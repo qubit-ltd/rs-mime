@@ -9,12 +9,12 @@
 //! MIME detector backed by the system `file` command.
 
 use std::io::{Read, Seek};
-use std::path::Path;
-#[cfg(not(coverage))]
-use std::process::Command;
+use std::path::{Path, PathBuf};
 #[cfg(not(coverage))]
 use std::sync::OnceLock;
 use std::time::Duration;
+
+use qubit_command::{Command, CommandRunner};
 
 use crate::{
     AbstractMimeDetector, DetectionSource, FileBasedMimeDetector, MimeDetectionPolicy,
@@ -28,8 +28,7 @@ use super::repository_mime_detector::default_repository;
 pub struct FileCommandMimeDetector<'a> {
     base: AbstractMimeDetector,
     repository: &'a MimeRepository,
-    execution_timeout: Option<Duration>,
-    working_directory: Option<String>,
+    command_runner: CommandRunner,
 }
 
 impl FileCommandMimeDetector<'static> {
@@ -43,6 +42,13 @@ impl FileCommandMimeDetector<'static> {
 }
 
 impl<'a> FileCommandMimeDetector<'a> {
+    /// System command executable name.
+    pub const COMMAND: &'static str = "file";
+    /// Argument enabling MIME type output.
+    pub const MIME_TYPE_ARG: &'static str = "--mime-type";
+    /// Argument enabling concise output.
+    pub const BRIEF_ARG: &'static str = "--brief";
+
     /// Creates a detector using an explicit repository for filename guesses.
     ///
     /// # Parameters
@@ -51,11 +57,26 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// File command detector borrowing `repository`.
     pub fn with_repository(repository: &'a MimeRepository) -> Self {
+        Self::with_repository_and_runner(repository, Self::default_command_runner())
+    }
+
+    /// Creates a detector using an explicit repository and command runner.
+    ///
+    /// # Parameters
+    /// - `repository`: Repository used for filename detection.
+    /// - `command_runner`: Runner used for all `file` command executions.
+    ///
+    /// # Returns
+    /// File command detector borrowing `repository` and owning the supplied
+    /// runner.
+    pub fn with_repository_and_runner(
+        repository: &'a MimeRepository,
+        command_runner: CommandRunner,
+    ) -> Self {
         Self {
             base: AbstractMimeDetector::default(),
             repository,
-            execution_timeout: None,
-            working_directory: None,
+            command_runner,
         }
     }
 
@@ -78,10 +99,9 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// Sets command execution timeout.
     ///
     /// # Parameters
-    /// - `timeout`: Timeout value stored for Java API parity. The current
-    ///   standard-library implementation does not enforce process timeouts.
+    /// - `timeout`: Maximum duration allowed for each `file` command.
     pub fn set_execution_timeout(&mut self, timeout: Duration) {
-        self.execution_timeout = Some(timeout);
+        self.command_runner = self.command_runner.clone().timeout(timeout);
     }
 
     /// Gets command execution timeout.
@@ -89,23 +109,29 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// Stored timeout, or `None`.
     pub fn execution_timeout(&self) -> Option<Duration> {
-        self.execution_timeout
+        self.command_runner.configured_timeout()
     }
 
     /// Sets command working directory.
     ///
     /// # Parameters
-    /// - `working_directory`: Optional working directory.
-    pub fn set_working_directory(&mut self, working_directory: Option<String>) {
-        self.working_directory = working_directory;
+    /// - `working_directory`: Working directory used by the command runner.
+    pub fn set_working_directory<P>(&mut self, working_directory: P)
+    where
+        P: Into<PathBuf>,
+    {
+        self.command_runner = self
+            .command_runner
+            .clone()
+            .working_directory(working_directory);
     }
 
     /// Gets command working directory.
     ///
     /// # Returns
     /// Stored working directory, or `None`.
-    pub fn working_directory(&self) -> Option<&str> {
-        self.working_directory.as_deref()
+    pub fn working_directory(&self) -> Option<&Path> {
+        self.command_runner.configured_working_directory()
     }
 
     /// Gets the repository used for filename detection.
@@ -114,6 +140,50 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// Repository reference.
     pub fn repository(&self) -> &'a MimeRepository {
         self.repository
+    }
+
+    /// Gets the command runner used by this detector.
+    ///
+    /// # Returns
+    /// Runner used for `file` command executions.
+    pub fn command_runner(&self) -> &CommandRunner {
+        &self.command_runner
+    }
+
+    /// Replaces the command runner used by this detector.
+    ///
+    /// # Parameters
+    /// - `command_runner`: New runner configuration.
+    pub fn set_command_runner(&mut self, command_runner: CommandRunner) {
+        self.command_runner = command_runner;
+    }
+
+    /// Replaces the command runner and returns the updated detector.
+    ///
+    /// # Parameters
+    /// - `command_runner`: New runner configuration.
+    ///
+    /// # Returns
+    /// The updated detector.
+    pub fn with_command_runner(mut self, command_runner: CommandRunner) -> Self {
+        self.command_runner = command_runner;
+        self
+    }
+
+    /// Enables or disables command execution logs.
+    ///
+    /// # Parameters
+    /// - `disable_logging`: `true` to suppress runner logs.
+    pub fn set_disable_logging(&mut self, disable_logging: bool) {
+        self.command_runner = self.command_runner.clone().disable_logging(disable_logging);
+    }
+
+    /// Tells whether command execution logging is disabled.
+    ///
+    /// # Returns
+    /// `true` when runner logs are suppressed.
+    pub fn is_disable_logging(&self) -> bool {
+        self.command_runner.is_logging_disabled()
     }
 
     /// Detects content from a local path using the `file` command only.
@@ -125,7 +195,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when the command cannot be executed.
+    /// Returns [`MimeError::Command`] when the command cannot be executed.
     pub fn detect_path_by_content<P: AsRef<Path>>(
         &self,
         path: P,
@@ -146,8 +216,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when file opening, reading, or command
-    /// execution fails.
+    /// Returns [`MimeError::Command`] when command execution fails.
     pub fn detect_path<P: AsRef<Path>>(
         &self,
         path: P,
@@ -181,7 +250,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when stream or temporary file operations fail.
+    /// Returns [`MimeError::Io`] when stream operations fail.
     pub fn detect_reader<R>(
         &self,
         reader: &mut R,
@@ -204,13 +273,11 @@ impl<'a> FileCommandMimeDetector<'a> {
     pub fn is_available() -> bool {
         static AVAILABLE: OnceLock<bool> = OnceLock::new();
         *AVAILABLE.get_or_init(|| {
-            Command::new("file")
-                .arg("--mime-type")
-                .arg("--brief")
-                .arg(".")
-                .output()
-                .map(|output| output.status.success())
-                .unwrap_or(false)
+            CommandRunner::new()
+                .disable_logging(true)
+                .lossy_output(true)
+                .run(Self::command_for_path(Path::new(".")))
+                .is_ok()
         })
     }
 
@@ -248,19 +315,11 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// Zero or one MIME type names.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when command execution fails.
+    /// Returns [`MimeError::Command`] when command execution fails.
     #[cfg(not(coverage))]
     fn guess_from_file_command(&self, path: &Path) -> Result<Vec<String>, MimeError> {
-        let mut command = Command::new("file");
-        command.arg("--mime-type").arg("--brief").arg(path);
-        if let Some(working_directory) = &self.working_directory {
-            command.current_dir(working_directory);
-        }
-        let output = command.output()?;
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
-        let text = String::from_utf8_lossy(&output.stdout);
+        let output = self.command_runner.run(Self::command_for_path(path))?;
+        let text = String::from_utf8_lossy(output.stdout_bytes());
         let result = text.trim();
         if result.is_empty() {
             Ok(Vec::new())
@@ -282,8 +341,30 @@ impl<'a> FileCommandMimeDetector<'a> {
     #[cfg(coverage)]
     fn guess_from_file_command(&self, path: &Path) -> Result<Vec<String>, MimeError> {
         let _ = std::fs::metadata(path)?;
-        let _ = self.working_directory.as_deref();
+        let _ = self.command_runner.configured_working_directory();
         Ok(vec!["text/plain".to_owned()])
+    }
+
+    /// Creates the default command runner for file detection.
+    ///
+    /// # Returns
+    /// Runner used by the default detector.
+    fn default_command_runner() -> CommandRunner {
+        CommandRunner::new().lossy_output(true)
+    }
+
+    /// Builds the structured `file` command for one path.
+    ///
+    /// # Parameters
+    /// - `path`: Local file path passed as an argument without shell parsing.
+    ///
+    /// # Returns
+    /// Structured command description.
+    fn command_for_path(path: &Path) -> Command {
+        Command::new(Self::COMMAND)
+            .arg(Self::MIME_TYPE_ARG)
+            .arg(Self::BRIEF_ARG)
+            .arg_os(path)
     }
 }
 
@@ -350,7 +431,10 @@ pub(crate) mod coverage_support {
     //! Coverage helpers for file-command detector branches.
 
     use std::io::Cursor;
+    use std::path::Path;
     use std::time::Duration;
+
+    use qubit_command::CommandRunner;
 
     use crate::{MimeDetectionPolicy, MimeDetector, MimeRepository};
 
@@ -363,13 +447,45 @@ pub(crate) mod coverage_support {
     pub(crate) fn exercise_file_command_edges() -> Vec<String> {
         let repository = MimeRepository::empty();
         let mut empty_detector = FileCommandMimeDetector::with_repository(&repository);
+        let base_flag = empty_detector
+            .base()
+            .media_stream_classifier()
+            .is_none()
+            .to_string();
+        empty_detector.base_mut().set_media_stream_classifier(None);
+        let base_mut_flag = empty_detector
+            .base()
+            .media_stream_classifier()
+            .is_none()
+            .to_string();
         empty_detector.set_execution_timeout(Duration::from_secs(1));
-        empty_detector.set_working_directory(Some(".".to_owned()));
+        empty_detector.set_working_directory(".");
+        empty_detector.set_disable_logging(true);
         let timeout = empty_detector.execution_timeout().is_some().to_string();
-        let working_directory = empty_detector.working_directory().unwrap_or("").to_owned();
+        let working_directory = empty_detector
+            .working_directory()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        let disable_logging = empty_detector.is_disable_logging().to_string();
+        let runner_timeout = empty_detector
+            .command_runner()
+            .configured_timeout()
+            .is_some()
+            .to_string();
         let working_directory_command =
             format!("{:?}", empty_detector.detect_path_by_content("Cargo.toml"));
+        let command_description = format!(
+            "{:?}",
+            FileCommandMimeDetector::command_for_path(Path::new("Cargo.toml"))
+        );
         let repository_len = empty_detector.repository().all().len().to_string();
+        let replaced_runner = FileCommandMimeDetector::with_repository(&repository)
+            .with_command_runner(CommandRunner::new().disable_logging(true))
+            .is_disable_logging()
+            .to_string();
+        let mut setter_detector = FileCommandMimeDetector::with_repository(&repository);
+        setter_detector.set_command_runner(CommandRunner::new().disable_logging(true));
+        let setter_runner = setter_detector.is_disable_logging().to_string();
 
         let detector = FileCommandMimeDetector::new();
         let default_detector = FileCommandMimeDetector::default();
@@ -417,10 +533,17 @@ pub(crate) mod coverage_support {
             )
         );
         vec![
+            base_flag,
+            base_mut_flag,
             timeout,
             working_directory,
+            disable_logging,
+            runner_timeout,
             working_directory_command,
+            command_description,
             repository_len,
+            replaced_runner,
+            setter_runner,
             default_detector
                 .detect_by_filename("file.pdf")
                 .is_some()

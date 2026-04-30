@@ -11,14 +11,14 @@
 pub(crate) mod abstract_mime_detector;
 pub(crate) mod arc_mime_detector;
 pub(crate) mod box_mime_detector;
+#[cfg(coverage)]
+pub(crate) mod coverage_support;
 pub(crate) mod detection_source;
 pub(crate) mod file_based_mime_detector;
 pub(crate) mod file_command_mime_detector;
-pub(crate) mod mime_detector;
 pub(crate) mod mime_detection_policy;
+pub(crate) mod mime_detector;
 pub(crate) mod mime_detector_backend;
-#[cfg(coverage)]
-pub(crate) mod coverage_support;
 pub(crate) mod repository_mime_detector;
 pub(crate) mod stream_based_mime_detector;
 pub(crate) mod string_list_mime_detector_backend;

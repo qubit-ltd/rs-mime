@@ -24,4 +24,3 @@ impl MimeDetectionPolicy {
         matches!(self, Self::VerifyContent)
     }
 }
-

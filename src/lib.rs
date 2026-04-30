@@ -71,8 +71,7 @@ pub mod coverage_support {
             crate::detector::repository_mime_detector::coverage_support::exercise_reader_errors(),
         );
         result.extend(crate::mime_config::coverage_support::exercise_config_edges());
-        result
-            .extend(crate::detector::mime_detector::coverage_support::exercise_detector_defaults());
+        result.extend(crate::detector::coverage_support::exercise_detector_defaults());
         result.extend(crate::classifier::media_stream_classifier::coverage_support::exercise_classifier_defaults());
         result.extend(
             crate::detector::abstract_mime_detector::coverage_support::exercise_abstract_edges(),

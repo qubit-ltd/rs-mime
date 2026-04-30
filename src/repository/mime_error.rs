@@ -63,6 +63,10 @@ pub enum MimeError {
     /// Detection from a path or reader failed due to I/O.
     #[error("I/O error while detecting MIME type: {0}")]
     Io(#[from] std::io::Error),
+
+    /// Detection using an external command failed.
+    #[error("command error while detecting MIME type: {0}")]
+    Command(#[from] qubit_command::CommandError),
 }
 
 impl MimeError {
@@ -143,11 +147,16 @@ pub(crate) mod coverage_support {
     /// # Returns
     /// Display strings for constructed errors.
     pub(crate) fn exercise_error_builders() -> Vec<String> {
+        let command_error = qubit_command::CommandError::SpawnFailed {
+            command: "file --mime-type --brief missing".to_owned(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
+        };
         vec![
             MimeError::invalid_attr("match", "value", "bad", "invalid").to_string(),
             MimeError::invalid_element("magic", "missing match").to_string(),
             MimeError::invalid_matcher("bad matcher").to_string(),
             MimeError::invalid_classifier_input("bad input").to_string(),
+            MimeError::Command(command_error).to_string(),
         ]
     }
 }

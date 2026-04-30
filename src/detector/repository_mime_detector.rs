@@ -289,7 +289,18 @@ pub(crate) mod coverage_support {
     /// A summary of observed detector states.
     pub(crate) fn exercise_detector_edges() -> Vec<String> {
         let repository = MimeRepository::empty();
-        let detector = RepositoryMimeDetector::with_repository(&repository);
+        let mut detector = RepositoryMimeDetector::with_repository(&repository);
+        let base_flag = detector
+            .base()
+            .media_stream_classifier()
+            .is_none()
+            .to_string();
+        detector.base_mut().set_media_stream_classifier(None);
+        let base_mut_flag = detector
+            .base()
+            .media_stream_classifier()
+            .is_none()
+            .to_string();
         let repository_len = detector.repository().all().len().to_string();
         let policy_detection = detector
             .detect_bytes(
@@ -303,11 +314,25 @@ pub(crate) mod coverage_support {
             .len()
             .to_string();
         let content_guesses = detector.guess_from_content(b"unknown").len().to_string();
+        let path =
+            std::env::temp_dir().join(format!("qubit-mime-coverage-{}.pdf", std::process::id()));
+        std::fs::write(&path, b"%PDF-1.7\n").expect("coverage temp file should be writable");
+        let path_detection = match RepositoryMimeDetector::default()
+            .detect_path(&path, MimeDetectionPolicy::PreferFilename)
+            .expect("coverage temp file should be readable")
+        {
+            Some(mime_type) => mime_type,
+            None => "none".to_owned(),
+        };
+        let _ = std::fs::remove_file(&path);
         vec![
+            base_flag,
+            base_mut_flag,
             repository_len,
             policy_detection,
             filename_guesses,
             content_guesses,
+            path_detection,
         ]
     }
 
@@ -320,7 +345,13 @@ pub(crate) mod coverage_support {
         let detector = RepositoryMimeDetector::with_repository(&repository);
         let mut seek_reader = FailingReader::new(FailureMode::Seek);
         let mut read_reader = FailingReader::new(FailureMode::Read);
+        let mut buffer = [];
+        let seek_read = seek_reader
+            .read(&mut buffer)
+            .expect("seek-mode reader should allow reads")
+            .to_string();
         vec![
+            seek_read,
             detector
                 .detect_reader(&mut seek_reader, None, MimeDetectionPolicy::VerifyContent)
                 .expect_err("seek should fail")
