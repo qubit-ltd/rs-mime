@@ -7,6 +7,10 @@
  *
  ******************************************************************************/
 //! Configuration constants used by MIME detectors.
+//!
+//! # Author
+//!
+//! Haixing Hu
 
 /// Environment variable selecting the default MIME detector implementation.
 pub const ENV_MIME_DETECTOR_DEFAULT: &str = "QUBIT_MIME_DETECTOR_DEFAULT";

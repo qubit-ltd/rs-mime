@@ -7,6 +7,10 @@
  *
  ******************************************************************************/
 //! Common MIME type constants.
+//!
+//! # Author
+//!
+//! Haixing Hu
 
 /// Microsoft Excel MIME types.
 pub const EXCEL_MIME_TYPES: &[&str] = &[

@@ -7,6 +7,10 @@
  *
  ******************************************************************************/
 //! Error type used by MIME database parsing and detection.
+//!
+//! # Author
+//!
+//! Haixing Hu
 
 use thiserror::Error;
 
@@ -160,3 +164,4 @@ pub(crate) mod coverage_support {
         ]
     }
 }
+

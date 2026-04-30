@@ -18,7 +18,9 @@ use super::detection_source::DetectionSource;
 /// Java-style shared detector state and merge/refinement logic.
 #[derive(Debug, Clone)]
 pub struct AbstractMimeDetector {
+    /// MIME detector configuration.
     config: MimeConfig,
+    /// Media stream classifier.
     media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>,
 }
 

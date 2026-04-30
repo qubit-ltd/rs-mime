@@ -7,6 +7,10 @@
  *
  ******************************************************************************/
 //! Configuration values for MIME detection.
+//!
+//! # Author
+//!
+//! Haixing Hu
 
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -20,8 +24,11 @@ use crate::{
 /// Runtime configuration for MIME detectors.
 #[derive(Debug, Clone)]
 pub struct MimeConfig {
+    /// Whether precise media-stream detection is enabled.
     enable_precise_detection: bool,
+    /// Extensions requiring precise detection.
     precise_detection_patterns: HashSet<String>,
+    /// Ambiguous MIME mappings.
     ambiguous_mime_mapping: HashMap<String, [String; 2]>,
 }
 

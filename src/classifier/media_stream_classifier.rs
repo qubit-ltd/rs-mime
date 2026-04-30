@@ -7,6 +7,10 @@
  *
  ******************************************************************************/
 //! Top-level media stream classifier interface.
+//!
+//! # Author
+//!
+//! Haixing Hu
 
 use std::fmt::Debug;
 use std::path::Path;

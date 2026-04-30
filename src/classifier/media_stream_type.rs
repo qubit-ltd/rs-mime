@@ -7,6 +7,10 @@
  *
  ******************************************************************************/
 //! Media stream classification result.
+//!
+//! # Author
+//!
+//! Haixing Hu
 
 /// Audio/video stream classification for a media payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
