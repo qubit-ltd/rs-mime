@@ -17,7 +17,6 @@ pub(crate) mod mime_type;
 pub(crate) mod mime_type_builder;
 
 pub use magic_value_type::MagicValueType;
-pub use crate::mime_error::MimeError;
 pub use mime_glob::MimeGlob;
 pub use mime_magic::MimeMagic;
 pub use mime_magic_matcher::MimeMagicMatcher;

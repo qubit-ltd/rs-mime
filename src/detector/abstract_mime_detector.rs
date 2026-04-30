@@ -287,12 +287,12 @@ pub(crate) mod coverage_support {
 
     impl MediaStreamClassifier for StaticClassifier {
         /// Returns a fixed classification for any path.
-        fn classify_path(&self, _path: &Path) -> Result<MediaStreamType, MimeError> {
+        fn classify_path(&self, _path: &Path) -> crate::MimeResult<MediaStreamType> {
             Ok(self.stream_type)
         }
 
         /// Returns a fixed classification for any content.
-        fn classify_content(&self, _content: &[u8]) -> Result<MediaStreamType, MimeError> {
+        fn classify_content(&self, _content: &[u8]) -> crate::MimeResult<MediaStreamType> {
             Ok(self.stream_type)
         }
     }
@@ -316,12 +316,12 @@ pub(crate) mod coverage_support {
 
     impl MediaStreamClassifier for FailingClassifier {
         /// Fails path classification.
-        fn classify_path(&self, _path: &Path) -> Result<MediaStreamType, MimeError> {
+        fn classify_path(&self, _path: &Path) -> crate::MimeResult<MediaStreamType> {
             Err(MimeError::invalid_classifier_input("forced"))
         }
 
         /// Fails content classification.
-        fn classify_content(&self, _content: &[u8]) -> Result<MediaStreamType, MimeError> {
+        fn classify_content(&self, _content: &[u8]) -> crate::MimeResult<MediaStreamType> {
             Err(MimeError::invalid_classifier_input("forced"))
         }
     }

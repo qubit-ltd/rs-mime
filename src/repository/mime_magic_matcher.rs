@@ -8,7 +8,7 @@
  ******************************************************************************/
 //! MIME content magic matcher.
 
-use crate::{MagicValueType, MimeError};
+use crate::{MagicValueType, MimeError, MimeResult};
 
 /// A single MIME magic matcher, optionally with nested sub-matchers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +46,7 @@ impl MimeMagicMatcher {
         value: Vec<u8>,
         mask: Option<Vec<u8>>,
         sub_matchers: Vec<MimeMagicMatcher>,
-    ) -> Result<Self, MimeError> {
+    ) -> MimeResult<Self> {
         validate_offsets(offset_begin, offset_end)?;
         validate_value_width(value_type, &value)?;
         validate_mask_width(&value, mask.as_deref())?;
@@ -188,7 +188,7 @@ impl MimeMagicMatcher {
 ///
 /// # Errors
 /// Returns [`MimeError::InvalidMagicMatcher`] when the range is inverted.
-fn validate_offsets(offset_begin: usize, offset_end: usize) -> Result<(), MimeError> {
+fn validate_offsets(offset_begin: usize, offset_end: usize) -> MimeResult<()> {
     if offset_begin > offset_end {
         return Err(MimeError::invalid_matcher(
             "offset begin must not be greater than offset end",
@@ -205,7 +205,7 @@ fn validate_offsets(offset_begin: usize, offset_end: usize) -> Result<(), MimeEr
 ///
 /// # Errors
 /// Returns [`MimeError::InvalidMagicMatcher`] when a numeric value has the wrong width.
-fn validate_value_width(value_type: MagicValueType, value: &[u8]) -> Result<(), MimeError> {
+fn validate_value_width(value_type: MagicValueType, value: &[u8]) -> MimeResult<()> {
     if value.is_empty() {
         return Err(MimeError::invalid_matcher(
             "magic matcher value must not be empty",
@@ -230,7 +230,7 @@ fn validate_value_width(value_type: MagicValueType, value: &[u8]) -> Result<(), 
 ///
 /// # Errors
 /// Returns [`MimeError::InvalidMagicMatcher`] when the mask length differs from value length.
-fn validate_mask_width(value: &[u8], mask: Option<&[u8]>) -> Result<(), MimeError> {
+fn validate_mask_width(value: &[u8], mask: Option<&[u8]>) -> MimeResult<()> {
     if let Some(mask) = mask
         && mask.len() != value.len()
     {

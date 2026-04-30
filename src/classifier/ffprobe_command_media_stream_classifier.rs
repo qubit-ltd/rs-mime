@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use crate::{
     AbstractMediaStreamClassifier, FileBasedMediaStreamClassifier, MediaStreamClassifier,
-    MediaStreamType, MimeError,
+    MediaStreamType, MimeResult,
 };
 
 /// Media stream classifier backed by the `ffprobe` command.
@@ -154,7 +154,7 @@ impl FfprobeCommandMediaStreamClassifier {
     /// # Errors
     /// Returns [`MimeError::Io`] when process execution itself fails.
     #[cfg(not(coverage))]
-    fn classify_by_local_file(&self, path: &Path) -> Result<MediaStreamType, MimeError> {
+    fn classify_by_local_file(&self, path: &Path) -> MimeResult<MediaStreamType> {
         AbstractMediaStreamClassifier::validate_readable_file(path)?;
         let mut command = Command::new(Self::COMMAND);
         command
@@ -187,7 +187,7 @@ impl FfprobeCommandMediaStreamClassifier {
     /// # Errors
     /// Returns [`MimeError::Io`] when the path is not readable.
     #[cfg(coverage)]
-    fn classify_by_local_file(&self, path: &Path) -> Result<MediaStreamType, MimeError> {
+    fn classify_by_local_file(&self, path: &Path) -> MimeResult<MediaStreamType> {
         AbstractMediaStreamClassifier::validate_readable_file(path)?;
         let _ = self.working_directory.as_deref();
         Ok(MediaStreamType::None)
@@ -203,12 +203,12 @@ impl Default for FfprobeCommandMediaStreamClassifier {
 
 impl MediaStreamClassifier for FfprobeCommandMediaStreamClassifier {
     /// Classifies a local media path using FFprobe.
-    fn classify_path(&self, path: &Path) -> Result<MediaStreamType, MimeError> {
+    fn classify_path(&self, path: &Path) -> MimeResult<MediaStreamType> {
         self.classify_by_local_file(path)
     }
 
     /// Classifies in-memory bytes by staging them to a temporary file.
-    fn classify_content(&self, content: &[u8]) -> Result<MediaStreamType, MimeError> {
+    fn classify_content(&self, content: &[u8]) -> MimeResult<MediaStreamType> {
         FileBasedMediaStreamClassifier::with_temp_file(content, |path| {
             self.classify_by_local_file(path)
         })

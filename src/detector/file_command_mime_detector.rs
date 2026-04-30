@@ -18,7 +18,7 @@ use qubit_command::{Command, CommandRunner};
 
 use crate::{
     AbstractMimeDetector, DetectionSource, FileBasedMimeDetector, MimeDetectionPolicy,
-    MimeDetector, MimeError, MimeRepository, StreamBasedMimeDetector,
+    MimeDetector, MimeRepository, MimeResult, StreamBasedMimeDetector,
 };
 
 use super::repository_mime_detector::default_repository;
@@ -196,10 +196,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Errors
     /// Returns [`MimeError::Command`] when the command cannot be executed.
-    pub fn detect_path_by_content<P: AsRef<Path>>(
-        &self,
-        path: P,
-    ) -> Result<Option<String>, MimeError> {
+    pub fn detect_path_by_content<P: AsRef<Path>>(&self, path: P) -> MimeResult<Option<String>> {
         Ok(self
             .guess_from_file_command(path.as_ref())?
             .into_iter()
@@ -221,7 +218,7 @@ impl<'a> FileCommandMimeDetector<'a> {
         &self,
         path: P,
         policy: MimeDetectionPolicy,
-    ) -> Result<Option<String>, MimeError> {
+    ) -> MimeResult<Option<String>> {
         let path = path.as_ref();
         let filename = path.to_string_lossy();
         let from_filename = self.guess_from_filename(&filename);
@@ -256,7 +253,7 @@ impl<'a> FileCommandMimeDetector<'a> {
         reader: &mut R,
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
-    ) -> Result<Option<String>, MimeError>
+    ) -> MimeResult<Option<String>>
     where
         R: Read + Seek,
     {
@@ -317,7 +314,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Errors
     /// Returns [`MimeError::Command`] when command execution fails.
     #[cfg(not(coverage))]
-    fn guess_from_file_command(&self, path: &Path) -> Result<Vec<String>, MimeError> {
+    fn guess_from_file_command(&self, path: &Path) -> MimeResult<Vec<String>> {
         let output = self.command_runner.run(Self::command_for_path(path))?;
         let text = String::from_utf8_lossy(output.stdout_bytes());
         let result = text.trim();
@@ -339,7 +336,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Errors
     /// Returns [`MimeError::Io`] when the path metadata cannot be read.
     #[cfg(coverage)]
-    fn guess_from_file_command(&self, path: &Path) -> Result<Vec<String>, MimeError> {
+    fn guess_from_file_command(&self, path: &Path) -> MimeResult<Vec<String>> {
         let _ = std::fs::metadata(path)?;
         let _ = self.command_runner.configured_working_directory();
         Ok(vec!["text/plain".to_owned()])

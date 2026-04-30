@@ -15,7 +15,7 @@ use roxmltree::{Document, Node};
 
 use crate::{
     MagicValueType, MimeDetectionPolicy, MimeError, MimeGlob, MimeMagic, MimeMagicMatcher,
-    MimeType, MimeTypeBuilder,
+    MimeResult, MimeType, MimeTypeBuilder,
 };
 
 /// A repository of MIME types and detection indexes.
@@ -47,7 +47,7 @@ impl MimeRepository {
     /// # Errors
     /// Returns [`MimeError`] when XML is malformed or a rule contains an
     /// unsupported value.
-    pub fn from_xml(xml: &str) -> Result<Self, MimeError> {
+    pub fn from_xml(xml: &str) -> MimeResult<Self> {
         let xml = strip_doctype(xml);
         let document = Document::parse(&xml)?;
         let root = document.root_element();
@@ -382,7 +382,7 @@ impl<'a> MagicDetectionResult<'a> {
 ///
 /// # Errors
 /// Returns [`MimeError`] when required attributes or child rules are invalid.
-fn parse_mime_type(node: Node<'_, '_>) -> Result<MimeType, MimeError> {
+fn parse_mime_type(node: Node<'_, '_>) -> MimeResult<MimeType> {
     let name = required_attr(node, "type")?.to_owned();
     let mut builder = MimeTypeBuilder::new(&name);
     for child in node.children().filter(Node::is_element) {
@@ -411,7 +411,7 @@ fn parse_mime_type(node: Node<'_, '_>) -> Result<MimeType, MimeError> {
 ///
 /// # Errors
 /// Returns [`MimeError`] when attributes are invalid.
-fn parse_glob(node: Node<'_, '_>) -> Result<MimeGlob, MimeError> {
+fn parse_glob(node: Node<'_, '_>) -> MimeResult<MimeGlob> {
     let pattern = required_attr(node, "pattern")?;
     let weight = optional_u16_attr(
         node,
@@ -434,7 +434,7 @@ fn parse_glob(node: Node<'_, '_>) -> Result<MimeGlob, MimeError> {
 ///
 /// # Errors
 /// Returns [`MimeError`] when priority or matchers are invalid.
-fn parse_magic(node: Node<'_, '_>) -> Result<MimeMagic, MimeError> {
+fn parse_magic(node: Node<'_, '_>) -> MimeResult<MimeMagic> {
     let priority = optional_u16_attr(
         node,
         "priority",
@@ -442,7 +442,7 @@ fn parse_magic(node: Node<'_, '_>) -> Result<MimeMagic, MimeError> {
         MimeMagic::MAX_PRIORITY,
         MimeMagic::DEFAULT_PRIORITY,
     )?;
-    let matchers: Result<Vec<_>, _> = node
+    let matchers: MimeResult<Vec<_>> = node
         .children()
         .filter(Node::is_element)
         .filter(|child| child.tag_name().name() == "match")
@@ -468,7 +468,7 @@ fn parse_magic(node: Node<'_, '_>) -> Result<MimeMagic, MimeError> {
 ///
 /// # Errors
 /// Returns [`MimeError`] when matcher attributes are invalid.
-fn parse_matcher(node: Node<'_, '_>) -> Result<MimeMagicMatcher, MimeError> {
+fn parse_matcher(node: Node<'_, '_>) -> MimeResult<MimeMagicMatcher> {
     let type_name = required_attr(node, "type")?;
     let value_type = MagicValueType::from_name(type_name)
         .ok_or_else(|| MimeError::invalid_attr("match", "type", type_name, "unknown type"))?;
@@ -478,7 +478,7 @@ fn parse_matcher(node: Node<'_, '_>) -> Result<MimeMagicMatcher, MimeError> {
         Some(mask) => Some(parse_mask(value_type, mask)?),
         None => None,
     };
-    let sub_matchers: Result<Vec<_>, _> = node
+    let sub_matchers: MimeResult<Vec<_>> = node
         .children()
         .filter(Node::is_element)
         .filter(|child| child.tag_name().name() == "match")
@@ -505,7 +505,7 @@ fn parse_matcher(node: Node<'_, '_>) -> Result<MimeMagicMatcher, MimeError> {
 ///
 /// # Errors
 /// Returns [`MimeError`] when the attribute is missing or empty.
-fn required_attr<'a>(node: Node<'a, '_>, name: &str) -> Result<&'a str, MimeError> {
+fn required_attr<'a>(node: Node<'a, '_>, name: &str) -> MimeResult<&'a str> {
     node.attribute(name)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
@@ -538,7 +538,7 @@ fn optional_u16_attr(
     min: u16,
     max: u16,
     default: u16,
-) -> Result<u16, MimeError> {
+) -> MimeResult<u16> {
     let Some(value) = node.attribute(name) else {
         return Ok(default);
     };
@@ -568,7 +568,7 @@ fn optional_u16_attr(
 ///
 /// # Errors
 /// Returns [`MimeError`] when the value is not `true` or `false`.
-fn optional_bool_attr(node: Node<'_, '_>, name: &str, default: bool) -> Result<bool, MimeError> {
+fn optional_bool_attr(node: Node<'_, '_>, name: &str, default: bool) -> MimeResult<bool> {
     match node.attribute(name) {
         Some("true") => Ok(true),
         Some("false") => Ok(false),
@@ -592,7 +592,7 @@ fn optional_bool_attr(node: Node<'_, '_>, name: &str, default: bool) -> Result<b
 ///
 /// # Errors
 /// Returns [`MimeError`] when the range is invalid.
-fn parse_offset(value: &str) -> Result<(usize, usize), MimeError> {
+fn parse_offset(value: &str) -> MimeResult<(usize, usize)> {
     let (begin, end) = value.split_once(':').map_or((value, value), |parts| parts);
     let offset_begin = parse_usize(begin, "offset")?;
     let offset_end = parse_usize(end, "offset")?;
@@ -618,7 +618,7 @@ fn parse_offset(value: &str) -> Result<(usize, usize), MimeError> {
 ///
 /// # Errors
 /// Returns [`MimeError`] when the number is invalid.
-fn parse_usize(value: &str, attribute: &str) -> Result<usize, MimeError> {
+fn parse_usize(value: &str, attribute: &str) -> MimeResult<usize> {
     value.parse::<usize>().map_err(|error| {
         MimeError::invalid_attr(
             "match",
@@ -640,7 +640,7 @@ fn parse_usize(value: &str, attribute: &str) -> Result<usize, MimeError> {
 ///
 /// # Errors
 /// Returns [`MimeError`] when the value cannot be decoded.
-fn parse_value(value_type: MagicValueType, value: &str) -> Result<Vec<u8>, MimeError> {
+fn parse_value(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
     match value_type {
         MagicValueType::String => decode_c_string(value),
         _ => parse_numeric_bytes(value_type, value),
@@ -658,7 +658,7 @@ fn parse_value(value_type: MagicValueType, value: &str) -> Result<Vec<u8>, MimeE
 ///
 /// # Errors
 /// Returns [`MimeError`] when the mask cannot be decoded.
-fn parse_mask(value_type: MagicValueType, value: &str) -> Result<Vec<u8>, MimeError> {
+fn parse_mask(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
     match value_type {
         MagicValueType::String => parse_hex_bytes(value),
         _ => parse_numeric_bytes(value_type, value),
@@ -675,7 +675,7 @@ fn parse_mask(value_type: MagicValueType, value: &str) -> Result<Vec<u8>, MimeEr
 ///
 /// # Errors
 /// Returns [`MimeError`] when an escape sequence is incomplete or invalid.
-fn decode_c_string(value: &str) -> Result<Vec<u8>, MimeError> {
+fn decode_c_string(value: &str) -> MimeResult<Vec<u8>> {
     let chars: Vec<char> = value.chars().collect();
     let mut bytes = Vec::with_capacity(value.len());
     let mut index = 0;
@@ -740,7 +740,7 @@ fn decode_hex_escape(
     mut index: usize,
     source: &str,
     bytes: &mut Vec<u8>,
-) -> Result<usize, MimeError> {
+) -> MimeResult<usize> {
     let mut value = 0u8;
     let mut digits = 0;
     while index + 1 < chars.len() && digits < 2 {
@@ -798,7 +798,7 @@ fn decode_octal_escape(chars: &[char], mut index: usize, bytes: &mut Vec<u8>) ->
 ///
 /// # Errors
 /// Returns [`MimeError`] when the value is invalid.
-fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> Result<Vec<u8>, MimeError> {
+fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
     let number = parse_c_integer(value)?;
     match value_type
         .numeric_width()
@@ -821,7 +821,7 @@ fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> Result<Vec<u8
 ///
 /// # Errors
 /// Returns [`MimeError`] when parsing fails.
-fn parse_c_integer(value: &str) -> Result<u64, MimeError> {
+fn parse_c_integer(value: &str) -> MimeResult<u64> {
     let trimmed = value.trim();
     let (radix, digits) = if let Some(hex) = trimmed
         .strip_prefix("0x")
@@ -848,7 +848,7 @@ fn parse_c_integer(value: &str) -> Result<u64, MimeError> {
 ///
 /// # Errors
 /// Returns [`MimeError`] when the value is not an even-length hex string.
-fn parse_hex_bytes(value: &str) -> Result<Vec<u8>, MimeError> {
+fn parse_hex_bytes(value: &str) -> MimeResult<Vec<u8>> {
     let digits = value
         .strip_prefix("0x")
         .or_else(|| value.strip_prefix("0X"))

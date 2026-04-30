@@ -11,7 +11,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::MimeError;
+use crate::{MimeError, MimeResult};
 
 /// Common validation and staging helpers for media stream classifiers.
 #[derive(Debug, Clone, Copy, Default)]
@@ -26,7 +26,7 @@ impl AbstractMediaStreamClassifier {
     /// # Errors
     /// Returns [`MimeError::Io`] when metadata cannot be read or the path is
     /// not a regular file.
-    pub fn validate_readable_file(path: &Path) -> Result<(), MimeError> {
+    pub fn validate_readable_file(path: &Path) -> MimeResult<()> {
         let metadata = fs::metadata(path)?;
         if metadata.is_file() {
             Ok(())

@@ -14,8 +14,8 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::{
-    AbstractMimeDetector, DetectionSource, MimeDetectionPolicy, MimeDetector, MimeError,
-    MimeRepository, StreamBasedMimeDetector,
+    AbstractMimeDetector, DetectionSource, MimeDetectionPolicy, MimeDetector, MimeRepository,
+    MimeResult, StreamBasedMimeDetector,
 };
 
 const DEFAULT_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
@@ -38,7 +38,7 @@ impl RepositoryMimeDetector<'static> {
     /// # Errors
     /// The embedded database is parsed from crate resources and is expected to
     /// be valid; this method keeps a `Result` return type for API consistency.
-    pub fn new() -> Result<Self, MimeError> {
+    pub fn new() -> MimeResult<Self> {
         Ok(Self::with_repository(default_repository()))
     }
 }
@@ -165,7 +165,7 @@ impl<'a> RepositoryMimeDetector<'a> {
         reader: &mut R,
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
-    ) -> Result<Option<String>, MimeError>
+    ) -> MimeResult<Option<String>>
     where
         R: Read + Seek,
     {
@@ -189,7 +189,7 @@ impl<'a> RepositoryMimeDetector<'a> {
         &self,
         path: P,
         policy: MimeDetectionPolicy,
-    ) -> Result<Option<String>, MimeError> {
+    ) -> MimeResult<Option<String>> {
         let path = path.as_ref();
         let filename = path.to_string_lossy();
         let mut file = File::open(path)?;

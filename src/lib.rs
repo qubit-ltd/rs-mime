@@ -21,6 +21,8 @@ pub mod repository;
 mod common_mime_types;
 mod constants;
 mod mime_config;
+mod mime_error;
+mod mime_result;
 
 pub use classifier::{
     AbstractMediaStreamClassifier, FfprobeCommandMediaStreamClassifier,
@@ -35,8 +37,10 @@ pub use detector::{
     StreamBasedMimeDetector, StringListMimeDetectorBackend,
 };
 pub use mime_config::MimeConfig;
+pub use mime_error::MimeError;
+pub use mime_result::MimeResult;
 pub use repository::{
-    MagicValueType, MimeError, MimeGlob, MimeMagic, MimeMagicMatcher, MimeRepository, MimeType,
+    MagicValueType, MimeGlob, MimeMagic, MimeMagicMatcher, MimeRepository, MimeType,
     MimeTypeBuilder,
 };
 
@@ -54,7 +58,7 @@ pub mod coverage_support {
         result.extend(
             crate::repository::magic_value_type::coverage_support::exercise_magic_value_types(),
         );
-        result.extend(crate::repository::mime_error::coverage_support::exercise_error_builders());
+        result.extend(crate::mime_error::coverage_support::exercise_error_builders());
         result.extend(crate::repository::mime_glob::coverage_support::exercise_glob_edges());
         result.extend(crate::repository::mime_magic::coverage_support::exercise_magic_edges());
         result.extend(

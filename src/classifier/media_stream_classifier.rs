@@ -15,7 +15,7 @@
 use std::fmt::Debug;
 use std::path::Path;
 
-use crate::MimeError;
+use crate::MimeResult;
 
 use super::{FfprobeCommandMediaStreamClassifier, MediaStreamType};
 
@@ -32,7 +32,7 @@ pub trait MediaStreamClassifier: Debug + Send + Sync {
     /// # Errors
     /// Returns [`MimeError::Io`] when the path cannot be read, or another
     /// [`MimeError`] when the classifier backend fails.
-    fn classify_path(&self, path: &Path) -> Result<MediaStreamType, MimeError>;
+    fn classify_path(&self, path: &Path) -> MimeResult<MediaStreamType>;
 
     /// Classifies an in-memory media payload.
     ///
@@ -45,7 +45,7 @@ pub trait MediaStreamClassifier: Debug + Send + Sync {
     /// # Errors
     /// Returns [`MimeError::Io`] when a file-backed classifier cannot stage the
     /// content.
-    fn classify_content(&self, content: &[u8]) -> Result<MediaStreamType, MimeError>;
+    fn classify_content(&self, content: &[u8]) -> MimeResult<MediaStreamType>;
 }
 
 impl dyn MediaStreamClassifier {

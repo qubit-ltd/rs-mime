@@ -16,7 +16,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use crate::MimeError;
+use crate::MimeResult;
 
 /// Helper for classifiers that need a local file backend.
 #[derive(Debug, Clone, Copy, Default)]
@@ -37,8 +37,8 @@ impl FileBasedMediaStreamClassifier {
     /// written, flushed, or removed.
     pub fn with_temp_file<T>(
         content: &[u8],
-        classify: impl FnOnce(&PathBuf) -> Result<T, MimeError>,
-    ) -> Result<T, MimeError> {
+        classify: impl FnOnce(&PathBuf) -> MimeResult<T>,
+    ) -> MimeResult<T> {
         #[cfg(coverage)]
         {
             let _ = content;
@@ -80,7 +80,7 @@ fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
 pub(crate) mod coverage_support {
     //! Coverage helpers for file-based classifier staging.
 
-    use crate::MimeError;
+    use crate::{MimeError, MimeResult};
 
     use super::FileBasedMediaStreamClassifier;
 
@@ -93,11 +93,12 @@ pub(crate) mod coverage_support {
             Ok(path.exists().to_string())
         })
         .expect("temporary file should be staged");
-        let err = FileBasedMediaStreamClassifier::with_temp_file(b"abc", |_path| {
-            Err::<String, MimeError>(MimeError::invalid_classifier_input("forced"))
-        })
-        .expect_err("callback should fail")
-        .to_string();
+        let err =
+            FileBasedMediaStreamClassifier::with_temp_file(b"abc", |_path| -> MimeResult<String> {
+                Err(MimeError::invalid_classifier_input("forced"))
+            })
+            .expect_err("callback should fail")
+            .to_string();
         vec![ok, err]
     }
 }

@@ -10,7 +10,7 @@
 
 use std::io::{Read, Seek, SeekFrom};
 
-use crate::MimeError;
+use crate::MimeResult;
 
 /// Helper for detectors that inspect seekable streams.
 #[derive(Debug, Clone, Copy, Default)]
@@ -28,7 +28,7 @@ impl StreamBasedMimeDetector {
     ///
     /// # Errors
     /// Returns [`MimeError::Io`] when reading or seeking fails.
-    pub fn read_prefix<R>(reader: &mut R, max_bytes: usize) -> Result<Vec<u8>, MimeError>
+    pub fn read_prefix<R>(reader: &mut R, max_bytes: usize) -> MimeResult<Vec<u8>>
     where
         R: Read + Seek,
     {
