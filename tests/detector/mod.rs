@@ -1,0 +1,3 @@
+mod abstract_mime_detector_tests;
+mod file_command_mime_detector_tests;
+mod repository_mime_detector_tests;

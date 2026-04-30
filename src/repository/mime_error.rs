@@ -49,6 +49,13 @@ pub enum MimeError {
         reason: String,
     },
 
+    /// A detector or classifier input cannot be processed.
+    #[error("invalid MIME classifier input: {reason}")]
+    InvalidClassifierInput {
+        /// Human-readable validation failure.
+        reason: String,
+    },
+
     /// The XML document could not be parsed.
     #[error("failed to parse MIME XML: {0}")]
     Xml(#[from] roxmltree::Error),
@@ -110,6 +117,19 @@ impl MimeError {
             reason: reason.into(),
         }
     }
+
+    /// Builds an invalid classifier input error.
+    ///
+    /// # Parameters
+    /// - `reason`: Why the input cannot be classified.
+    ///
+    /// # Returns
+    /// A [`MimeError::InvalidClassifierInput`] value.
+    pub(crate) fn invalid_classifier_input(reason: impl Into<String>) -> Self {
+        Self::InvalidClassifierInput {
+            reason: reason.into(),
+        }
+    }
 }
 
 #[cfg(coverage)]
@@ -127,6 +147,7 @@ pub(crate) mod coverage_support {
             MimeError::invalid_attr("match", "value", "bad", "invalid").to_string(),
             MimeError::invalid_element("magic", "missing match").to_string(),
             MimeError::invalid_matcher("bad matcher").to_string(),
+            MimeError::invalid_classifier_input("bad input").to_string(),
         ]
     }
 }

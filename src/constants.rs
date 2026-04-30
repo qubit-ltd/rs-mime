@@ -1,0 +1,35 @@
+/*******************************************************************************
+ *
+ *    Copyright (c) 2026.
+ *    Haixing Hu, Qubit Co. Ltd.
+ *
+ *    All rights reserved.
+ *
+ ******************************************************************************/
+//! Configuration constants used by MIME detectors.
+
+/// Environment variable selecting the default MIME detector implementation.
+pub const ENV_MIME_DETECTOR_DEFAULT: &str = "QUBIT_MIME_DETECTOR_DEFAULT";
+
+/// Environment variable selecting the default media stream classifier implementation.
+pub const ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT: &str = "QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT";
+
+/// Environment variable controlling precise MIME detection.
+pub const ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION: &str = "QUBIT_MIME_ENABLE_PRECISE_DETECTION";
+
+/// Environment variable listing extensions that should use precise detection.
+pub const ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS: &str =
+    "QUBIT_MIME_PRECISE_DETECTION_PATTERNS";
+
+/// Environment variable defining ambiguous extension to MIME mappings.
+pub const ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING: &str = "QUBIT_MIME_AMBIGUOUS_MIME_MAPPING";
+
+/// Default value for precise media stream based detection.
+pub const DEFAULT_ENABLE_PRECISE_DETECTION: bool = true;
+
+/// Default comma-separated extensions that may need media stream classification.
+pub const DEFAULT_PRECISE_DETECTION_PATTERNS: &str = "webm,ogg";
+
+/// Default ambiguous extension mapping: `extension:video_mime,audio_mime`.
+pub const DEFAULT_AMBIGUOUS_MIME_MAPPING: &str =
+    "webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg";

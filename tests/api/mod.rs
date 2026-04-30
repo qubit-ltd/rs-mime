@@ -6,12 +6,7 @@
  *    All rights reserved.
  *
  ******************************************************************************/
-//! Integration tests for `qubit-mime`.
+//! Tests for top-level crate API traits.
 
-mod api;
-mod classifier;
-mod detector;
-mod repository;
-
-#[cfg(coverage)]
-mod coverage_support;
+mod media_stream_classifier_tests;
+mod mime_detector_tests;
