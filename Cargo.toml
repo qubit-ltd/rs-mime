@@ -1,0 +1,38 @@
+[package]
+name = "qubit-mime"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+authors = ["Haixing Hu <starfish.hu@gmail.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/qubit-ltd/rs-mime"
+description = "MIME type detection utilities for Rust based on filename glob rules and content magic"
+homepage = "https://github.com/qubit-ltd/rs-mime"
+documentation = "https://docs.rs/qubit-mime"
+readme = "README.md"
+keywords = ["mime", "detection", "media-type", "file", "qubit"]
+categories = ["filesystem", "parser-implementations"]
+exclude = [
+    "coverage.sh",
+    "COVERAGE.md",
+    "COVERAGE.zh_CN.md",
+    ".circleci/*",
+    "ci-check.sh",
+    ".llvm-cov.toml",
+    ".cargo-audit.toml.example",
+]
+
+[lib]
+name = "qubit_mime"
+doctest = true
+
+[dependencies]
+regex = "1.12"
+roxmltree = "0.21"
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3.23"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
