@@ -110,6 +110,7 @@ qubit-mime = "0.1.0"
 ```rust
 use qubit_mime::{
     MimeError,
+    MimeDetectionPolicy,
     RepositoryMimeDetector,
 };
 
@@ -122,7 +123,11 @@ fn main() -> Result<(), MimeError> {
     let by_content = detector.detect_by_content(b"%PDF-1.7\n");
     assert_eq!(Some("application/pdf".to_owned()), by_content);
 
-    let combined = detector.detect_bytes(b"%PDF-1.7\n", Some("report.pdf"), true);
+    let combined = detector.detect_bytes(
+        b"%PDF-1.7\n",
+        Some("report.pdf"),
+        MimeDetectionPolicy::VerifyContent,
+    );
     assert_eq!(Some("application/pdf".to_owned()), combined);
 
     Ok(())
@@ -186,6 +191,9 @@ embedded repository for filename candidates and `file --mime-type --brief` for
 content detection.
 
 ```rust,no_run
+use std::time::Duration;
+
+use qubit_command::CommandRunner;
 use qubit_mime::{
     FileCommandMimeDetector,
     MimeDetectionPolicy,
@@ -206,6 +214,14 @@ fn main() -> Result<(), MimeError> {
     );
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
+
+    let runner = CommandRunner::new()
+        .timeout(Duration::from_secs(2))
+        .disable_logging(true)
+        .lossy_output(true);
+    let detector = FileCommandMimeDetector::new().with_command_runner(runner);
+    assert!(detector.command_runner().configured_timeout().is_some());
+
     Ok(())
 }
 ```
@@ -500,12 +516,16 @@ fn main() -> Result<(), MimeError> {
 |--------|-------------|
 | `new()` | Create a detector backed by the embedded repository and the system `file` command |
 | `with_repository(repository)` | Create a detector borrowing an explicit repository |
+| `with_repository_and_runner(repository, runner)` | Create a detector with an explicit `qubit_command::CommandRunner` |
+| `command_runner()` | Borrow the runner used for command execution |
+| `set_command_runner(runner)` | Replace the runner used for command execution |
 | `is_available()` | Check whether the `file` command can be executed |
 | `detect_path_by_content(path)` | Detect a local file using command output only |
 | `detect_path(path, policy)` | Detect a path by filename and command-backed content inspection |
 | `detect_reader(reader, filename, policy)` | Detect a seekable reader through the file-backed path |
-| `set_execution_timeout(timeout)` | Store the Java-compatible command timeout setting |
-| `set_working_directory(directory)` | Set the command working directory |
+| `set_execution_timeout(timeout)` | Configure the runner timeout for `file` commands |
+| `set_working_directory(directory)` | Configure the runner working directory |
+| `set_disable_logging(value)` | Configure command runner logging |
 
 ### `MediaStreamClassifier`
 
@@ -637,6 +657,7 @@ cargo test
 
 Runtime dependencies are intentionally small:
 
+- `qubit-command` runs external `file` commands with timeout and output capture.
 - `regex` compiles and runs filename glob matchers.
 - `roxmltree` parses shared MIME-info XML.
 - `thiserror` provides the concrete `MimeError` implementation.

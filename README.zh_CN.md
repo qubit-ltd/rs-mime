@@ -102,6 +102,7 @@ qubit-mime = "0.1.0"
 ```rust
 use qubit_mime::{
     MimeError,
+    MimeDetectionPolicy,
     RepositoryMimeDetector,
 };
 
@@ -114,7 +115,11 @@ fn main() -> Result<(), MimeError> {
     let by_content = detector.detect_by_content(b"%PDF-1.7\n");
     assert_eq!(Some("application/pdf".to_owned()), by_content);
 
-    let combined = detector.detect_bytes(b"%PDF-1.7\n", Some("report.pdf"), true);
+    let combined = detector.detect_bytes(
+        b"%PDF-1.7\n",
+        Some("report.pdf"),
+        MimeDetectionPolicy::VerifyContent,
+    );
     assert_eq!(Some("application/pdf".to_owned()), combined);
 
     Ok(())
@@ -175,6 +180,9 @@ fn main() -> Result<(), MimeError> {
 做文件名候选检测，并使用 `file --mime-type --brief` 做内容检测。
 
 ```rust,no_run
+use std::time::Duration;
+
+use qubit_command::CommandRunner;
 use qubit_mime::{
     FileCommandMimeDetector,
     MimeDetectionPolicy,
@@ -195,6 +203,14 @@ fn main() -> Result<(), MimeError> {
     );
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
+
+    let runner = CommandRunner::new()
+        .timeout(Duration::from_secs(2))
+        .disable_logging(true)
+        .lossy_output(true);
+    let detector = FileCommandMimeDetector::new().with_command_runner(runner);
+    assert!(detector.command_runner().configured_timeout().is_some());
+
     Ok(())
 }
 ```
@@ -486,12 +502,16 @@ fn main() -> Result<(), MimeError> {
 |-----|------|
 | `new()` | 创建使用内置仓库和系统 `file` 命令的检测器 |
 | `with_repository(repository)` | 创建借用显式仓库的检测器 |
+| `with_repository_and_runner(repository, runner)` | 使用显式 `qubit_command::CommandRunner` 创建检测器 |
+| `command_runner()` | 借用用于命令执行的 runner |
+| `set_command_runner(runner)` | 替换用于命令执行的 runner |
 | `is_available()` | 检查 `file` 命令是否可执行 |
 | `detect_path_by_content(path)` | 只根据命令输出检测本地文件 |
 | `detect_path(path, policy)` | 根据文件名和命令支持的内容检测来检测路径 |
 | `detect_reader(reader, filename, policy)` | 通过 file-backed 路径检测可 seek reader |
-| `set_execution_timeout(timeout)` | 保存与 Java API 对齐的命令超时设置 |
-| `set_working_directory(directory)` | 设置命令工作目录 |
+| `set_execution_timeout(timeout)` | 配置 `file` 命令的 runner 超时 |
+| `set_working_directory(directory)` | 配置 runner 工作目录 |
+| `set_disable_logging(value)` | 配置命令 runner 日志 |
 
 ### `MediaStreamClassifier`
 
@@ -619,6 +639,7 @@ cargo test
 
 运行时依赖保持很少：
 
+- `qubit-command` 用于执行外部 `file` 命令，支持超时和输出捕获。
 - `regex` 用于编译和运行文件名 glob 匹配器。
 - `roxmltree` 用于解析 shared MIME-info XML。
 - `thiserror` 用于实现具体的 `MimeError`。
