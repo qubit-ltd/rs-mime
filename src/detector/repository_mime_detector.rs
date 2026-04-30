@@ -43,6 +43,12 @@ impl RepositoryMimeDetector<'static> {
     }
 }
 
+impl Default for RepositoryMimeDetector<'static> {
+    fn default() -> Self {
+        Self::new().expect("embedded MIME repository should parse")
+    }
+}
+
 impl<'a> RepositoryMimeDetector<'a> {
     /// Creates a detector using an explicit repository.
     ///

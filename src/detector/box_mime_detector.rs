@@ -1,0 +1,120 @@
+/*******************************************************************************
+ *
+ *    Copyright (c) 2026.
+ *    Haixing Hu, Qubit Co. Ltd.
+ *
+ *    All rights reserved.
+ *
+ ******************************************************************************/
+//! Boxed MIME detector wrapper.
+
+use std::ops::Deref;
+
+use crate::{ENV_MIME_DETECTOR_DEFAULT, MimeDetectionPolicy, MimeDetector};
+
+use super::mime_detector_backend::MimeDetectorBackend;
+use super::{FileCommandMimeDetector, RepositoryMimeDetector};
+
+/// A MIME detector stored in a [`Box`].
+pub struct BoxMimeDetector {
+    inner: Box<dyn MimeDetector>,
+}
+
+impl BoxMimeDetector {
+    /// Wraps an existing boxed MIME detector.
+    ///
+    /// # Parameters
+    /// - `detector`: Detector to wrap.
+    ///
+    /// # Returns
+    /// Wrapped boxed detector.
+    pub fn new(detector: Box<dyn MimeDetector>) -> Self {
+        Self { inner: detector }
+    }
+
+    /// Creates a boxed detector from an implementation name.
+    ///
+    /// # Parameters
+    /// - `name`: Detector selector.
+    ///
+    /// # Returns
+    /// Matching detector, or `None` when the selector is empty or unknown.
+    pub fn from_name(name: &str) -> Option<Self> {
+        super::mime_detector_backend::MimeDetectorBackend::from_name(name).map(Self::from_backend)
+    }
+
+    /// Borrows the wrapped detector.
+    ///
+    /// # Returns
+    /// Wrapped detector as a trait object.
+    pub fn as_detector(&self) -> &(dyn MimeDetector + 'static) {
+        self.inner.as_ref()
+    }
+
+    /// Unwraps this wrapper into the inner boxed detector.
+    ///
+    /// # Returns
+    /// Inner boxed detector.
+    pub fn into_inner(self) -> Box<dyn MimeDetector> {
+        self.inner
+    }
+
+    fn from_backend(backend: MimeDetectorBackend) -> Self {
+        match backend {
+            MimeDetectorBackend::Repository => {
+                Self::new(Box::new(RepositoryMimeDetector::default()))
+            }
+            MimeDetectorBackend::FileCommand => Self::new(Box::new(FileCommandMimeDetector::new())),
+        }
+    }
+}
+
+impl Default for BoxMimeDetector {
+    fn default() -> Self {
+        let configured = std::env::var(ENV_MIME_DETECTOR_DEFAULT).unwrap_or_default();
+        let backend = super::mime_detector_backend::MimeDetectorBackend::select(
+            &configured,
+            FileCommandMimeDetector::is_available(),
+        );
+        Self::from_backend(backend)
+    }
+}
+
+impl Deref for BoxMimeDetector {
+    type Target = dyn MimeDetector;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_detector()
+    }
+}
+
+impl From<Box<dyn MimeDetector>> for BoxMimeDetector {
+    fn from(detector: Box<dyn MimeDetector>) -> Self {
+        Self::new(detector)
+    }
+}
+
+impl From<BoxMimeDetector> for Box<dyn MimeDetector> {
+    fn from(detector: BoxMimeDetector) -> Self {
+        detector.into_inner()
+    }
+}
+
+impl MimeDetector for BoxMimeDetector {
+    fn detect_by_filename(&self, filename: &str) -> Option<String> {
+        self.inner.detect_by_filename(filename)
+    }
+
+    fn detect_by_content(&self, content: &[u8]) -> Option<String> {
+        self.inner.detect_by_content(content)
+    }
+
+    fn detect(
+        &self,
+        content: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> Option<String> {
+        self.inner.detect(content, filename, policy)
+    }
+}

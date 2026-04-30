@@ -11,7 +11,9 @@
 use std::fmt::Debug;
 use std::path::Path;
 
-use crate::{FfprobeCommandMediaStreamClassifier, MediaStreamType, MimeError};
+use crate::MimeError;
+
+use super::{FfprobeCommandMediaStreamClassifier, MediaStreamType};
 
 /// Classifies a media source by the audio and video streams it contains.
 pub trait MediaStreamClassifier: Debug + Send + Sync {

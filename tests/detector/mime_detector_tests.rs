@@ -7,7 +7,9 @@
  *
  ******************************************************************************/
 
-use qubit_mime::{MimeDetectionPolicy, MimeDetector, RepositoryMimeDetector};
+use qubit_mime::{
+    ArcMimeDetector, BoxMimeDetector, MimeDetectionPolicy, MimeDetector, RepositoryMimeDetector,
+};
 
 #[test]
 fn test_mime_detector_trait_supports_repository_detector() {
@@ -33,6 +35,23 @@ fn test_mime_detector_trait_supports_repository_detector() {
 
 #[test]
 fn test_default_mime_detector_returns_usable_detector() {
-    let detector = Box::<dyn MimeDetector>::default();
+    let detector = BoxMimeDetector::default();
     assert!(detector.detect_by_filename("document.pdf").is_some());
+}
+
+#[test]
+fn test_mime_detector_wrappers_select_named_detectors() {
+    let boxed = BoxMimeDetector::from_name("repository").expect("repository detector");
+    let shared = ArcMimeDetector::from_name("repository").expect("repository detector");
+
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        boxed.detect_by_filename("document.pdf")
+    );
+    assert_eq!(
+        Some("image/png".to_owned()),
+        shared.detect_by_filename("image.png")
+    );
+    assert!(BoxMimeDetector::from_name("unknown").is_none());
+    assert!(ArcMimeDetector::from_name("unknown").is_none());
 }

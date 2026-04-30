@@ -20,23 +20,21 @@ pub mod repository;
 
 mod common_mime_types;
 mod constants;
-mod media_stream_classifier;
 mod mime_config;
-mod mime_detector;
 
 pub use classifier::{
     AbstractMediaStreamClassifier, FfprobeCommandMediaStreamClassifier,
-    FileBasedMediaStreamClassifier, MediaStreamType,
+    FileBasedMediaStreamClassifier, MediaStreamClassifier, MediaStreamType,
+    default_media_stream_classifier,
 };
 pub use common_mime_types::*;
 pub use constants::*;
 pub use detector::{
-    AbstractMimeDetector, DetectionSource, FileBasedMimeDetector, FileCommandMimeDetector,
-    RepositoryMimeDetector, StreamBasedMimeDetector, StringListMimeDetectorBackend,
+    AbstractMimeDetector, ArcMimeDetector, BoxMimeDetector, DetectionSource, FileBasedMimeDetector,
+    FileCommandMimeDetector, MimeDetectionPolicy, MimeDetector, RepositoryMimeDetector,
+    StreamBasedMimeDetector, StringListMimeDetectorBackend,
 };
-pub use media_stream_classifier::{MediaStreamClassifier, default_media_stream_classifier};
 pub use mime_config::MimeConfig;
-pub use mime_detector::{MimeDetectionPolicy, MimeDetector, default_mime_detector};
 pub use repository::{
     MagicValueType, MimeError, MimeGlob, MimeMagic, MimeMagicMatcher, MimeRepository, MimeType,
     MimeTypeBuilder,
@@ -73,10 +71,9 @@ pub mod coverage_support {
             crate::detector::repository_mime_detector::coverage_support::exercise_reader_errors(),
         );
         result.extend(crate::mime_config::coverage_support::exercise_config_edges());
-        result.extend(crate::mime_detector::coverage_support::exercise_detector_defaults());
-        result.extend(
-            crate::media_stream_classifier::coverage_support::exercise_classifier_defaults(),
-        );
+        result
+            .extend(crate::detector::mime_detector::coverage_support::exercise_detector_defaults());
+        result.extend(crate::classifier::media_stream_classifier::coverage_support::exercise_classifier_defaults());
         result.extend(
             crate::detector::abstract_mime_detector::coverage_support::exercise_abstract_edges(),
         );

@@ -128,6 +128,7 @@ detector。只需要 MIME 名称的代码可以依赖 trait，而不是依赖具
 
 ```rust
 use qubit_mime::{
+    BoxMimeDetector,
     MimeDetectionPolicy,
     MimeDetector,
 };
@@ -137,11 +138,11 @@ fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) ->
 }
 
 fn main() {
-    let detector = Box::<dyn MimeDetector>::default();
+    let detector = BoxMimeDetector::default();
 
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detect_upload(detector.as_ref(), "upload.bin", b"%PDF-1.7\n"),
+        detect_upload(detector.as_detector(), "upload.bin", b"%PDF-1.7\n"),
     );
 }
 ```
@@ -458,8 +459,10 @@ fn main() -> Result<(), MimeError> {
 
 | 方法 | 描述 |
 |-----|------|
-| `default_mime_detector()` | 选择配置或默认检测器 |
-| `Box::<dyn MimeDetector>::default()` | Rust 风格的默认检测器构造入口 |
+| `BoxMimeDetector::default()` | 选择配置或默认的 boxed 检测器 |
+| `BoxMimeDetector::from_name(name)` | 按实现名称选择 boxed 检测器 |
+| `ArcMimeDetector::default()` | 选择配置或默认的共享检测器 |
+| `ArcMimeDetector::from_name(name)` | 按实现名称选择共享检测器 |
 | `detect_by_filename(filename)` | 根据文件名检测一个 MIME 名称 |
 | `detect_by_content(bytes)` | 根据内容字节检测一个 MIME 名称 |
 | `detect(bytes, filename, policy)` | 根据字节和可选文件名检测 |
@@ -544,10 +547,9 @@ fn main() -> Result<(), MimeError> {
 ```text
 src/
   mime_detector.rs              # 顶层 MimeDetector trait
-  media_stream_classifier.rs    # 顶层 MediaStreamClassifier trait
   mime_config.rs                # 精确检测配置
   detector/                     # detector 实现
-  classifier/                   # 媒体流 classifier 实现
+  classifier/                   # 媒体流 classifier 接口与实现
   repository/                   # MIME 数据库、glob、magic 和元数据类型
 ```
 

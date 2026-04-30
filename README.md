@@ -131,12 +131,14 @@ fn main() -> Result<(), MimeError> {
 
 ### Use the Rust-style `MimeDetector` trait
 
-`Box<dyn MimeDetector>` implements `Default` and returns a boxed detector
-selected from configuration and backend availability. Code that only needs MIME
-names can depend on the trait instead of a concrete detector.
+`BoxMimeDetector` and `ArcMimeDetector` provide explicit boxed and shared
+default detector containers selected from configuration and backend
+availability. Code that only needs MIME names can depend on the trait instead of
+a concrete detector.
 
 ```rust
 use qubit_mime::{
+    BoxMimeDetector,
     MimeDetectionPolicy,
     MimeDetector,
 };
@@ -146,11 +148,11 @@ fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) ->
 }
 
 fn main() {
-    let detector = Box::<dyn MimeDetector>::default();
+    let detector = BoxMimeDetector::default();
 
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detect_upload(detector.as_ref(), "upload.bin", b"%PDF-1.7\n"),
+        detect_upload(detector.as_detector(), "upload.bin", b"%PDF-1.7\n"),
     );
 }
 ```
@@ -471,8 +473,10 @@ fn main() -> Result<(), MimeError> {
 
 | Method | Description |
 |--------|-------------|
-| `default_mime_detector()` | Select the configured/default detector |
-| `Box::<dyn MimeDetector>::default()` | Rust-style default detector constructor |
+| `BoxMimeDetector::default()` | Select the configured/default boxed detector |
+| `BoxMimeDetector::from_name(name)` | Select a boxed detector by implementation name |
+| `ArcMimeDetector::default()` | Select the configured/default shared detector |
+| `ArcMimeDetector::from_name(name)` | Select a shared detector by implementation name |
 | `detect_by_filename(filename)` | Detect one MIME name from filename |
 | `detect_by_content(bytes)` | Detect one MIME name from content bytes |
 | `detect(bytes, filename, policy)` | Detect from bytes and optional filename |
@@ -557,10 +561,9 @@ The source layout intentionally mirrors the Java implementation:
 ```text
 src/
   mime_detector.rs              # top-level MimeDetector trait
-  media_stream_classifier.rs    # top-level MediaStreamClassifier trait
   mime_config.rs                # precise detection configuration
   detector/                     # detector implementations
-  classifier/                   # media stream classifier implementations
+  classifier/                   # media stream classifier interface and implementations
   repository/                   # MIME database, glob, magic, and metadata types
 ```
 
