@@ -17,12 +17,22 @@ freedesktop shared MIME-info data model as the Java `common-mime` module:
 canonical MIME type names, aliases, localized comments, filename globs,
 content magic rules, and super-type relationships.
 
-The crate provides two layers:
+The crate follows the Java `common-mime` design while exposing idiomatic Rust
+types. Its public surface is organized into three layers:
 
-- `RepositoryMimeDetector`: a convenient detector returning `Option<String>`
-  MIME names for filenames, byte slices, readers, and filesystem paths.
-- `MimeRepository`: a lower-level repository returning `MimeType` metadata and
-  all matching candidates when callers need richer inspection.
+- `MimeDetector`: the top-level detector trait, equivalent to the Java
+  `MimeDetector` interface. Use it when code should work with any detector
+  implementation.
+- `detector`: Java-style detector implementations and shared detector logic,
+  including `AbstractMimeDetector`, `RepositoryMimeDetector`,
+  `FileCommandMimeDetector`, `StreamBasedMimeDetector`, and
+  `FileBasedMimeDetector`.
+- `MediaStreamClassifier`: the top-level media stream classifier trait,
+  equivalent to the Java `MediaStreamClassifier` interface. The `classifier`
+  module provides `FfprobeCommandMediaStreamClassifier`,
+  `AbstractMediaStreamClassifier`, and file-based classifier helpers.
+- `MimeRepository`: the lower-level repository returning `MimeType` metadata
+  and all matching candidates when callers need richer inspection.
 
 ## Design Goals
 
@@ -31,6 +41,8 @@ The crate provides two layers:
 - **Practical defaults**: ship with an embedded freedesktop MIME database.
 - **Filename and content detection**: support glob-based and magic-based
   detection, independently or together.
+- **Detector and classifier hierarchy**: mirror the Java detector/classifier
+  split while keeping Rust ownership and error handling.
 - **Predictable conflict resolution**: prefer higher glob weights, longer glob
   patterns, and higher magic priorities.
 - **Rust-friendly API**: use borrowed repositories, concrete errors, and
@@ -65,11 +77,22 @@ The crate provides two layers:
 
 ### Detection Entrypoints
 
+- Top-level trait: `MimeDetector`.
+- Repository detector: `RepositoryMimeDetector`.
+- System command detector: `FileCommandMimeDetector`.
 - Filename only: `detect_by_filename`.
 - Content only: `detect_by_content`.
-- Combined filename and bytes: `detect_bytes`.
+- Combined filename and bytes: `detect` or `detect_bytes`.
 - Combined filename and reader: `detect_reader`.
 - Filesystem path: `detect_path`.
+
+### Media Stream Classification
+
+- Top-level trait: `MediaStreamClassifier`.
+- Stream result enum: `MediaStreamType`.
+- FFprobe-backed implementation: `FfprobeCommandMediaStreamClassifier`.
+- Precise refinement for ambiguous media types such as WebM and Ogg when a
+  classifier is configured on `AbstractMimeDetector`.
 
 ## Installation
 
@@ -106,6 +129,32 @@ fn main() -> Result<(), MimeError> {
 }
 ```
 
+### Use the Java-style `MimeDetector` trait
+
+`default_mime_detector` returns a boxed detector selected from configuration
+and backend availability. Code that only needs MIME names can depend on the
+trait instead of a concrete detector.
+
+```rust
+use qubit_mime::{
+    MimeDetector,
+    default_mime_detector,
+};
+
+fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) -> Option<String> {
+    detector.detect(content, Some(filename), true)
+}
+
+fn main() {
+    let detector = default_mime_detector();
+
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        detect_upload(detector.as_ref(), "upload.bin", b"%PDF-1.7\n"),
+    );
+}
+```
+
 ### Detect a filesystem path
 
 ```rust
@@ -123,6 +172,67 @@ fn main() -> Result<(), MimeError> {
     std::fs::remove_file(&path).ok();
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
+    Ok(())
+}
+```
+
+### Use the system `file` command detector
+
+`FileCommandMimeDetector` mirrors the Java file-command detector. It uses the
+embedded repository for filename candidates and `file --mime-type --brief` for
+content detection.
+
+```rust,no_run
+use qubit_mime::{
+    FileCommandMimeDetector,
+    MimeDetector,
+    MimeError,
+};
+
+fn main() -> Result<(), MimeError> {
+    if !FileCommandMimeDetector::is_available() {
+        return Ok(());
+    }
+
+    let detector = FileCommandMimeDetector::new();
+    let detected = detector.detect(b"%PDF-1.7\n", Some("report.bin"), true);
+
+    assert_eq!(Some("application/pdf".to_owned()), detected);
+    Ok(())
+}
+```
+
+### Classify media streams with FFprobe
+
+`FfprobeCommandMediaStreamClassifier` mirrors the Java FFprobe classifier. It
+classifies a media file as no media, audio-only, video-only, or video with
+audio.
+
+```rust,no_run
+use std::path::Path;
+
+use qubit_mime::{
+    FfprobeCommandMediaStreamClassifier,
+    MediaStreamClassifier,
+    MediaStreamType,
+    MimeError,
+};
+
+fn main() -> Result<(), MimeError> {
+    if !FfprobeCommandMediaStreamClassifier::is_available() {
+        return Ok(());
+    }
+
+    let classifier = FfprobeCommandMediaStreamClassifier::new();
+    let stream_type = classifier.classify_path(Path::new("sample.webm"))?;
+
+    assert!(matches!(
+        stream_type,
+        MediaStreamType::AudioOnly
+            | MediaStreamType::VideoOnly
+            | MediaStreamType::VideoWithAudio
+            | MediaStreamType::None,
+    ));
     Ok(())
 }
 ```
@@ -342,6 +452,19 @@ fn main() -> Result<(), MimeError> {
 
 ## API Reference
 
+### `MimeDetector`
+
+| Method | Description |
+|--------|-------------|
+| `default_mime_detector()` | Select the configured/default detector |
+| `<dyn MimeDetector>::default_detector()` | Java-style default detector constructor |
+| `detect_by_filename(filename)` | Detect one MIME name from filename |
+| `detect_by_content(bytes)` | Detect one MIME name from content bytes |
+| `detect(bytes, filename, always_check_magic)` | Detect from bytes and optional filename |
+| `detect_default(bytes, filename)` | Detect using the detector default magic-check setting |
+| `is_always_check_magic_by_default()` | Read the default combined detection mode |
+| `set_always_check_magic_by_default(value)` | Change the default combined detection mode |
+
 ### `RepositoryMimeDetector`
 
 | Method | Description |
@@ -357,6 +480,39 @@ fn main() -> Result<(), MimeError> {
 | `detect_path(path, always_check_magic)` | Open and detect a filesystem path |
 | `is_always_check_magic_by_default()` | Read the default combined detection mode |
 | `set_always_check_magic_by_default(value)` | Change the default combined detection mode |
+
+### `FileCommandMimeDetector`
+
+| Method | Description |
+|--------|-------------|
+| `new()` | Create a detector backed by the embedded repository and the system `file` command |
+| `with_repository(repository)` | Create a detector borrowing an explicit repository |
+| `is_available()` | Check whether the `file` command can be executed |
+| `detect_path_by_content(path)` | Detect a local file using command output only |
+| `detect_path(path, always_check_magic)` | Detect a path by filename and command-backed content inspection |
+| `detect_reader(reader, filename, always_check_magic)` | Detect a seekable reader through the file-backed path |
+| `set_execution_timeout(timeout)` | Store the Java-compatible command timeout setting |
+| `set_working_directory(directory)` | Set the command working directory |
+
+### `MediaStreamClassifier`
+
+| Method | Description |
+|--------|-------------|
+| `default_media_stream_classifier()` | Return a default classifier when a backend is available |
+| `<dyn MediaStreamClassifier>::default_classifier()` | Java-style default classifier constructor |
+| `classify_path(path)` | Classify a local media path |
+| `classify_content(bytes)` | Classify in-memory media content |
+
+### `FfprobeCommandMediaStreamClassifier`
+
+| Method | Description |
+|--------|-------------|
+| `new()` | Create an FFprobe-backed classifier |
+| `is_available()` | Check whether `ffprobe` can be executed |
+| `classify_stream_listing(output)` | Classify parsed FFprobe `codec_type` output |
+| `set_execution_timeout(timeout)` | Store the Java-compatible command timeout setting |
+| `set_working_directory(directory)` | Set the command working directory |
+| `set_disable_logging(value)` | Store the Java-compatible disable-logging flag |
 
 ### `MimeRepository`
 
@@ -381,7 +537,27 @@ fn main() -> Result<(), MimeError> {
 | `MimeMagic` | Priority-ranked collection of magic matchers |
 | `MimeMagicMatcher` | One magic matcher with offset, value, mask, and children |
 | `MagicValueType` | Freedesktop magic value type enum |
+| `MediaStreamType` | Audio/video stream classification result |
+| `MimeConfig` | Precise detection and ambiguous media mapping configuration |
 | `MimeError` | Error type for XML parsing, rule validation, and I/O |
+
+## Module Layout
+
+The source layout intentionally mirrors the Java implementation:
+
+```text
+src/
+  mime_detector.rs              # top-level MimeDetector trait
+  media_stream_classifier.rs    # top-level MediaStreamClassifier trait
+  mime_config.rs                # precise detection configuration
+  detector/                     # detector implementations
+  classifier/                   # media stream classifier implementations
+  repository/                   # MIME database, glob, magic, and metadata types
+```
+
+Use the root re-exports for normal application code. Use the nested modules
+when you need to inspect or extend a specific detector, classifier, or
+repository component.
 
 ## Detection Rules
 
@@ -414,6 +590,11 @@ Otherwise, content magic is evaluated and merged with filename candidates.
 | Filename detection | Glob rules | Glob rules |
 | Content detection | Magic rules | Magic rules |
 | Alias lookup | Supported | Supported |
+| Detector interface | `MimeDetector` | `MimeDetector` trait |
+| Media stream classifier | `MediaStreamClassifier` | `MediaStreamClassifier` trait |
+| Repository detector | `RepositoryMimeDetector` | `RepositoryMimeDetector` |
+| File command detector | `FileCommandMimeDetector` | `FileCommandMimeDetector` |
+| FFprobe classifier | `FfprobeCommandMediaStreamClassifier` | `FfprobeCommandMediaStreamClassifier` |
 | Repository loading | XML resource | Embedded XML or explicit XML |
 | Return style | Java objects and collections | Rust `Option`, slices, and vectors |
 | Errors | Java exceptions | Concrete `MimeError` |

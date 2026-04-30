@@ -15,10 +15,18 @@ Qubit MIME 是一个基于仓库的 Rust MIME 类型检测库。它使用与 Jav
 `common-mime` 模块相同的 freedesktop shared MIME-info 数据模型：
 规范 MIME 类型名、别名、本地化说明、文件名 glob、内容魔数规则和父类型关系。
 
-本 crate 提供两层 API：
+本 crate 参考 Java `common-mime` 的设计，同时暴露符合 Rust 习惯的类型。
+公开 API 分为三层：
 
-- `RepositoryMimeDetector`：便利检测器，针对文件名、字节切片、reader 和文件路径
-  返回 `Option<String>` 形式的 MIME 类型名。
+- `MimeDetector`：顶层检测器 trait，对应 Java 的 `MimeDetector` 接口。业务代码
+  需要兼容不同检测器实现时依赖它。
+- `detector`：Java 风格的检测器实现和共享检测逻辑，包括
+  `AbstractMimeDetector`、`RepositoryMimeDetector`、`FileCommandMimeDetector`、
+  `StreamBasedMimeDetector` 和 `FileBasedMimeDetector`。
+- `MediaStreamClassifier`：顶层媒体流分类 trait，对应 Java 的
+  `MediaStreamClassifier` 接口。`classifier` 模块提供
+  `FfprobeCommandMediaStreamClassifier`、`AbstractMediaStreamClassifier` 和
+  file-based 辅助实现。
 - `MimeRepository`：底层仓库 API，返回 `MimeType` 元数据和所有最佳候选项，适合
   需要进一步检查规则和说明的调用方。
 
@@ -27,6 +35,8 @@ Qubit MIME 是一个基于仓库的 Rust MIME 类型检测库。它使用与 Jav
 - **对齐 Java**：行为和数据库模型参考 Java `common-mime` 实现。
 - **实用默认值**：内置 freedesktop MIME 数据库。
 - **文件名与内容检测**：同时支持 glob 检测和 magic 检测，可单独使用也可组合使用。
+- **检测器与分类器层次**：对齐 Java detector/classifier 拆分，同时保留 Rust 的
+  所有权和错误处理方式。
 - **可预测的冲突处理**：优先选择更高 glob 权重、更长 glob 模式和更高 magic 优先级。
 - **符合 Rust 习惯**：使用借用仓库、具体错误类型和标准 `Read + Seek` 检测入口。
 - **依赖面小**：运行时依赖保持聚焦和稳定。
@@ -59,11 +69,22 @@ Qubit MIME 是一个基于仓库的 Rust MIME 类型检测库。它使用与 Jav
 
 ### 检测入口
 
+- 顶层 trait：`MimeDetector`。
+- 仓库检测器：`RepositoryMimeDetector`。
+- 系统命令检测器：`FileCommandMimeDetector`。
 - 仅文件名：`detect_by_filename`。
 - 仅内容：`detect_by_content`。
-- 文件名与字节组合：`detect_bytes`。
+- 文件名与字节组合：`detect` 或 `detect_bytes`。
 - 文件名与 reader 组合：`detect_reader`。
 - 文件系统路径：`detect_path`。
+
+### 媒体流分类
+
+- 顶层 trait：`MediaStreamClassifier`。
+- 流结果枚举：`MediaStreamType`。
+- FFprobe 实现：`FfprobeCommandMediaStreamClassifier`。
+- 当 `AbstractMimeDetector` 配置了 classifier 时，可对 WebM、Ogg 等有歧义的
+  媒体 MIME 类型做更精确的音视频区分。
 
 ## 安装
 
@@ -100,6 +121,31 @@ fn main() -> Result<(), MimeError> {
 }
 ```
 
+### 使用 Java 风格的 `MimeDetector` trait
+
+`default_mime_detector` 会根据配置和后端可用性返回 boxed detector。只需要
+MIME 名称的代码可以依赖 trait，而不是依赖具体检测器类型。
+
+```rust
+use qubit_mime::{
+    MimeDetector,
+    default_mime_detector,
+};
+
+fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) -> Option<String> {
+    detector.detect(content, Some(filename), true)
+}
+
+fn main() {
+    let detector = default_mime_detector();
+
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        detect_upload(detector.as_ref(), "upload.bin", b"%PDF-1.7\n"),
+    );
+}
+```
+
 ### 检测文件系统路径
 
 ```rust
@@ -117,6 +163,65 @@ fn main() -> Result<(), MimeError> {
     std::fs::remove_file(&path).ok();
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
+    Ok(())
+}
+```
+
+### 使用系统 `file` 命令检测器
+
+`FileCommandMimeDetector` 对应 Java 中的 file-command detector。它使用内置仓库
+做文件名候选检测，并使用 `file --mime-type --brief` 做内容检测。
+
+```rust,no_run
+use qubit_mime::{
+    FileCommandMimeDetector,
+    MimeDetector,
+    MimeError,
+};
+
+fn main() -> Result<(), MimeError> {
+    if !FileCommandMimeDetector::is_available() {
+        return Ok(());
+    }
+
+    let detector = FileCommandMimeDetector::new();
+    let detected = detector.detect(b"%PDF-1.7\n", Some("report.bin"), true);
+
+    assert_eq!(Some("application/pdf".to_owned()), detected);
+    Ok(())
+}
+```
+
+### 使用 FFprobe 分类媒体流
+
+`FfprobeCommandMediaStreamClassifier` 对应 Java 中的 FFprobe classifier。它可以把
+媒体文件分类为无媒体流、纯音频、纯视频或音视频都有。
+
+```rust,no_run
+use std::path::Path;
+
+use qubit_mime::{
+    FfprobeCommandMediaStreamClassifier,
+    MediaStreamClassifier,
+    MediaStreamType,
+    MimeError,
+};
+
+fn main() -> Result<(), MimeError> {
+    if !FfprobeCommandMediaStreamClassifier::is_available() {
+        return Ok(());
+    }
+
+    let classifier = FfprobeCommandMediaStreamClassifier::new();
+    let stream_type = classifier.classify_path(Path::new("sample.webm"))?;
+
+    assert!(matches!(
+        stream_type,
+        MediaStreamType::AudioOnly
+            | MediaStreamType::VideoOnly
+            | MediaStreamType::VideoWithAudio
+            | MediaStreamType::None,
+    ));
     Ok(())
 }
 ```
@@ -333,6 +438,19 @@ fn main() -> Result<(), MimeError> {
 
 ## API 参考
 
+### `MimeDetector`
+
+| 方法 | 描述 |
+|-----|------|
+| `default_mime_detector()` | 选择配置或默认检测器 |
+| `<dyn MimeDetector>::default_detector()` | Java 风格的默认检测器构造入口 |
+| `detect_by_filename(filename)` | 根据文件名检测一个 MIME 名称 |
+| `detect_by_content(bytes)` | 根据内容字节检测一个 MIME 名称 |
+| `detect(bytes, filename, always_check_magic)` | 根据字节和可选文件名检测 |
+| `detect_default(bytes, filename)` | 使用检测器默认 magic 检查设置检测 |
+| `is_always_check_magic_by_default()` | 读取默认组合检测模式 |
+| `set_always_check_magic_by_default(value)` | 修改默认组合检测模式 |
+
 ### `RepositoryMimeDetector`
 
 | 方法 | 描述 |
@@ -348,6 +466,39 @@ fn main() -> Result<(), MimeError> {
 | `detect_path(path, always_check_magic)` | 打开并检测文件系统路径 |
 | `is_always_check_magic_by_default()` | 读取默认组合检测模式 |
 | `set_always_check_magic_by_default(value)` | 修改默认组合检测模式 |
+
+### `FileCommandMimeDetector`
+
+| 方法 | 描述 |
+|-----|------|
+| `new()` | 创建使用内置仓库和系统 `file` 命令的检测器 |
+| `with_repository(repository)` | 创建借用显式仓库的检测器 |
+| `is_available()` | 检查 `file` 命令是否可执行 |
+| `detect_path_by_content(path)` | 只根据命令输出检测本地文件 |
+| `detect_path(path, always_check_magic)` | 根据文件名和命令支持的内容检测来检测路径 |
+| `detect_reader(reader, filename, always_check_magic)` | 通过 file-backed 路径检测可 seek reader |
+| `set_execution_timeout(timeout)` | 保存与 Java API 对齐的命令超时设置 |
+| `set_working_directory(directory)` | 设置命令工作目录 |
+
+### `MediaStreamClassifier`
+
+| 方法 | 描述 |
+|-----|------|
+| `default_media_stream_classifier()` | 后端可用时返回默认 classifier |
+| `<dyn MediaStreamClassifier>::default_classifier()` | Java 风格的默认 classifier 构造入口 |
+| `classify_path(path)` | 分类本地媒体路径 |
+| `classify_content(bytes)` | 分类内存中的媒体内容 |
+
+### `FfprobeCommandMediaStreamClassifier`
+
+| 方法 | 描述 |
+|-----|------|
+| `new()` | 创建基于 FFprobe 的 classifier |
+| `is_available()` | 检查 `ffprobe` 是否可执行 |
+| `classify_stream_listing(output)` | 分类 FFprobe `codec_type` 输出 |
+| `set_execution_timeout(timeout)` | 保存与 Java API 对齐的命令超时设置 |
+| `set_working_directory(directory)` | 设置命令工作目录 |
+| `set_disable_logging(value)` | 保存与 Java API 对齐的关闭日志标志 |
 
 ### `MimeRepository`
 
@@ -372,7 +523,26 @@ fn main() -> Result<(), MimeError> {
 | `MimeMagic` | 带优先级的一组 magic matcher |
 | `MimeMagicMatcher` | 带 offset、value、mask 和子 matcher 的单个 magic 匹配器 |
 | `MagicValueType` | freedesktop magic value type 枚举 |
+| `MediaStreamType` | 音视频流分类结果 |
+| `MimeConfig` | 精确检测和有歧义媒体映射配置 |
 | `MimeError` | XML 解析、规则校验和 I/O 错误类型 |
+
+## 模块结构
+
+源码结构有意对齐 Java 实现：
+
+```text
+src/
+  mime_detector.rs              # 顶层 MimeDetector trait
+  media_stream_classifier.rs    # 顶层 MediaStreamClassifier trait
+  mime_config.rs                # 精确检测配置
+  detector/                     # detector 实现
+  classifier/                   # 媒体流 classifier 实现
+  repository/                   # MIME 数据库、glob、magic 和元数据类型
+```
+
+普通业务代码优先使用 crate root 的 re-export。只有在需要查看或扩展具体 detector、
+classifier 或 repository 组件时，才需要直接使用嵌套模块。
 
 ## 检测规则
 
@@ -403,6 +573,11 @@ magic 优先级排序。可使用 `repository.max_test_bytes()` 获取当前仓�
 | 文件名检测 | Glob 规则 | Glob 规则 |
 | 内容检测 | Magic 规则 | Magic 规则 |
 | 别名查找 | 支持 | 支持 |
+| 检测器接口 | `MimeDetector` | `MimeDetector` trait |
+| 媒体流分类接口 | `MediaStreamClassifier` | `MediaStreamClassifier` trait |
+| 仓库检测器 | `RepositoryMimeDetector` | `RepositoryMimeDetector` |
+| file 命令检测器 | `FileCommandMimeDetector` | `FileCommandMimeDetector` |
+| FFprobe classifier | `FfprobeCommandMediaStreamClassifier` | `FfprobeCommandMediaStreamClassifier` |
 | 仓库加载 | XML 资源 | 内置 XML 或显式 XML |
 | 返回风格 | Java 对象与集合 | Rust `Option`、slice 和 vector |
 | 错误处理 | Java 异常 | 具体 `MimeError` |
