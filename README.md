@@ -1,7 +1,485 @@
 # Qubit MIME
 
-MIME type detection utilities for Rust services.
+[![CircleCI](https://circleci.com/gh/qubit-ltd/rs-mime.svg?style=shield)](https://circleci.com/gh/qubit-ltd/rs-mime)
+[![Coverage Status](https://coveralls.io/repos/github/qubit-ltd/rs-mime/badge.svg?branch=main)](https://coveralls.io/github/qubit-ltd/rs-mime?branch=main)
+[![Crates.io](https://img.shields.io/crates/v/qubit-mime.svg?color=blue)](https://crates.io/crates/qubit-mime)
+[![Rust](https://img.shields.io/badge/rust-1.94+-blue.svg?logo=rust)](https://www.rust-lang.org)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![中文文档](https://img.shields.io/badge/文档-中文版-blue.svg)](README.zh_CN.md)
 
-This crate detects MIME types from filename glob rules and content magic rules,
-using the same freedesktop-style MIME database model as the Java
-`common-mime` module.
+MIME type detection utilities for Rust services based on filename glob rules
+and content magic rules.
+
+## Overview
+
+Qubit MIME is a repository-backed MIME type detector for Rust. It uses the same
+freedesktop shared MIME-info data model as the Java `common-mime` module:
+canonical MIME type names, aliases, localized comments, filename globs,
+content magic rules, and super-type relationships.
+
+The crate provides two layers:
+
+- `RepositoryMimeDetector`: a convenient detector returning `Option<String>`
+  MIME names for filenames, byte slices, readers, and filesystem paths.
+- `MimeRepository`: a lower-level repository returning `MimeType` metadata and
+  all matching candidates when callers need richer inspection.
+
+## Design Goals
+
+- **Java parity**: follow the behavior and database model of the Java
+  `common-mime` implementation.
+- **Practical defaults**: ship with an embedded freedesktop MIME database.
+- **Filename and content detection**: support glob-based and magic-based
+  detection, independently or together.
+- **Predictable conflict resolution**: prefer higher glob weights, longer glob
+  patterns, and higher magic priorities.
+- **Rust-friendly API**: use borrowed repositories, concrete errors, and
+  standard `Read + Seek` based detection.
+- **Small dependency surface**: keep runtime dependencies focused and stable.
+
+## Features
+
+### Filename Detection
+
+- Literal, extension, and general glob matching.
+- Case-insensitive matching by default, with support for case-sensitive globs.
+- Conflict resolution by glob weight and pattern length.
+- Path-safe detection that only uses the final filename component.
+
+### Content Magic Detection
+
+- Freedesktop magic value types: `string`, `byte`, `host16`, `host32`,
+  `big16`, `big32`, `little16`, and `little32`.
+- Offset ranges such as `0` and `0:1024`.
+- Optional masks for binary magic values.
+- Nested magic matchers.
+- Conflict resolution by magic priority.
+
+### Repository Metadata
+
+- Canonical names and aliases.
+- Localized comments and descriptions.
+- Preferred and complete filename extension lookup.
+- Super-type metadata parsed from `sub-class-of` entries.
+- Maximum byte count required by magic rules.
+
+### Detection Entrypoints
+
+- Filename only: `detect_by_filename`.
+- Content only: `detect_by_content`.
+- Combined filename and bytes: `detect_bytes`.
+- Combined filename and reader: `detect_reader`.
+- Filesystem path: `detect_path`.
+
+## Installation
+
+Add this to your `Cargo.toml`:
+
+```toml
+[dependencies]
+qubit-mime = "0.1.0"
+```
+
+## Quick Start
+
+### Detect from filename and content
+
+```rust
+use qubit_mime::{
+    MimeError,
+    RepositoryMimeDetector,
+};
+
+fn main() -> Result<(), MimeError> {
+    let detector = RepositoryMimeDetector::new()?;
+
+    let by_name = detector.detect_by_filename("photo.JPG");
+    assert_eq!(Some("image/jpeg".to_owned()), by_name);
+
+    let by_content = detector.detect_by_content(b"%PDF-1.7\n");
+    assert_eq!(Some("application/pdf".to_owned()), by_content);
+
+    let combined = detector.detect_bytes(b"%PDF-1.7\n", Some("report.pdf"), true);
+    assert_eq!(Some("application/pdf".to_owned()), combined);
+
+    Ok(())
+}
+```
+
+### Detect a filesystem path
+
+```rust
+use qubit_mime::{
+    MimeError,
+    RepositoryMimeDetector,
+};
+
+fn main() -> Result<(), MimeError> {
+    let detector = RepositoryMimeDetector::new()?;
+    let path = std::env::temp_dir().join("qubit-mime-example.pdf");
+
+    std::fs::write(&path, b"%PDF-1.7\n")?;
+    let detected = detector.detect_path(&path, true)?;
+    std::fs::remove_file(&path).ok();
+
+    assert_eq!(Some("application/pdf".to_owned()), detected);
+    Ok(())
+}
+```
+
+### Detect from a seekable reader
+
+`detect_reader` reads up to the repository's required magic byte count and then
+restores the original stream position.
+
+```rust
+use std::io::{
+    Cursor,
+    Seek,
+};
+
+use qubit_mime::{
+    MimeError,
+    RepositoryMimeDetector,
+};
+
+fn main() -> Result<(), MimeError> {
+    let detector = RepositoryMimeDetector::new()?;
+    let mut reader = Cursor::new(b"%PDF-1.7\npayload".to_vec());
+
+    let detected = detector.detect_reader(&mut reader, Some("document.bin"), true)?;
+    assert_eq!(Some("application/pdf".to_owned()), detected);
+    assert_eq!(0, reader.stream_position()?);
+
+    Ok(())
+}
+```
+
+## Combined Detection Strategy
+
+Combined detection accepts both a filename and content bytes. The
+`always_check_magic` flag controls whether content magic is checked when the
+filename has a single unambiguous match.
+
+```rust
+use qubit_mime::{
+    MimeError,
+    RepositoryMimeDetector,
+};
+
+fn main() -> Result<(), MimeError> {
+    let mut detector = RepositoryMimeDetector::new()?;
+    let pdf_bytes = b"%PDF-1.7\n";
+
+    // The filename is unique, so the detector trusts it by default.
+    let by_filename = detector.detect_bytes(pdf_bytes, Some("photo.jpg"), false);
+    assert_eq!(Some("image/jpeg".to_owned()), by_filename);
+
+    // Force content magic checking when content is more authoritative.
+    let by_magic = detector.detect_bytes(pdf_bytes, Some("photo.jpg"), true);
+    assert_eq!(Some("application/pdf".to_owned()), by_magic);
+
+    // The same behavior can be configured as the detector default.
+    detector.set_always_check_magic_by_default(true);
+    let detected = detector.detect_bytes_default(pdf_bytes, Some("photo.jpg"));
+    assert_eq!(Some("application/pdf".to_owned()), detected);
+
+    Ok(())
+}
+```
+
+Use `always_check_magic = false` when filenames come from a trusted source and
+you want less I/O. Use `true` when uploaded or user-controlled filenames may be
+wrong or misleading.
+
+## Repository Metadata
+
+The default detector exposes the parsed repository. Use it when you need
+metadata instead of just a MIME name.
+
+```rust
+use qubit_mime::{
+    MimeError,
+    RepositoryMimeDetector,
+};
+
+fn main() -> Result<(), MimeError> {
+    let detector = RepositoryMimeDetector::new()?;
+    let repository = detector.repository();
+
+    let png = repository
+        .get("image/png")
+        .expect("default repository should contain image/png");
+
+    assert_eq!("image/png", png.name());
+    assert_eq!(Some("png"), png.preferred_extension());
+    assert!(png.description().is_some());
+    assert!(png.matches_filename("ICON.PNG"));
+
+    let extensions = png.all_extensions();
+    assert!(extensions.contains(&"png"));
+
+    Ok(())
+}
+```
+
+`MimeRepository::detect_by_filename` and `MimeRepository::detect_by_content`
+return all best candidates instead of a single string:
+
+```rust
+use qubit_mime::{
+    MimeError,
+    RepositoryMimeDetector,
+};
+
+fn main() -> Result<(), MimeError> {
+    let detector = RepositoryMimeDetector::new()?;
+    let repository = detector.repository();
+
+    let candidates = repository.detect_by_filename("archive.tar.gz");
+    assert!(!candidates.is_empty());
+
+    for candidate in candidates {
+        println!("{} {:?}", candidate.name(), candidate.description());
+    }
+
+    Ok(())
+}
+```
+
+## Custom Repository
+
+Use `MimeRepository::from_xml` when you need a small test repository, a product
+specific MIME database, or a database generated from another source.
+
+```rust
+use qubit_mime::{
+    MimeError,
+    MimeRepository,
+    RepositoryMimeDetector,
+};
+
+fn main() -> Result<(), MimeError> {
+    let xml = r#"
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-example">
+    <comment>Example bundle</comment>
+    <alias type="application/example"/>
+    <glob pattern="*.example" weight="80"/>
+    <magic priority="90">
+      <match type="string" value="EXAMPLE" offset="0"/>
+    </magic>
+  </mime-type>
+</mime-info>
+"#;
+
+    let repository = MimeRepository::from_xml(xml)?;
+    let detector = RepositoryMimeDetector::with_repository(&repository);
+
+    assert_eq!(
+        Some("application/x-example".to_owned()),
+        detector.detect_by_filename("demo.example"),
+    );
+    assert_eq!(
+        Some("application/x-example".to_owned()),
+        detector.detect_by_content(b"EXAMPLE payload"),
+    );
+
+    let mime_type = repository
+        .get("application/example")
+        .expect("alias should resolve to the canonical MIME type");
+    assert_eq!("application/x-example", mime_type.name());
+    assert_eq!(Some("example"), mime_type.preferred_extension());
+
+    Ok(())
+}
+```
+
+## Low-Level Rule Types
+
+The low-level types are useful in tests and integrations that need to inspect
+or validate MIME rules directly.
+
+```rust
+use qubit_mime::{
+    MagicValueType,
+    MimeError,
+    MimeGlob,
+    MimeMagic,
+    MimeMagicMatcher,
+    MimeType,
+};
+
+fn main() -> Result<(), MimeError> {
+    let glob = MimeGlob::new("*.png", MimeGlob::DEFAULT_WEIGHT, false)?;
+    assert!(glob.matches("ICON.PNG"));
+
+    let matcher = MimeMagicMatcher::new(
+        MagicValueType::String,
+        0,
+        0,
+        b"\x89PNG\r\n\x1a\n".to_vec(),
+        None,
+        vec![],
+    )?;
+    let magic = MimeMagic::new(80, vec![matcher]);
+
+    let png = MimeType::builder("image/png")
+        .description("en", "PNG image")
+        .alias("image/x-png")
+        .glob(glob)
+        .magic(magic)
+        .build();
+
+    assert_eq!("image/png", png.name());
+    assert_eq!(Some("png"), png.preferred_extension());
+    assert!(png.matches_filename("icon.png"));
+    assert!(png.magics()[0].matches(b"\x89PNG\r\n\x1a\npayload"));
+
+    Ok(())
+}
+```
+
+## API Reference
+
+### `RepositoryMimeDetector`
+
+| Method | Description |
+|--------|-------------|
+| `new()` | Create a detector backed by the embedded freedesktop repository |
+| `with_repository(repository)` | Create a detector borrowing an explicit repository |
+| `repository()` | Borrow the underlying repository |
+| `detect_by_filename(filename)` | Return the first MIME name matched by filename |
+| `detect_by_content(bytes)` | Return the first MIME name matched by content magic |
+| `detect_bytes(bytes, filename, always_check_magic)` | Detect from bytes and optional filename |
+| `detect_bytes_default(bytes, filename)` | Detect using the detector's default magic-check setting |
+| `detect_reader(reader, filename, always_check_magic)` | Detect from a `Read + Seek` reader and restore its position |
+| `detect_path(path, always_check_magic)` | Open and detect a filesystem path |
+| `is_always_check_magic_by_default()` | Read the default combined detection mode |
+| `set_always_check_magic_by_default(value)` | Change the default combined detection mode |
+
+### `MimeRepository`
+
+| Method | Description |
+|--------|-------------|
+| `from_xml(xml)` | Parse a freedesktop shared MIME-info XML document |
+| `empty()` | Create an empty repository |
+| `all()` | Return all parsed MIME types in database order |
+| `get(name)` | Resolve a canonical MIME name or alias |
+| `max_test_bytes()` | Return the maximum byte prefix needed by magic rules |
+| `detect_by_filename(filename)` | Return best filename candidates |
+| `detect_by_content(bytes)` | Return best content candidates |
+| `detect(filename, bytes, always_check_magic)` | Merge filename and content detection |
+
+### Metadata and Rule Types
+
+| Type | Purpose |
+|------|---------|
+| `MimeType` | Metadata and rules for one MIME type |
+| `MimeTypeBuilder` | Builder for standalone `MimeType` values |
+| `MimeGlob` | Filename glob rule with weight and case-sensitivity |
+| `MimeMagic` | Priority-ranked collection of magic matchers |
+| `MimeMagicMatcher` | One magic matcher with offset, value, mask, and children |
+| `MagicValueType` | Freedesktop magic value type enum |
+| `MimeError` | Error type for XML parsing, rule validation, and I/O |
+
+## Detection Rules
+
+### Filename Rules
+
+Filename detection uses only the final path component. Matches are ranked by:
+
+1. Higher glob weight.
+2. Longer glob pattern when weights tie.
+3. Database order when the repository returns multiple equal candidates.
+
+### Content Rules
+
+Content detection checks the provided byte prefix against each MIME type's
+direct magic rules. Matches are ranked by higher magic priority. Use
+`repository.max_test_bytes()` to know the largest useful prefix length for a
+repository.
+
+### Combined Rules
+
+Combined detection first evaluates filename globs. When there is exactly one
+filename match and magic checking is not forced, that filename match is used.
+Otherwise, content magic is evaluated and merged with filename candidates.
+
+## Comparison with Java `common-mime`
+
+| Aspect | Java `common-mime` | Qubit MIME |
+|--------|--------------------|------------|
+| Database model | Freedesktop shared MIME-info | Same model |
+| Filename detection | Glob rules | Glob rules |
+| Content detection | Magic rules | Magic rules |
+| Alias lookup | Supported | Supported |
+| Repository loading | XML resource | Embedded XML or explicit XML |
+| Return style | Java objects and collections | Rust `Option`, slices, and vectors |
+| Errors | Java exceptions | Concrete `MimeError` |
+
+## Testing & Code Coverage
+
+This project keeps tests under `tests/` and validates repository parsing,
+filename matching, content magic matching, reader/path detection, and coverage
+thresholds.
+
+### Running Tests
+
+```bash
+# Run all tests
+cargo test
+
+# Generate a coverage report
+./coverage.sh
+
+# Generate a text format coverage report
+./coverage.sh text
+
+# Run CI checks (format, clippy, tests, docs, coverage, audit)
+./ci-check.sh
+```
+
+## Dependencies
+
+Runtime dependencies are intentionally small:
+
+- `regex` compiles and runs filename glob matchers.
+- `roxmltree` parses shared MIME-info XML.
+- `thiserror` provides the concrete `MimeError` implementation.
+
+## License
+
+Copyright (c) 2026. Haixing Hu, Qubit Co. Ltd. All rights reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+<http://www.apache.org/licenses/LICENSE-2.0>
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+See [LICENSE](LICENSE) for the full license text.
+
+## Contributing
+
+Contributions are welcome. Please keep changes aligned with the existing Rust
+project structure and run `./ci-check.sh` before opening a pull request.
+
+## Author
+
+**Haixing Hu** - *Qubit Co. Ltd.*
+
+## Related Projects
+
+More Rust libraries from Qubit are published under the
+[qubit-ltd](https://github.com/qubit-ltd) GitHub organization.
+
+---
+
+Repository: [https://github.com/qubit-ltd/rs-mime](https://github.com/qubit-ltd/rs-mime)
