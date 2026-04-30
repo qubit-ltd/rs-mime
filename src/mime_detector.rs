@@ -10,21 +10,25 @@
 
 use crate::{ENV_MIME_DETECTOR_DEFAULT, FileCommandMimeDetector, RepositoryMimeDetector};
 
+/// Policy for resolving combined MIME detection from filename and content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MimeDetectionPolicy {
+    /// Prefer a definitive filename result without checking content magic.
+    PreferFilename,
+
+    /// Check content magic even when filename detection has a definitive result.
+    VerifyContent,
+}
+
+impl MimeDetectionPolicy {
+    /// Tells whether content magic should be checked for a definitive filename match.
+    pub(crate) fn should_verify_content(self) -> bool {
+        matches!(self, Self::VerifyContent)
+    }
+}
+
 /// Detects MIME types from filenames and content.
 pub trait MimeDetector {
-    /// Tells whether combined detection checks magic by default.
-    ///
-    /// # Returns
-    /// `true` when default combined detection should inspect content magic even
-    /// for a unique filename match.
-    fn is_always_check_magic_by_default(&self) -> bool;
-
-    /// Sets whether combined detection checks magic by default.
-    ///
-    /// # Parameters
-    /// - `always_check_magic_by_default`: New default behavior.
-    fn set_always_check_magic_by_default(&mut self, always_check_magic_by_default: bool);
-
     /// Detects a MIME type from a filename.
     ///
     /// # Parameters
@@ -48,8 +52,7 @@ pub trait MimeDetector {
     /// # Parameters
     /// - `content`: Content bytes to inspect.
     /// - `filename`: Optional file path or basename.
-    /// - `always_check_magic`: Whether content should be checked even when the
-    ///   filename has a unique result.
+    /// - `policy`: Strategy for resolving filename and content results.
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
@@ -57,29 +60,12 @@ pub trait MimeDetector {
         &self,
         content: &[u8],
         filename: Option<&str>,
-        always_check_magic: bool,
+        policy: MimeDetectionPolicy,
     ) -> Option<String>;
-
-    /// Detects a MIME type using the default magic-check setting.
-    ///
-    /// # Parameters
-    /// - `content`: Content bytes to inspect.
-    /// - `filename`: Optional file path or basename.
-    ///
-    /// # Returns
-    /// Selected MIME type name, or `None`.
-    fn detect_default(&self, content: &[u8], filename: Option<&str>) -> Option<String> {
-        self.detect(content, filename, self.is_always_check_magic_by_default())
-    }
 }
 
-impl dyn MimeDetector {
-    /// Gets the default MIME detector.
-    ///
-    /// # Returns
-    /// A detector selected from environment configuration or backend
-    /// availability.
-    pub fn default_detector() -> Box<dyn MimeDetector> {
+impl Default for Box<dyn MimeDetector> {
+    fn default() -> Self {
         default_mime_detector()
     }
 }
@@ -182,7 +168,11 @@ pub(crate) mod coverage_support {
                 .to_string(),
             format!(
                 "{:?}",
-                repository_detector.detect_default(b"%PDF-1.7\n", Some("file.bin"))
+                repository_detector.detect(
+                    b"%PDF-1.7\n",
+                    Some("file.bin"),
+                    crate::MimeDetectionPolicy::VerifyContent,
+                )
             ),
             file_detector
                 .detect_by_filename("file.pdf")
@@ -193,7 +183,7 @@ pub(crate) mod coverage_support {
                 .is_some()
                 .to_string(),
             detector_from_name("unknown").is_none().to_string(),
-            <dyn MimeDetector>::default_detector()
+            Box::<dyn MimeDetector>::default()
                 .detect_by_filename("image.png")
                 .is_some()
                 .to_string(),

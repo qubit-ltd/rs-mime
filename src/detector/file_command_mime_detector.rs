@@ -17,8 +17,8 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::{
-    AbstractMimeDetector, DetectionSource, FileBasedMimeDetector, MimeDetector, MimeError,
-    MimeRepository, StreamBasedMimeDetector,
+    AbstractMimeDetector, DetectionSource, FileBasedMimeDetector, MimeDetectionPolicy,
+    MimeDetector, MimeError, MimeRepository, StreamBasedMimeDetector,
 };
 
 use super::repository_mime_detector::default_repository;
@@ -140,8 +140,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Parameters
     /// - `path`: Local file path.
-    /// - `always_check_magic`: Whether content should be checked even when the
-    ///   filename has a unique result.
+    /// - `policy`: Strategy for resolving filename and content results.
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
@@ -152,12 +151,12 @@ impl<'a> FileCommandMimeDetector<'a> {
     pub fn detect_path<P: AsRef<Path>>(
         &self,
         path: P,
-        always_check_magic: bool,
+        policy: MimeDetectionPolicy,
     ) -> Result<Option<String>, MimeError> {
         let path = path.as_ref();
         let filename = path.to_string_lossy();
         let from_filename = self.guess_from_filename(&filename);
-        let from_content = if from_filename.len() == 1 && !always_check_magic {
+        let from_content = if from_filename.len() == 1 && !policy.should_verify_content() {
             Vec::new()
         } else {
             self.guess_from_file_command(path)?
@@ -166,7 +165,7 @@ impl<'a> FileCommandMimeDetector<'a> {
             &from_filename,
             &from_content,
             Some(&filename),
-            always_check_magic,
+            policy,
             DetectionSource::Path(path),
         ))
     }
@@ -176,8 +175,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Parameters
     /// - `reader`: Reader to inspect. The original position is restored.
     /// - `filename`: Optional filename.
-    /// - `always_check_magic`: Whether content should be checked even when the
-    ///   filename has a unique result.
+    /// - `policy`: Strategy for resolving filename and content results.
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
@@ -188,14 +186,14 @@ impl<'a> FileCommandMimeDetector<'a> {
         &self,
         reader: &mut R,
         filename: Option<&str>,
-        always_check_magic: bool,
+        policy: MimeDetectionPolicy,
     ) -> Result<Option<String>, MimeError>
     where
         R: Read + Seek,
     {
         let content =
             StreamBasedMimeDetector::read_prefix(reader, self.repository.max_test_bytes())?;
-        Ok(self.detect(&content, filename, always_check_magic))
+        Ok(self.detect(&content, filename, policy))
     }
 
     /// Checks whether the `file` command is available.
@@ -297,17 +295,6 @@ impl Default for FileCommandMimeDetector<'static> {
 }
 
 impl<'a> MimeDetector for FileCommandMimeDetector<'a> {
-    /// Tells whether combined detection checks magic by default.
-    fn is_always_check_magic_by_default(&self) -> bool {
-        self.base.is_always_check_magic_by_default()
-    }
-
-    /// Sets whether combined detection checks magic by default.
-    fn set_always_check_magic_by_default(&mut self, always_check_magic_by_default: bool) {
-        self.base
-            .set_always_check_magic_by_default(always_check_magic_by_default);
-    }
-
     /// Detects a MIME type from filename using the repository.
     fn detect_by_filename(&self, filename: &str) -> Option<String> {
         self.guess_from_filename(filename).first().map(|mime_type| {
@@ -335,12 +322,12 @@ impl<'a> MimeDetector for FileCommandMimeDetector<'a> {
         &self,
         content: &[u8],
         filename: Option<&str>,
-        always_check_magic: bool,
+        policy: MimeDetectionPolicy,
     ) -> Option<String> {
         let from_filename = filename
             .map(|filename| self.guess_from_filename(filename))
             .unwrap_or_default();
-        let from_content = if from_filename.len() == 1 && !always_check_magic {
+        let from_content = if from_filename.len() == 1 && !policy.should_verify_content() {
             Vec::new()
         } else {
             FileBasedMimeDetector::with_temp_file(content, |path| {
@@ -352,7 +339,7 @@ impl<'a> MimeDetector for FileCommandMimeDetector<'a> {
             &from_filename,
             &from_content,
             filename,
-            always_check_magic,
+            policy,
             DetectionSource::Content(content),
         )
     }
@@ -365,7 +352,7 @@ pub(crate) mod coverage_support {
     use std::io::Cursor;
     use std::time::Duration;
 
-    use crate::{MimeDetector, MimeRepository};
+    use crate::{MimeDetectionPolicy, MimeDetector, MimeRepository};
 
     use super::FileCommandMimeDetector;
 
@@ -383,61 +370,61 @@ pub(crate) mod coverage_support {
         let working_directory_command =
             format!("{:?}", empty_detector.detect_path_by_content("Cargo.toml"));
         let repository_len = empty_detector.repository().all().len().to_string();
-        let base_initial = empty_detector
-            .base()
-            .is_always_check_magic_by_default()
-            .to_string();
-        empty_detector
-            .base_mut()
-            .set_always_check_magic_by_default(true);
-        let base_updated = empty_detector
-            .base()
-            .is_always_check_magic_by_default()
-            .to_string();
 
         let detector = FileCommandMimeDetector::new();
         let default_detector = FileCommandMimeDetector::default();
-        let mut trait_detector = FileCommandMimeDetector::new();
-        let trait_initial =
-            MimeDetector::is_always_check_magic_by_default(&trait_detector).to_string();
-        MimeDetector::set_always_check_magic_by_default(&mut trait_detector, true);
-        let trait_updated =
-            MimeDetector::is_always_check_magic_by_default(&trait_detector).to_string();
         let filename = format!("{:?}", detector.detect_by_filename("image.png"));
         let content = format!("{:?}", detector.detect_by_content(b"%PDF-1.7\n"));
         let combined = format!(
             "{:?}",
-            detector.detect(b"%PDF-1.7\n", Some("file.pdf"), true)
+            detector.detect(
+                b"%PDF-1.7\n",
+                Some("file.pdf"),
+                MimeDetectionPolicy::VerifyContent,
+            )
         );
-        let filename_only = format!("{:?}", detector.detect(b"", Some("file.pdf"), false));
+        let filename_only = format!(
+            "{:?}",
+            detector.detect(b"", Some("file.pdf"), MimeDetectionPolicy::PreferFilename,)
+        );
         let mut reader = Cursor::new(b"%PDF-1.7\n".to_vec());
         let reader_result = format!(
             "{:?}",
-            detector.detect_reader(&mut reader, Some("file.pdf"), true)
+            detector.detect_reader(
+                &mut reader,
+                Some("file.pdf"),
+                MimeDetectionPolicy::VerifyContent,
+            )
         );
-        let path_result = format!("{:?}", detector.detect_path("Cargo.toml", true));
-        let path_filename_only = format!("{:?}", detector.detect_path("file.pdf", false));
+        let path_result = format!(
+            "{:?}",
+            detector.detect_path("Cargo.toml", MimeDetectionPolicy::VerifyContent)
+        );
+        let path_filename_only = format!(
+            "{:?}",
+            detector.detect_path("file.pdf", MimeDetectionPolicy::PreferFilename)
+        );
         let path_content = format!("{:?}", detector.detect_path_by_content("Cargo.toml"));
         let detector_trait: &dyn MimeDetector = &detector;
         let trait_filename = format!("{:?}", detector_trait.detect_by_filename("image.png"));
         let trait_content = format!("{:?}", detector_trait.detect_by_content(b"%PDF-1.7\n"));
         let trait_combined = format!(
             "{:?}",
-            detector_trait.detect(b"%PDF-1.7\n", Some("file.pdf"), true)
+            detector_trait.detect(
+                b"%PDF-1.7\n",
+                Some("file.pdf"),
+                MimeDetectionPolicy::VerifyContent,
+            )
         );
         vec![
             timeout,
             working_directory,
             working_directory_command,
             repository_len,
-            base_initial,
-            base_updated,
             default_detector
                 .detect_by_filename("file.pdf")
                 .is_some()
                 .to_string(),
-            trait_initial,
-            trait_updated,
             FileCommandMimeDetector::is_available().to_string(),
             filename,
             content,

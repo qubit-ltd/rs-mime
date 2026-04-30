@@ -36,7 +36,7 @@ pub use detector::{
 };
 pub use media_stream_classifier::{MediaStreamClassifier, default_media_stream_classifier};
 pub use mime_config::MimeConfig;
-pub use mime_detector::{MimeDetector, default_mime_detector};
+pub use mime_detector::{MimeDetectionPolicy, MimeDetector, default_mime_detector};
 pub use repository::{
     MagicValueType, MimeError, MimeGlob, MimeMagic, MimeMagicMatcher, MimeRepository, MimeType,
     MimeTypeBuilder,

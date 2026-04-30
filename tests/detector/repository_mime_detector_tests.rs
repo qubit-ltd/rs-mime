@@ -10,7 +10,7 @@
 
 use std::io::Cursor;
 
-use qubit_mime::RepositoryMimeDetector;
+use qubit_mime::{MimeDetectionPolicy, RepositoryMimeDetector};
 use tempfile::NamedTempFile;
 
 #[test]
@@ -48,15 +48,23 @@ fn test_detect_bytes_merges_filename_and_content_results() {
 
     assert_eq!(
         Some("image/jpeg".to_owned()),
-        detector.detect_bytes(b"%PDF-1.7\n", Some("photo.jpg"), false)
+        detector.detect_bytes(
+            b"%PDF-1.7\n",
+            Some("photo.jpg"),
+            MimeDetectionPolicy::PreferFilename,
+        )
     );
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detector.detect_bytes(b"%PDF-1.7\n", Some("photo.jpg"), true)
+        detector.detect_bytes(
+            b"%PDF-1.7\n",
+            Some("photo.jpg"),
+            MimeDetectionPolicy::VerifyContent,
+        )
     );
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detector.detect_bytes(b"%PDF-1.7\n", None, true)
+        detector.detect_bytes(b"%PDF-1.7\n", None, MimeDetectionPolicy::VerifyContent)
     );
 }
 
@@ -66,7 +74,11 @@ fn test_detect_reader_does_not_consume_reader_position() {
     let mut reader = Cursor::new(b"%PDF-1.7\n".to_vec());
 
     let detected = detector
-        .detect_reader(&mut reader, Some("document.pdf"), true)
+        .detect_reader(
+            &mut reader,
+            Some("document.pdf"),
+            MimeDetectionPolicy::VerifyContent,
+        )
         .expect("reader detection should succeed");
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
@@ -80,7 +92,7 @@ fn test_detect_path_reads_file_and_uses_path_filename() {
     std::io::Write::write_all(&mut file, b"%PDF-1.7\n").expect("temp file should be writable");
 
     let detected = detector
-        .detect_path(file.path(), true)
+        .detect_path(file.path(), MimeDetectionPolicy::VerifyContent)
         .expect("path detection should succeed");
 
     assert_eq!(Some("application/pdf".to_owned()), detected);

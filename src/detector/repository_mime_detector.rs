@@ -14,8 +14,8 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::{
-    AbstractMimeDetector, DetectionSource, MimeDetector, MimeError, MimeRepository,
-    StreamBasedMimeDetector,
+    AbstractMimeDetector, DetectionSource, MimeDetectionPolicy, MimeDetector, MimeError,
+    MimeRepository, StreamBasedMimeDetector,
 };
 
 const DEFAULT_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
@@ -82,24 +82,6 @@ impl<'a> RepositoryMimeDetector<'a> {
         self.repository
     }
 
-    /// Tells whether combined detection checks content magic by default.
-    ///
-    /// # Returns
-    /// `true` when default `detect_*` calls check content even for unique
-    /// filename matches.
-    pub fn is_always_check_magic_by_default(&self) -> bool {
-        self.base.is_always_check_magic_by_default()
-    }
-
-    /// Sets whether combined detection checks content magic by default.
-    ///
-    /// # Parameters
-    /// - `always_check_magic_by_default`: New default behavior.
-    pub fn set_always_check_magic_by_default(&mut self, always_check_magic_by_default: bool) {
-        self.base
-            .set_always_check_magic_by_default(always_check_magic_by_default);
-    }
-
     /// Detects a MIME type from a filename.
     ///
     /// # Parameters
@@ -133,8 +115,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// # Parameters
     /// - `bytes`: Content prefix to inspect.
     /// - `filename`: Optional path or basename used for glob detection.
-    /// - `always_check_magic`: Whether content magic should be checked even
-    ///   when filename detection has a single result.
+    /// - `policy`: Strategy for resolving filename and content results.
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
@@ -142,12 +123,12 @@ impl<'a> RepositoryMimeDetector<'a> {
         &self,
         bytes: &[u8],
         filename: Option<&str>,
-        always_check_magic: bool,
+        policy: MimeDetectionPolicy,
     ) -> Option<String> {
         let from_filename = filename
             .map(|filename| self.guess_from_filename(filename))
             .unwrap_or_default();
-        let from_content = if from_filename.len() == 1 && !always_check_magic {
+        let from_content = if from_filename.len() == 1 && !policy.should_verify_content() {
             Vec::new()
         } else {
             self.guess_from_content(bytes)
@@ -156,24 +137,8 @@ impl<'a> RepositoryMimeDetector<'a> {
             &from_filename,
             &from_content,
             filename,
-            always_check_magic,
+            policy,
             DetectionSource::Content(bytes),
-        )
-    }
-
-    /// Detects a MIME type using the default `always_check_magic` setting.
-    ///
-    /// # Parameters
-    /// - `bytes`: Content prefix to inspect.
-    /// - `filename`: Optional path or basename used for glob detection.
-    ///
-    /// # Returns
-    /// Selected MIME type name, or `None`.
-    pub fn detect_bytes_default(&self, bytes: &[u8], filename: Option<&str>) -> Option<String> {
-        self.detect_bytes(
-            bytes,
-            filename,
-            self.base.is_always_check_magic_by_default(),
         )
     }
 
@@ -182,8 +147,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// # Parameters
     /// - `reader`: Reader to inspect. The original stream position is restored.
     /// - `filename`: Optional path or basename used for glob detection.
-    /// - `always_check_magic`: Whether content magic should be checked even
-    ///   when filename detection has a single result.
+    /// - `policy`: Strategy for resolving filename and content results.
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
@@ -194,22 +158,21 @@ impl<'a> RepositoryMimeDetector<'a> {
         &self,
         reader: &mut R,
         filename: Option<&str>,
-        always_check_magic: bool,
+        policy: MimeDetectionPolicy,
     ) -> Result<Option<String>, MimeError>
     where
         R: Read + Seek,
     {
         let buffer =
             StreamBasedMimeDetector::read_prefix(reader, self.repository.max_test_bytes())?;
-        Ok(self.detect_bytes(&buffer, filename, always_check_magic))
+        Ok(self.detect_bytes(&buffer, filename, policy))
     }
 
     /// Detects a MIME type from a filesystem path.
     ///
     /// # Parameters
     /// - `path`: File path to open.
-    /// - `always_check_magic`: Whether content magic should be checked even
-    ///   when filename detection has a single result.
+    /// - `policy`: Strategy for resolving filename and content results.
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
@@ -219,7 +182,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     pub fn detect_path<P: AsRef<Path>>(
         &self,
         path: P,
-        always_check_magic: bool,
+        policy: MimeDetectionPolicy,
     ) -> Result<Option<String>, MimeError> {
         let path = path.as_ref();
         let filename = path.to_string_lossy();
@@ -227,7 +190,7 @@ impl<'a> RepositoryMimeDetector<'a> {
         let buffer =
             StreamBasedMimeDetector::read_prefix(&mut file, self.repository.max_test_bytes())?;
         let from_filename = self.guess_from_filename(&filename);
-        let from_content = if from_filename.len() == 1 && !always_check_magic {
+        let from_content = if from_filename.len() == 1 && !policy.should_verify_content() {
             Vec::new()
         } else {
             self.guess_from_content(&buffer)
@@ -236,7 +199,7 @@ impl<'a> RepositoryMimeDetector<'a> {
             &from_filename,
             &from_content,
             Some(&filename),
-            always_check_magic,
+            policy,
             DetectionSource::Path(path),
         ))
     }
@@ -285,19 +248,6 @@ pub(crate) fn default_repository() -> &'static MimeRepository {
 }
 
 impl<'a> MimeDetector for RepositoryMimeDetector<'a> {
-    /// Tells whether combined detection checks magic by default.
-    fn is_always_check_magic_by_default(&self) -> bool {
-        RepositoryMimeDetector::is_always_check_magic_by_default(self)
-    }
-
-    /// Sets whether combined detection checks magic by default.
-    fn set_always_check_magic_by_default(&mut self, always_check_magic_by_default: bool) {
-        RepositoryMimeDetector::set_always_check_magic_by_default(
-            self,
-            always_check_magic_by_default,
-        );
-    }
-
     /// Detects a MIME type from filename.
     fn detect_by_filename(&self, filename: &str) -> Option<String> {
         RepositoryMimeDetector::detect_by_filename(self, filename)
@@ -313,9 +263,9 @@ impl<'a> MimeDetector for RepositoryMimeDetector<'a> {
         &self,
         content: &[u8],
         filename: Option<&str>,
-        always_check_magic: bool,
+        policy: MimeDetectionPolicy,
     ) -> Option<String> {
-        RepositoryMimeDetector::detect_bytes(self, content, filename, always_check_magic)
+        RepositoryMimeDetector::detect_bytes(self, content, filename, policy)
     }
 }
 
@@ -325,7 +275,7 @@ pub(crate) mod coverage_support {
 
     use std::io::{Error, ErrorKind, Read, Result as IoResult, Seek, SeekFrom};
 
-    use crate::{MimeRepository, RepositoryMimeDetector};
+    use crate::{MimeDetectionPolicy, MimeRepository, RepositoryMimeDetector};
 
     /// Exercises detector accessors and no-match paths.
     ///
@@ -333,22 +283,14 @@ pub(crate) mod coverage_support {
     /// A summary of observed detector states.
     pub(crate) fn exercise_detector_edges() -> Vec<String> {
         let repository = MimeRepository::empty();
-        let mut detector = RepositoryMimeDetector::with_repository(&repository);
-        let initial = detector.is_always_check_magic_by_default().to_string();
-        detector.set_always_check_magic_by_default(true);
-        let updated = detector.is_always_check_magic_by_default().to_string();
-        let base_initial = detector
-            .base()
-            .is_always_check_magic_by_default()
-            .to_string();
-        detector.base_mut().set_always_check_magic_by_default(false);
-        let base_updated = detector
-            .base()
-            .is_always_check_magic_by_default()
-            .to_string();
+        let detector = RepositoryMimeDetector::with_repository(&repository);
         let repository_len = detector.repository().all().len().to_string();
-        let default_detection = detector
-            .detect_bytes_default(b"", Some("unknown.bin"))
+        let policy_detection = detector
+            .detect_bytes(
+                b"",
+                Some("unknown.bin"),
+                MimeDetectionPolicy::PreferFilename,
+            )
             .unwrap_or_else(|| "none".to_owned());
         let filename_guesses = detector
             .guess_from_filename("unknown.bin")
@@ -356,12 +298,8 @@ pub(crate) mod coverage_support {
             .to_string();
         let content_guesses = detector.guess_from_content(b"unknown").len().to_string();
         vec![
-            initial,
-            updated,
-            base_initial,
-            base_updated,
             repository_len,
-            default_detection,
+            policy_detection,
             filename_guesses,
             content_guesses,
         ]
@@ -378,11 +316,11 @@ pub(crate) mod coverage_support {
         let mut read_reader = FailingReader::new(FailureMode::Read);
         vec![
             detector
-                .detect_reader(&mut seek_reader, None, true)
+                .detect_reader(&mut seek_reader, None, MimeDetectionPolicy::VerifyContent)
                 .expect_err("seek should fail")
                 .to_string(),
             detector
-                .detect_reader(&mut read_reader, None, true)
+                .detect_reader(&mut read_reader, None, MimeDetectionPolicy::VerifyContent)
                 .expect_err("read should fail")
                 .to_string(),
         ]

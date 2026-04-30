@@ -121,23 +121,23 @@ fn main() -> Result<(), MimeError> {
 }
 ```
 
-### 使用 Java 风格的 `MimeDetector` trait
+### 使用 Rust 风格的 `MimeDetector` trait
 
-`default_mime_detector` 会根据配置和后端可用性返回 boxed detector。只需要
-MIME 名称的代码可以依赖 trait，而不是依赖具体检测器类型。
+`Box<dyn MimeDetector>` 实现了 `Default`，会根据配置和后端可用性返回 boxed
+detector。只需要 MIME 名称的代码可以依赖 trait，而不是依赖具体检测器类型。
 
 ```rust
 use qubit_mime::{
+    MimeDetectionPolicy,
     MimeDetector,
-    default_mime_detector,
 };
 
 fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) -> Option<String> {
-    detector.detect(content, Some(filename), true)
+    detector.detect(content, Some(filename), MimeDetectionPolicy::VerifyContent)
 }
 
 fn main() {
-    let detector = default_mime_detector();
+    let detector = Box::<dyn MimeDetector>::default();
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -150,6 +150,7 @@ fn main() {
 
 ```rust
 use qubit_mime::{
+    MimeDetectionPolicy,
     MimeError,
     RepositoryMimeDetector,
 };
@@ -159,7 +160,7 @@ fn main() -> Result<(), MimeError> {
     let path = std::env::temp_dir().join("qubit-mime-example.pdf");
 
     std::fs::write(&path, b"%PDF-1.7\n")?;
-    let detected = detector.detect_path(&path, true)?;
+    let detected = detector.detect_path(&path, MimeDetectionPolicy::VerifyContent)?;
     std::fs::remove_file(&path).ok();
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
@@ -175,6 +176,7 @@ fn main() -> Result<(), MimeError> {
 ```rust,no_run
 use qubit_mime::{
     FileCommandMimeDetector,
+    MimeDetectionPolicy,
     MimeDetector,
     MimeError,
 };
@@ -185,7 +187,11 @@ fn main() -> Result<(), MimeError> {
     }
 
     let detector = FileCommandMimeDetector::new();
-    let detected = detector.detect(b"%PDF-1.7\n", Some("report.bin"), true);
+    let detected = detector.detect(
+        b"%PDF-1.7\n",
+        Some("report.bin"),
+        MimeDetectionPolicy::VerifyContent,
+    );
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
     Ok(())
@@ -238,6 +244,7 @@ use std::io::{
 };
 
 use qubit_mime::{
+    MimeDetectionPolicy,
     MimeError,
     RepositoryMimeDetector,
 };
@@ -246,7 +253,11 @@ fn main() -> Result<(), MimeError> {
     let detector = RepositoryMimeDetector::new()?;
     let mut reader = Cursor::new(b"%PDF-1.7\npayload".to_vec());
 
-    let detected = detector.detect_reader(&mut reader, Some("document.bin"), true)?;
+    let detected = detector.detect_reader(
+        &mut reader,
+        Some("document.bin"),
+        MimeDetectionPolicy::VerifyContent,
+    )?;
     assert_eq!(Some("application/pdf".to_owned()), detected);
     assert_eq!(0, reader.stream_position()?);
 
@@ -256,38 +267,43 @@ fn main() -> Result<(), MimeError> {
 
 ## 组合检测策略
 
-组合检测同时接收文件名和内容字节。`always_check_magic` 参数控制当文件名已经得到
-唯一匹配时，是否仍然检查内容 magic。
+组合检测同时接收文件名和内容字节。`MimeDetectionPolicy` 会让每次调用都显式声明
+文件名结果和内容结果的取舍策略。
 
 ```rust
 use qubit_mime::{
+    MimeDetectionPolicy,
     MimeError,
     RepositoryMimeDetector,
 };
 
 fn main() -> Result<(), MimeError> {
-    let mut detector = RepositoryMimeDetector::new()?;
+    let detector = RepositoryMimeDetector::new()?;
     let pdf_bytes = b"%PDF-1.7\n";
 
-    // 文件名唯一匹配时，默认信任文件名。
-    let by_filename = detector.detect_bytes(pdf_bytes, Some("photo.jpg"), false);
+    // 优先使用确定的文件名结果，避免额外检查内容。
+    let by_filename = detector.detect_bytes(
+        pdf_bytes,
+        Some("photo.jpg"),
+        MimeDetectionPolicy::PreferFilename,
+    );
     assert_eq!(Some("image/jpeg".to_owned()), by_filename);
 
-    // 当内容更可信时，可以强制检查 magic。
-    let by_magic = detector.detect_bytes(pdf_bytes, Some("photo.jpg"), true);
+    // 当内容更可信时，明确检查 magic。
+    let by_magic = detector.detect_bytes(
+        pdf_bytes,
+        Some("photo.jpg"),
+        MimeDetectionPolicy::VerifyContent,
+    );
     assert_eq!(Some("application/pdf".to_owned()), by_magic);
-
-    // 也可以把同样的行为设置为检测器默认值。
-    detector.set_always_check_magic_by_default(true);
-    let detected = detector.detect_bytes_default(pdf_bytes, Some("photo.jpg"));
-    assert_eq!(Some("application/pdf".to_owned()), detected);
 
     Ok(())
 }
 ```
 
-当文件名来自可信来源且希望减少 I/O 时，使用 `always_check_magic = false`。当文件名
-来自用户上传或可能被伪造时，使用 `true` 更稳妥。
+当文件名来自可信来源且希望减少 I/O 时，使用
+`MimeDetectionPolicy::PreferFilename`。当文件名来自用户上传或可能被伪造时，使用
+`MimeDetectionPolicy::VerifyContent` 更稳妥。
 
 ## 仓库元数据
 
@@ -443,13 +459,10 @@ fn main() -> Result<(), MimeError> {
 | 方法 | 描述 |
 |-----|------|
 | `default_mime_detector()` | 选择配置或默认检测器 |
-| `<dyn MimeDetector>::default_detector()` | Java 风格的默认检测器构造入口 |
+| `Box::<dyn MimeDetector>::default()` | Rust 风格的默认检测器构造入口 |
 | `detect_by_filename(filename)` | 根据文件名检测一个 MIME 名称 |
 | `detect_by_content(bytes)` | 根据内容字节检测一个 MIME 名称 |
-| `detect(bytes, filename, always_check_magic)` | 根据字节和可选文件名检测 |
-| `detect_default(bytes, filename)` | 使用检测器默认 magic 检查设置检测 |
-| `is_always_check_magic_by_default()` | 读取默认组合检测模式 |
-| `set_always_check_magic_by_default(value)` | 修改默认组合检测模式 |
+| `detect(bytes, filename, policy)` | 根据字节和可选文件名检测 |
 
 ### `RepositoryMimeDetector`
 
@@ -460,12 +473,9 @@ fn main() -> Result<(), MimeError> {
 | `repository()` | 借用底层仓库 |
 | `detect_by_filename(filename)` | 返回文件名匹配到的第一个 MIME 名称 |
 | `detect_by_content(bytes)` | 返回内容 magic 匹配到的第一个 MIME 名称 |
-| `detect_bytes(bytes, filename, always_check_magic)` | 根据字节和可选文件名检测 |
-| `detect_bytes_default(bytes, filename)` | 使用检测器默认 magic 检查设置进行检测 |
-| `detect_reader(reader, filename, always_check_magic)` | 从 `Read + Seek` reader 检测并恢复位置 |
-| `detect_path(path, always_check_magic)` | 打开并检测文件系统路径 |
-| `is_always_check_magic_by_default()` | 读取默认组合检测模式 |
-| `set_always_check_magic_by_default(value)` | 修改默认组合检测模式 |
+| `detect_bytes(bytes, filename, policy)` | 根据字节和可选文件名检测 |
+| `detect_reader(reader, filename, policy)` | 从 `Read + Seek` reader 检测并恢复位置 |
+| `detect_path(path, policy)` | 打开并检测文件系统路径 |
 
 ### `FileCommandMimeDetector`
 
@@ -475,8 +485,8 @@ fn main() -> Result<(), MimeError> {
 | `with_repository(repository)` | 创建借用显式仓库的检测器 |
 | `is_available()` | 检查 `file` 命令是否可执行 |
 | `detect_path_by_content(path)` | 只根据命令输出检测本地文件 |
-| `detect_path(path, always_check_magic)` | 根据文件名和命令支持的内容检测来检测路径 |
-| `detect_reader(reader, filename, always_check_magic)` | 通过 file-backed 路径检测可 seek reader |
+| `detect_path(path, policy)` | 根据文件名和命令支持的内容检测来检测路径 |
+| `detect_reader(reader, filename, policy)` | 通过 file-backed 路径检测可 seek reader |
 | `set_execution_timeout(timeout)` | 保存与 Java API 对齐的命令超时设置 |
 | `set_working_directory(directory)` | 设置命令工作目录 |
 
@@ -511,7 +521,7 @@ fn main() -> Result<(), MimeError> {
 | `max_test_bytes()` | 返回 magic 规则需要的最大内容前缀长度 |
 | `detect_by_filename(filename)` | 返回最佳文件名候选项 |
 | `detect_by_content(bytes)` | 返回最佳内容候选项 |
-| `detect(filename, bytes, always_check_magic)` | 合并文件名和内容检测 |
+| `detect(filename, bytes, policy)` | 合并文件名和内容检测 |
 
 ### 元数据与规则类型
 

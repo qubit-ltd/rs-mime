@@ -151,17 +151,25 @@ fn test_detect_uses_filename_when_single_candidate_and_magic_not_required() {
 
     assert_eq!(
         vec!["application/pdf"],
-        names(repository.detect("document.pdf", b"\x89PNG\r\n\x1a\n", false))
+        names(repository.detect(
+            "document.pdf",
+            b"\x89PNG\r\n\x1a\n",
+            qubit_mime::MimeDetectionPolicy::PreferFilename,
+        ))
     );
 }
 
 #[test]
-fn test_detect_uses_magic_when_always_check_magic_is_enabled() {
+fn test_detect_uses_magic_when_verify_content_policy_is_enabled() {
     let repository = create_repository();
 
     assert_eq!(
         vec!["image/png"],
-        names(repository.detect("document.pdf", b"\x89PNG\r\n\x1a\n", true))
+        names(repository.detect(
+            "document.pdf",
+            b"\x89PNG\r\n\x1a\n",
+            qubit_mime::MimeDetectionPolicy::VerifyContent,
+        ))
     );
 }
 
@@ -177,7 +185,11 @@ fn test_detect_returns_empty_when_no_rule_matches() {
     );
     assert!(
         repository
-            .detect("unknown.nope", b"nothing recognizable", true)
+            .detect(
+                "unknown.nope",
+                b"nothing recognizable",
+                qubit_mime::MimeDetectionPolicy::VerifyContent,
+            )
             .is_empty()
     );
 }

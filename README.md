@@ -129,24 +129,24 @@ fn main() -> Result<(), MimeError> {
 }
 ```
 
-### Use the Java-style `MimeDetector` trait
+### Use the Rust-style `MimeDetector` trait
 
-`default_mime_detector` returns a boxed detector selected from configuration
-and backend availability. Code that only needs MIME names can depend on the
-trait instead of a concrete detector.
+`Box<dyn MimeDetector>` implements `Default` and returns a boxed detector
+selected from configuration and backend availability. Code that only needs MIME
+names can depend on the trait instead of a concrete detector.
 
 ```rust
 use qubit_mime::{
+    MimeDetectionPolicy,
     MimeDetector,
-    default_mime_detector,
 };
 
 fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) -> Option<String> {
-    detector.detect(content, Some(filename), true)
+    detector.detect(content, Some(filename), MimeDetectionPolicy::VerifyContent)
 }
 
 fn main() {
-    let detector = default_mime_detector();
+    let detector = Box::<dyn MimeDetector>::default();
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -159,6 +159,7 @@ fn main() {
 
 ```rust
 use qubit_mime::{
+    MimeDetectionPolicy,
     MimeError,
     RepositoryMimeDetector,
 };
@@ -168,7 +169,7 @@ fn main() -> Result<(), MimeError> {
     let path = std::env::temp_dir().join("qubit-mime-example.pdf");
 
     std::fs::write(&path, b"%PDF-1.7\n")?;
-    let detected = detector.detect_path(&path, true)?;
+    let detected = detector.detect_path(&path, MimeDetectionPolicy::VerifyContent)?;
     std::fs::remove_file(&path).ok();
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
@@ -185,6 +186,7 @@ content detection.
 ```rust,no_run
 use qubit_mime::{
     FileCommandMimeDetector,
+    MimeDetectionPolicy,
     MimeDetector,
     MimeError,
 };
@@ -195,7 +197,11 @@ fn main() -> Result<(), MimeError> {
     }
 
     let detector = FileCommandMimeDetector::new();
-    let detected = detector.detect(b"%PDF-1.7\n", Some("report.bin"), true);
+    let detected = detector.detect(
+        b"%PDF-1.7\n",
+        Some("report.bin"),
+        MimeDetectionPolicy::VerifyContent,
+    );
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
     Ok(())
@@ -249,6 +255,7 @@ use std::io::{
 };
 
 use qubit_mime::{
+    MimeDetectionPolicy,
     MimeError,
     RepositoryMimeDetector,
 };
@@ -257,7 +264,11 @@ fn main() -> Result<(), MimeError> {
     let detector = RepositoryMimeDetector::new()?;
     let mut reader = Cursor::new(b"%PDF-1.7\npayload".to_vec());
 
-    let detected = detector.detect_reader(&mut reader, Some("document.bin"), true)?;
+    let detected = detector.detect_reader(
+        &mut reader,
+        Some("document.bin"),
+        MimeDetectionPolicy::VerifyContent,
+    )?;
     assert_eq!(Some("application/pdf".to_owned()), detected);
     assert_eq!(0, reader.stream_position()?);
 
@@ -268,39 +279,43 @@ fn main() -> Result<(), MimeError> {
 ## Combined Detection Strategy
 
 Combined detection accepts both a filename and content bytes. The
-`always_check_magic` flag controls whether content magic is checked when the
-filename has a single unambiguous match.
+`MimeDetectionPolicy` value makes the filename/content resolution strategy
+explicit at each call site.
 
 ```rust
 use qubit_mime::{
+    MimeDetectionPolicy,
     MimeError,
     RepositoryMimeDetector,
 };
 
 fn main() -> Result<(), MimeError> {
-    let mut detector = RepositoryMimeDetector::new()?;
+    let detector = RepositoryMimeDetector::new()?;
     let pdf_bytes = b"%PDF-1.7\n";
 
-    // The filename is unique, so the detector trusts it by default.
-    let by_filename = detector.detect_bytes(pdf_bytes, Some("photo.jpg"), false);
+    // Prefer a definitive filename result and avoid extra content inspection.
+    let by_filename = detector.detect_bytes(
+        pdf_bytes,
+        Some("photo.jpg"),
+        MimeDetectionPolicy::PreferFilename,
+    );
     assert_eq!(Some("image/jpeg".to_owned()), by_filename);
 
-    // Force content magic checking when content is more authoritative.
-    let by_magic = detector.detect_bytes(pdf_bytes, Some("photo.jpg"), true);
+    // Verify content magic when content is more authoritative.
+    let by_magic = detector.detect_bytes(
+        pdf_bytes,
+        Some("photo.jpg"),
+        MimeDetectionPolicy::VerifyContent,
+    );
     assert_eq!(Some("application/pdf".to_owned()), by_magic);
-
-    // The same behavior can be configured as the detector default.
-    detector.set_always_check_magic_by_default(true);
-    let detected = detector.detect_bytes_default(pdf_bytes, Some("photo.jpg"));
-    assert_eq!(Some("application/pdf".to_owned()), detected);
 
     Ok(())
 }
 ```
 
-Use `always_check_magic = false` when filenames come from a trusted source and
-you want less I/O. Use `true` when uploaded or user-controlled filenames may be
-wrong or misleading.
+Use `MimeDetectionPolicy::PreferFilename` when filenames come from a trusted
+source and you want less I/O. Use `MimeDetectionPolicy::VerifyContent` when
+uploaded or user-controlled filenames may be wrong or misleading.
 
 ## Repository Metadata
 
@@ -457,13 +472,10 @@ fn main() -> Result<(), MimeError> {
 | Method | Description |
 |--------|-------------|
 | `default_mime_detector()` | Select the configured/default detector |
-| `<dyn MimeDetector>::default_detector()` | Java-style default detector constructor |
+| `Box::<dyn MimeDetector>::default()` | Rust-style default detector constructor |
 | `detect_by_filename(filename)` | Detect one MIME name from filename |
 | `detect_by_content(bytes)` | Detect one MIME name from content bytes |
-| `detect(bytes, filename, always_check_magic)` | Detect from bytes and optional filename |
-| `detect_default(bytes, filename)` | Detect using the detector default magic-check setting |
-| `is_always_check_magic_by_default()` | Read the default combined detection mode |
-| `set_always_check_magic_by_default(value)` | Change the default combined detection mode |
+| `detect(bytes, filename, policy)` | Detect from bytes and optional filename |
 
 ### `RepositoryMimeDetector`
 
@@ -474,12 +486,9 @@ fn main() -> Result<(), MimeError> {
 | `repository()` | Borrow the underlying repository |
 | `detect_by_filename(filename)` | Return the first MIME name matched by filename |
 | `detect_by_content(bytes)` | Return the first MIME name matched by content magic |
-| `detect_bytes(bytes, filename, always_check_magic)` | Detect from bytes and optional filename |
-| `detect_bytes_default(bytes, filename)` | Detect using the detector's default magic-check setting |
-| `detect_reader(reader, filename, always_check_magic)` | Detect from a `Read + Seek` reader and restore its position |
-| `detect_path(path, always_check_magic)` | Open and detect a filesystem path |
-| `is_always_check_magic_by_default()` | Read the default combined detection mode |
-| `set_always_check_magic_by_default(value)` | Change the default combined detection mode |
+| `detect_bytes(bytes, filename, policy)` | Detect from bytes and optional filename |
+| `detect_reader(reader, filename, policy)` | Detect from a `Read + Seek` reader and restore its position |
+| `detect_path(path, policy)` | Open and detect a filesystem path |
 
 ### `FileCommandMimeDetector`
 
@@ -489,8 +498,8 @@ fn main() -> Result<(), MimeError> {
 | `with_repository(repository)` | Create a detector borrowing an explicit repository |
 | `is_available()` | Check whether the `file` command can be executed |
 | `detect_path_by_content(path)` | Detect a local file using command output only |
-| `detect_path(path, always_check_magic)` | Detect a path by filename and command-backed content inspection |
-| `detect_reader(reader, filename, always_check_magic)` | Detect a seekable reader through the file-backed path |
+| `detect_path(path, policy)` | Detect a path by filename and command-backed content inspection |
+| `detect_reader(reader, filename, policy)` | Detect a seekable reader through the file-backed path |
 | `set_execution_timeout(timeout)` | Store the Java-compatible command timeout setting |
 | `set_working_directory(directory)` | Set the command working directory |
 
@@ -525,7 +534,7 @@ fn main() -> Result<(), MimeError> {
 | `max_test_bytes()` | Return the maximum byte prefix needed by magic rules |
 | `detect_by_filename(filename)` | Return best filename candidates |
 | `detect_by_content(bytes)` | Return best content candidates |
-| `detect(filename, bytes, always_check_magic)` | Merge filename and content detection |
+| `detect(filename, bytes, policy)` | Merge filename and content detection |
 
 ### Metadata and Rule Types
 

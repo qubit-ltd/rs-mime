@@ -14,7 +14,8 @@ use std::collections::HashMap;
 use roxmltree::{Document, Node};
 
 use crate::{
-    MagicValueType, MimeError, MimeGlob, MimeMagic, MimeMagicMatcher, MimeType, MimeTypeBuilder,
+    MagicValueType, MimeDetectionPolicy, MimeError, MimeGlob, MimeMagic, MimeMagicMatcher,
+    MimeType, MimeTypeBuilder,
 };
 
 /// A repository of MIME types and detection indexes.
@@ -170,15 +171,19 @@ impl MimeRepository {
     /// # Parameters
     /// - `filename`: File path or basename.
     /// - `bytes`: Content prefix to test.
-    /// - `always_check_magic`: Whether content magic should be checked even
-    ///   when the filename has a single candidate.
+    /// - `policy`: Strategy for resolving filename and content results.
     ///
     /// # Returns
     /// A vector containing the selected MIME type, or an empty vector when no
     /// rule matches.
-    pub fn detect(&self, filename: &str, bytes: &[u8], always_check_magic: bool) -> Vec<&MimeType> {
+    pub fn detect(
+        &self,
+        filename: &str,
+        bytes: &[u8],
+        policy: MimeDetectionPolicy,
+    ) -> Vec<&MimeType> {
         let from_filename = self.detect_by_filename(filename);
-        if from_filename.len() == 1 && !always_check_magic {
+        if from_filename.len() == 1 && !policy.should_verify_content() {
             return from_filename;
         }
         let from_content = self.detect_by_content(bytes);

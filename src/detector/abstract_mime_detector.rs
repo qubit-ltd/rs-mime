@@ -11,14 +11,13 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::{MediaStreamClassifier, MediaStreamType, MimeConfig};
+use crate::{MediaStreamClassifier, MediaStreamType, MimeConfig, MimeDetectionPolicy};
 
 use super::detection_source::DetectionSource;
 
 /// Java-style shared detector state and merge/refinement logic.
 #[derive(Debug, Clone)]
 pub struct AbstractMimeDetector {
-    always_check_magic_by_default: bool,
     config: MimeConfig,
     media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>,
 }
@@ -33,27 +32,9 @@ impl AbstractMimeDetector {
     /// Shared detector state.
     pub fn new(config: MimeConfig) -> Self {
         Self {
-            always_check_magic_by_default: false,
             config,
             media_stream_classifier: None,
         }
-    }
-
-    /// Tells whether combined detection checks content magic by default.
-    ///
-    /// # Returns
-    /// `true` when default combined detection checks magic even for a unique
-    /// filename match.
-    pub fn is_always_check_magic_by_default(&self) -> bool {
-        self.always_check_magic_by_default
-    }
-
-    /// Sets whether combined detection checks content magic by default.
-    ///
-    /// # Parameters
-    /// - `always_check_magic_by_default`: New default behavior.
-    pub fn set_always_check_magic_by_default(&mut self, always_check_magic_by_default: bool) {
-        self.always_check_magic_by_default = always_check_magic_by_default;
     }
 
     /// Sets the classifier used for precise media MIME refinement.
@@ -108,7 +89,7 @@ impl AbstractMimeDetector {
     /// - `from_filename`: Candidates from filename glob detection.
     /// - `from_content`: Candidates from content magic detection.
     /// - `filename`: Optional filename used for precise detection decisions.
-    /// - `always_check_magic`: Whether content magic was forced.
+    /// - `policy`: Strategy for resolving filename and content results.
     /// - `source`: Source available for optional media stream refinement.
     ///
     /// # Returns
@@ -118,10 +99,10 @@ impl AbstractMimeDetector {
         from_filename: &[String],
         from_content: &[String],
         filename: Option<&str>,
-        always_check_magic: bool,
+        policy: MimeDetectionPolicy,
         source: DetectionSource<'_>,
     ) -> Option<String> {
-        let result = if from_filename.len() == 1 && !always_check_magic {
+        let result = if from_filename.len() == 1 && !policy.should_verify_content() {
             from_filename.first().cloned()
         } else {
             self.merge_results(from_filename, from_content)
@@ -353,9 +334,6 @@ pub(crate) mod coverage_support {
             "webm,ogg",
             "webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg",
         ));
-        let initial = detector.is_always_check_magic_by_default().to_string();
-        detector.set_always_check_magic_by_default(true);
-        let updated = detector.is_always_check_magic_by_default().to_string();
         detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
             stream_type: MediaStreamType::VideoOnly,
         })));
@@ -368,7 +346,7 @@ pub(crate) mod coverage_support {
                 &from_filename,
                 &from_content,
                 Some("movie.webm"),
-                true,
+                crate::MimeDetectionPolicy::VerifyContent,
                 DetectionSource::Content(b"webm"),
             )
         );
@@ -420,9 +398,6 @@ pub(crate) mod coverage_support {
             Some("movie.webm"),
             DetectionSource::Path(Path::new("Cargo.toml")),
         );
-        let default_detector = AbstractMimeDetector::default()
-            .is_always_check_magic_by_default()
-            .to_string();
         let backend = StaticBackend;
         let backend_trait: &dyn StringListMimeDetectorBackend = &backend;
         let static_classifier = StaticClassifier {
@@ -430,8 +405,6 @@ pub(crate) mod coverage_support {
         };
         let classifier_trait: &dyn MediaStreamClassifier = &static_classifier;
         vec![
-            initial,
-            updated,
             classifier_present,
             selected,
             refined_by_type,
@@ -442,7 +415,6 @@ pub(crate) mod coverage_support {
             mismatch,
             failed_stream,
             failed_path_stream,
-            default_detector,
             detector.merge_results(&[], &[]).is_none().to_string(),
             format!("{:?}", extension_from_filename("no-extension")),
             backend_trait.guess_from_filename("movie.webm").join(","),
