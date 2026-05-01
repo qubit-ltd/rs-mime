@@ -28,6 +28,27 @@ pub const ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS: &str =
 /// Environment variable defining ambiguous extension to MIME mappings.
 pub const ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING: &str = "QUBIT_MIME_AMBIGUOUS_MIME_MAPPING";
 
+/// Configuration key selecting the default MIME detector implementation.
+pub const CONFIG_MIME_DETECTOR_DEFAULT: &str = "mime.detector.default";
+
+/// Configuration key selecting the default media stream classifier implementation.
+pub const CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT: &str = "mime.media.stream.classifier.default";
+
+/// Configuration key controlling precise MIME detection.
+pub const CONFIG_MIME_ENABLE_PRECISE_DETECTION: &str = "mime.enable.precise.detection";
+
+/// Configuration key listing extensions that should use precise detection.
+pub const CONFIG_MIME_PRECISE_DETECTION_PATTERNS: &str = "mime.precise.detection.patterns";
+
+/// Configuration key defining ambiguous extension to MIME mappings.
+pub const CONFIG_MIME_AMBIGUOUS_MIME_MAPPING: &str = "mime.ambiguous.mime.mapping";
+
+/// Default MIME detector backend selector.
+pub const DEFAULT_MIME_DETECTOR: &str = "repository";
+
+/// Default media stream classifier backend selector.
+pub const DEFAULT_MEDIA_STREAM_CLASSIFIER: &str = "ffprobe";
+
 /// Default value for precise media stream based detection.
 pub const DEFAULT_ENABLE_PRECISE_DETECTION: bool = true;
 

@@ -137,9 +137,8 @@ fn main() -> Result<(), MimeError> {
 ### Use the Rust-style `MimeDetector` trait
 
 `BoxMimeDetector` and `ArcMimeDetector` provide explicit boxed and shared
-default detector containers selected from configuration and backend
-availability. Code that only needs MIME names can depend on the trait instead of
-a concrete detector.
+default detector containers selected from `MimeConfig`. Code that only needs
+MIME names can depend on the trait instead of a concrete detector.
 
 ```rust
 use qubit_mime::{
@@ -157,8 +156,53 @@ fn main() {
 
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detect_upload(detector.as_detector(), "upload.bin", b"%PDF-1.7\n"),
+        detect_upload(detector.as_ref(), "upload.bin", b"%PDF-1.7\n"),
     );
+}
+```
+
+### Configure global defaults with `Config`
+
+`MimeConfig::default()` returns a snapshot of the current global default MIME
+configuration. Use `MimeConfig::reload_default()` to replace it from an
+`rs-config` `Config`, or `MimeConfig::reload_default_from_env()` to load from
+`Config::from_env()`.
+
+```rust
+use qubit_config::Config;
+use qubit_mime::{
+    BoxMimeDetector,
+    CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+    CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+    CONFIG_MIME_DETECTOR_DEFAULT,
+    CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+    CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
+    DEFAULT_AMBIGUOUS_MIME_MAPPING,
+    DEFAULT_PRECISE_DETECTION_PATTERNS,
+    MimeConfig,
+    MimeDetector,
+    MimeError,
+};
+
+fn main() -> Result<(), MimeError> {
+    let original = MimeConfig::default();
+    let mut config = Config::new();
+    config.set(CONFIG_MIME_DETECTOR_DEFAULT, "repository")?;
+    config.set(CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, "ffprobe")?;
+    config.set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)?;
+    config.set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, DEFAULT_PRECISE_DETECTION_PATTERNS)?;
+    config.set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, DEFAULT_AMBIGUOUS_MIME_MAPPING)?;
+
+    MimeConfig::reload_default(&config)?;
+    let detector = BoxMimeDetector::default();
+
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        detector.detect_by_filename("document.pdf"),
+    );
+
+    MimeConfig::set_default(original);
+    Ok(())
 }
 ```
 
@@ -491,8 +535,10 @@ fn main() -> Result<(), MimeError> {
 |--------|-------------|
 | `BoxMimeDetector::default()` | Select the configured/default boxed detector |
 | `BoxMimeDetector::from_name(name)` | Select a boxed detector by implementation name |
+| `BoxMimeDetector::from_mime_config(config)` | Select a boxed detector from explicit MIME configuration |
 | `ArcMimeDetector::default()` | Select the configured/default shared detector |
 | `ArcMimeDetector::from_name(name)` | Select a shared detector by implementation name |
+| `ArcMimeDetector::from_mime_config(config)` | Select a shared detector from explicit MIME configuration |
 | `detect_by_filename(filename)` | Detect one MIME name from filename |
 | `detect_by_content(bytes)` | Detect one MIME name from content bytes |
 | `detect(bytes, filename, policy)` | Detect from bytes and optional filename |
@@ -503,6 +549,7 @@ fn main() -> Result<(), MimeError> {
 |--------|-------------|
 | `new()` | Create a detector backed by the embedded freedesktop repository |
 | `with_repository(repository)` | Create a detector borrowing an explicit repository |
+| `with_repository_and_config(repository, config)` | Create a detector borrowing an explicit repository and MIME configuration |
 | `repository()` | Borrow the underlying repository |
 | `detect_by_filename(filename)` | Return the first MIME name matched by filename |
 | `detect_by_content(bytes)` | Return the first MIME name matched by content magic |
@@ -517,6 +564,7 @@ fn main() -> Result<(), MimeError> {
 | `new()` | Create a detector backed by the embedded repository and the system `file` command |
 | `with_repository(repository)` | Create a detector borrowing an explicit repository |
 | `with_repository_and_runner(repository, runner)` | Create a detector with an explicit `qubit_command::CommandRunner` |
+| `with_repository_runner_and_config(repository, runner, config)` | Create a detector with explicit repository, runner, and MIME configuration |
 | `command_runner()` | Borrow the runner used for command execution |
 | `set_command_runner(runner)` | Replace the runner used for command execution |
 | `is_available()` | Check whether the `file` command can be executed |
@@ -533,8 +581,10 @@ fn main() -> Result<(), MimeError> {
 |--------|-------------|
 | `BoxMediaStreamClassifier::default()` | Select the configured/default boxed classifier |
 | `BoxMediaStreamClassifier::from_name(name)` | Select a boxed classifier by implementation name |
+| `BoxMediaStreamClassifier::from_mime_config(config)` | Select a boxed classifier from explicit MIME configuration |
 | `ArcMediaStreamClassifier::default()` | Select the configured/default shared classifier |
 | `ArcMediaStreamClassifier::from_name(name)` | Select a shared classifier by implementation name |
+| `ArcMediaStreamClassifier::from_mime_config(config)` | Select a shared classifier from explicit MIME configuration |
 | `classify_file(file)` | Classify a local media file |
 | `classify_content(bytes)` | Classify in-memory media content |
 
@@ -575,6 +625,20 @@ fn main() -> Result<(), MimeError> {
 | `MediaStreamType` | Audio/video stream classification result |
 | `MimeConfig` | Precise detection and ambiguous media mapping configuration |
 | `MimeError` | Error type for XML parsing, rule validation, and I/O |
+
+### `MimeConfig`
+
+| Method | Description |
+|--------|-------------|
+| `new(detector, classifier, enabled, patterns, mapping)` | Create explicit MIME configuration |
+| `from_config(config)` | Parse MIME configuration from a `qubit_config::Config` |
+| `from_env()` | Parse MIME configuration from `Config::from_env()` |
+| `default()` | Clone the current global default MIME configuration |
+| `set_default(config)` | Replace the global default used by future default instances |
+| `reload_default(config)` | Parse and replace the global default from a `Config` |
+| `reload_default_from_env()` | Parse and replace the global default from process environment |
+| `mime_detector_default()` | Read the configured detector selector |
+| `media_stream_classifier_default()` | Read the configured media classifier selector |
 
 ## Module Layout
 
@@ -660,6 +724,7 @@ cargo test
 Runtime dependencies are intentionally small:
 
 - `qubit-command` runs external `file` commands with timeout and output capture.
+- `qubit-config` loads MIME defaults from configuration objects and environment.
 - `regex` compiles and runs filename glob matchers.
 - `roxmltree` parses shared MIME-info XML.
 - `thiserror` provides the concrete `MimeError` implementation.

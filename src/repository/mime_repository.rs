@@ -45,7 +45,7 @@ impl MimeRepository {
     /// A parsed repository with filename and alias indexes.
     ///
     /// # Errors
-    /// Returns [`MimeError`] when XML is malformed or a rule contains an
+    /// Returns [`MimeError`](crate::MimeError) when XML is malformed or a rule contains an
     /// unsupported value.
     pub fn from_xml(xml: &str) -> MimeResult<Self> {
         let xml = strip_doctype(xml);
@@ -381,7 +381,7 @@ impl<'a> MagicDetectionResult<'a> {
 /// Parsed MIME type.
 ///
 /// # Errors
-/// Returns [`MimeError`] when required attributes or child rules are invalid.
+/// Returns [`MimeError`](crate::MimeError) when required attributes or child rules are invalid.
 fn parse_mime_type(node: Node<'_, '_>) -> MimeResult<MimeType> {
     let name = required_attr(node, "type")?.to_owned();
     let mut builder = MimeTypeBuilder::new(&name);
@@ -410,7 +410,7 @@ fn parse_mime_type(node: Node<'_, '_>) -> MimeResult<MimeType> {
 /// Parsed glob.
 ///
 /// # Errors
-/// Returns [`MimeError`] when attributes are invalid.
+/// Returns [`MimeError`](crate::MimeError) when attributes are invalid.
 fn parse_glob(node: Node<'_, '_>) -> MimeResult<MimeGlob> {
     let pattern = required_attr(node, "pattern")?;
     let weight = optional_u16_attr(
@@ -433,7 +433,7 @@ fn parse_glob(node: Node<'_, '_>) -> MimeResult<MimeGlob> {
 /// Parsed magic rule.
 ///
 /// # Errors
-/// Returns [`MimeError`] when priority or matchers are invalid.
+/// Returns [`MimeError`](crate::MimeError) when priority or matchers are invalid.
 fn parse_magic(node: Node<'_, '_>) -> MimeResult<MimeMagic> {
     let priority = optional_u16_attr(
         node,
@@ -467,7 +467,7 @@ fn parse_magic(node: Node<'_, '_>) -> MimeResult<MimeMagic> {
 /// Parsed magic matcher.
 ///
 /// # Errors
-/// Returns [`MimeError`] when matcher attributes are invalid.
+/// Returns [`MimeError`](crate::MimeError) when matcher attributes are invalid.
 fn parse_matcher(node: Node<'_, '_>) -> MimeResult<MimeMagicMatcher> {
     let type_name = required_attr(node, "type")?;
     let value_type = MagicValueType::from_name(type_name)
@@ -504,7 +504,7 @@ fn parse_matcher(node: Node<'_, '_>) -> MimeResult<MimeMagicMatcher> {
 /// Attribute value.
 ///
 /// # Errors
-/// Returns [`MimeError`] when the attribute is missing or empty.
+/// Returns [`MimeError`](crate::MimeError) when the attribute is missing or empty.
 fn required_attr<'a>(node: Node<'a, '_>, name: &str) -> MimeResult<&'a str> {
     node.attribute(name)
         .filter(|value| !value.is_empty())
@@ -531,7 +531,7 @@ fn required_attr<'a>(node: Node<'a, '_>, name: &str) -> MimeResult<&'a str> {
 /// Parsed value.
 ///
 /// # Errors
-/// Returns [`MimeError`] when the value is not an integer or is out of range.
+/// Returns [`MimeError`](crate::MimeError) when the value is not an integer or is out of range.
 fn optional_u16_attr(
     node: Node<'_, '_>,
     name: &str,
@@ -567,7 +567,7 @@ fn optional_u16_attr(
 /// Parsed boolean value.
 ///
 /// # Errors
-/// Returns [`MimeError`] when the value is not `true` or `false`.
+/// Returns [`MimeError`](crate::MimeError) when the value is not `true` or `false`.
 fn optional_bool_attr(node: Node<'_, '_>, name: &str, default: bool) -> MimeResult<bool> {
     match node.attribute(name) {
         Some("true") => Ok(true),
@@ -591,7 +591,7 @@ fn optional_bool_attr(node: Node<'_, '_>, name: &str, default: bool) -> MimeResu
 /// Inclusive offset range.
 ///
 /// # Errors
-/// Returns [`MimeError`] when the range is invalid.
+/// Returns [`MimeError`](crate::MimeError) when the range is invalid.
 fn parse_offset(value: &str) -> MimeResult<(usize, usize)> {
     let (begin, end) = value.split_once(':').map_or((value, value), |parts| parts);
     let offset_begin = parse_usize(begin, "offset")?;
@@ -617,7 +617,7 @@ fn parse_offset(value: &str) -> MimeResult<(usize, usize)> {
 /// Parsed integer.
 ///
 /// # Errors
-/// Returns [`MimeError`] when the number is invalid.
+/// Returns [`MimeError`](crate::MimeError) when the number is invalid.
 fn parse_usize(value: &str, attribute: &str) -> MimeResult<usize> {
     value.parse::<usize>().map_err(|error| {
         MimeError::invalid_attr(
@@ -639,7 +639,7 @@ fn parse_usize(value: &str, attribute: &str) -> MimeResult<usize> {
 /// Parsed bytes. Numeric values are stored big-endian.
 ///
 /// # Errors
-/// Returns [`MimeError`] when the value cannot be decoded.
+/// Returns [`MimeError`](crate::MimeError) when the value cannot be decoded.
 fn parse_value(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
     match value_type {
         MagicValueType::String => decode_c_string(value),
@@ -657,7 +657,7 @@ fn parse_value(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
 /// Parsed mask bytes.
 ///
 /// # Errors
-/// Returns [`MimeError`] when the mask cannot be decoded.
+/// Returns [`MimeError`](crate::MimeError) when the mask cannot be decoded.
 fn parse_mask(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
     match value_type {
         MagicValueType::String => parse_hex_bytes(value),
@@ -674,7 +674,7 @@ fn parse_mask(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
 /// Decoded bytes.
 ///
 /// # Errors
-/// Returns [`MimeError`] when an escape sequence is incomplete or invalid.
+/// Returns [`MimeError`](crate::MimeError) when an escape sequence is incomplete or invalid.
 fn decode_c_string(value: &str) -> MimeResult<Vec<u8>> {
     let chars: Vec<char> = value.chars().collect();
     let mut bytes = Vec::with_capacity(value.len());
@@ -734,7 +734,7 @@ fn push_char_bytes(ch: char, bytes: &mut Vec<u8>) {
 /// Index of the last consumed hex digit.
 ///
 /// # Errors
-/// Returns [`MimeError`] when the escape has no hex digit.
+/// Returns [`MimeError`](crate::MimeError) when the escape has no hex digit.
 fn decode_hex_escape(
     chars: &[char],
     mut index: usize,
@@ -797,7 +797,7 @@ fn decode_octal_escape(chars: &[char], mut index: usize, bytes: &mut Vec<u8>) ->
 /// Big-endian bytes with the width required by `value_type`.
 ///
 /// # Errors
-/// Returns [`MimeError`] when the value is invalid.
+/// Returns [`MimeError`](crate::MimeError) when the value is invalid.
 fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
     let number = parse_c_integer(value)?;
     match value_type
@@ -820,7 +820,7 @@ fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> MimeResult<Ve
 /// Parsed integer as `u64`.
 ///
 /// # Errors
-/// Returns [`MimeError`] when parsing fails.
+/// Returns [`MimeError`](crate::MimeError) when parsing fails.
 fn parse_c_integer(value: &str) -> MimeResult<u64> {
     let trimmed = value.trim();
     let (radix, digits) = if let Some(hex) = trimmed
@@ -847,7 +847,7 @@ fn parse_c_integer(value: &str) -> MimeResult<u64> {
 /// Decoded bytes.
 ///
 /// # Errors
-/// Returns [`MimeError`] when the value is not an even-length hex string.
+/// Returns [`MimeError`](crate::MimeError) when the value is not an even-length hex string.
 fn parse_hex_bytes(value: &str) -> MimeResult<Vec<u8>> {
     let digits = value
         .strip_prefix("0x")

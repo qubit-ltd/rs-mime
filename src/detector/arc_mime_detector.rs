@@ -11,7 +11,7 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use crate::{ENV_MIME_DETECTOR_DEFAULT, MimeDetectionPolicy, MimeDetector};
+use crate::{MimeConfig, MimeDetectionPolicy, MimeDetector};
 
 use super::mime_detector_backend::MimeDetectorBackend;
 use super::{FileCommandMimeDetector, RepositoryMimeDetector};
@@ -45,6 +45,21 @@ impl ArcMimeDetector {
         super::mime_detector_backend::MimeDetectorBackend::from_name(name).map(Self::from_backend)
     }
 
+    /// Creates a shared detector from MIME configuration.
+    ///
+    /// # Parameters
+    /// - `config`: MIME configuration containing the default detector selector.
+    ///
+    /// # Returns
+    /// Configured detector wrapper.
+    pub fn from_mime_config(config: &MimeConfig) -> Self {
+        let backend = MimeDetectorBackend::select(
+            config.mime_detector_default(),
+            FileCommandMimeDetector::is_available(),
+        );
+        Self::from_backend_with_config(backend, config)
+    }
+
     /// Unwraps this wrapper into the inner shared detector.
     ///
     /// # Returns
@@ -54,23 +69,24 @@ impl ArcMimeDetector {
     }
 
     fn from_backend(backend: MimeDetectorBackend) -> Self {
+        Self::from_backend_with_config(backend, &MimeConfig::default())
+    }
+
+    fn from_backend_with_config(backend: MimeDetectorBackend, config: &MimeConfig) -> Self {
         match backend {
-            MimeDetectorBackend::Repository => {
-                Self::new(Arc::new(RepositoryMimeDetector::default()))
-            }
-            MimeDetectorBackend::FileCommand => Self::new(Arc::new(FileCommandMimeDetector::new())),
+            MimeDetectorBackend::Repository => Self::new(Arc::new(
+                RepositoryMimeDetector::from_mime_config(config.clone()),
+            )),
+            MimeDetectorBackend::FileCommand => Self::new(Arc::new(
+                FileCommandMimeDetector::from_mime_config(config.clone()),
+            )),
         }
     }
 }
 
 impl Default for ArcMimeDetector {
     fn default() -> Self {
-        let configured = std::env::var(ENV_MIME_DETECTOR_DEFAULT).unwrap_or_default();
-        let backend = super::mime_detector_backend::MimeDetectorBackend::select(
-            &configured,
-            FileCommandMimeDetector::is_available(),
-        );
-        Self::from_backend(backend)
+        Self::from_mime_config(&MimeConfig::default())
     }
 }
 

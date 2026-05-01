@@ -71,6 +71,10 @@ pub enum MimeError {
     /// Detection using an external command failed.
     #[error("command error while detecting MIME type: {0}")]
     Command(#[from] qubit_command::CommandError),
+
+    /// Loading MIME configuration failed.
+    #[error("configuration error while loading MIME settings: {0}")]
+    Config(#[from] qubit_config::ConfigError),
 }
 
 impl MimeError {
@@ -83,7 +87,7 @@ impl MimeError {
     /// - `reason`: Why the value is invalid.
     ///
     /// # Returns
-    /// A [`MimeError::InvalidXmlAttribute`] value.
+    /// A [`MimeError::InvalidXmlAttribute`](crate::MimeError::InvalidXmlAttribute) value.
     pub(crate) fn invalid_attr(
         element: &str,
         attribute: &str,
@@ -105,7 +109,7 @@ impl MimeError {
     /// - `reason`: Why the element is invalid.
     ///
     /// # Returns
-    /// A [`MimeError::InvalidXmlElement`] value.
+    /// A [`MimeError::InvalidXmlElement`](crate::MimeError::InvalidXmlElement) value.
     pub(crate) fn invalid_element(element: &str, reason: impl Into<String>) -> Self {
         Self::InvalidXmlElement {
             element: element.to_owned(),
@@ -119,7 +123,7 @@ impl MimeError {
     /// - `reason`: Why the matcher is invalid.
     ///
     /// # Returns
-    /// A [`MimeError::InvalidMagicMatcher`] value.
+    /// A [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher) value.
     pub(crate) fn invalid_matcher(reason: impl Into<String>) -> Self {
         Self::InvalidMagicMatcher {
             reason: reason.into(),
@@ -132,7 +136,7 @@ impl MimeError {
     /// - `reason`: Why the input cannot be classified.
     ///
     /// # Returns
-    /// A [`MimeError::InvalidClassifierInput`] value.
+    /// A [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) value.
     pub(crate) fn invalid_classifier_input(reason: impl Into<String>) -> Self {
         Self::InvalidClassifierInput {
             reason: reason.into(),
@@ -155,12 +159,14 @@ pub(crate) mod coverage_support {
             command: "file --mime-type --brief missing".to_owned(),
             source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
         };
+        let config_error = qubit_config::ConfigError::Other("bad config".to_owned());
         vec![
             MimeError::invalid_attr("match", "value", "bad", "invalid").to_string(),
             MimeError::invalid_element("magic", "missing match").to_string(),
             MimeError::invalid_matcher("bad matcher").to_string(),
             MimeError::invalid_classifier_input("bad input").to_string(),
             MimeError::Command(command_error).to_string(),
+            MimeError::Config(config_error).to_string(),
         ]
     }
 }

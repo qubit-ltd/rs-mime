@@ -36,7 +36,7 @@ impl MimeMagicMatcher {
     /// A validated [`MimeMagicMatcher`].
     ///
     /// # Errors
-    /// Returns [`MimeError::InvalidMagicMatcher`] when offsets are inverted,
+    /// Returns [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher) when offsets are inverted,
     /// when numeric value widths are wrong, or when the mask length differs
     /// from the value length.
     pub fn new(
@@ -187,7 +187,7 @@ impl MimeMagicMatcher {
 /// - `offset_end`: Last allowed offset.
 ///
 /// # Errors
-/// Returns [`MimeError::InvalidMagicMatcher`] when the range is inverted.
+/// Returns [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher) when the range is inverted.
 fn validate_offsets(offset_begin: usize, offset_end: usize) -> MimeResult<()> {
     if offset_begin > offset_end {
         return Err(MimeError::invalid_matcher(
@@ -204,7 +204,7 @@ fn validate_offsets(offset_begin: usize, offset_end: usize) -> MimeResult<()> {
 /// - `value`: Value bytes to validate.
 ///
 /// # Errors
-/// Returns [`MimeError::InvalidMagicMatcher`] when a numeric value has the wrong width.
+/// Returns [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher) when a numeric value has the wrong width.
 fn validate_value_width(value_type: MagicValueType, value: &[u8]) -> MimeResult<()> {
     if value.is_empty() {
         return Err(MimeError::invalid_matcher(
@@ -229,7 +229,7 @@ fn validate_value_width(value_type: MagicValueType, value: &[u8]) -> MimeResult<
 /// - `mask`: Optional mask bytes.
 ///
 /// # Errors
-/// Returns [`MimeError::InvalidMagicMatcher`] when the mask length differs from value length.
+/// Returns [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher) when the mask length differs from value length.
 fn validate_mask_width(value: &[u8], mask: Option<&[u8]>) -> MimeResult<()> {
     if let Some(mask) = mask
         && mask.len() != value.len()

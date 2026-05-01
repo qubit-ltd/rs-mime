@@ -30,8 +30,8 @@ pub trait MediaStreamClassifier: Debug + Send + Sync {
     /// Media stream classification.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when the file cannot be read, or another
-    /// [`MimeError`] when the classifier backend fails.
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be read, or another
+    /// [`MimeError`](crate::MimeError) when the classifier backend fails.
     fn classify_file(&self, file: &Path) -> MimeResult<MediaStreamType>;
 
     /// Classifies an in-memory media payload.
@@ -43,7 +43,7 @@ pub trait MediaStreamClassifier: Debug + Send + Sync {
     /// Media stream classification.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when a file-backed classifier cannot stage the
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when a file-backed classifier cannot stage the
     /// content.
     fn classify_content(&self, content: &[u8]) -> MimeResult<MediaStreamType>;
 }

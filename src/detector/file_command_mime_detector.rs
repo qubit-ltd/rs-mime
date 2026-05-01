@@ -17,7 +17,7 @@ use std::time::Duration;
 use qubit_command::{Command, CommandRunner};
 
 use crate::{
-    AbstractMimeDetector, DetectionSource, FileBasedMimeDetector, MimeDetectionPolicy,
+    AbstractMimeDetector, DetectionSource, FileBasedMimeDetector, MimeConfig, MimeDetectionPolicy,
     MimeDetector, MimeRepository, MimeResult, StreamBasedMimeDetector,
 };
 
@@ -38,6 +38,21 @@ impl FileCommandMimeDetector<'static> {
     /// File command detector.
     pub fn new() -> Self {
         Self::with_repository(default_repository())
+    }
+
+    /// Creates a detector using the embedded repository and explicit config.
+    ///
+    /// # Parameters
+    /// - `config`: MIME detector configuration.
+    ///
+    /// # Returns
+    /// File command detector.
+    pub fn from_mime_config(config: MimeConfig) -> Self {
+        Self::with_repository_runner_and_config(
+            default_repository(),
+            Self::default_command_runner(),
+            config,
+        )
     }
 }
 
@@ -73,8 +88,26 @@ impl<'a> FileCommandMimeDetector<'a> {
         repository: &'a MimeRepository,
         command_runner: CommandRunner,
     ) -> Self {
+        Self::with_repository_runner_and_config(repository, command_runner, MimeConfig::default())
+    }
+
+    /// Creates a detector using an explicit repository, runner, and config.
+    ///
+    /// # Parameters
+    /// - `repository`: Repository used for filename detection.
+    /// - `command_runner`: Runner used for all `file` command executions.
+    /// - `config`: MIME detector configuration.
+    ///
+    /// # Returns
+    /// File command detector borrowing `repository` and owning the supplied
+    /// runner.
+    pub fn with_repository_runner_and_config(
+        repository: &'a MimeRepository,
+        command_runner: CommandRunner,
+        config: MimeConfig,
+    ) -> Self {
         Self {
-            base: AbstractMimeDetector::default(),
+            base: AbstractMimeDetector::from_mime_config(config),
             repository,
             command_runner,
         }
@@ -195,7 +228,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Command`] when the command cannot be executed.
+    /// Returns [`MimeError::Command`](crate::MimeError::Command) when the command cannot be executed.
     pub fn detect_path_by_content<P: AsRef<Path>>(&self, path: P) -> MimeResult<Option<String>> {
         Ok(self
             .guess_from_file_command(path.as_ref())?
@@ -213,7 +246,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Command`] when command execution fails.
+    /// Returns [`MimeError::Command`](crate::MimeError::Command) when command execution fails.
     pub fn detect_path<P: AsRef<Path>>(
         &self,
         path: P,
@@ -247,7 +280,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when stream operations fail.
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when stream operations fail.
     pub fn detect_reader<R>(
         &self,
         reader: &mut R,
@@ -312,7 +345,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// Zero or one MIME type names.
     ///
     /// # Errors
-    /// Returns [`MimeError::Command`] when command execution fails.
+    /// Returns [`MimeError::Command`](crate::MimeError::Command) when command execution fails.
     #[cfg(not(coverage))]
     fn guess_from_file_command(&self, path: &Path) -> MimeResult<Vec<String>> {
         let output = self.command_runner.run(Self::command_for_path(path))?;
@@ -334,7 +367,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// A stable MIME type candidate when the path exists.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when the path metadata cannot be read.
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the path metadata cannot be read.
     #[cfg(coverage)]
     fn guess_from_file_command(&self, path: &Path) -> MimeResult<Vec<String>> {
         let _ = std::fs::metadata(path)?;

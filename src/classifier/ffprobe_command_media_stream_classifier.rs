@@ -152,7 +152,7 @@ impl FfprobeCommandMediaStreamClassifier {
     /// [`MediaStreamType::None`] to match Java's best-effort refinement.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when process execution itself fails.
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when process execution itself fails.
     #[cfg(not(coverage))]
     fn classify_by_local_file(&self, path: &Path) -> MimeResult<MediaStreamType> {
         AbstractMediaStreamClassifier::validate_readable_file(path)?;
@@ -185,7 +185,7 @@ impl FfprobeCommandMediaStreamClassifier {
     /// A deterministic non-media classification after validating readability.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when the path is not readable.
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the path is not readable.
     #[cfg(coverage)]
     fn classify_by_local_file(&self, path: &Path) -> MimeResult<MediaStreamType> {
         AbstractMediaStreamClassifier::validate_readable_file(path)?;

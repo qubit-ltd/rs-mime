@@ -128,8 +128,9 @@ fn main() -> Result<(), MimeError> {
 
 ### 使用 Rust 风格的 `MimeDetector` trait
 
-`Box<dyn MimeDetector>` 实现了 `Default`，会根据配置和后端可用性返回 boxed
-detector。只需要 MIME 名称的代码可以依赖 trait，而不是依赖具体检测器类型。
+`BoxMimeDetector` 和 `ArcMimeDetector` 提供 boxed 和 shared 默认 detector
+容器，默认实现由 `MimeConfig` 决定。只需要 MIME 名称的代码可以依赖 trait，
+而不是依赖具体检测器类型。
 
 ```rust
 use qubit_mime::{
@@ -147,8 +148,53 @@ fn main() {
 
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detect_upload(detector.as_detector(), "upload.bin", b"%PDF-1.7\n"),
+        detect_upload(detector.as_ref(), "upload.bin", b"%PDF-1.7\n"),
     );
+}
+```
+
+### 使用 `Config` 配置全局默认值
+
+`MimeConfig::default()` 返回当前全局默认 MIME 配置的快照。使用
+`MimeConfig::reload_default()` 可以从 `rs-config` 的 `Config` 替换全局默认值；
+使用 `MimeConfig::reload_default_from_env()` 可以通过 `Config::from_env()` 从
+进程环境载入。
+
+```rust
+use qubit_config::Config;
+use qubit_mime::{
+    BoxMimeDetector,
+    CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+    CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+    CONFIG_MIME_DETECTOR_DEFAULT,
+    CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+    CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
+    DEFAULT_AMBIGUOUS_MIME_MAPPING,
+    DEFAULT_PRECISE_DETECTION_PATTERNS,
+    MimeConfig,
+    MimeDetector,
+    MimeError,
+};
+
+fn main() -> Result<(), MimeError> {
+    let original = MimeConfig::default();
+    let mut config = Config::new();
+    config.set(CONFIG_MIME_DETECTOR_DEFAULT, "repository")?;
+    config.set(CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, "ffprobe")?;
+    config.set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)?;
+    config.set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, DEFAULT_PRECISE_DETECTION_PATTERNS)?;
+    config.set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, DEFAULT_AMBIGUOUS_MIME_MAPPING)?;
+
+    MimeConfig::reload_default(&config)?;
+    let detector = BoxMimeDetector::default();
+
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        detector.detect_by_filename("document.pdf"),
+    );
+
+    MimeConfig::set_default(original);
+    Ok(())
 }
 ```
 
@@ -477,8 +523,10 @@ fn main() -> Result<(), MimeError> {
 |-----|------|
 | `BoxMimeDetector::default()` | 选择配置或默认的 boxed 检测器 |
 | `BoxMimeDetector::from_name(name)` | 按实现名称选择 boxed 检测器 |
+| `BoxMimeDetector::from_mime_config(config)` | 通过显式 MIME 配置选择 boxed 检测器 |
 | `ArcMimeDetector::default()` | 选择配置或默认的共享检测器 |
 | `ArcMimeDetector::from_name(name)` | 按实现名称选择共享检测器 |
+| `ArcMimeDetector::from_mime_config(config)` | 通过显式 MIME 配置选择共享检测器 |
 | `detect_by_filename(filename)` | 根据文件名检测一个 MIME 名称 |
 | `detect_by_content(bytes)` | 根据内容字节检测一个 MIME 名称 |
 | `detect(bytes, filename, policy)` | 根据字节和可选文件名检测 |
@@ -489,6 +537,7 @@ fn main() -> Result<(), MimeError> {
 |-----|------|
 | `new()` | 创建使用内置 freedesktop 仓库的检测器 |
 | `with_repository(repository)` | 创建借用显式仓库的检测器 |
+| `with_repository_and_config(repository, config)` | 创建借用显式仓库和 MIME 配置的检测器 |
 | `repository()` | 借用底层仓库 |
 | `detect_by_filename(filename)` | 返回文件名匹配到的第一个 MIME 名称 |
 | `detect_by_content(bytes)` | 返回内容 magic 匹配到的第一个 MIME 名称 |
@@ -503,6 +552,7 @@ fn main() -> Result<(), MimeError> {
 | `new()` | 创建使用内置仓库和系统 `file` 命令的检测器 |
 | `with_repository(repository)` | 创建借用显式仓库的检测器 |
 | `with_repository_and_runner(repository, runner)` | 使用显式 `qubit_command::CommandRunner` 创建检测器 |
+| `with_repository_runner_and_config(repository, runner, config)` | 使用显式仓库、runner 和 MIME 配置创建检测器 |
 | `command_runner()` | 借用用于命令执行的 runner |
 | `set_command_runner(runner)` | 替换用于命令执行的 runner |
 | `is_available()` | 检查 `file` 命令是否可执行 |
@@ -519,8 +569,10 @@ fn main() -> Result<(), MimeError> {
 |-----|------|
 | `BoxMediaStreamClassifier::default()` | 选择配置或默认的 boxed classifier |
 | `BoxMediaStreamClassifier::from_name(name)` | 按实现名称选择 boxed classifier |
+| `BoxMediaStreamClassifier::from_mime_config(config)` | 通过显式 MIME 配置选择 boxed classifier |
 | `ArcMediaStreamClassifier::default()` | 选择配置或默认的共享 classifier |
 | `ArcMediaStreamClassifier::from_name(name)` | 按实现名称选择共享 classifier |
+| `ArcMediaStreamClassifier::from_mime_config(config)` | 通过显式 MIME 配置选择共享 classifier |
 | `classify_file(file)` | 分类本地媒体文件 |
 | `classify_content(bytes)` | 分类内存中的媒体内容 |
 
@@ -561,6 +613,20 @@ fn main() -> Result<(), MimeError> {
 | `MediaStreamType` | 音视频流分类结果 |
 | `MimeConfig` | 精确检测和有歧义媒体映射配置 |
 | `MimeError` | XML 解析、规则校验和 I/O 错误类型 |
+
+### `MimeConfig`
+
+| 方法 | 描述 |
+|-----|------|
+| `new(detector, classifier, enabled, patterns, mapping)` | 创建显式 MIME 配置 |
+| `from_config(config)` | 从 `qubit_config::Config` 解析 MIME 配置 |
+| `from_env()` | 从 `Config::from_env()` 解析 MIME 配置 |
+| `default()` | 克隆当前全局默认 MIME 配置 |
+| `set_default(config)` | 替换未来默认实例使用的全局默认配置 |
+| `reload_default(config)` | 从 `Config` 解析并替换全局默认配置 |
+| `reload_default_from_env()` | 从进程环境解析并替换全局默认配置 |
+| `mime_detector_default()` | 读取配置的 detector selector |
+| `media_stream_classifier_default()` | 读取配置的媒体 classifier selector |
 
 ## 模块结构
 
@@ -642,6 +708,7 @@ cargo test
 运行时依赖保持很少：
 
 - `qubit-command` 用于执行外部 `file` 命令，支持超时和输出捕获。
+- `qubit-config` 用于从配置对象和环境载入 MIME 默认值。
 - `regex` 用于编译和运行文件名 glob 匹配器。
 - `roxmltree` 用于解析 shared MIME-info XML。
 - `thiserror` 用于实现具体的 `MimeError`。

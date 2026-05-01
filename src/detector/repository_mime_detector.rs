@@ -14,8 +14,8 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::{
-    AbstractMimeDetector, DetectionSource, MimeDetectionPolicy, MimeDetector, MimeRepository,
-    MimeResult, StreamBasedMimeDetector,
+    AbstractMimeDetector, DetectionSource, MimeConfig, MimeDetectionPolicy, MimeDetector,
+    MimeRepository, MimeResult, StreamBasedMimeDetector,
 };
 
 const DEFAULT_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
@@ -41,6 +41,17 @@ impl RepositoryMimeDetector<'static> {
     pub fn new() -> MimeResult<Self> {
         Ok(Self::with_repository(default_repository()))
     }
+
+    /// Creates a detector using the embedded repository and explicit config.
+    ///
+    /// # Parameters
+    /// - `config`: MIME detector configuration.
+    ///
+    /// # Returns
+    /// A repository-backed detector.
+    pub fn from_mime_config(config: MimeConfig) -> Self {
+        Self::with_repository_and_config(default_repository(), config)
+    }
 }
 
 impl Default for RepositoryMimeDetector<'static> {
@@ -58,8 +69,20 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// # Returns
     /// A detector borrowing `repository`.
     pub fn with_repository(repository: &'a MimeRepository) -> Self {
+        Self::with_repository_and_config(repository, MimeConfig::default())
+    }
+
+    /// Creates a detector using an explicit repository and config.
+    ///
+    /// # Parameters
+    /// - `repository`: Repository used for all detections.
+    /// - `config`: MIME detector configuration.
+    ///
+    /// # Returns
+    /// A detector borrowing `repository`.
+    pub fn with_repository_and_config(repository: &'a MimeRepository, config: MimeConfig) -> Self {
         Self {
-            base: AbstractMimeDetector::default(),
+            base: AbstractMimeDetector::from_mime_config(config),
             repository,
         }
     }
@@ -159,7 +182,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when reading or seeking fails.
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking fails.
     pub fn detect_reader<R>(
         &self,
         reader: &mut R,
@@ -184,7 +207,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when the path cannot be opened or read.
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the path cannot be opened or read.
     pub fn detect_path<P: AsRef<Path>>(
         &self,
         path: P,

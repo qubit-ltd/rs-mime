@@ -33,7 +33,7 @@ impl FileBasedMimeDetector {
     /// The callback result.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when the temporary file cannot be created,
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the temporary file cannot be created,
     /// written, flushed, or removed.
     pub fn with_temp_file<T>(
         content: &[u8],

@@ -16,9 +16,7 @@ use std::ops::Deref;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::{
-    ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT, MediaStreamClassifier, MediaStreamType, MimeResult,
-};
+use crate::{MediaStreamClassifier, MediaStreamType, MimeConfig, MimeResult};
 
 use super::FfprobeCommandMediaStreamClassifier;
 use super::media_stream_classifier_backend::MediaStreamClassifierBackend;
@@ -52,6 +50,19 @@ impl ArcMediaStreamClassifier {
         MediaStreamClassifierBackend::from_name(name).map(Self::from_backend)
     }
 
+    /// Creates a shared classifier from MIME configuration.
+    ///
+    /// # Parameters
+    /// - `config`: MIME configuration containing the default classifier selector.
+    ///
+    /// # Returns
+    /// Configured classifier wrapper.
+    pub fn from_mime_config(config: &MimeConfig) -> Self {
+        let backend =
+            MediaStreamClassifierBackend::select(config.media_stream_classifier_default());
+        Self::from_backend(backend)
+    }
+
     /// Unwraps this wrapper into the inner shared classifier.
     ///
     /// # Returns
@@ -71,9 +82,7 @@ impl ArcMediaStreamClassifier {
 
 impl Default for ArcMediaStreamClassifier {
     fn default() -> Self {
-        let configured = std::env::var(ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT).unwrap_or_default();
-        let backend = MediaStreamClassifierBackend::select(&configured);
-        Self::from_backend(backend)
+        Self::from_mime_config(&MimeConfig::default())
     }
 }
 

@@ -27,7 +27,7 @@ impl StreamBasedMimeDetector {
     /// Bytes read from the stream.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when reading or seeking fails.
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking fails.
     pub fn read_prefix<R>(reader: &mut R, max_bytes: usize) -> MimeResult<Vec<u8>>
     where
         R: Read + Seek,

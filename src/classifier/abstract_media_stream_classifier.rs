@@ -24,7 +24,7 @@ impl AbstractMediaStreamClassifier {
     /// - `path`: Path to validate.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when metadata cannot be read or the path is
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when metadata cannot be read or the path is
     /// not a regular file.
     pub fn validate_readable_file(path: &Path) -> MimeResult<()> {
         let metadata = fs::metadata(path)?;

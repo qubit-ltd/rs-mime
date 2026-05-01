@@ -44,6 +44,3 @@ pub trait MimeDetector {
         policy: crate::MimeDetectionPolicy,
     ) -> Option<String>;
 }
-// (Other helper modules like backend selectors and coverage helpers moved to
-// separate files: `mime_detector_backend.rs`, `mime_detection_policy.rs`,
-// and `coverage_support.rs`.)

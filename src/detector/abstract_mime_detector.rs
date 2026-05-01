@@ -11,7 +11,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::{MediaStreamClassifier, MediaStreamType, MimeConfig, MimeDetectionPolicy};
+use crate::{
+    ArcMediaStreamClassifier, MediaStreamClassifier, MediaStreamType, MimeConfig,
+    MimeDetectionPolicy,
+};
 
 use super::detection_source::DetectionSource;
 
@@ -37,6 +40,24 @@ impl AbstractMimeDetector {
             config,
             media_stream_classifier: None,
         }
+    }
+
+    /// Creates detector state from configuration and default classifier.
+    ///
+    /// # Parameters
+    /// - `config`: MIME detector configuration.
+    ///
+    /// # Returns
+    /// Shared detector state using the configured default media classifier when
+    /// precise detection is enabled.
+    pub fn from_mime_config(config: MimeConfig) -> Self {
+        let mut detector = Self::new(config.clone());
+        if config.enable_precise_detection() {
+            detector.set_media_stream_classifier(Some(
+                ArcMediaStreamClassifier::from_mime_config(&config).into_inner(),
+            ));
+        }
+        detector
     }
 
     /// Sets the classifier used for precise media MIME refinement.
@@ -246,7 +267,7 @@ impl AbstractMimeDetector {
 impl Default for AbstractMimeDetector {
     /// Loads default detector state.
     fn default() -> Self {
-        Self::new(MimeConfig::load())
+        Self::from_mime_config(MimeConfig::default())
     }
 }
 
@@ -332,6 +353,8 @@ pub(crate) mod coverage_support {
     /// Summary strings from shared detector behavior.
     pub(crate) fn exercise_abstract_edges() -> Vec<String> {
         let mut detector = AbstractMimeDetector::new(MimeConfig::new(
+            "repository",
+            "ffprobe",
             true,
             "webm,ogg",
             "webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg",
@@ -362,33 +385,49 @@ pub(crate) mod coverage_support {
             Some("movie.webm"),
             DetectionSource::None,
         );
-        let no_classifier =
-            AbstractMimeDetector::new(MimeConfig::new(true, "webm", "webm:video/webm,audio/webm"))
+        let no_classifier = AbstractMimeDetector::new(MimeConfig::new(
+            "repository",
+            "ffprobe",
+            true,
+            "webm",
+            "webm:video/webm,audio/webm",
+        ))
+        .refine_detected_mime_type(
+            "video/webm",
+            Some("movie.webm"),
+            DetectionSource::Content(b""),
+        );
+        let disabled = AbstractMimeDetector::new(MimeConfig::new(
+            "repository",
+            "ffprobe",
+            false,
+            "webm",
+            "webm:video/webm,audio/webm",
+        ))
+        .refine_detected_mime_type(
+            "video/webm",
+            Some("movie.webm"),
+            DetectionSource::Content(b""),
+        );
+        let missing_mapping =
+            AbstractMimeDetector::new(MimeConfig::new("repository", "ffprobe", true, "webm", ""))
                 .refine_detected_mime_type(
                     "video/webm",
                     Some("movie.webm"),
                     DetectionSource::Content(b""),
                 );
-        let disabled =
-            AbstractMimeDetector::new(MimeConfig::new(false, "webm", "webm:video/webm,audio/webm"))
-                .refine_detected_mime_type(
-                    "video/webm",
-                    Some("movie.webm"),
-                    DetectionSource::Content(b""),
-                );
-        let missing_mapping = AbstractMimeDetector::new(MimeConfig::new(true, "webm", ""))
-            .refine_detected_mime_type(
-                "video/webm",
-                Some("movie.webm"),
-                DetectionSource::Content(b""),
-            );
         let mismatch = detector.refine_detected_mime_type(
             "application/pdf",
             Some("movie.webm"),
             DetectionSource::Content(b""),
         );
-        let mut none_detector =
-            AbstractMimeDetector::new(MimeConfig::new(true, "webm", "webm:video/webm,audio/webm"));
+        let mut none_detector = AbstractMimeDetector::new(MimeConfig::new(
+            "repository",
+            "ffprobe",
+            true,
+            "webm",
+            "webm:video/webm,audio/webm",
+        ));
         none_detector.set_media_stream_classifier(Some(Arc::new(FailingClassifier)));
         let failed_stream = none_detector.refine_detected_mime_type(
             "video/webm",

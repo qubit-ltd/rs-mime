@@ -7,3 +7,5 @@
  *
  ******************************************************************************/
 //! Tests for top-level crate API traits.
+
+mod mime_config_tests;
