@@ -25,9 +25,9 @@ mod mime_error;
 mod mime_result;
 
 pub use classifier::{
-    AbstractMediaStreamClassifier, FfprobeCommandMediaStreamClassifier,
-    FileBasedMediaStreamClassifier, MediaStreamClassifier, MediaStreamType,
-    default_media_stream_classifier,
+    AbstractMediaStreamClassifier, ArcMediaStreamClassifier, BoxMediaStreamClassifier,
+    FfprobeCommandMediaStreamClassifier, FileBasedMediaStreamClassifier, MediaStreamClassifier,
+    MediaStreamType,
 };
 pub use common_mime_types::*;
 pub use constants::*;
@@ -76,7 +76,7 @@ pub mod coverage_support {
         );
         result.extend(crate::mime_config::coverage_support::exercise_config_edges());
         result.extend(crate::detector::coverage_support::exercise_detector_defaults());
-        result.extend(crate::classifier::media_stream_classifier::coverage_support::exercise_classifier_defaults());
+        result.extend(crate::classifier::coverage_support::exercise_classifier_defaults());
         result.extend(
             crate::detector::abstract_mime_detector::coverage_support::exercise_abstract_edges(),
         );

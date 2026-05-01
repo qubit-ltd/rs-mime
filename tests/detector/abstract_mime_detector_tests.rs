@@ -20,7 +20,7 @@ struct StaticClassifier {
 }
 
 impl MediaStreamClassifier for StaticClassifier {
-    fn classify_path(&self, _path: &Path) -> Result<MediaStreamType, MimeError> {
+    fn classify_file(&self, _file: &Path) -> Result<MediaStreamType, MimeError> {
         Ok(self.stream_type)
     }
 

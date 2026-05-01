@@ -30,7 +30,7 @@ pub(crate) fn exercise_detector_defaults() -> Vec<String> {
 
     let boxed_wrapper = BoxMimeDetector::new(Box::new(RepositoryMimeDetector::default()));
     let boxed_as_detector = boxed_wrapper
-        .as_detector()
+        .as_ref()
         .detect_by_filename("file.pdf")
         .is_some()
         .to_string();
@@ -65,7 +65,7 @@ pub(crate) fn exercise_detector_defaults() -> Vec<String> {
 
     let arc_wrapper = ArcMimeDetector::new(Arc::new(RepositoryMimeDetector::default()));
     let arc_as_detector = arc_wrapper
-        .as_detector()
+        .as_ref()
         .detect_by_filename("file.pdf")
         .is_some()
         .to_string();

@@ -202,9 +202,9 @@ impl Default for FfprobeCommandMediaStreamClassifier {
 }
 
 impl MediaStreamClassifier for FfprobeCommandMediaStreamClassifier {
-    /// Classifies a local media path using FFprobe.
-    fn classify_path(&self, path: &Path) -> MimeResult<MediaStreamType> {
-        self.classify_by_local_file(path)
+    /// Classifies a local media file using FFprobe.
+    fn classify_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
+        self.classify_by_local_file(file)
     }
 
     /// Classifies in-memory bytes by staging them to a temporary file.
@@ -247,15 +247,15 @@ pub(crate) mod coverage_support {
         .map(|stream_type| format!("{stream_type:?}"))
         .collect::<Vec<_>>()
         .join(",");
-        let path = format!(
+        let file = format!(
             "{:?}",
-            classifier.classify_path(std::path::Path::new("Cargo.toml"))
+            classifier.classify_file(std::path::Path::new("Cargo.toml"))
         );
         let content = format!("{:?}", classifier.classify_content(b"not media"));
         let trait_classifier: &dyn MediaStreamClassifier = &classifier;
-        let trait_path = format!(
+        let trait_file = format!(
             "{:?}",
-            trait_classifier.classify_path(std::path::Path::new("Cargo.toml"))
+            trait_classifier.classify_file(std::path::Path::new("Cargo.toml"))
         );
         let trait_content = format!("{:?}", trait_classifier.classify_content(b"not media"));
         let default = FfprobeCommandMediaStreamClassifier::default()
@@ -269,9 +269,9 @@ pub(crate) mod coverage_support {
             disable_logging,
             listing,
             FfprobeCommandMediaStreamClassifier::is_available().to_string(),
-            path,
+            file,
             content,
-            trait_path,
+            trait_file,
             trait_content,
             default,
         ]

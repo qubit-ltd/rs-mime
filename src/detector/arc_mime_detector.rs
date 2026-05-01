@@ -45,14 +45,6 @@ impl ArcMimeDetector {
         super::mime_detector_backend::MimeDetectorBackend::from_name(name).map(Self::from_backend)
     }
 
-    /// Borrows the wrapped detector.
-    ///
-    /// # Returns
-    /// Wrapped detector as a trait object.
-    pub fn as_detector(&self) -> &(dyn MimeDetector + 'static) {
-        self.inner.as_ref()
-    }
-
     /// Unwraps this wrapper into the inner shared detector.
     ///
     /// # Returns
@@ -86,7 +78,13 @@ impl Deref for ArcMimeDetector {
     type Target = dyn MimeDetector;
 
     fn deref(&self) -> &Self::Target {
-        self.as_detector()
+        self.as_ref()
+    }
+}
+
+impl AsRef<dyn MimeDetector> for ArcMimeDetector {
+    fn as_ref(&self) -> &(dyn MimeDetector + 'static) {
+        self.inner.as_ref()
     }
 }
 

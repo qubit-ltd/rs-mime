@@ -138,7 +138,7 @@ impl AbstractMimeDetector {
         };
         let stream_type = match source {
             DetectionSource::Content(content) => classifier.classify_content(content),
-            DetectionSource::Path(path) => classifier.classify_path(path),
+            DetectionSource::Path(path) => classifier.classify_file(path),
             DetectionSource::None => return detected_mime_type.to_owned(),
         };
         match stream_type.unwrap_or(MediaStreamType::None) {
@@ -286,8 +286,8 @@ pub(crate) mod coverage_support {
     }
 
     impl MediaStreamClassifier for StaticClassifier {
-        /// Returns a fixed classification for any path.
-        fn classify_path(&self, _path: &Path) -> crate::MimeResult<MediaStreamType> {
+        /// Returns a fixed classification for any file.
+        fn classify_file(&self, _file: &Path) -> crate::MimeResult<MediaStreamType> {
             Ok(self.stream_type)
         }
 
@@ -315,8 +315,8 @@ pub(crate) mod coverage_support {
     struct FailingClassifier;
 
     impl MediaStreamClassifier for FailingClassifier {
-        /// Fails path classification.
-        fn classify_path(&self, _path: &Path) -> crate::MimeResult<MediaStreamType> {
+        /// Fails file classification.
+        fn classify_file(&self, _file: &Path) -> crate::MimeResult<MediaStreamType> {
             Err(MimeError::invalid_classifier_input("forced"))
         }
 
@@ -423,7 +423,7 @@ pub(crate) mod coverage_support {
             backend_trait.guess_from_content(b"webm").join(","),
             format!(
                 "{:?}",
-                classifier_trait.classify_path(Path::new("Cargo.toml"))
+                classifier_trait.classify_file(Path::new("Cargo.toml"))
             ),
             format!("{:?}", classifier_trait.classify_content(b"webm")),
         ]

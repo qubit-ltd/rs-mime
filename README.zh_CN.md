@@ -236,7 +236,7 @@ fn main() -> Result<(), MimeError> {
     }
 
     let classifier = FfprobeCommandMediaStreamClassifier::new();
-    let stream_type = classifier.classify_path(Path::new("sample.webm"))?;
+    let stream_type = classifier.classify_file(Path::new("sample.webm"))?;
 
     assert!(matches!(
         stream_type,
@@ -517,9 +517,11 @@ fn main() -> Result<(), MimeError> {
 
 | 方法 | 描述 |
 |-----|------|
-| `default_media_stream_classifier()` | 后端可用时返回默认 classifier |
-| `<dyn MediaStreamClassifier>::default_classifier()` | Java 风格的默认 classifier 构造入口 |
-| `classify_path(path)` | 分类本地媒体路径 |
+| `BoxMediaStreamClassifier::default()` | 选择配置或默认的 boxed classifier |
+| `BoxMediaStreamClassifier::from_name(name)` | 按实现名称选择 boxed classifier |
+| `ArcMediaStreamClassifier::default()` | 选择配置或默认的共享 classifier |
+| `ArcMediaStreamClassifier::from_name(name)` | 按实现名称选择共享 classifier |
+| `classify_file(file)` | 分类本地媒体文件 |
 | `classify_content(bytes)` | 分类内存中的媒体内容 |
 
 ### `FfprobeCommandMediaStreamClassifier`

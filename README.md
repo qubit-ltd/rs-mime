@@ -248,7 +248,7 @@ fn main() -> Result<(), MimeError> {
     }
 
     let classifier = FfprobeCommandMediaStreamClassifier::new();
-    let stream_type = classifier.classify_path(Path::new("sample.webm"))?;
+    let stream_type = classifier.classify_file(Path::new("sample.webm"))?;
 
     assert!(matches!(
         stream_type,
@@ -531,9 +531,11 @@ fn main() -> Result<(), MimeError> {
 
 | Method | Description |
 |--------|-------------|
-| `default_media_stream_classifier()` | Return a default classifier when a backend is available |
-| `<dyn MediaStreamClassifier>::default_classifier()` | Java-style default classifier constructor |
-| `classify_path(path)` | Classify a local media path |
+| `BoxMediaStreamClassifier::default()` | Select the configured/default boxed classifier |
+| `BoxMediaStreamClassifier::from_name(name)` | Select a boxed classifier by implementation name |
+| `ArcMediaStreamClassifier::default()` | Select the configured/default shared classifier |
+| `ArcMediaStreamClassifier::from_name(name)` | Select a shared classifier by implementation name |
+| `classify_file(file)` | Classify a local media file |
 | `classify_content(bytes)` | Classify in-memory media content |
 
 ### `FfprobeCommandMediaStreamClassifier`

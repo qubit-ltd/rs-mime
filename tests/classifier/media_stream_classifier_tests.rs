@@ -9,7 +9,10 @@
 
 use std::path::Path;
 
-use qubit_mime::{MediaStreamClassifier, MediaStreamType, MimeError};
+use qubit_mime::{
+    ArcMediaStreamClassifier, BoxMediaStreamClassifier, MediaStreamClassifier, MediaStreamType,
+    MimeError,
+};
 
 #[derive(Debug)]
 struct StaticClassifier {
@@ -17,7 +20,7 @@ struct StaticClassifier {
 }
 
 impl MediaStreamClassifier for StaticClassifier {
-    fn classify_path(&self, _path: &Path) -> Result<MediaStreamType, MimeError> {
+    fn classify_file(&self, _file: &Path) -> Result<MediaStreamType, MimeError> {
         Ok(self.stream_type)
     }
 
@@ -41,12 +44,27 @@ fn test_media_stream_classifier_trait_supports_content_classification() {
 }
 
 #[test]
-fn test_default_media_stream_classifier_is_optional() {
-    let classifier = <dyn MediaStreamClassifier>::default_classifier();
-    if let Some(classifier) = classifier {
-        assert!(matches!(
-            classifier.classify_content(b"not a media file"),
-            Ok(MediaStreamType::None) | Err(_)
-        ));
-    }
+fn test_default_box_media_stream_classifier_returns_classifier() {
+    let classifier = BoxMediaStreamClassifier::default();
+    assert!(matches!(
+        classifier.classify_content(b"not a media file"),
+        Ok(MediaStreamType::None) | Err(_)
+    ));
+}
+
+#[test]
+fn test_media_stream_classifier_wrappers_select_named_classifiers() {
+    let boxed = BoxMediaStreamClassifier::from_name("ffprobe").expect("ffprobe classifier");
+    let shared = ArcMediaStreamClassifier::from_name("ffprobe").expect("ffprobe classifier");
+
+    assert!(matches!(
+        boxed.classify_content(b"not a media file"),
+        Ok(MediaStreamType::None) | Err(_)
+    ));
+    assert!(matches!(
+        shared.classify_content(b"not a media file"),
+        Ok(MediaStreamType::None) | Err(_)
+    ));
+    assert!(BoxMediaStreamClassifier::from_name("unknown").is_none());
+    assert!(ArcMediaStreamClassifier::from_name("unknown").is_none());
 }
