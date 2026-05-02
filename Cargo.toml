@@ -27,11 +27,12 @@ name = "qubit_mime"
 doctest = true
 
 [dependencies]
-qubit-command = "0.2"
-qubit-config = { version = "0.11", path = "../rs-config" }
 regex = "1.12"
 roxmltree = "0.21"
 thiserror = "2.0"
+
+qubit-command = "0.2"
+qubit-config = { version = "0.12", path = "../rs-config" }
 
 [dev-dependencies]
 tempfile = "3.23"

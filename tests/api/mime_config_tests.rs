@@ -20,7 +20,7 @@ use qubit_mime::{
     DEFAULT_MEDIA_STREAM_CLASSIFIER, DEFAULT_MIME_DETECTOR, DEFAULT_PRECISE_DETECTION_PATTERNS,
     ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT, ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
     ENV_MIME_DETECTOR_DEFAULT, ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
-    ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS, MimeConfig, MimeDetector,
+    ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS, MimeConfig, MimeDetector, MimeError,
 };
 
 static MIME_CONFIG_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -60,11 +60,64 @@ fn test_from_config_reads_logical_config_keys() {
 }
 
 #[test]
+fn test_from_config_reads_env_aliases_with_env_friendly_options() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_MIME_DETECTOR_DEFAULT, "   ")
+        .expect("blank detector default should be configurable");
+    config
+        .set(ENV_MIME_DETECTOR_DEFAULT, "repository")
+        .expect("detector env default should be configurable");
+    config
+        .set(ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT, " ffprobe ")
+        .expect("classifier env default should be configurable");
+    config
+        .set(ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION, "yes")
+        .expect("precise detection env flag should be configurable");
+    config
+        .set(
+            ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
+            ".mkv, webm,, ",
+        )
+        .expect("precise patterns env value should be configurable");
+    config
+        .set(
+            ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
+            "mkv:video/x-matroska,audio/x-matroska; webm:video/webm,audio/webm",
+        )
+        .expect("ambiguous mapping env value should be configurable");
+
+    let mime_config = MimeConfig::from_config(&config).expect("env aliases should parse");
+
+    assert_eq!("repository", mime_config.mime_detector_default());
+    assert_eq!("ffprobe", mime_config.media_stream_classifier_default());
+    assert!(mime_config.enable_precise_detection());
+    assert!(mime_config.precise_detection_patterns().contains("mkv"));
+    assert!(mime_config.precise_detection_patterns().contains("webm"));
+    assert_eq!(
+        Some(&["video/webm".to_owned(), "audio/webm".to_owned()]),
+        mime_config.ambiguous_mime_mapping().get("webm")
+    );
+}
+
+#[test]
+fn test_from_config_reports_invalid_boolean_value() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, "maybe")
+        .expect("invalid precise detection flag should still be storable");
+
+    let result = MimeConfig::from_config(&config);
+
+    assert!(matches!(result, Err(MimeError::Config(_))));
+}
+
+#[test]
 fn test_set_default_and_reload_default_replace_default_snapshot() {
     let _guard = mime_config_test_lock();
     let original = MimeConfig::default();
     let _restore = DefaultConfigRestore::new(original);
-    let custom = MimeConfig::new(
+    let custom = create_test_config(
         "repository",
         "ffprobe",
         true,
@@ -161,7 +214,7 @@ fn test_wrappers_use_mime_config_defaults() {
     let original = MimeConfig::default();
     let _restore = DefaultConfigRestore::new(original);
 
-    MimeConfig::set_default(MimeConfig::new(
+    MimeConfig::set_default(create_test_config(
         "repository",
         "ffprobe",
         DEFAULT_ENABLE_PRECISE_DETECTION,
@@ -190,6 +243,41 @@ fn mime_config_test_lock() -> MutexGuard<'static, ()> {
     MIME_CONFIG_TEST_LOCK
         .lock()
         .expect("MIME config test lock should not be poisoned")
+}
+
+fn create_test_config(
+    mime_detector_default: &str,
+    media_stream_classifier_default: &str,
+    enable_precise_detection: bool,
+    precise_detection_patterns: &str,
+    ambiguous_mime_mapping: &str,
+) -> MimeConfig {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_MIME_DETECTOR_DEFAULT, mime_detector_default)
+        .expect("detector default should be configurable");
+    config
+        .set(
+            CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+            media_stream_classifier_default,
+        )
+        .expect("classifier default should be configurable");
+    config
+        .set(
+            CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+            enable_precise_detection,
+        )
+        .expect("precise detection should be configurable");
+    config
+        .set(
+            CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
+            precise_detection_patterns,
+        )
+        .expect("precise detection patterns should be configurable");
+    config
+        .set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, ambiguous_mime_mapping)
+        .expect("ambiguous MIME mapping should be configurable");
+    MimeConfig::from_config(&config).expect("test MIME config should parse")
 }
 
 struct DefaultConfigRestore {

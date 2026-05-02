@@ -23,8 +23,8 @@ mod mime_error;
 mod mime_result;
 
 pub use classifier::{
-    AbstractMediaStreamClassifier, ArcMediaStreamClassifier, BoxMediaStreamClassifier,
-    FfprobeCommandMediaStreamClassifier, FileBasedMediaStreamClassifier, MediaStreamClassifier,
+    ArcMediaStreamClassifier, BoxMediaStreamClassifier, FfprobeCommandMediaStreamClassifier,
+    FileBasedMediaStreamClassifier, MediaStreamClassifier, MediaStreamClassifierBackend,
     MediaStreamType,
 };
 pub use common_mime_types::*;
@@ -89,7 +89,7 @@ pub mod coverage_support {
             crate::detector::stream_based_mime_detector::coverage_support::exercise_stream_edges(),
         );
         result.extend(
-            crate::classifier::abstract_media_stream_classifier::coverage_support::exercise_abstract_classifier_edges(),
+            crate::classifier::media_stream_classifier_helpers::coverage_support::exercise_media_stream_classifier_helper_edges(),
         );
         result.extend(
             crate::classifier::file_based_media_stream_classifier::coverage_support::exercise_file_based_classifier_edges(),

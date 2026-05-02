@@ -19,7 +19,7 @@ use crate::{
 
 use super::detection_source::DetectionSource;
 
-/// Java-style shared detector state and merge/refinement logic.
+/// Shared detector state and merge/refinement logic.
 #[derive(Debug, Clone)]
 pub struct AbstractMimeDetector {
     /// MIME detector configuration.
@@ -55,7 +55,7 @@ impl AbstractMimeDetector {
         let mut detector = Self::new(config.clone());
         if config.enable_precise_detection() {
             detector.set_media_stream_classifier(Some(
-                ArcMediaStreamClassifier::from_mime_config(&config).into_inner(),
+                ArcMediaStreamClassifier::from_config(&config).into_inner(),
             ));
         }
         detector
@@ -81,7 +81,7 @@ impl AbstractMimeDetector {
         self.media_stream_classifier.as_ref()
     }
 
-    /// Merges filename and content candidates using the Java detector strategy.
+    /// Merges filename and content candidates using the detector selection strategy.
     ///
     /// # Parameters
     /// - `from_filename`: Candidates from filename glob detection.
@@ -292,12 +292,17 @@ fn extension_from_filename(filename: &str) -> Option<String> {
 pub(crate) mod coverage_support {
     //! Coverage helpers for shared detector behavior.
 
+    use std::io::Read;
     use std::path::Path;
     use std::sync::Arc;
 
+    use qubit_config::Config;
+
     use crate::{
-        MediaStreamClassifier, MediaStreamType, MimeConfig, MimeError,
-        StringListMimeDetectorBackend,
+        CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+        CONFIG_MIME_DETECTOR_DEFAULT, CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+        CONFIG_MIME_PRECISE_DETECTION_PATTERNS, MediaStreamClassifier, MediaStreamType, MimeConfig,
+        MimeError, StringListMimeDetectorBackend,
     };
 
     use super::{AbstractMimeDetector, DetectionSource, extension_from_filename};
@@ -314,7 +319,7 @@ pub(crate) mod coverage_support {
         }
 
         /// Returns a fixed classification for any content.
-        fn classify_content(&self, _content: &[u8]) -> crate::MimeResult<MediaStreamType> {
+        fn classify_reader(&self, _reader: &mut dyn Read) -> crate::MimeResult<MediaStreamType> {
             Ok(self.stream_type)
         }
     }
@@ -343,7 +348,7 @@ pub(crate) mod coverage_support {
         }
 
         /// Fails content classification.
-        fn classify_content(&self, _content: &[u8]) -> crate::MimeResult<MediaStreamType> {
+        fn classify_reader(&self, _reader: &mut dyn Read) -> crate::MimeResult<MediaStreamType> {
             Err(MimeError::invalid_classifier_input("forced"))
         }
     }
@@ -353,9 +358,7 @@ pub(crate) mod coverage_support {
     /// # Returns
     /// Summary strings from shared detector behavior.
     pub(crate) fn exercise_abstract_edges() -> Vec<String> {
-        let mut detector = AbstractMimeDetector::new(MimeConfig::new(
-            "repository",
-            "ffprobe",
+        let mut detector = AbstractMimeDetector::new(config_from_values(
             true,
             "webm,ogg",
             "webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg",
@@ -386,9 +389,7 @@ pub(crate) mod coverage_support {
             Some("movie.webm"),
             DetectionSource::None,
         );
-        let no_classifier = AbstractMimeDetector::new(MimeConfig::new(
-            "repository",
-            "ffprobe",
+        let no_classifier = AbstractMimeDetector::new(config_from_values(
             true,
             "webm",
             "webm:video/webm,audio/webm",
@@ -398,9 +399,7 @@ pub(crate) mod coverage_support {
             Some("movie.webm"),
             DetectionSource::Content(b""),
         );
-        let disabled = AbstractMimeDetector::new(MimeConfig::new(
-            "repository",
-            "ffprobe",
+        let disabled = AbstractMimeDetector::new(config_from_values(
             false,
             "webm",
             "webm:video/webm,audio/webm",
@@ -410,21 +409,18 @@ pub(crate) mod coverage_support {
             Some("movie.webm"),
             DetectionSource::Content(b""),
         );
-        let missing_mapping =
-            AbstractMimeDetector::new(MimeConfig::new("repository", "ffprobe", true, "webm", ""))
-                .refine_detected_mime_type(
-                    "video/webm",
-                    Some("movie.webm"),
-                    DetectionSource::Content(b""),
-                );
+        let missing_mapping = AbstractMimeDetector::new(config_from_values(true, "webm", ""))
+            .refine_detected_mime_type(
+                "video/webm",
+                Some("movie.webm"),
+                DetectionSource::Content(b""),
+            );
         let mismatch = detector.refine_detected_mime_type(
             "application/pdf",
             Some("movie.webm"),
             DetectionSource::Content(b""),
         );
-        let mut none_detector = AbstractMimeDetector::new(MimeConfig::new(
-            "repository",
-            "ffprobe",
+        let mut none_detector = AbstractMimeDetector::new(config_from_values(
             true,
             "webm",
             "webm:video/webm,audio/webm",
@@ -467,5 +463,44 @@ pub(crate) mod coverage_support {
             ),
             format!("{:?}", classifier_trait.classify_content(b"webm")),
         ]
+    }
+
+    /// Creates MIME configuration through the public config reader path.
+    ///
+    /// # Parameters
+    /// - `enable_precise_detection`: Whether precise detection is enabled.
+    /// - `precise_detection_patterns`: Extension list used for refinement.
+    /// - `ambiguous_mime_mapping`: Mapping list used for refinement.
+    ///
+    /// # Returns
+    /// Parsed MIME configuration.
+    fn config_from_values(
+        enable_precise_detection: bool,
+        precise_detection_patterns: &str,
+        ambiguous_mime_mapping: &str,
+    ) -> MimeConfig {
+        let mut config = Config::new();
+        config
+            .set(CONFIG_MIME_DETECTOR_DEFAULT, "repository")
+            .expect("coverage detector selector should be configurable");
+        config
+            .set(CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, "ffprobe")
+            .expect("coverage classifier selector should be configurable");
+        config
+            .set(
+                CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+                enable_precise_detection,
+            )
+            .expect("coverage precise detection flag should be configurable");
+        config
+            .set(
+                CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
+                precise_detection_patterns,
+            )
+            .expect("coverage precise detection patterns should be configurable");
+        config
+            .set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, ambiguous_mime_mapping)
+            .expect("coverage ambiguous MIME mapping should be configurable");
+        MimeConfig::from_config(&config).expect("coverage MIME config should parse")
     }
 }

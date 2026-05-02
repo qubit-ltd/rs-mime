@@ -12,37 +12,36 @@ and content magic rules.
 
 ## Overview
 
-Qubit MIME is a repository-backed MIME type detector for Rust. It uses the same
-freedesktop shared MIME-info data model as the Java `common-mime` module:
-canonical MIME type names, aliases, localized comments, filename globs,
-content magic rules, and super-type relationships.
+Qubit MIME is a repository-backed MIME type detector for Rust. It uses the
+freedesktop shared MIME-info data model: canonical MIME type names, aliases,
+localized comments, filename globs, content magic rules, and super-type
+relationships.
 
-The crate follows the Java `common-mime` design while exposing idiomatic Rust
-types. Its public surface is organized into three layers:
+The public surface is organized into three layers:
 
-- `MimeDetector`: the top-level detector trait, equivalent to the Java
-  `MimeDetector` interface. Use it when code should work with any detector
-  implementation.
-- `detector`: Java-style detector implementations and shared detector logic,
+- `MimeDetector`: the top-level detector trait. Use it when code should work
+  with any detector implementation.
+- `detector`: detector implementations and shared detector logic,
   including `AbstractMimeDetector`, `RepositoryMimeDetector`,
   `FileCommandMimeDetector`, `StreamBasedMimeDetector`, and
   `FileBasedMimeDetector`.
-- `MediaStreamClassifier`: the top-level media stream classifier trait,
-  equivalent to the Java `MediaStreamClassifier` interface. The `classifier`
-  module provides `FfprobeCommandMediaStreamClassifier`,
-  `AbstractMediaStreamClassifier`, and file-based classifier helpers.
+- `MediaStreamClassifier`: the top-level media stream classifier trait. The
+  `classifier` module provides `FfprobeCommandMediaStreamClassifier`,
+  `MediaStreamClassifierBackend`, and `FileBasedMediaStreamClassifier` for
+  implementing stream-backed or file-backed classifiers with less duplicated
+  entry-point code.
 - `MimeRepository`: the lower-level repository returning `MimeType` metadata
   and all matching candidates when callers need richer inspection.
 
 ## Design Goals
 
-- **Java parity**: follow the behavior and database model of the Java
-  `common-mime` implementation.
+- **Freedesktop data model**: follow shared MIME-info names, aliases, glob
+  rules, and magic rules.
 - **Practical defaults**: ship with an embedded freedesktop MIME database.
 - **Filename and content detection**: support glob-based and magic-based
   detection, independently or together.
-- **Detector and classifier hierarchy**: mirror the Java detector/classifier
-  split while keeping Rust ownership and error handling.
+- **Detector and classifier hierarchy**: keep MIME detection and media stream
+  refinement separate with Rust ownership and error handling.
 - **Predictable conflict resolution**: prefer higher glob weights, longer glob
   patterns, and higher magic priorities.
 - **Rust-friendly API**: use borrowed repositories, concrete errors, and
@@ -230,9 +229,8 @@ fn main() -> Result<(), MimeError> {
 
 ### Use the system `file` command detector
 
-`FileCommandMimeDetector` mirrors the Java file-command detector. It uses the
-embedded repository for filename candidates and `file --mime-type --brief` for
-content detection.
+`FileCommandMimeDetector` uses the embedded repository for filename candidates
+and `file --mime-type --brief` for content detection.
 
 ```rust,no_run
 use std::time::Duration;
@@ -272,9 +270,8 @@ fn main() -> Result<(), MimeError> {
 
 ### Classify media streams with FFprobe
 
-`FfprobeCommandMediaStreamClassifier` mirrors the Java FFprobe classifier. It
-classifies a media file as no media, audio-only, video-only, or video with
-audio.
+`FfprobeCommandMediaStreamClassifier` classifies a media file as no media,
+audio-only, video-only, or video with audio.
 
 ```rust,no_run
 use std::path::Path;
@@ -571,9 +568,6 @@ fn main() -> Result<(), MimeError> {
 | `detect_path_by_content(path)` | Detect a local file using command output only |
 | `detect_path(path, policy)` | Detect a path by filename and command-backed content inspection |
 | `detect_reader(reader, filename, policy)` | Detect a seekable reader through the file-backed path |
-| `set_execution_timeout(timeout)` | Configure the runner timeout for `file` commands |
-| `set_working_directory(directory)` | Configure the runner working directory |
-| `set_disable_logging(value)` | Configure command runner logging |
 
 ### `MediaStreamClassifier`
 
@@ -581,11 +575,12 @@ fn main() -> Result<(), MimeError> {
 |--------|-------------|
 | `BoxMediaStreamClassifier::default()` | Select the configured/default boxed classifier |
 | `BoxMediaStreamClassifier::from_name(name)` | Select a boxed classifier by implementation name |
-| `BoxMediaStreamClassifier::from_mime_config(config)` | Select a boxed classifier from explicit MIME configuration |
+| `BoxMediaStreamClassifier::from_config(config)` | Select a boxed classifier from explicit MIME configuration |
 | `ArcMediaStreamClassifier::default()` | Select the configured/default shared classifier |
 | `ArcMediaStreamClassifier::from_name(name)` | Select a shared classifier by implementation name |
-| `ArcMediaStreamClassifier::from_mime_config(config)` | Select a shared classifier from explicit MIME configuration |
+| `ArcMediaStreamClassifier::from_config(config)` | Select a shared classifier from explicit MIME configuration |
 | `classify_file(file)` | Classify a local media file |
+| `classify_reader(reader)` | Classify media content from a reader |
 | `classify_content(bytes)` | Classify in-memory media content |
 
 ### `FfprobeCommandMediaStreamClassifier`
@@ -595,9 +590,7 @@ fn main() -> Result<(), MimeError> {
 | `new()` | Create an FFprobe-backed classifier |
 | `is_available()` | Check whether `ffprobe` can be executed |
 | `classify_stream_listing(output)` | Classify parsed FFprobe `codec_type` output |
-| `set_execution_timeout(timeout)` | Store the Java-compatible command timeout setting |
 | `set_working_directory(directory)` | Set the command working directory |
-| `set_disable_logging(value)` | Store the Java-compatible disable-logging flag |
 
 ### `MimeRepository`
 
@@ -642,7 +635,7 @@ fn main() -> Result<(), MimeError> {
 
 ## Module Layout
 
-The source layout intentionally mirrors the Java implementation:
+The source layout is grouped by detector, classifier, and repository concerns:
 
 ```text
 src/

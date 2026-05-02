@@ -41,26 +41,26 @@ fn test_with_repository_and_runner_uses_runner_configuration() {
         Some(Duration::from_secs(2)),
         detector.command_runner().configured_timeout()
     );
-    assert!(detector.is_disable_logging());
+    assert!(detector.command_runner().is_logging_disabled());
     assert!(detector.command_runner().is_lossy_output_enabled());
 
-    detector.set_working_directory(".");
+    detector.set_command_runner(detector.command_runner().clone().working_directory("."));
     assert_eq!(
         Some(std::path::Path::new(".")),
-        detector.working_directory()
+        detector.command_runner().configured_working_directory()
     );
 
     detector.set_command_runner(CommandRunner::new().disable_logging(false));
-    assert!(!detector.is_disable_logging());
+    assert!(!detector.command_runner().is_logging_disabled());
 }
 
 #[test]
-fn test_detect_path_by_content_honors_execution_timeout() {
+fn test_detect_path_by_content_uses_runner_timeout() {
     if !FileCommandMimeDetector::is_available() {
         return;
     }
-    let mut detector = FileCommandMimeDetector::new();
-    detector.set_execution_timeout(Duration::ZERO);
+    let detector = FileCommandMimeDetector::new()
+        .with_command_runner(CommandRunner::new().timeout(Duration::ZERO));
 
     assert!(detector.detect_path_by_content("Cargo.toml").is_err());
 }

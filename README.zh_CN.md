@@ -11,32 +11,31 @@
 
 ## 概述
 
-Qubit MIME 是一个基于仓库的 Rust MIME 类型检测库。它使用与 Java
-`common-mime` 模块相同的 freedesktop shared MIME-info 数据模型：
-规范 MIME 类型名、别名、本地化说明、文件名 glob、内容魔数规则和父类型关系。
+Qubit MIME 是一个基于仓库的 Rust MIME 类型检测库。它使用 freedesktop
+shared MIME-info 数据模型：规范 MIME 类型名、别名、本地化说明、文件名
+glob、内容魔数规则和父类型关系。
 
-本 crate 参考 Java `common-mime` 的设计，同时暴露符合 Rust 习惯的类型。
 公开 API 分为三层：
 
-- `MimeDetector`：顶层检测器 trait，对应 Java 的 `MimeDetector` 接口。业务代码
-  需要兼容不同检测器实现时依赖它。
-- `detector`：Java 风格的检测器实现和共享检测逻辑，包括
+- `MimeDetector`：顶层检测器 trait。业务代码需要兼容不同检测器实现时依赖它。
+- `detector`：检测器实现和共享检测逻辑，包括
   `AbstractMimeDetector`、`RepositoryMimeDetector`、`FileCommandMimeDetector`、
   `StreamBasedMimeDetector` 和 `FileBasedMimeDetector`。
-- `MediaStreamClassifier`：顶层媒体流分类 trait，对应 Java 的
-  `MediaStreamClassifier` 接口。`classifier` 模块提供
-  `FfprobeCommandMediaStreamClassifier`、`AbstractMediaStreamClassifier` 和
-  file-based 辅助实现。
+- `MediaStreamClassifier`：顶层媒体流分类 trait。`classifier` 模块提供
+  `FfprobeCommandMediaStreamClassifier`、`MediaStreamClassifierBackend` 和
+  `FileBasedMediaStreamClassifier`，用于用更少重复入口代码实现 stream-backed
+  或 file-backed classifier。
 - `MimeRepository`：底层仓库 API，返回 `MimeType` 元数据和所有最佳候选项，适合
   需要进一步检查规则和说明的调用方。
 
 ## 设计目标
 
-- **对齐 Java**：行为和数据库模型参考 Java `common-mime` 实现。
+- **Freedesktop 数据模型**：遵循 shared MIME-info 名称、别名、glob 规则和
+  magic 规则。
 - **实用默认值**：内置 freedesktop MIME 数据库。
 - **文件名与内容检测**：同时支持 glob 检测和 magic 检测，可单独使用也可组合使用。
-- **检测器与分类器层次**：对齐 Java detector/classifier 拆分，同时保留 Rust 的
-  所有权和错误处理方式。
+- **检测器与分类器层次**：分离 MIME 检测和媒体流细化逻辑，并保留 Rust 的
+  所有权与错误处理方式。
 - **可预测的冲突处理**：优先选择更高 glob 权重、更长 glob 模式和更高 magic 优先级。
 - **符合 Rust 习惯**：使用借用仓库、具体错误类型和标准 `Read + Seek` 检测入口。
 - **依赖面小**：运行时依赖保持聚焦和稳定。
@@ -222,8 +221,8 @@ fn main() -> Result<(), MimeError> {
 
 ### 使用系统 `file` 命令检测器
 
-`FileCommandMimeDetector` 对应 Java 中的 file-command detector。它使用内置仓库
-做文件名候选检测，并使用 `file --mime-type --brief` 做内容检测。
+`FileCommandMimeDetector` 使用内置仓库做文件名候选检测，并使用
+`file --mime-type --brief` 做内容检测。
 
 ```rust,no_run
 use std::time::Duration;
@@ -263,8 +262,8 @@ fn main() -> Result<(), MimeError> {
 
 ### 使用 FFprobe 分类媒体流
 
-`FfprobeCommandMediaStreamClassifier` 对应 Java 中的 FFprobe classifier。它可以把
-媒体文件分类为无媒体流、纯音频、纯视频或音视频都有。
+`FfprobeCommandMediaStreamClassifier` 可以把媒体文件分类为无媒体流、纯音频、
+纯视频或音视频都有。
 
 ```rust,no_run
 use std::path::Path;
@@ -559,9 +558,6 @@ fn main() -> Result<(), MimeError> {
 | `detect_path_by_content(path)` | 只根据命令输出检测本地文件 |
 | `detect_path(path, policy)` | 根据文件名和命令支持的内容检测来检测路径 |
 | `detect_reader(reader, filename, policy)` | 通过 file-backed 路径检测可 seek reader |
-| `set_execution_timeout(timeout)` | 配置 `file` 命令的 runner 超时 |
-| `set_working_directory(directory)` | 配置 runner 工作目录 |
-| `set_disable_logging(value)` | 配置命令 runner 日志 |
 
 ### `MediaStreamClassifier`
 
@@ -569,11 +565,12 @@ fn main() -> Result<(), MimeError> {
 |-----|------|
 | `BoxMediaStreamClassifier::default()` | 选择配置或默认的 boxed classifier |
 | `BoxMediaStreamClassifier::from_name(name)` | 按实现名称选择 boxed classifier |
-| `BoxMediaStreamClassifier::from_mime_config(config)` | 通过显式 MIME 配置选择 boxed classifier |
+| `BoxMediaStreamClassifier::from_config(config)` | 通过显式 MIME 配置选择 boxed classifier |
 | `ArcMediaStreamClassifier::default()` | 选择配置或默认的共享 classifier |
 | `ArcMediaStreamClassifier::from_name(name)` | 按实现名称选择共享 classifier |
-| `ArcMediaStreamClassifier::from_mime_config(config)` | 通过显式 MIME 配置选择共享 classifier |
+| `ArcMediaStreamClassifier::from_config(config)` | 通过显式 MIME 配置选择共享 classifier |
 | `classify_file(file)` | 分类本地媒体文件 |
+| `classify_reader(reader)` | 从 reader 分类媒体内容 |
 | `classify_content(bytes)` | 分类内存中的媒体内容 |
 
 ### `FfprobeCommandMediaStreamClassifier`
@@ -583,9 +580,7 @@ fn main() -> Result<(), MimeError> {
 | `new()` | 创建基于 FFprobe 的 classifier |
 | `is_available()` | 检查 `ffprobe` 是否可执行 |
 | `classify_stream_listing(output)` | 分类 FFprobe `codec_type` 输出 |
-| `set_execution_timeout(timeout)` | 保存与 Java API 对齐的命令超时设置 |
 | `set_working_directory(directory)` | 设置命令工作目录 |
-| `set_disable_logging(value)` | 保存与 Java API 对齐的关闭日志标志 |
 
 ### `MimeRepository`
 
@@ -630,7 +625,7 @@ fn main() -> Result<(), MimeError> {
 
 ## 模块结构
 
-源码结构有意对齐 Java 实现：
+源码结构按 detector、classifier 和 repository 职责组织：
 
 ```text
 src/

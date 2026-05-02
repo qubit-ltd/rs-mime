@@ -10,10 +10,9 @@
 //! MIME detector backed by the system `file` command.
 
 use std::io::{Read, Seek};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 #[cfg(not(coverage))]
 use std::sync::OnceLock;
-use std::time::Duration;
 
 use qubit_command::{Command, CommandRunner};
 
@@ -130,44 +129,6 @@ impl<'a> FileCommandMimeDetector<'a> {
         &mut self.base
     }
 
-    /// Sets command execution timeout.
-    ///
-    /// # Parameters
-    /// - `timeout`: Maximum duration allowed for each `file` command.
-    pub fn set_execution_timeout(&mut self, timeout: Duration) {
-        self.command_runner = self.command_runner.clone().timeout(timeout);
-    }
-
-    /// Gets command execution timeout.
-    ///
-    /// # Returns
-    /// Stored timeout, or `None`.
-    pub fn execution_timeout(&self) -> Option<Duration> {
-        self.command_runner.configured_timeout()
-    }
-
-    /// Sets command working directory.
-    ///
-    /// # Parameters
-    /// - `working_directory`: Working directory used by the command runner.
-    pub fn set_working_directory<P>(&mut self, working_directory: P)
-    where
-        P: Into<PathBuf>,
-    {
-        self.command_runner = self
-            .command_runner
-            .clone()
-            .working_directory(working_directory);
-    }
-
-    /// Gets command working directory.
-    ///
-    /// # Returns
-    /// Stored working directory, or `None`.
-    pub fn working_directory(&self) -> Option<&Path> {
-        self.command_runner.configured_working_directory()
-    }
-
     /// Gets the repository used for filename detection.
     ///
     /// # Returns
@@ -202,22 +163,6 @@ impl<'a> FileCommandMimeDetector<'a> {
     pub fn with_command_runner(mut self, command_runner: CommandRunner) -> Self {
         self.command_runner = command_runner;
         self
-    }
-
-    /// Enables or disables command execution logs.
-    ///
-    /// # Parameters
-    /// - `disable_logging`: `true` to suppress runner logs.
-    pub fn set_disable_logging(&mut self, disable_logging: bool) {
-        self.command_runner = self.command_runner.clone().disable_logging(disable_logging);
-    }
-
-    /// Tells whether command execution logging is disabled.
-    ///
-    /// # Returns
-    /// `true` when runner logs are suppressed.
-    pub fn is_disable_logging(&self) -> bool {
-        self.command_runner.is_logging_disabled()
     }
 
     /// Detects content from a local path using the `file` command only.
@@ -463,7 +408,6 @@ pub(crate) mod coverage_support {
 
     use std::io::Cursor;
     use std::path::Path;
-    use std::time::Duration;
 
     use qubit_command::CommandRunner;
 
@@ -489,19 +433,25 @@ pub(crate) mod coverage_support {
             .media_stream_classifier()
             .is_none()
             .to_string();
-        empty_detector.set_execution_timeout(Duration::from_secs(1));
-        empty_detector.set_working_directory(".");
-        empty_detector.set_disable_logging(true);
-        let timeout = empty_detector.execution_timeout().is_some().to_string();
-        let working_directory = empty_detector
-            .working_directory()
-            .map(|path| path.display().to_string())
-            .unwrap_or_default();
-        let disable_logging = empty_detector.is_disable_logging().to_string();
+        empty_detector.set_command_runner(
+            CommandRunner::new()
+                .working_directory(".")
+                .disable_logging(true)
+                .timeout(std::time::Duration::from_secs(1)),
+        );
         let runner_timeout = empty_detector
             .command_runner()
             .configured_timeout()
             .is_some()
+            .to_string();
+        let working_directory = empty_detector
+            .command_runner()
+            .configured_working_directory()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
+        let disable_logging = empty_detector
+            .command_runner()
+            .is_logging_disabled()
             .to_string();
         let working_directory_command =
             format!("{:?}", empty_detector.detect_path_by_content("Cargo.toml"));
@@ -512,11 +462,15 @@ pub(crate) mod coverage_support {
         let repository_len = empty_detector.repository().all().len().to_string();
         let replaced_runner = FileCommandMimeDetector::with_repository(&repository)
             .with_command_runner(CommandRunner::new().disable_logging(true))
-            .is_disable_logging()
+            .command_runner()
+            .is_logging_disabled()
             .to_string();
         let mut setter_detector = FileCommandMimeDetector::with_repository(&repository);
         setter_detector.set_command_runner(CommandRunner::new().disable_logging(true));
-        let setter_runner = setter_detector.is_disable_logging().to_string();
+        let setter_runner = setter_detector
+            .command_runner()
+            .is_logging_disabled()
+            .to_string();
 
         let detector = FileCommandMimeDetector::new();
         let default_detector = FileCommandMimeDetector::default();
@@ -566,7 +520,6 @@ pub(crate) mod coverage_support {
         vec![
             base_flag,
             base_mut_flag,
-            timeout,
             working_directory,
             disable_logging,
             runner_timeout,

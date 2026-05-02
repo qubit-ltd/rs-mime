@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::{MimeConfig, MimeDetectionPolicy, MimeDetector};
 
-use super::mime_detector_backend::MimeDetectorBackend;
+use super::mime_detector_kind::MimeDetectorKind;
 use super::{FileCommandMimeDetector, RepositoryMimeDetector};
 
 /// A MIME detector stored in an [`Arc`].
@@ -43,7 +43,7 @@ impl ArcMimeDetector {
     /// # Returns
     /// Matching detector, or `None` when the selector is empty or unknown.
     pub fn from_name(name: &str) -> Option<Self> {
-        super::mime_detector_backend::MimeDetectorBackend::from_name(name).map(Self::from_backend)
+        MimeDetectorKind::from_name(name).map(Self::from_kind)
     }
 
     /// Creates a shared detector from MIME configuration.
@@ -53,12 +53,12 @@ impl ArcMimeDetector {
     ///
     /// # Returns
     /// Configured detector wrapper.
-    pub fn from_mime_config(config: &MimeConfig) -> Self {
-        let backend = MimeDetectorBackend::select(
+    pub fn from_config(config: &MimeConfig) -> Self {
+        let kind = MimeDetectorKind::select(
             config.mime_detector_default(),
             FileCommandMimeDetector::is_available(),
         );
-        Self::from_backend_with_config(backend, config)
+        Self::from_kind_with_config(kind, config)
     }
 
     /// Unwraps this wrapper into the inner shared detector.
@@ -69,16 +69,16 @@ impl ArcMimeDetector {
         self.inner
     }
 
-    fn from_backend(backend: MimeDetectorBackend) -> Self {
-        Self::from_backend_with_config(backend, &MimeConfig::default())
+    fn from_kind(kind: MimeDetectorKind) -> Self {
+        Self::from_kind_with_config(kind, &MimeConfig::default())
     }
 
-    fn from_backend_with_config(backend: MimeDetectorBackend, config: &MimeConfig) -> Self {
-        match backend {
-            MimeDetectorBackend::Repository => Self::new(Arc::new(
+    fn from_kind_with_config(kind: MimeDetectorKind, config: &MimeConfig) -> Self {
+        match kind {
+            MimeDetectorKind::Repository => Self::new(Arc::new(
                 RepositoryMimeDetector::from_mime_config(config.clone()),
             )),
-            MimeDetectorBackend::FileCommand => Self::new(Arc::new(
+            MimeDetectorKind::FileCommand => Self::new(Arc::new(
                 FileCommandMimeDetector::from_mime_config(config.clone()),
             )),
         }
@@ -87,7 +87,7 @@ impl ArcMimeDetector {
 
 impl Default for ArcMimeDetector {
     fn default() -> Self {
-        Self::from_mime_config(&MimeConfig::default())
+        Self::from_config(&MimeConfig::default())
     }
 }
 

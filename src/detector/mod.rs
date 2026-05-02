@@ -19,7 +19,7 @@ pub(crate) mod file_based_mime_detector;
 pub(crate) mod file_command_mime_detector;
 pub(crate) mod mime_detection_policy;
 pub(crate) mod mime_detector;
-pub(crate) mod mime_detector_backend;
+pub(crate) mod mime_detector_kind;
 pub(crate) mod repository_mime_detector;
 pub(crate) mod stream_based_mime_detector;
 pub(crate) mod string_list_mime_detector_backend;

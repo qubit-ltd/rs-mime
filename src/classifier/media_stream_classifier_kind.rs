@@ -7,34 +7,30 @@
  *    Licensed under the Apache License, Version 2.0.
  *
  ******************************************************************************/
-//! MIME detector backend selector and helpers.
+//! Media stream classifier backend selector and helpers.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MimeDetectorBackend {
-    Repository,
-    FileCommand,
+pub(crate) enum MediaStreamClassifierKind {
+    FfprobeCommand,
 }
 
-impl MimeDetectorBackend {
-    /// Selects a detector backend from configuration and backend availability.
+impl MediaStreamClassifierKind {
+    /// Selects a classifier backend from configuration.
     ///
     /// # Parameters
-    /// - `configured`: Configured detector selector.
-    /// - `file_available`: Whether the `file` backend is available.
+    /// - `configured`: Configured classifier selector.
     ///
     /// # Returns
-    /// Selected detector backend.
-    pub(crate) fn select(configured: &str, file_available: bool) -> Self {
+    /// Selected classifier backend.
+    pub(crate) fn select(configured: &str) -> Self {
         if let Some(backend) = Self::from_name(configured) {
             backend
-        } else if file_available {
-            Self::FileCommand
         } else {
-            Self::Repository
+            Self::FfprobeCommand
         }
     }
 
-    /// Resolves a detector backend from a configured implementation name.
+    /// Resolves a classifier backend from a configured implementation name.
     ///
     /// # Parameters
     /// - `name`: Implementation selector.
@@ -43,8 +39,9 @@ impl MimeDetectorBackend {
     /// Matching backend, or `None` when the selector is empty or unknown.
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
-            "repository" | "repository-mime-detector" => Some(Self::Repository),
-            "file" | "file-command" | "file-command-mime-detector" => Some(Self::FileCommand),
+            "ffprobe" | "ffprobe-command" | "ffprobe-command-media-stream-classifier" => {
+                Some(Self::FfprobeCommand)
+            }
             _ => None,
         }
     }

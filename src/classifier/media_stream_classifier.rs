@@ -11,6 +11,7 @@
 //!
 
 use std::fmt::Debug;
+use std::io::{Cursor, Read};
 use std::path::Path;
 
 use crate::MimeResult;
@@ -32,6 +33,19 @@ pub trait MediaStreamClassifier: Debug + Send + Sync {
     /// [`MimeError`](crate::MimeError) when the classifier backend fails.
     fn classify_file(&self, file: &Path) -> MimeResult<MediaStreamType>;
 
+    /// Classifies media bytes from a reader.
+    ///
+    /// # Parameters
+    /// - `reader`: Media stream to classify. The stream is consumed as needed by the classifier.
+    ///
+    /// # Returns
+    /// Media stream classification.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the stream cannot be read, or another
+    /// [`MimeError`](crate::MimeError) when the classifier backend fails.
+    fn classify_reader(&self, reader: &mut dyn Read) -> MimeResult<MediaStreamType>;
+
     /// Classifies an in-memory media payload.
     ///
     /// # Parameters
@@ -43,5 +57,8 @@ pub trait MediaStreamClassifier: Debug + Send + Sync {
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when a file-backed classifier cannot stage the
     /// content.
-    fn classify_content(&self, content: &[u8]) -> MimeResult<MediaStreamType>;
+    fn classify_content(&self, content: &[u8]) -> MimeResult<MediaStreamType> {
+        let mut cursor = Cursor::new(content);
+        self.classify_reader(&mut cursor)
+    }
 }

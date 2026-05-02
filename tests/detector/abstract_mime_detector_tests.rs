@@ -8,6 +8,7 @@
  *
  ******************************************************************************/
 
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -25,13 +26,13 @@ impl MediaStreamClassifier for StaticClassifier {
         Ok(self.stream_type)
     }
 
-    fn classify_content(&self, _content: &[u8]) -> Result<MediaStreamType, MimeError> {
+    fn classify_reader(&self, _reader: &mut dyn Read) -> Result<MediaStreamType, MimeError> {
         Ok(self.stream_type)
     }
 }
 
 #[test]
-fn test_merge_results_matches_java_detector_strategy() {
+fn test_merge_results_uses_detector_selection_strategy() {
     let detector = AbstractMimeDetector::default();
 
     assert_eq!(

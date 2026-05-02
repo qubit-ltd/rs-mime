@@ -9,13 +9,14 @@
  ******************************************************************************/
 //! Boxed media stream classifier wrapper.
 
+use std::io::Read;
 use std::ops::Deref;
 use std::path::Path;
 
 use crate::{MediaStreamClassifier, MediaStreamType, MimeConfig, MimeResult};
 
 use super::FfprobeCommandMediaStreamClassifier;
-use super::media_stream_classifier_backend::MediaStreamClassifierBackend;
+use super::media_stream_classifier_kind::MediaStreamClassifierKind;
 
 /// A media stream classifier stored in a [`Box`].
 #[derive(Debug)]
@@ -43,7 +44,7 @@ impl BoxMediaStreamClassifier {
     /// # Returns
     /// Matching classifier, or `None` when the selector is empty or unknown.
     pub fn from_name(name: &str) -> Option<Self> {
-        MediaStreamClassifierBackend::from_name(name).map(Self::from_backend)
+        MediaStreamClassifierKind::from_name(name).map(Self::from_kind)
     }
 
     /// Creates a boxed classifier from MIME configuration.
@@ -53,10 +54,9 @@ impl BoxMediaStreamClassifier {
     ///
     /// # Returns
     /// Configured classifier wrapper.
-    pub fn from_mime_config(config: &MimeConfig) -> Self {
-        let backend =
-            MediaStreamClassifierBackend::select(config.media_stream_classifier_default());
-        Self::from_backend(backend)
+    pub fn from_config(config: &MimeConfig) -> Self {
+        let backend = MediaStreamClassifierKind::select(config.media_stream_classifier_default());
+        Self::from_kind(backend)
     }
 
     /// Unwraps this wrapper into the inner boxed classifier.
@@ -67,9 +67,9 @@ impl BoxMediaStreamClassifier {
         self.inner
     }
 
-    fn from_backend(backend: MediaStreamClassifierBackend) -> Self {
-        match backend {
-            MediaStreamClassifierBackend::FfprobeCommand => {
+    fn from_kind(kind: MediaStreamClassifierKind) -> Self {
+        match kind {
+            MediaStreamClassifierKind::FfprobeCommand => {
                 Self::new(Box::new(FfprobeCommandMediaStreamClassifier::new()))
             }
         }
@@ -78,7 +78,7 @@ impl BoxMediaStreamClassifier {
 
 impl Default for BoxMediaStreamClassifier {
     fn default() -> Self {
-        Self::from_mime_config(&MimeConfig::default())
+        Self::from_config(&MimeConfig::default())
     }
 }
 
@@ -113,7 +113,7 @@ impl MediaStreamClassifier for BoxMediaStreamClassifier {
         self.inner.classify_file(file)
     }
 
-    fn classify_content(&self, content: &[u8]) -> MimeResult<MediaStreamType> {
-        self.inner.classify_content(content)
+    fn classify_reader(&self, reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
+        self.inner.classify_reader(reader)
     }
 }

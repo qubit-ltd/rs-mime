@@ -14,19 +14,13 @@ use std::path::Path;
 use std::process::Command;
 #[cfg(not(coverage))]
 use std::sync::OnceLock;
-use std::time::Duration;
 
-use crate::{
-    AbstractMediaStreamClassifier, FileBasedMediaStreamClassifier, MediaStreamClassifier,
-    MediaStreamType, MimeResult,
-};
+use crate::{FileBasedMediaStreamClassifier, MediaStreamType, MimeResult};
 
 /// Media stream classifier backed by the `ffprobe` command.
 #[derive(Debug, Clone)]
 pub struct FfprobeCommandMediaStreamClassifier {
-    execution_timeout: Option<Duration>,
     working_directory: Option<String>,
-    disable_logging: bool,
 }
 
 impl FfprobeCommandMediaStreamClassifier {
@@ -43,28 +37,8 @@ impl FfprobeCommandMediaStreamClassifier {
     /// A classifier using the current process working directory.
     pub fn new() -> Self {
         Self {
-            execution_timeout: None,
             working_directory: None,
-            disable_logging: false,
         }
-    }
-
-    /// Sets the configured execution timeout.
-    ///
-    /// # Parameters
-    /// - `timeout`: Timeout value stored for callers that need parity with the
-    ///   Java API. The current standard-library implementation does not enforce
-    ///   process timeouts.
-    pub fn set_execution_timeout(&mut self, timeout: Duration) {
-        self.execution_timeout = Some(timeout);
-    }
-
-    /// Gets the configured execution timeout.
-    ///
-    /// # Returns
-    /// Stored timeout value, or `None`.
-    pub fn execution_timeout(&self) -> Option<Duration> {
-        self.execution_timeout
     }
 
     /// Sets the working directory used to execute FFprobe.
@@ -81,22 +55,6 @@ impl FfprobeCommandMediaStreamClassifier {
     /// Stored working directory, or `None`.
     pub fn working_directory(&self) -> Option<&str> {
         self.working_directory.as_deref()
-    }
-
-    /// Sets whether command logging is disabled.
-    ///
-    /// # Parameters
-    /// - `disable_logging`: Stored flag for Java API parity.
-    pub fn set_disable_logging(&mut self, disable_logging: bool) {
-        self.disable_logging = disable_logging;
-    }
-
-    /// Tells whether command logging is disabled.
-    ///
-    /// # Returns
-    /// Stored disable-logging flag.
-    pub fn is_disable_logging(&self) -> bool {
-        self.disable_logging
     }
 
     /// Classifies FFprobe `codec_type` output.
@@ -150,13 +108,12 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// Media stream classification. Non-zero FFprobe status is treated as
-    /// [`MediaStreamType::None`] to match Java's best-effort refinement.
+    /// [`MediaStreamType::None`] because stream refinement is best-effort.
     ///
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when process execution itself fails.
     #[cfg(not(coverage))]
-    fn classify_by_local_file(&self, path: &Path) -> MimeResult<MediaStreamType> {
-        AbstractMediaStreamClassifier::validate_readable_file(path)?;
+    fn classify_with_ffprobe(&self, path: &Path) -> MimeResult<MediaStreamType> {
         let mut command = Command::new(Self::COMMAND);
         command
             .arg("-v")
@@ -188,8 +145,8 @@ impl FfprobeCommandMediaStreamClassifier {
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when the path is not readable.
     #[cfg(coverage)]
-    fn classify_by_local_file(&self, path: &Path) -> MimeResult<MediaStreamType> {
-        AbstractMediaStreamClassifier::validate_readable_file(path)?;
+    fn classify_with_ffprobe(&self, path: &Path) -> MimeResult<MediaStreamType> {
+        let _ = path;
         let _ = self.working_directory.as_deref();
         Ok(MediaStreamType::None)
     }
@@ -202,25 +159,16 @@ impl Default for FfprobeCommandMediaStreamClassifier {
     }
 }
 
-impl MediaStreamClassifier for FfprobeCommandMediaStreamClassifier {
-    /// Classifies a local media file using FFprobe.
-    fn classify_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
-        self.classify_by_local_file(file)
-    }
-
-    /// Classifies in-memory bytes by staging them to a temporary file.
-    fn classify_content(&self, content: &[u8]) -> MimeResult<MediaStreamType> {
-        FileBasedMediaStreamClassifier::with_temp_file(content, |path| {
-            self.classify_by_local_file(path)
-        })
+impl FileBasedMediaStreamClassifier for FfprobeCommandMediaStreamClassifier {
+    /// Classifies a readable local media file using FFprobe.
+    fn classify_by_local_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
+        self.classify_with_ffprobe(file)
     }
 }
 
 #[cfg(coverage)]
 pub(crate) mod coverage_support {
     //! Coverage helpers for FFprobe classifier branches.
-
-    use std::time::Duration;
 
     use crate::MediaStreamClassifier;
 
@@ -232,12 +180,8 @@ pub(crate) mod coverage_support {
     /// Summary strings from classifier behavior.
     pub(crate) fn exercise_ffprobe_edges() -> Vec<String> {
         let mut classifier = FfprobeCommandMediaStreamClassifier::new();
-        classifier.set_execution_timeout(Duration::from_secs(1));
         classifier.set_working_directory(Some(".".to_owned()));
-        classifier.set_disable_logging(true);
-        let timeout = classifier.execution_timeout().is_some().to_string();
         let working_directory = classifier.working_directory().unwrap_or("").to_owned();
-        let disable_logging = classifier.is_disable_logging().to_string();
         let listing = [
             FfprobeCommandMediaStreamClassifier::classify_stream_listing("video\naudio\n"),
             FfprobeCommandMediaStreamClassifier::classify_stream_listing("video\n"),
@@ -260,14 +204,12 @@ pub(crate) mod coverage_support {
         );
         let trait_content = format!("{:?}", trait_classifier.classify_content(b"not media"));
         let default = FfprobeCommandMediaStreamClassifier::default()
-            .execution_timeout()
+            .working_directory()
             .is_none()
             .to_string();
         vec![
             FfprobeCommandMediaStreamClassifier::COMMAND.to_owned(),
-            timeout,
             working_directory,
-            disable_logging,
             listing,
             FfprobeCommandMediaStreamClassifier::is_available().to_string(),
             file,

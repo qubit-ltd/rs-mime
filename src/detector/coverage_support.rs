@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use super::mime_detector::MimeDetector;
-use super::mime_detector_backend::MimeDetectorBackend;
+use super::mime_detector_kind::MimeDetectorKind;
 use crate::{ArcMimeDetector, BoxMimeDetector, MimeDetectionPolicy, RepositoryMimeDetector};
 
 /// Exercises default detector paths and trait default methods.
@@ -118,9 +118,9 @@ pub(crate) fn exercise_detector_defaults() -> Vec<String> {
         boxed_detect,
         boxed_inner,
         boxed_from_into,
-        format!("{:?}", MimeDetectorBackend::select("", true)),
-        format!("{:?}", MimeDetectorBackend::select("", false)),
-        format!("{:?}", MimeDetectorBackend::select("repository", true)),
+        format!("{:?}", MimeDetectorKind::select("", true)),
+        format!("{:?}", MimeDetectorKind::select("", false)),
+        format!("{:?}", MimeDetectorKind::select("repository", true)),
         file_default
             .detect_by_filename("file.pdf")
             .is_some()
@@ -129,9 +129,7 @@ pub(crate) fn exercise_detector_defaults() -> Vec<String> {
             .detect_by_filename("file.pdf")
             .is_some()
             .to_string(),
-        MimeDetectorBackend::from_name("unknown")
-            .is_none()
-            .to_string(),
+        MimeDetectorKind::from_name("unknown").is_none().to_string(),
         ArcMimeDetector::default()
             .detect_by_filename("image.png")
             .is_some()

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use crate::{ArcMediaStreamClassifier, BoxMediaStreamClassifier, MediaStreamClassifier};
 
 use super::FfprobeCommandMediaStreamClassifier;
-use super::media_stream_classifier_backend::MediaStreamClassifierBackend;
+use super::media_stream_classifier_kind::MediaStreamClassifierKind;
 
 /// Exercises optional default classifier selection.
 ///
@@ -99,9 +99,9 @@ pub(crate) fn exercise_classifier_defaults() -> Vec<String> {
         boxed_file,
         boxed_inner,
         boxed_from_into,
-        format!("{:?}", MediaStreamClassifierBackend::select("")),
-        format!("{:?}", MediaStreamClassifierBackend::select("unknown")),
-        format!("{:?}", MediaStreamClassifierBackend::select("ffprobe")),
+        format!("{:?}", MediaStreamClassifierKind::select("")),
+        format!("{:?}", MediaStreamClassifierKind::select("unknown")),
+        format!("{:?}", MediaStreamClassifierKind::select("ffprobe")),
         ArcMediaStreamClassifier::default()
             .classify_content(b"media")
             .is_ok()

@@ -11,22 +11,22 @@
 //!
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{OnceLock, RwLock};
+use std::sync::{LazyLock, RwLock};
 
-use qubit_config::Config;
+use qubit_config::{
+    Config,
+    options::{CollectionReadOptions, ConfigReadOptions, EmptyItemPolicy},
+};
 
 use crate::{
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT, CONFIG_MIME_ENABLE_PRECISE_DETECTION,
-    CONFIG_MIME_PRECISE_DETECTION_PATTERNS, DEFAULT_AMBIGUOUS_MIME_MAPPING,
-    DEFAULT_ENABLE_PRECISE_DETECTION, DEFAULT_MEDIA_STREAM_CLASSIFIER, DEFAULT_MIME_DETECTOR,
-    DEFAULT_PRECISE_DETECTION_PATTERNS, ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+    CONFIG_MIME_PRECISE_DETECTION_PATTERNS, DEFAULT_ENABLE_PRECISE_DETECTION,
+    DEFAULT_MEDIA_STREAM_CLASSIFIER, DEFAULT_MIME_DETECTOR, ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING, ENV_MIME_DETECTOR_DEFAULT,
     ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION, ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
     MimeResult,
 };
-
-static DEFAULT_MIME_CONFIG: OnceLock<RwLock<MimeConfig>> = OnceLock::new();
 
 /// Runtime configuration for MIME detectors.
 #[derive(Debug, Clone)]
@@ -43,6 +43,37 @@ pub struct MimeConfig {
     ambiguous_mime_mapping: HashMap<String, [String; 2]>,
 }
 
+/// Default MIME configuration.
+static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
+    LazyLock::new(|| RwLock::new(MimeConfig::load()));
+
+/// Value read options.
+static VALUE_READ_OPTIONS: LazyLock<ConfigReadOptions> =
+    LazyLock::new(ConfigReadOptions::env_friendly);
+
+/// Mapping read options.
+static MAPPING_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
+    ConfigReadOptions::env_friendly().with_collection_options(
+        CollectionReadOptions::default()
+            .with_split_scalar_strings(true)
+            .with_delimiters([';'])
+            .with_trim_items(true)
+            .with_empty_item_policy(EmptyItemPolicy::Skip),
+    )
+});
+
+/// Built-in precise detection patterns.
+static DEFAULT_PRECISE_DETECTION_PATTERNS: LazyLock<Vec<String>> =
+    LazyLock::new(|| vec!["webm".to_owned(), "ogg".to_owned()]);
+
+/// Built-in ambiguous MIME mapping entries.
+static DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES: LazyLock<Vec<String>> = LazyLock::new(|| {
+    vec![
+        "webm:video/webm,audio/webm".to_owned(),
+        "ogg:video/ogg,audio/ogg".to_owned(),
+    ]
+});
+
 impl MimeConfig {
     /// Loads configuration from environment variables and defaults.
     ///
@@ -52,36 +83,6 @@ impl MimeConfig {
         match Self::from_env() {
             Ok(config) => config,
             Err(_) => Self::builtin_default(),
-        }
-    }
-
-    /// Creates a configuration from explicit values.
-    ///
-    /// # Parameters
-    /// - `mime_detector_default`: Default MIME detector selector.
-    /// - `media_stream_classifier_default`: Default media stream classifier selector.
-    /// - `enable_precise_detection`: Whether precise detection is enabled.
-    /// - `precise_detection_patterns`: Comma-separated extension list.
-    /// - `ambiguous_mime_mapping`: Semicolon-separated ambiguous mapping list.
-    ///
-    /// # Returns
-    /// Parsed configuration.
-    pub fn new(
-        mime_detector_default: &str,
-        media_stream_classifier_default: &str,
-        enable_precise_detection: bool,
-        precise_detection_patterns: &str,
-        ambiguous_mime_mapping: &str,
-    ) -> Self {
-        Self {
-            mime_detector_default: normalize_selector(mime_detector_default, DEFAULT_MIME_DETECTOR),
-            media_stream_classifier_default: normalize_selector(
-                media_stream_classifier_default,
-                DEFAULT_MEDIA_STREAM_CLASSIFIER,
-            ),
-            enable_precise_detection,
-            precise_detection_patterns: parse_patterns(precise_detection_patterns),
-            ambiguous_mime_mapping: parse_mapping(ambiguous_mime_mapping),
         }
     }
 
@@ -96,52 +97,52 @@ impl MimeConfig {
     ///
     /// # Errors
     /// Returns [`MimeError::Config`](crate::MimeError::Config) when a present
-    /// configuration value cannot be read as text.
+    /// configuration value cannot be converted to the expected type.
     pub fn from_config(config: &Config) -> MimeResult<Self> {
-        let mime_detector_default = read_string(
-            config,
-            &[CONFIG_MIME_DETECTOR_DEFAULT, ENV_MIME_DETECTOR_DEFAULT],
-            DEFAULT_MIME_DETECTOR,
+        let mime_detector_default = config.get_any_or_with(
+            [CONFIG_MIME_DETECTOR_DEFAULT, ENV_MIME_DETECTOR_DEFAULT],
+            DEFAULT_MIME_DETECTOR.to_owned(),
+            &VALUE_READ_OPTIONS,
         )?;
-        let media_stream_classifier_default = read_string(
-            config,
-            &[
+        let media_stream_classifier_default = config.get_any_or_with(
+            [
                 CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
                 ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
             ],
-            DEFAULT_MEDIA_STREAM_CLASSIFIER,
+            DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
+            &VALUE_READ_OPTIONS,
         )?;
-        let enable_precise_detection = read_bool(
-            config,
-            &[
+        let enable_precise_detection = config.get_any_or_with(
+            [
                 CONFIG_MIME_ENABLE_PRECISE_DETECTION,
                 ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
             ],
             DEFAULT_ENABLE_PRECISE_DETECTION,
+            &VALUE_READ_OPTIONS,
         )?;
-        let precise_detection_patterns = read_string(
-            config,
-            &[
+        let precise_detection_patterns = config.get_any_or_with(
+            [
                 CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
                 ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
             ],
-            DEFAULT_PRECISE_DETECTION_PATTERNS,
+            DEFAULT_PRECISE_DETECTION_PATTERNS.clone(),
+            &VALUE_READ_OPTIONS,
         )?;
-        let ambiguous_mime_mapping = read_string(
-            config,
-            &[
+        let ambiguous_mime_mapping = config.get_any_or_with(
+            [
                 CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
                 ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
             ],
-            DEFAULT_AMBIGUOUS_MIME_MAPPING,
+            DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES.clone(),
+            &MAPPING_READ_OPTIONS,
         )?;
-        Ok(Self::new(
-            &mime_detector_default,
-            &media_stream_classifier_default,
+        Ok(Self {
+            mime_detector_default,
+            media_stream_classifier_default,
             enable_precise_detection,
-            &precise_detection_patterns,
-            &ambiguous_mime_mapping,
-        ))
+            precise_detection_patterns: normalize_patterns(precise_detection_patterns),
+            ambiguous_mime_mapping: build_ambiguous_mime_mapping(ambiguous_mime_mapping),
+        })
     }
 
     /// Creates MIME configuration from process environment variables.
@@ -162,8 +163,7 @@ impl MimeConfig {
     /// # Parameters
     /// - `config`: Configuration to use for future default instances.
     pub fn set_default(config: Self) {
-        let cell = default_config_cell();
-        match cell.write() {
+        match DEFAULT_MIME_CONFIG.write() {
             Ok(mut guard) => *guard = config,
             Err(poisoned) => *poisoned.into_inner() = config,
         }
@@ -176,7 +176,7 @@ impl MimeConfig {
     ///
     /// # Errors
     /// Returns [`MimeError::Config`](crate::MimeError::Config) when a present
-    /// configuration value cannot be read as text.
+    /// configuration value cannot be converted to the expected type.
     pub fn reload_default(config: &Config) -> MimeResult<()> {
         Self::set_default(Self::from_config(config)?);
         Ok(())
@@ -237,182 +237,56 @@ impl MimeConfig {
     /// # Returns
     /// Configuration populated entirely from crate constants.
     fn builtin_default() -> Self {
-        Self::new(
-            DEFAULT_MIME_DETECTOR,
-            DEFAULT_MEDIA_STREAM_CLASSIFIER,
-            DEFAULT_ENABLE_PRECISE_DETECTION,
-            DEFAULT_PRECISE_DETECTION_PATTERNS,
-            DEFAULT_AMBIGUOUS_MIME_MAPPING,
-        )
-    }
-
-    /// Creates configuration from raw optional values.
-    ///
-    /// # Parameters
-    /// - `mime_detector_default`: Optional MIME detector selector.
-    /// - `media_stream_classifier_default`: Optional media stream classifier selector.
-    /// - `enable_precise_detection`: Optional boolean text.
-    /// - `precise_detection_patterns`: Optional comma-separated pattern text.
-    /// - `ambiguous_mime_mapping`: Optional semicolon-separated mapping text.
-    ///
-    /// # Returns
-    /// Parsed configuration with defaults for missing or invalid values.
-    #[cfg(coverage)]
-    fn from_raw_values(
-        mime_detector_default: Option<String>,
-        media_stream_classifier_default: Option<String>,
-        enable_precise_detection: Option<String>,
-        precise_detection_patterns: Option<String>,
-        ambiguous_mime_mapping: Option<String>,
-    ) -> Self {
-        let mime_detector_default =
-            mime_detector_default.unwrap_or_else(|| DEFAULT_MIME_DETECTOR.to_owned());
-        let media_stream_classifier_default = media_stream_classifier_default
-            .unwrap_or_else(|| DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned());
-        let enable_precise_detection = enable_precise_detection
-            .as_deref()
-            .and_then(parse_bool)
-            .unwrap_or(DEFAULT_ENABLE_PRECISE_DETECTION);
-        let precise_detection_patterns = precise_detection_patterns
-            .unwrap_or_else(|| DEFAULT_PRECISE_DETECTION_PATTERNS.to_owned());
-        let ambiguous_mime_mapping =
-            ambiguous_mime_mapping.unwrap_or_else(|| DEFAULT_AMBIGUOUS_MIME_MAPPING.to_owned());
-        Self::new(
-            &mime_detector_default,
-            &media_stream_classifier_default,
-            enable_precise_detection,
-            &precise_detection_patterns,
-            &ambiguous_mime_mapping,
-        )
+        Self {
+            mime_detector_default: DEFAULT_MIME_DETECTOR.to_owned(),
+            media_stream_classifier_default: DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
+            enable_precise_detection: DEFAULT_ENABLE_PRECISE_DETECTION,
+            precise_detection_patterns: normalize_patterns(
+                DEFAULT_PRECISE_DETECTION_PATTERNS.clone(),
+            ),
+            ambiguous_mime_mapping: build_ambiguous_mime_mapping(
+                DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES.clone(),
+            ),
+        }
     }
 }
 
 impl Default for MimeConfig {
     /// Loads default configuration.
     fn default() -> Self {
-        let cell = default_config_cell();
-        match cell.read() {
+        match DEFAULT_MIME_CONFIG.read() {
             Ok(guard) => guard.clone(),
             Err(poisoned) => poisoned.into_inner().clone(),
         }
     }
 }
 
-/// Gets the global default configuration cell.
-///
-/// # Returns
-/// Shared lock containing the current default MIME configuration.
-fn default_config_cell() -> &'static RwLock<MimeConfig> {
-    DEFAULT_MIME_CONFIG.get_or_init(|| RwLock::new(MimeConfig::load()))
-}
-
-/// Reads a string from the first present configuration key.
+/// Normalizes extension patterns.
 ///
 /// # Parameters
-/// - `config`: Configuration object.
-/// - `keys`: Candidate keys in priority order.
-/// - `default`: Fallback value when none of the keys are present.
+/// - `patterns`: Raw extension items, usually read from configuration.
 ///
 /// # Returns
-/// Configured string or fallback.
-///
-/// # Errors
-/// Returns configuration errors from `config` when a present value cannot be
-/// read as a string.
-fn read_string(config: &Config, keys: &[&str], default: &str) -> MimeResult<String> {
-    for key in keys {
-        if let Some(value) = config.get_optional_string(key)? {
-            let value = value.trim();
-            if !value.is_empty() {
-                return Ok(value.to_owned());
-            }
-        }
-    }
-    Ok(default.to_owned())
-}
-
-/// Reads a permissive boolean from the first present configuration key.
-///
-/// # Parameters
-/// - `config`: Configuration object.
-/// - `keys`: Candidate keys in priority order.
-/// - `default`: Fallback value when none of the keys parse as a boolean.
-///
-/// # Returns
-/// Configured boolean or fallback.
-///
-/// # Errors
-/// Returns configuration errors from `config` when a present value cannot be
-/// read as a string.
-fn read_bool(config: &Config, keys: &[&str], default: bool) -> MimeResult<bool> {
-    for key in keys {
-        if let Some(value) = config.get_optional_string(key)?
-            && let Some(parsed) = parse_bool(&value)
-        {
-            return Ok(parsed);
-        }
-    }
-    Ok(default)
-}
-
-/// Normalizes a backend selector with a fallback for empty values.
-///
-/// # Parameters
-/// - `selector`: Raw selector text.
-/// - `default`: Fallback selector for empty values.
-///
-/// # Returns
-/// Trimmed selector or fallback.
-fn normalize_selector(selector: &str, default: &str) -> String {
-    let selector = selector.trim();
-    if selector.is_empty() {
-        default.to_owned()
-    } else {
-        selector.to_owned()
-    }
-}
-
-/// Parses a permissive boolean environment value.
-///
-/// # Parameters
-/// - `value`: Text to parse.
-///
-/// # Returns
-/// Parsed boolean, or `None` when the value is not recognized.
-fn parse_bool(value: &str) -> Option<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
-    }
-}
-
-/// Parses comma-separated extension patterns.
-///
-/// # Parameters
-/// - `patterns`: Comma-separated extension text.
-///
-/// # Returns
-/// Lowercase extension set.
-fn parse_patterns(patterns: &str) -> HashSet<String> {
+/// Lowercase extension set without leading dots.
+fn normalize_patterns(patterns: Vec<String>) -> HashSet<String> {
     patterns
-        .split(',')
-        .map(str::trim)
+        .into_iter()
+        .map(|pattern| pattern.trim().to_owned())
         .filter(|pattern| !pattern.is_empty())
         .map(|pattern| pattern.trim_start_matches('.').to_ascii_lowercase())
         .collect()
 }
 
-/// Parses ambiguous MIME mapping text.
+/// Builds ambiguous MIME mappings from configured entries.
 ///
 /// # Parameters
-/// - `mapping`: Mapping text in `ext:video,audio;...` format.
+/// - `entries`: Mapping entries in `ext:video,audio` format.
 ///
 /// # Returns
 /// Lowercase extension to MIME pair mapping.
-fn parse_mapping(mapping: &str) -> HashMap<String, [String; 2]> {
-    mapping
-        .split(';')
+fn build_ambiguous_mime_mapping(entries: Vec<String>) -> HashMap<String, [String; 2]> {
+    entries
+        .into_iter()
         .filter_map(|entry| {
             let (extension, mime_types) = entry.split_once(':')?;
             let mut mime_types = mime_types.split(',').map(str::trim);
@@ -443,7 +317,7 @@ pub(crate) mod coverage_support {
 
     use qubit_config::Config;
 
-    use super::{MimeConfig, parse_bool, parse_mapping, parse_patterns};
+    use super::MimeConfig;
     use crate::{
         CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
         CONFIG_MIME_DETECTOR_DEFAULT, CONFIG_MIME_ENABLE_PRECISE_DETECTION,
@@ -455,14 +329,14 @@ pub(crate) mod coverage_support {
     /// # Returns
     /// Summary strings for parsed configuration values.
     pub(crate) fn exercise_config_edges() -> Vec<String> {
-        let config = MimeConfig::new(
+        let config = config_from_values(
             "repository",
             "ffprobe",
             false,
             "webm,.ogg,, ",
             "webm:video/webm,audio/webm;bad;ogg:video/ogg,audio/ogg;bad:one;empty:,audio/x;extra:video/x,audio/x,other",
         );
-        let blank_selectors = MimeConfig::new(" ", "\t", false, "", "");
+        let blank_selectors = config_from_values(" ", "\t", false, "", "");
         let mut explicit_config = Config::new();
         explicit_config
             .set(CONFIG_MIME_DETECTOR_DEFAULT, "repository")
@@ -487,15 +361,14 @@ pub(crate) mod coverage_support {
         let builtin = MimeConfig::builtin_default();
         let loaded = MimeConfig::load();
         let defaulted = <MimeConfig as Default>::default();
-        let raw_values = MimeConfig::from_raw_values(
-            Some("repository".to_owned()),
-            Some("ffprobe".to_owned()),
-            Some("true".to_owned()),
-            Some("webm".to_owned()),
-            Some("webm:video/webm,audio/webm".to_owned()),
+        let explicit_values = config_from_values(
+            "repository",
+            "ffprobe",
+            true,
+            "webm",
+            "webm:video/webm,audio/webm",
         );
-        let raw_invalid =
-            MimeConfig::from_raw_values(None, None, Some("maybe".to_owned()), None, None);
+        let invalid_bool = config_with_invalid_bool();
         vec![
             config.mime_detector_default().to_owned(),
             config.media_stream_classifier_default().to_owned(),
@@ -515,21 +388,66 @@ pub(crate) mod coverage_support {
             config.ambiguous_mime_mapping().len().to_string(),
             loaded.enable_precise_detection().to_string(),
             defaulted.enable_precise_detection().to_string(),
-            raw_values.enable_precise_detection().to_string(),
-            raw_invalid.enable_precise_detection().to_string(),
-            format!("{:?}", parse_bool("yes")),
-            format!("{:?}", parse_bool("true")),
-            format!("{:?}", parse_bool("1")),
-            format!("{:?}", parse_bool("on")),
-            format!("{:?}", parse_bool("off")),
-            format!("{:?}", parse_bool("false")),
-            format!("{:?}", parse_bool("0")),
-            format!("{:?}", parse_bool("no")),
-            format!("{:?}", parse_bool("maybe")),
-            parse_patterns("a,.b").len().to_string(),
-            parse_mapping("x:video/x,audio/x;y:video/y,audio/y")
-                .len()
-                .to_string(),
+            explicit_values.enable_precise_detection().to_string(),
+            invalid_bool.is_err().to_string(),
         ]
+    }
+
+    /// Creates a MIME config through the public configuration reader path.
+    ///
+    /// # Parameters
+    /// - `mime_detector_default`: Detector selector value.
+    /// - `media_stream_classifier_default`: Classifier selector value.
+    /// - `enable_precise_detection`: Whether precise detection is enabled.
+    /// - `precise_detection_patterns`: Configured pattern list.
+    /// - `ambiguous_mime_mapping`: Configured mapping list.
+    ///
+    /// # Returns
+    /// Parsed MIME config.
+    fn config_from_values(
+        mime_detector_default: &str,
+        media_stream_classifier_default: &str,
+        enable_precise_detection: bool,
+        precise_detection_patterns: &str,
+        ambiguous_mime_mapping: &str,
+    ) -> MimeConfig {
+        let mut config = Config::new();
+        config
+            .set(CONFIG_MIME_DETECTOR_DEFAULT, mime_detector_default)
+            .expect("coverage detector selector should be configurable");
+        config
+            .set(
+                CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+                media_stream_classifier_default,
+            )
+            .expect("coverage classifier selector should be configurable");
+        config
+            .set(
+                CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+                enable_precise_detection,
+            )
+            .expect("coverage precise detection flag should be configurable");
+        config
+            .set(
+                CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
+                precise_detection_patterns,
+            )
+            .expect("coverage precise patterns should be configurable");
+        config
+            .set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, ambiguous_mime_mapping)
+            .expect("coverage ambiguous MIME mapping should be configurable");
+        MimeConfig::from_config(&config).expect("coverage MIME config should parse")
+    }
+
+    /// Creates a MIME config read result with an invalid boolean value.
+    ///
+    /// # Returns
+    /// Result carrying the conversion error.
+    fn config_with_invalid_bool() -> crate::MimeResult<MimeConfig> {
+        let mut config = Config::new();
+        config
+            .set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, "maybe")
+            .expect("coverage invalid boolean should be configurable");
+        MimeConfig::from_config(&config)
     }
 }
