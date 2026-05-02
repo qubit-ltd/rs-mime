@@ -1,16 +1,14 @@
 /*******************************************************************************
  *
- *    Copyright (c) 2026.
- *    Haixing Hu, Qubit Co. Ltd.
+ *    Copyright (c) 2026 Haixing Hu.
  *
- *    All rights reserved.
+ *    SPDX-License-Identifier: Apache-2.0
+ *
+ *    Licensed under the Apache License, Version 2.0.
  *
  ******************************************************************************/
 //! Shared media stream classifier wrapper.
 //!
-//! # Author
-//!
-//! Haixing Hu
 
 use std::ops::Deref;
 use std::path::Path;

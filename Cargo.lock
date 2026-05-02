@@ -550,6 +550,8 @@ dependencies = [
 [[package]]
 name = "qubit-command"
 version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d7d90309af1463d6f008951b64f186f3d12ee4e45f70122ece639bd30c2b3f1"
 dependencies = [
  "log",
  "process-wrap",
@@ -575,6 +577,8 @@ dependencies = [
 [[package]]
 name = "qubit-config"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6db0e8f19f6825bba589e4b953949e2feff457fe7856c20a34d067849f25386"
 dependencies = [
  "bigdecimal",
  "chrono",

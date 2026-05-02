@@ -27,8 +27,8 @@ name = "qubit_mime"
 doctest = true
 
 [dependencies]
-qubit-command = "0.2",
-qubit-config = "0.10",
+qubit-command = "0.2"
+qubit-config = "0.10"
 regex = "1.12"
 roxmltree = "0.21"
 thiserror = "2.0"

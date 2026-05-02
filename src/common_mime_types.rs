@@ -1,16 +1,14 @@
 /*******************************************************************************
  *
- *    Copyright (c) 2026.
- *    Haixing Hu, Qubit Co. Ltd.
+ *    Copyright (c) 2026 Haixing Hu.
  *
- *    All rights reserved.
+ *    SPDX-License-Identifier: Apache-2.0
+ *
+ *    Licensed under the Apache License, Version 2.0.
  *
  ******************************************************************************/
 //! Common MIME type constants.
 //!
-//! # Author
-//!
-//! Haixing Hu
 
 /// Microsoft Excel MIME types.
 pub const EXCEL_MIME_TYPES: &[&str] = &[

@@ -1,16 +1,14 @@
 /*******************************************************************************
  *
- *    Copyright (c) 2026.
- *    Haixing Hu, Qubit Co. Ltd.
+ *    Copyright (c) 2026 Haixing Hu.
  *
- *    All rights reserved.
+ *    SPDX-License-Identifier: Apache-2.0
+ *
+ *    Licensed under the Apache License, Version 2.0.
  *
  ******************************************************************************/
 //! Configuration values for MIME detection.
 //!
-//! # Author
-//!
-//! Haixing Hu
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{OnceLock, RwLock};
