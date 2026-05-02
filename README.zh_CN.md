@@ -92,7 +92,7 @@ Qubit MIME 是一个基于仓库的 Rust MIME 类型检测库。它使用与 Jav
 
 ```toml
 [dependencies]
-qubit-mime = "0.1.0"
+qubit-mime = "0.2"
 ```
 
 ## 快速开始
