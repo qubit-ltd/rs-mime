@@ -31,9 +31,10 @@ regex = "1.12"
 roxmltree = "0.21"
 thiserror = "2.0"
 
+qubit-io = "0.1"
 qubit-command = "0.3"
-qubit-config = { version = "0.12", path = "../rs-config" }
-qubit-io = { version = "0.1", path = "../rs-io" }
+qubit-config = "0.12"
+
 
 [dev-dependencies]
 tempfile = "3.23"

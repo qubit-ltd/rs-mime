@@ -184,7 +184,7 @@ impl MimeRepository {
         policy: MimeDetectionPolicy,
     ) -> Vec<&MimeType> {
         let from_filename = self.detect_by_filename(filename);
-        if from_filename.len() == 1 && !policy.should_verify_content() {
+        if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
             return from_filename;
         }
         let from_content = self.detect_by_content(bytes);

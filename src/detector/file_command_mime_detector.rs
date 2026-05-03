@@ -27,8 +27,11 @@ use super::repository_mime_detector::default_repository;
 /// MIME detector backed by `file --mime-type --brief`.
 #[derive(Debug, Clone)]
 pub struct FileCommandMimeDetector<'a> {
-    base: MimeDetectorCore,
+    /// The shared detector core.
+    core: MimeDetectorCore,
+    /// The repository used for filename detection.
     repository: &'a MimeRepository,
+    /// The command runner used for command execution.
     command_runner: CommandRunner,
 }
 
@@ -108,26 +111,26 @@ impl<'a> FileCommandMimeDetector<'a> {
         config: MimeConfig,
     ) -> Self {
         Self {
-            base: MimeDetectorCore::from_mime_config(config),
+            core: MimeDetectorCore::from_mime_config(config),
             repository,
             command_runner,
         }
     }
 
-    /// Gets the shared detector state.
+    /// Gets the shared detector core.
     ///
     /// # Returns
-    /// Shared detector behavior and configuration.
-    pub fn base(&self) -> &MimeDetectorCore {
-        &self.base
+    /// Shared detector core.
+    pub fn core(&self) -> &MimeDetectorCore {
+        &self.core
     }
 
-    /// Gets mutable shared detector state.
+    /// Gets mutable shared detector core.
     ///
     /// # Returns
-    /// Mutable shared detector behavior and configuration.
-    pub fn base_mut(&mut self) -> &mut MimeDetectorCore {
-        &mut self.base
+    /// Mutable shared detector core.
+    pub fn core_mut(&mut self) -> &mut MimeDetectorCore {
+        &mut self.core
     }
 
     /// Gets the repository used for filename detection.
@@ -332,7 +335,7 @@ impl Default for FileCommandMimeDetector<'static> {
 impl<'a> MimeDetectorBackend for FileCommandMimeDetector<'a> {
     /// Gets the shared detector core.
     fn core(&self) -> &MimeDetectorCore {
-        &self.base
+        &self.core
     }
 
     /// Gets the maximum content prefix length from the repository.
@@ -376,14 +379,14 @@ pub(crate) mod coverage_support {
     pub(crate) fn exercise_file_command_edges() -> Vec<String> {
         let repository = MimeRepository::empty();
         let mut empty_detector = FileCommandMimeDetector::with_repository(&repository);
-        let base_flag = empty_detector
-            .base()
+        let core_flag = empty_detector
+            .core()
             .media_stream_classifier()
             .is_none()
             .to_string();
-        empty_detector.base_mut().set_media_stream_classifier(None);
-        let base_mut_flag = empty_detector
-            .base()
+        empty_detector.core_mut().set_media_stream_classifier(None);
+        let core_mut_flag = empty_detector
+            .core()
             .media_stream_classifier()
             .is_none()
             .to_string();
@@ -477,8 +480,8 @@ pub(crate) mod coverage_support {
             )
         );
         vec![
-            base_flag,
-            base_mut_flag,
+            core_flag,
+            core_mut_flag,
             working_directory,
             disable_logging,
             runner_timeout,

@@ -13,7 +13,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use qubit_mime::{
-    DetectionSource, MediaStreamClassifier, MediaStreamType, MimeDetectorCore, MimeError,
+    ArcMediaStreamClassifier, DetectionSource, MediaStreamClassifier, MediaStreamType,
+    MimeDetectorCore, MimeError,
 };
 
 #[derive(Debug)]
@@ -64,9 +65,11 @@ fn test_merge_results_uses_detector_selection_strategy() {
 #[test]
 fn test_refine_detected_mime_type_uses_media_stream_classifier() {
     let mut detector = MimeDetectorCore::default();
-    detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
-        stream_type: MediaStreamType::AudioOnly,
-    })));
+    detector.set_media_stream_classifier(Some(ArcMediaStreamClassifier::new(Arc::new(
+        StaticClassifier {
+            stream_type: MediaStreamType::AudioOnly,
+        },
+    ))));
 
     let refined = detector.refine_detected_mime_type(
         "video/webm",

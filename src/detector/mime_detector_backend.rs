@@ -122,11 +122,12 @@ where
         let from_filename = filename
             .map(|filename| self.guess_from_filename(filename))
             .unwrap_or_default();
-        let from_content = if from_filename.len() == 1 && !policy.should_verify_content() {
-            Vec::new()
-        } else {
-            self.guess_from_content(content).unwrap_or_default()
-        };
+        let from_content =
+            if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+                Vec::new()
+            } else {
+                self.guess_from_content(content).unwrap_or_default()
+            };
         self.core().select_result(
             &from_filename,
             &from_content,
@@ -146,12 +147,12 @@ where
         let from_filename = filename
             .map(|filename| self.guess_from_filename(filename))
             .unwrap_or_default();
-        let (from_content, content) = if from_filename.len() == 1 && !policy.should_verify_content()
-        {
-            (Vec::new(), Vec::new())
-        } else {
-            self.guess_from_reader(reader)?
-        };
+        let (from_content, content) =
+            if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+                (Vec::new(), Vec::new())
+            } else {
+                self.guess_from_reader(reader)?
+            };
         Ok(self.core().select_result(
             &from_filename,
             &from_content,
@@ -166,7 +167,7 @@ where
         let filename = file.to_string_lossy();
         let from_filename = self.guess_from_filename(&filename);
         let (from_content, _content) =
-            if from_filename.len() == 1 && !policy.should_verify_content() {
+            if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
                 (Vec::new(), Vec::new())
             } else {
                 self.guess_from_file(file)?

@@ -18,10 +18,3 @@ pub enum MimeDetectionPolicy {
     /// Check content magic even when filename detection has a definitive result.
     VerifyContent,
 }
-
-impl MimeDetectionPolicy {
-    /// Tells whether content magic should be checked for a definitive filename match.
-    pub(crate) fn should_verify_content(self) -> bool {
-        matches!(self, Self::VerifyContent)
-    }
-}

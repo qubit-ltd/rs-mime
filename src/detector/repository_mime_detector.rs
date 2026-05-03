@@ -24,7 +24,8 @@ static DEFAULT_REPOSITORY: OnceLock<MimeRepository> = OnceLock::new();
 /// MIME detector backed by a [`MimeRepository`].
 #[derive(Debug, Clone)]
 pub struct RepositoryMimeDetector<'a> {
-    base: MimeDetectorCore,
+    /// The shared detector core.
+    core: MimeDetectorCore,
     repository: &'a MimeRepository,
 }
 
@@ -81,25 +82,25 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// A detector borrowing `repository`.
     pub fn with_repository_and_config(repository: &'a MimeRepository, config: MimeConfig) -> Self {
         Self {
-            base: MimeDetectorCore::from_mime_config(config),
+            core: MimeDetectorCore::from_mime_config(config),
             repository,
         }
     }
 
-    /// Gets the shared detector state.
+    /// Gets the shared detector core.
     ///
     /// # Returns
-    /// Shared detector behavior and configuration.
-    pub fn base(&self) -> &MimeDetectorCore {
-        &self.base
+    /// Shared detector core.
+    pub fn core(&self) -> &MimeDetectorCore {
+        &self.core
     }
 
-    /// Gets mutable shared detector state.
+    /// Gets mutable shared detector core.
     ///
     /// # Returns
-    /// Mutable shared detector behavior and configuration.
-    pub fn base_mut(&mut self) -> &mut MimeDetectorCore {
-        &mut self.base
+    /// Mutable shared detector core.
+    pub fn core_mut(&mut self) -> &mut MimeDetectorCore {
+        &mut self.core
     }
 
     /// Gets the underlying repository.
@@ -236,7 +237,7 @@ pub(crate) fn default_repository() -> &'static MimeRepository {
 impl<'a> MimeDetectorBackend for RepositoryMimeDetector<'a> {
     /// Gets the shared detector core.
     fn core(&self) -> &MimeDetectorCore {
-        &self.base
+        &self.core
     }
 
     /// Gets the maximum content prefix length from the repository.
@@ -266,18 +267,18 @@ pub(crate) mod coverage_support {
     /// Exercises detector accessors and no-match paths.
     ///
     /// # Returns
-    /// A summary of observed detector states.
+    /// A summary of observed detector core values.
     pub(crate) fn exercise_detector_edges() -> Vec<String> {
         let repository = MimeRepository::empty();
         let mut detector = RepositoryMimeDetector::with_repository(&repository);
-        let base_flag = detector
-            .base()
+        let core_flag = detector
+            .core()
             .media_stream_classifier()
             .is_none()
             .to_string();
-        detector.base_mut().set_media_stream_classifier(None);
-        let base_mut_flag = detector
-            .base()
+        detector.core_mut().set_media_stream_classifier(None);
+        let core_mut_flag = detector
+            .core()
             .media_stream_classifier()
             .is_none()
             .to_string();
@@ -306,8 +307,8 @@ pub(crate) mod coverage_support {
         };
         let _ = std::fs::remove_file(&path);
         vec![
-            base_flag,
-            base_mut_flag,
+            core_flag,
+            core_mut_flag,
             repository_len,
             policy_detection,
             filename_guesses,

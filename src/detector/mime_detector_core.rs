@@ -10,7 +10,6 @@
 //! Shared MIME detector behavior.
 
 use std::path::Path;
-use std::sync::Arc;
 
 use crate::{
     ArcMediaStreamClassifier, MediaStreamClassifier, MediaStreamType, MimeConfig,
@@ -19,23 +18,23 @@ use crate::{
 
 use super::detection_source::DetectionSource;
 
-/// Shared detector state and merge/refinement logic.
+/// Shared detector core for configuration and merge/refinement logic.
 #[derive(Debug, Clone)]
 pub struct MimeDetectorCore {
     /// MIME detector configuration.
     config: MimeConfig,
     /// Media stream classifier.
-    media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>,
+    media_stream_classifier: Option<ArcMediaStreamClassifier>,
 }
 
 impl MimeDetectorCore {
-    /// Creates detector state from configuration.
+    /// Creates a detector core from configuration.
     ///
     /// # Parameters
     /// - `config`: MIME detector configuration.
     ///
     /// # Returns
-    /// Shared detector state.
+    /// Shared detector core.
     pub fn new(config: MimeConfig) -> Self {
         Self {
             config,
@@ -43,20 +42,19 @@ impl MimeDetectorCore {
         }
     }
 
-    /// Creates detector state from configuration and default classifier.
+    /// Creates a detector core from configuration and default classifier.
     ///
     /// # Parameters
     /// - `config`: MIME detector configuration.
     ///
     /// # Returns
-    /// Shared detector state using the configured default media classifier when
+    /// Shared detector core using the configured default media classifier when
     /// precise detection is enabled.
     pub fn from_mime_config(config: MimeConfig) -> Self {
         let mut detector = Self::new(config.clone());
         if config.enable_precise_detection() {
-            detector.set_media_stream_classifier(Some(
-                ArcMediaStreamClassifier::from_config(&config).into_inner(),
-            ));
+            let classifier = ArcMediaStreamClassifier::from_config(&config);
+            detector.set_media_stream_classifier(Some(classifier));
         }
         detector
     }
@@ -68,7 +66,7 @@ impl MimeDetectorCore {
     ///   runtime media stream refinement.
     pub fn set_media_stream_classifier(
         &mut self,
-        media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>,
+        media_stream_classifier: Option<ArcMediaStreamClassifier>,
     ) {
         self.media_stream_classifier = media_stream_classifier;
     }
@@ -77,7 +75,7 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Configured classifier, or `None`.
-    pub fn media_stream_classifier(&self) -> Option<&Arc<dyn MediaStreamClassifier>> {
+    pub fn media_stream_classifier(&self) -> Option<&ArcMediaStreamClassifier> {
         self.media_stream_classifier.as_ref()
     }
 
@@ -126,7 +124,7 @@ impl MimeDetectorCore {
         policy: MimeDetectionPolicy,
         source: DetectionSource<'_>,
     ) -> Option<String> {
-        let result = if from_filename.len() == 1 && !policy.should_verify_content() {
+        let result = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
             from_filename.first().cloned()
         } else {
             self.merge_results(from_filename, from_content)
@@ -266,7 +264,7 @@ impl MimeDetectorCore {
 }
 
 impl Default for MimeDetectorCore {
-    /// Loads default detector state.
+    /// Loads the default detector core.
     fn default() -> Self {
         Self::from_mime_config(MimeConfig::default())
     }
@@ -299,10 +297,10 @@ pub(crate) mod coverage_support {
     use qubit_config::Config;
 
     use crate::{
-        CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
-        CONFIG_MIME_DETECTOR_DEFAULT, CONFIG_MIME_ENABLE_PRECISE_DETECTION,
-        CONFIG_MIME_PRECISE_DETECTION_PATTERNS, MediaStreamClassifier, MediaStreamType, MimeConfig,
-        MimeError,
+        ArcMediaStreamClassifier, CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+        CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, CONFIG_MIME_DETECTOR_DEFAULT,
+        CONFIG_MIME_ENABLE_PRECISE_DETECTION, CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
+        MediaStreamClassifier, MediaStreamType, MimeConfig, MimeError,
     };
 
     use super::{DetectionSource, MimeDetectorCore, extension_from_filename};
@@ -349,9 +347,11 @@ pub(crate) mod coverage_support {
             "webm,ogg",
             "webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg",
         ));
-        detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
-            stream_type: MediaStreamType::VideoOnly,
-        })));
+        detector.set_media_stream_classifier(Some(ArcMediaStreamClassifier::new(Arc::new(
+            StaticClassifier {
+                stream_type: MediaStreamType::VideoOnly,
+            },
+        ))));
         let classifier_present = detector.media_stream_classifier().is_some().to_string();
         let from_filename = vec!["video/webm".to_owned()];
         let from_content = vec!["audio/webm".to_owned()];
@@ -411,7 +411,9 @@ pub(crate) mod coverage_support {
             "webm",
             "webm:video/webm,audio/webm",
         ));
-        none_detector.set_media_stream_classifier(Some(Arc::new(FailingClassifier)));
+        none_detector.set_media_stream_classifier(Some(ArcMediaStreamClassifier::new(Arc::new(
+            FailingClassifier,
+        ))));
         let failed_stream = none_detector.refine_detected_mime_type(
             "video/webm",
             Some("movie.webm"),

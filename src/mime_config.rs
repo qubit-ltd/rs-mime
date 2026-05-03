@@ -63,16 +63,11 @@ static MAPPING_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
 });
 
 /// Built-in precise detection patterns.
-static DEFAULT_PRECISE_DETECTION_PATTERNS: LazyLock<Vec<String>> =
-    LazyLock::new(|| vec!["webm".to_owned(), "ogg".to_owned()]);
+static DEFAULT_PRECISE_DETECTION_PATTERNS: &[&str] = &["webm", "ogg"];
 
 /// Built-in ambiguous MIME mapping entries.
-static DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES: LazyLock<Vec<String>> = LazyLock::new(|| {
-    vec![
-        "webm:video/webm,audio/webm".to_owned(),
-        "ogg:video/ogg,audio/ogg".to_owned(),
-    ]
-});
+static DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES: &[&str] =
+    &["webm:video/webm,audio/webm", "ogg:video/ogg,audio/ogg"];
 
 impl MimeConfig {
     /// Loads configuration from environment variables and defaults.
@@ -125,7 +120,7 @@ impl MimeConfig {
                 CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
                 ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
             ],
-            DEFAULT_PRECISE_DETECTION_PATTERNS.clone(),
+            DEFAULT_PRECISE_DETECTION_PATTERNS,
             &VALUE_READ_OPTIONS,
         )?;
         let ambiguous_mime_mapping = config.get_any_or_with(
@@ -133,7 +128,7 @@ impl MimeConfig {
                 CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
                 ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
             ],
-            DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES.clone(),
+            DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES,
             &MAPPING_READ_OPTIONS,
         )?;
         Ok(Self {
@@ -242,10 +237,16 @@ impl MimeConfig {
             media_stream_classifier_default: DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
             enable_precise_detection: DEFAULT_ENABLE_PRECISE_DETECTION,
             precise_detection_patterns: normalize_patterns(
-                DEFAULT_PRECISE_DETECTION_PATTERNS.clone(),
+                DEFAULT_PRECISE_DETECTION_PATTERNS
+                    .iter()
+                    .map(|pattern| pattern.to_string())
+                    .collect(),
             ),
             ambiguous_mime_mapping: build_ambiguous_mime_mapping(
-                DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES.clone(),
+                DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES
+                    .iter()
+                    .map(|entry| entry.to_string())
+                    .collect(),
             ),
         }
     }
