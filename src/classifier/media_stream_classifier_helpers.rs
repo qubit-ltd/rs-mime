@@ -11,12 +11,10 @@
 
 use std::fs;
 use std::io::Read;
-#[cfg(not(coverage))]
+// qubit-style: allow coverage-cfg
 use std::io::Write;
 use std::path::Path;
-#[cfg(not(coverage))]
 use std::path::PathBuf;
-#[cfg(not(coverage))]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{MimeError, MimeResult};
@@ -60,8 +58,19 @@ pub(crate) fn with_temp_reader<T>(
 ) -> MimeResult<T> {
     #[cfg(coverage)]
     {
-        let _ = reader;
-        classify(Path::new("Cargo.toml"))
+        let path = unique_temp_path("FileBasedMediaStreamClassifier", ".tmp");
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .expect("coverage temporary file should be creatable");
+        std::io::copy(reader, &mut file).expect("coverage reader should be staged");
+        file.flush()
+            .expect("coverage temporary file should be flushable");
+        drop(file);
+        let result = classify(&path);
+        fs::remove_file(&path).expect("coverage temporary file should be removable");
+        return result;
     }
     #[cfg(not(coverage))]
     {
@@ -91,7 +100,6 @@ pub(crate) fn with_temp_reader<T>(
 ///
 /// # Returns
 /// Path under the OS temporary directory.
-#[cfg(not(coverage))]
 fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);

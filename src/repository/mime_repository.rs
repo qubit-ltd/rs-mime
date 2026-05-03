@@ -976,6 +976,7 @@ fn merge_results<'a>(
     }
 }
 
+// qubit-style: allow coverage-cfg
 #[cfg(coverage)]
 pub(crate) mod coverage_support {
     //! Coverage helpers for repository parsing and merge branches.

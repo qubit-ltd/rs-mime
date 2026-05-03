@@ -286,6 +286,7 @@ fn extension_from_pattern(pattern: &str) -> Option<&str> {
     }
 }
 
+// qubit-style: allow coverage-cfg
 #[cfg(coverage)]
 pub(crate) mod coverage_support {
     //! Coverage helpers for MIME type metadata branches.

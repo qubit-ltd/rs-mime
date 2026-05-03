@@ -10,13 +10,12 @@
 //! File-backed MIME detector helpers.
 
 use std::fmt::Debug;
+use std::fs;
 use std::path::{Path, PathBuf};
+// qubit-style: allow coverage-cfg
+use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(not(coverage))]
-use std::{
-    fs::{self, OpenOptions},
-    io::Write,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::{fs::OpenOptions, io::Write};
 
 use crate::{MimeDetectorBackend, MimeDetectorCore, MimeResult};
 
@@ -109,8 +108,11 @@ pub(crate) fn with_temp_file<T>(
 ) -> MimeResult<T> {
     #[cfg(coverage)]
     {
-        let _ = content;
-        return detect(&PathBuf::from("Cargo.toml"));
+        let path = unique_temp_path("MimeDetectorTemp", ".tmp");
+        fs::write(&path, content).expect("coverage temporary file should be writable");
+        let result = detect(&path);
+        fs::remove_file(&path).expect("coverage temporary file should be removable");
+        return result;
     }
     #[cfg(not(coverage))]
     {
@@ -136,7 +138,6 @@ pub(crate) fn with_temp_file<T>(
 ///
 /// # Returns
 /// Path under the OS temporary directory.
-#[cfg(not(coverage))]
 fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);

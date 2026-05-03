@@ -577,7 +577,7 @@ checksum = "deb73fe2b797cd89c02dbed577c003086ace6d919d0c81cc4b092f0fb3359967"
 
 [[package]]
 name = "qubit-mime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "qubit-command",
  "qubit-config",

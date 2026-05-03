@@ -35,6 +35,7 @@ pub(crate) fn read_prefix(reader: &mut dyn ReadSeek, max_bytes: usize) -> MimeRe
     Ok(buffer)
 }
 
+// qubit-style: allow coverage-cfg
 #[cfg(coverage)]
 pub(crate) mod coverage_support {
     //! Coverage helpers for stream-based detector helpers.

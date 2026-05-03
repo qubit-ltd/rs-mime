@@ -256,6 +256,7 @@ impl<'a> MimeDetectorBackend for RepositoryMimeDetector<'a> {
     }
 }
 
+// qubit-style: allow coverage-cfg
 #[cfg(coverage)]
 pub(crate) mod coverage_support {
     //! Coverage helpers for detector branches.

@@ -286,6 +286,7 @@ fn extension_from_filename(filename: &str) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
+// qubit-style: allow coverage-cfg
 #[cfg(coverage)]
 pub(crate) mod coverage_support {
     //! Coverage helpers for shared detector behavior.

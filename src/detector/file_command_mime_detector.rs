@@ -10,6 +10,7 @@
 //! MIME detector backed by the system `file` command.
 
 use std::path::Path;
+// qubit-style: allow coverage-cfg
 #[cfg(not(coverage))]
 use std::sync::OnceLock;
 

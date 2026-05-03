@@ -183,6 +183,7 @@ fn append_escaped_regex_char(ch: char, regex: &mut String) {
     regex.push(ch);
 }
 
+// qubit-style: allow coverage-cfg
 #[cfg(coverage)]
 pub(crate) mod coverage_support {
     //! Coverage helpers for glob conversion branches.

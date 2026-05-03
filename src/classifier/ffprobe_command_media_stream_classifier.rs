@@ -10,6 +10,7 @@
 //! FFprobe-backed media stream classifier.
 
 use std::path::Path;
+// qubit-style: allow coverage-cfg
 #[cfg(not(coverage))]
 use std::sync::OnceLock;
 

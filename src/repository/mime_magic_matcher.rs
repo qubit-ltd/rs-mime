@@ -286,6 +286,7 @@ fn value_matches_at(bytes: &[u8], offset: usize, value: &[u8], mask: Option<&[u8
     }
 }
 
+// qubit-style: allow coverage-cfg
 #[cfg(coverage)]
 pub(crate) mod coverage_support {
     //! Coverage helpers for magic matcher branches.
