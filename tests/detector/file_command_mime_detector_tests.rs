@@ -53,12 +53,16 @@ fn test_with_repository_and_runner_uses_runner_configuration() {
 }
 
 #[test]
-fn test_detect_path_by_content_uses_runner_timeout() {
+fn test_detect_file_by_content_uses_runner_timeout() {
     if !FileCommandMimeDetector::is_available() {
         return;
     }
     let detector = FileCommandMimeDetector::new()
         .with_command_runner(CommandRunner::new().timeout(Duration::ZERO));
 
-    assert!(detector.detect_path_by_content("Cargo.toml").is_err());
+    assert!(
+        detector
+            .detect_file_by_content(std::path::Path::new("Cargo.toml"))
+            .is_err()
+    );
 }

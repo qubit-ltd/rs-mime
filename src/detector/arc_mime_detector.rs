@@ -10,15 +10,18 @@
 //! Shared MIME detector wrapper.
 
 use std::ops::Deref;
+use std::path::Path;
 use std::sync::Arc;
 
-use crate::{MimeConfig, MimeDetectionPolicy, MimeDetector};
+use qubit_io::ReadSeek;
+
+use crate::{MimeConfig, MimeDetectionPolicy, MimeDetector, MimeResult};
 
 use super::mime_detector_kind::MimeDetectorKind;
 use super::{FileCommandMimeDetector, RepositoryMimeDetector};
 
 /// A MIME detector stored in an [`Arc`].
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ArcMimeDetector {
     inner: Arc<dyn MimeDetector>,
 }
@@ -133,5 +136,18 @@ impl MimeDetector for ArcMimeDetector {
         policy: MimeDetectionPolicy,
     ) -> Option<String> {
         self.inner.detect(content, filename, policy)
+    }
+
+    fn detect_reader(
+        &self,
+        reader: &mut dyn ReadSeek,
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        self.inner.detect_reader(reader, filename, policy)
+    }
+
+    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+        self.inner.detect_file(file, policy)
     }
 }

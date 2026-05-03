@@ -87,14 +87,14 @@ fn test_detect_reader_does_not_consume_reader_position() {
 }
 
 #[test]
-fn test_detect_path_reads_file_and_uses_path_filename() {
+fn test_detect_file_reads_file_and_uses_file_name() {
     let detector = RepositoryMimeDetector::new().expect("default repository should load");
     let mut file = NamedTempFile::with_suffix(".pdf").expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"%PDF-1.7\n").expect("temp file should be writable");
 
     let detected = detector
-        .detect_path(file.path(), MimeDetectionPolicy::VerifyContent)
-        .expect("path detection should succeed");
+        .detect_file(file.path(), MimeDetectionPolicy::VerifyContent)
+        .expect("file detection should succeed");
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
 }

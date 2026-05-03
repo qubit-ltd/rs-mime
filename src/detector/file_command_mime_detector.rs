@@ -9,24 +9,25 @@
  ******************************************************************************/
 //! MIME detector backed by the system `file` command.
 
-use std::io::{Read, Seek};
 use std::path::Path;
 #[cfg(not(coverage))]
 use std::sync::OnceLock;
 
 use qubit_command::{Command, CommandRunner};
+use qubit_io::ReadSeek;
 
 use crate::{
-    AbstractMimeDetector, DetectionSource, FileBasedMimeDetector, MimeConfig, MimeDetectionPolicy,
-    MimeDetector, MimeRepository, MimeResult, StreamBasedMimeDetector,
+    MimeConfig, MimeDetectionPolicy, MimeDetector, MimeDetectorBackend, MimeDetectorCore,
+    MimeRepository, MimeResult,
 };
 
+use super::file_based_mime_detector::with_temp_file;
 use super::repository_mime_detector::default_repository;
 
 /// MIME detector backed by `file --mime-type --brief`.
 #[derive(Debug, Clone)]
 pub struct FileCommandMimeDetector<'a> {
-    base: AbstractMimeDetector,
+    base: MimeDetectorCore,
     repository: &'a MimeRepository,
     command_runner: CommandRunner,
 }
@@ -107,7 +108,7 @@ impl<'a> FileCommandMimeDetector<'a> {
         config: MimeConfig,
     ) -> Self {
         Self {
-            base: AbstractMimeDetector::from_mime_config(config),
+            base: MimeDetectorCore::from_mime_config(config),
             repository,
             command_runner,
         }
@@ -117,7 +118,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// Shared detector behavior and configuration.
-    pub fn base(&self) -> &AbstractMimeDetector {
+    pub fn base(&self) -> &MimeDetectorCore {
         &self.base
     }
 
@@ -125,7 +126,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// Mutable shared detector behavior and configuration.
-    pub fn base_mut(&mut self) -> &mut AbstractMimeDetector {
+    pub fn base_mut(&mut self) -> &mut MimeDetectorCore {
         &mut self.base
     }
 
@@ -165,27 +166,24 @@ impl<'a> FileCommandMimeDetector<'a> {
         self
     }
 
-    /// Detects content from a local path using the `file` command only.
+    /// Detects content from a local file using the `file` command only.
     ///
     /// # Parameters
-    /// - `path`: Local path to inspect.
+    /// - `file`: Local file path to inspect.
     ///
     /// # Returns
     /// MIME type name, or `None`.
     ///
     /// # Errors
     /// Returns [`MimeError::Command`](crate::MimeError::Command) when the command cannot be executed.
-    pub fn detect_path_by_content<P: AsRef<Path>>(&self, path: P) -> MimeResult<Option<String>> {
-        Ok(self
-            .guess_from_file_command(path.as_ref())?
-            .into_iter()
-            .next())
+    pub fn detect_file_by_content(&self, file: &Path) -> MimeResult<Option<String>> {
+        Ok(self.guess_from_file_command(file)?.into_iter().next())
     }
 
-    /// Detects a local path from filename and content.
+    /// Detects a local file from filename and content.
     ///
     /// # Parameters
-    /// - `path`: Local file path.
+    /// - `file`: Local file path.
     /// - `policy`: Strategy for resolving filename and content results.
     ///
     /// # Returns
@@ -193,26 +191,12 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Errors
     /// Returns [`MimeError::Command`](crate::MimeError::Command) when command execution fails.
-    pub fn detect_path<P: AsRef<Path>>(
+    pub fn detect_file(
         &self,
-        path: P,
+        file: &Path,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        let path = path.as_ref();
-        let filename = path.to_string_lossy();
-        let from_filename = self.guess_from_filename(&filename);
-        let from_content = if from_filename.len() == 1 && !policy.should_verify_content() {
-            Vec::new()
-        } else {
-            self.guess_from_file_command(path)?
-        };
-        Ok(self.base.select_result(
-            &from_filename,
-            &from_content,
-            Some(&filename),
-            policy,
-            DetectionSource::Path(path),
-        ))
+        <Self as MimeDetector>::detect_file(self, file, policy)
     }
 
     /// Detects a seekable reader by staging its prefix to a temporary file.
@@ -227,18 +211,13 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when stream operations fail.
-    pub fn detect_reader<R>(
+    pub fn detect_reader(
         &self,
-        reader: &mut R,
+        reader: &mut dyn ReadSeek,
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>>
-    where
-        R: Read + Seek,
-    {
-        let content =
-            StreamBasedMimeDetector::read_prefix(reader, self.repository.max_test_bytes())?;
-        Ok(self.detect(&content, filename, policy))
+    ) -> MimeResult<Option<String>> {
+        <Self as MimeDetector>::detect_reader(self, reader, filename, policy)
     }
 
     /// Checks whether the `file` command is available.
@@ -350,54 +329,30 @@ impl Default for FileCommandMimeDetector<'static> {
     }
 }
 
-impl<'a> MimeDetector for FileCommandMimeDetector<'a> {
-    /// Detects a MIME type from filename using the repository.
-    fn detect_by_filename(&self, filename: &str) -> Option<String> {
-        self.guess_from_filename(filename).first().map(|mime_type| {
-            self.base
-                .refine_detected_mime_type(mime_type, Some(filename), DetectionSource::None)
-        })
+impl<'a> MimeDetectorBackend for FileCommandMimeDetector<'a> {
+    /// Gets the shared detector core.
+    fn core(&self) -> &MimeDetectorCore {
+        &self.base
     }
 
-    /// Detects a MIME type from bytes by staging them to the `file` command.
-    fn detect_by_content(&self, content: &[u8]) -> Option<String> {
-        FileBasedMimeDetector::with_temp_file(content, |path| self.detect_path_by_content(path))
-            .ok()
-            .flatten()
-            .map(|mime_type| {
-                self.base.refine_detected_mime_type(
-                    &mime_type,
-                    None,
-                    DetectionSource::Content(content),
-                )
-            })
+    /// Gets the maximum content prefix length from the repository.
+    fn max_test_bytes(&self) -> usize {
+        self.repository.max_test_bytes()
     }
 
-    /// Detects a MIME type from bytes and optional filename.
-    fn detect(
-        &self,
-        content: &[u8],
-        filename: Option<&str>,
-        policy: MimeDetectionPolicy,
-    ) -> Option<String> {
-        let from_filename = filename
-            .map(|filename| self.guess_from_filename(filename))
-            .unwrap_or_default();
-        let from_content = if from_filename.len() == 1 && !policy.should_verify_content() {
-            Vec::new()
-        } else {
-            FileBasedMimeDetector::with_temp_file(content, |path| {
-                self.guess_from_file_command(path)
-            })
-            .unwrap_or_default()
-        };
-        self.base.select_result(
-            &from_filename,
-            &from_content,
-            filename,
-            policy,
-            DetectionSource::Content(content),
-        )
+    /// Guesses MIME type names from filename rules.
+    fn guess_from_filename(&self, filename: &str) -> Vec<String> {
+        FileCommandMimeDetector::guess_from_filename(self, filename)
+    }
+
+    /// Guesses MIME type names from content using a temporary file.
+    fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+        with_temp_file(content, |path| self.guess_from_file_command(path))
+    }
+
+    /// Guesses MIME type names from a local file using the file command.
+    fn guess_from_file(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
+        Ok((self.guess_from_file_command(file)?, Vec::new()))
     }
 }
 
@@ -452,8 +407,10 @@ pub(crate) mod coverage_support {
             .command_runner()
             .is_logging_disabled()
             .to_string();
-        let working_directory_command =
-            format!("{:?}", empty_detector.detect_path_by_content("Cargo.toml"));
+        let working_directory_command = format!(
+            "{:?}",
+            empty_detector.detect_file_by_content(Path::new("Cargo.toml"))
+        );
         let command_description = format!(
             "{:?}",
             FileCommandMimeDetector::command_for_path(Path::new("Cargo.toml"))
@@ -498,13 +455,16 @@ pub(crate) mod coverage_support {
         );
         let path_result = format!(
             "{:?}",
-            detector.detect_path("Cargo.toml", MimeDetectionPolicy::VerifyContent)
+            detector.detect_file(Path::new("Cargo.toml"), MimeDetectionPolicy::VerifyContent)
         );
         let path_filename_only = format!(
             "{:?}",
-            detector.detect_path("file.pdf", MimeDetectionPolicy::PreferFilename)
+            detector.detect_file(Path::new("file.pdf"), MimeDetectionPolicy::PreferFilename)
         );
-        let path_content = format!("{:?}", detector.detect_path_by_content("Cargo.toml"));
+        let path_content = format!(
+            "{:?}",
+            detector.detect_file_by_content(Path::new("Cargo.toml"))
+        );
         let detector_trait: &dyn MimeDetector = &detector;
         let trait_filename = format!("{:?}", detector_trait.detect_by_filename("image.png"));
         let trait_content = format!("{:?}", detector_trait.detect_by_content(b"%PDF-1.7\n"));

@@ -9,6 +9,7 @@
  ******************************************************************************/
 //! Coverage helpers for default detector selection.
 
+use std::io::Cursor;
 use std::sync::Arc;
 
 use super::mime_detector::MimeDetector;
@@ -51,6 +52,26 @@ pub(crate) fn exercise_detector_defaults() -> Vec<String> {
         )
         .is_some()
         .to_string();
+    let mut boxed_reader = Cursor::new(b"%PDF-1.7\n".to_vec());
+    let boxed_reader_detect = boxed_wrapper
+        .detect_reader(
+            &mut boxed_reader,
+            Some("file.pdf"),
+            MimeDetectionPolicy::VerifyContent,
+        )
+        .expect("coverage reader should be detected")
+        .is_some()
+        .to_string();
+    let temp_file = std::env::temp_dir().join(format!(
+        "qubit-mime-detector-coverage-{}.pdf",
+        std::process::id()
+    ));
+    std::fs::write(&temp_file, b"%PDF-1.7\n").expect("coverage file should be writable");
+    let boxed_file_detect = boxed_wrapper
+        .detect_file(&temp_file, MimeDetectionPolicy::VerifyContent)
+        .expect("coverage file should be detected")
+        .is_some()
+        .to_string();
     let boxed_inner = boxed_wrapper
         .into_inner()
         .detect_by_filename("file.pdf")
@@ -86,6 +107,22 @@ pub(crate) fn exercise_detector_defaults() -> Vec<String> {
         )
         .is_some()
         .to_string();
+    let mut arc_reader = Cursor::new(b"%PDF-1.7\n".to_vec());
+    let arc_reader_detect = arc_wrapper
+        .detect_reader(
+            &mut arc_reader,
+            Some("file.pdf"),
+            MimeDetectionPolicy::VerifyContent,
+        )
+        .expect("coverage reader should be detected")
+        .is_some()
+        .to_string();
+    let arc_file_detect = arc_wrapper
+        .detect_file(&temp_file, MimeDetectionPolicy::VerifyContent)
+        .expect("coverage file should be detected")
+        .is_some()
+        .to_string();
+    std::fs::remove_file(&temp_file).ok();
     let arc_inner = arc_wrapper
         .into_inner()
         .detect_by_filename("file.pdf")
@@ -116,6 +153,8 @@ pub(crate) fn exercise_detector_defaults() -> Vec<String> {
         boxed_deref,
         boxed_content,
         boxed_detect,
+        boxed_reader_detect,
+        boxed_file_detect,
         boxed_inner,
         boxed_from_into,
         format!("{:?}", MimeDetectorKind::select("", true)),
@@ -138,6 +177,8 @@ pub(crate) fn exercise_detector_defaults() -> Vec<String> {
         arc_deref,
         arc_content,
         arc_detect,
+        arc_reader_detect,
+        arc_file_detect,
         arc_inner,
         arc_from_into,
     ]

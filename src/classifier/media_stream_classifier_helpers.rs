@@ -10,7 +10,9 @@
 //! Shared media stream classifier helpers.
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
+#[cfg(not(coverage))]
+use std::io::Write;
 use std::path::Path;
 #[cfg(not(coverage))]
 use std::path::PathBuf;
@@ -100,9 +102,12 @@ fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
 pub(crate) mod coverage_support {
     //! Coverage helpers for classifier validation.
 
+    use std::io::Cursor;
     use std::path::Path;
 
-    use super::validate_readable_file;
+    use crate::{MimeError, MimeResult};
+
+    use super::{validate_readable_file, with_temp_reader};
 
     /// Exercises readable-file validation paths.
     ///
@@ -115,6 +120,15 @@ pub(crate) mod coverage_support {
         let invalid = validate_readable_file(Path::new("."))
             .expect_err("directory should not validate")
             .to_string();
-        vec![valid, invalid]
+        let mut reader = Cursor::new(b"%PDF-1.7\n".to_vec());
+        let staged = with_temp_reader(&mut reader, |path| Ok(path.exists().to_string()))
+            .expect("coverage reader should be staged");
+        let mut failing_reader = Cursor::new(Vec::new());
+        let staged_error = with_temp_reader(&mut failing_reader, |_path| -> MimeResult<String> {
+            Err(MimeError::invalid_classifier_input("forced"))
+        })
+        .expect_err("coverage callback should fail")
+        .to_string();
+        vec![valid, invalid, staged, staged_error]
     }
 }

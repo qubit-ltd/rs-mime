@@ -11,6 +11,7 @@
 use qubit_mime::{
     ArcMimeDetector, BoxMimeDetector, MimeDetectionPolicy, MimeDetector, RepositoryMimeDetector,
 };
+use tempfile::NamedTempFile;
 
 #[test]
 fn test_mime_detector_trait_supports_repository_detector() {
@@ -32,6 +33,31 @@ fn test_mime_detector_trait_supports_repository_detector() {
             MimeDetectionPolicy::VerifyContent,
         )
     );
+}
+
+#[test]
+fn test_mime_detector_trait_supports_reader_and_file_detection() {
+    let detector = RepositoryMimeDetector::new().expect("default repository should load");
+    let detector: &dyn MimeDetector = &detector;
+    let mut reader = std::io::Cursor::new(b"%PDF-1.7\n".to_vec());
+
+    let from_reader = detector
+        .detect_reader(
+            &mut reader,
+            Some("document.pdf"),
+            MimeDetectionPolicy::VerifyContent,
+        )
+        .expect("trait-object reader detection should succeed");
+
+    let mut file = NamedTempFile::with_suffix(".pdf").expect("temp file should be created");
+    std::io::Write::write_all(&mut file, b"%PDF-1.7\n").expect("temp file should be writable");
+    let from_file = detector
+        .detect_file(file.path(), MimeDetectionPolicy::VerifyContent)
+        .expect("trait-object file detection should succeed");
+
+    assert_eq!(Some("application/pdf".to_owned()), from_reader);
+    assert_eq!(Some("application/pdf".to_owned()), from_file);
+    assert_eq!(0, reader.position());
 }
 
 #[test]

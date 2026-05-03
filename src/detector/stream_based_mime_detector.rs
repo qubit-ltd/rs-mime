@@ -9,37 +9,30 @@
  ******************************************************************************/
 //! Helpers for stream-backed MIME detectors.
 
-use std::io::{Read, Seek, SeekFrom};
+use std::io::SeekFrom;
+
+use qubit_io::ReadSeek;
 
 use crate::MimeResult;
 
-/// Helper for detectors that inspect seekable streams.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct StreamBasedMimeDetector;
-
-impl StreamBasedMimeDetector {
-    /// Reads a prefix from a stream and restores the original position.
-    ///
-    /// # Parameters
-    /// - `reader`: Stream to inspect.
-    /// - `max_bytes`: Maximum number of bytes to read.
-    ///
-    /// # Returns
-    /// Bytes read from the stream.
-    ///
-    /// # Errors
-    /// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking fails.
-    pub fn read_prefix<R>(reader: &mut R, max_bytes: usize) -> MimeResult<Vec<u8>>
-    where
-        R: Read + Seek,
-    {
-        let position = reader.stream_position()?;
-        let mut buffer = vec![0; max_bytes];
-        let bytes_read = reader.read(&mut buffer)?;
-        buffer.truncate(bytes_read);
-        reader.seek(SeekFrom::Start(position))?;
-        Ok(buffer)
-    }
+/// Reads a prefix from a stream and restores the original position.
+///
+/// # Parameters
+/// - `reader`: Stream to inspect.
+/// - `max_bytes`: Maximum number of bytes to read.
+///
+/// # Returns
+/// Bytes read from the stream.
+///
+/// # Errors
+/// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking fails.
+pub(crate) fn read_prefix(reader: &mut dyn ReadSeek, max_bytes: usize) -> MimeResult<Vec<u8>> {
+    let position = reader.stream_position()?;
+    let mut buffer = vec![0; max_bytes];
+    let bytes_read = reader.read(&mut buffer)?;
+    buffer.truncate(bytes_read);
+    reader.seek(SeekFrom::Start(position))?;
+    Ok(buffer)
 }
 
 #[cfg(coverage)]
@@ -48,7 +41,7 @@ pub(crate) mod coverage_support {
 
     use std::io::{Cursor, Error, ErrorKind, Read, Result as IoResult, Seek, SeekFrom};
 
-    use super::StreamBasedMimeDetector;
+    use super::read_prefix;
 
     /// Exercises successful and failing stream prefix reads.
     ///
@@ -56,10 +49,9 @@ pub(crate) mod coverage_support {
     /// Summary strings from stream reads.
     pub(crate) fn exercise_stream_edges() -> Vec<String> {
         let mut cursor = Cursor::new(b"abcdef".to_vec());
-        let prefix =
-            StreamBasedMimeDetector::read_prefix(&mut cursor, 3).expect("prefix should read");
+        let prefix = read_prefix(&mut cursor, 3).expect("prefix should read");
         let mut failing = FailingSeek;
-        let error = StreamBasedMimeDetector::read_prefix(&mut failing, 3)
+        let error = read_prefix(&mut failing, 3)
             .expect_err("seek should fail")
             .to_string();
         let mut readable_failing_seek = FailingSeek;
@@ -67,7 +59,7 @@ pub(crate) mod coverage_support {
             .expect("empty read should succeed")
             .to_string();
         let mut failing_read = FailingRead;
-        let read_error = StreamBasedMimeDetector::read_prefix(&mut failing_read, 3)
+        let read_error = read_prefix(&mut failing_read, 3)
             .expect_err("read should fail")
             .to_string();
         let mut seekable_failing_read = FailingRead;

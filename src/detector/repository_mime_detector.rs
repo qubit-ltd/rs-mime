@@ -9,14 +9,12 @@
  ******************************************************************************/
 //! Repository-backed MIME detector.
 
-use std::fs::File;
-use std::io::{Read, Seek};
 use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::{
-    AbstractMimeDetector, DetectionSource, MimeConfig, MimeDetectionPolicy, MimeDetector,
-    MimeRepository, MimeResult, StreamBasedMimeDetector,
+    MimeConfig, MimeDetectionPolicy, MimeDetector, MimeDetectorBackend, MimeDetectorCore,
+    MimeRepository, MimeResult,
 };
 
 const DEFAULT_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
@@ -26,7 +24,7 @@ static DEFAULT_REPOSITORY: OnceLock<MimeRepository> = OnceLock::new();
 /// MIME detector backed by a [`MimeRepository`].
 #[derive(Debug, Clone)]
 pub struct RepositoryMimeDetector<'a> {
-    base: AbstractMimeDetector,
+    base: MimeDetectorCore,
     repository: &'a MimeRepository,
 }
 
@@ -83,7 +81,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// A detector borrowing `repository`.
     pub fn with_repository_and_config(repository: &'a MimeRepository, config: MimeConfig) -> Self {
         Self {
-            base: AbstractMimeDetector::from_mime_config(config),
+            base: MimeDetectorCore::from_mime_config(config),
             repository,
         }
     }
@@ -92,7 +90,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Shared detector behavior and configuration.
-    pub fn base(&self) -> &AbstractMimeDetector {
+    pub fn base(&self) -> &MimeDetectorCore {
         &self.base
     }
 
@@ -100,7 +98,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Mutable shared detector behavior and configuration.
-    pub fn base_mut(&mut self) -> &mut AbstractMimeDetector {
+    pub fn base_mut(&mut self) -> &mut MimeDetectorCore {
         &mut self.base
     }
 
@@ -120,10 +118,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// # Returns
     /// First MIME type matched by filename, or `None`.
     pub fn detect_by_filename(&self, filename: &str) -> Option<String> {
-        self.guess_from_filename(filename).first().map(|mime_type| {
-            self.base
-                .refine_detected_mime_type(mime_type, Some(filename), DetectionSource::None)
-        })
+        <Self as MimeDetector>::detect_by_filename(self, filename)
     }
 
     /// Detects a MIME type from content bytes.
@@ -134,10 +129,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// # Returns
     /// First MIME type matched by magic, or `None`.
     pub fn detect_by_content(&self, bytes: &[u8]) -> Option<String> {
-        self.guess_from_content(bytes).first().map(|mime_type| {
-            self.base
-                .refine_detected_mime_type(mime_type, None, DetectionSource::Content(bytes))
-        })
+        <Self as MimeDetector>::detect_by_content(self, bytes)
     }
 
     /// Detects a MIME type from content bytes and an optional filename.
@@ -155,21 +147,7 @@ impl<'a> RepositoryMimeDetector<'a> {
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
     ) -> Option<String> {
-        let from_filename = filename
-            .map(|filename| self.guess_from_filename(filename))
-            .unwrap_or_default();
-        let from_content = if from_filename.len() == 1 && !policy.should_verify_content() {
-            Vec::new()
-        } else {
-            self.guess_from_content(bytes)
-        };
-        self.base.select_result(
-            &from_filename,
-            &from_content,
-            filename,
-            policy,
-            DetectionSource::Content(bytes),
-        )
+        self.detect(bytes, filename, policy)
     }
 
     /// Detects a MIME type from a seekable reader without consuming its position.
@@ -184,54 +162,32 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking fails.
-    pub fn detect_reader<R>(
+    pub fn detect_reader(
         &self,
-        reader: &mut R,
+        reader: &mut dyn qubit_io::ReadSeek,
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>>
-    where
-        R: Read + Seek,
-    {
-        let buffer =
-            StreamBasedMimeDetector::read_prefix(reader, self.repository.max_test_bytes())?;
-        Ok(self.detect_bytes(&buffer, filename, policy))
+    ) -> MimeResult<Option<String>> {
+        <Self as MimeDetector>::detect_reader(self, reader, filename, policy)
     }
 
-    /// Detects a MIME type from a filesystem path.
+    /// Detects a MIME type from a local file.
     ///
     /// # Parameters
-    /// - `path`: File path to open.
+    /// - `file`: Local file path to open.
     /// - `policy`: Strategy for resolving filename and content results.
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the path cannot be opened or read.
-    pub fn detect_path<P: AsRef<Path>>(
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be opened or read.
+    pub fn detect_file(
         &self,
-        path: P,
+        file: &Path,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        let path = path.as_ref();
-        let filename = path.to_string_lossy();
-        let mut file = File::open(path)?;
-        let buffer =
-            StreamBasedMimeDetector::read_prefix(&mut file, self.repository.max_test_bytes())?;
-        let from_filename = self.guess_from_filename(&filename);
-        let from_content = if from_filename.len() == 1 && !policy.should_verify_content() {
-            Vec::new()
-        } else {
-            self.guess_from_content(&buffer)
-        };
-        Ok(self.base.select_result(
-            &from_filename,
-            &from_content,
-            Some(&filename),
-            policy,
-            DetectionSource::Path(path),
-        ))
+        <Self as MimeDetector>::detect_file(self, file, policy)
     }
 
     /// Guesses MIME type names from filename rules.
@@ -277,25 +233,25 @@ pub(crate) fn default_repository() -> &'static MimeRepository {
     })
 }
 
-impl<'a> MimeDetector for RepositoryMimeDetector<'a> {
-    /// Detects a MIME type from filename.
-    fn detect_by_filename(&self, filename: &str) -> Option<String> {
-        RepositoryMimeDetector::detect_by_filename(self, filename)
+impl<'a> MimeDetectorBackend for RepositoryMimeDetector<'a> {
+    /// Gets the shared detector core.
+    fn core(&self) -> &MimeDetectorCore {
+        &self.base
     }
 
-    /// Detects a MIME type from content bytes.
-    fn detect_by_content(&self, content: &[u8]) -> Option<String> {
-        RepositoryMimeDetector::detect_by_content(self, content)
+    /// Gets the maximum content prefix length from the repository.
+    fn max_test_bytes(&self) -> usize {
+        self.repository.max_test_bytes()
     }
 
-    /// Detects a MIME type from content bytes and optional filename.
-    fn detect(
-        &self,
-        content: &[u8],
-        filename: Option<&str>,
-        policy: MimeDetectionPolicy,
-    ) -> Option<String> {
-        RepositoryMimeDetector::detect_bytes(self, content, filename, policy)
+    /// Guesses MIME type names from filename rules.
+    fn guess_from_filename(&self, filename: &str) -> Vec<String> {
+        RepositoryMimeDetector::guess_from_filename(self, filename)
+    }
+
+    /// Guesses MIME type names from content magic rules.
+    fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+        Ok(RepositoryMimeDetector::guess_from_content(self, content))
     }
 }
 
@@ -342,7 +298,7 @@ pub(crate) mod coverage_support {
             std::env::temp_dir().join(format!("qubit-mime-coverage-{}.pdf", std::process::id()));
         std::fs::write(&path, b"%PDF-1.7\n").expect("coverage temp file should be writable");
         let path_detection = match RepositoryMimeDetector::default()
-            .detect_path(&path, MimeDetectionPolicy::PreferFilename)
+            .detect_file(&path, MimeDetectionPolicy::PreferFilename)
             .expect("coverage temp file should be readable")
         {
             Some(mime_type) => mime_type,

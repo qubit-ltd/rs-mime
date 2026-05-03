@@ -22,9 +22,8 @@ The public surface is organized into three layers:
 - `MimeDetector`: the top-level detector trait. Use it when code should work
   with any detector implementation.
 - `detector`: detector implementations and shared detector logic,
-  including `AbstractMimeDetector`, `RepositoryMimeDetector`,
-  `FileCommandMimeDetector`, `StreamBasedMimeDetector`, and
-  `FileBasedMimeDetector`.
+  including `MimeDetectorCore`, `MimeDetectorBackend`,
+  `RepositoryMimeDetector`, and `FileCommandMimeDetector`.
 - `MediaStreamClassifier`: the top-level media stream classifier trait. The
   `classifier` module provides `FfprobeCommandMediaStreamClassifier`,
   `MediaStreamClassifierBackend`, and `FileBasedMediaStreamClassifier` for
@@ -83,7 +82,7 @@ The public surface is organized into three layers:
 - Content only: `detect_by_content`.
 - Combined filename and bytes: `detect` or `detect_bytes`.
 - Combined filename and reader: `detect_reader`.
-- Filesystem path: `detect_path`.
+- Local file path: `detect_file`.
 
 ### Media Stream Classification
 
@@ -91,7 +90,7 @@ The public surface is organized into three layers:
 - Stream result enum: `MediaStreamType`.
 - FFprobe-backed implementation: `FfprobeCommandMediaStreamClassifier`.
 - Precise refinement for ambiguous media types such as WebM and Ogg when a
-  classifier is configured on `AbstractMimeDetector`.
+  classifier is configured on `MimeDetectorCore`.
 
 ## Installation
 
@@ -219,7 +218,7 @@ fn main() -> Result<(), MimeError> {
     let path = std::env::temp_dir().join("qubit-mime-example.pdf");
 
     std::fs::write(&path, b"%PDF-1.7\n")?;
-    let detected = detector.detect_path(&path, MimeDetectionPolicy::VerifyContent)?;
+    let detected = detector.detect_file(&path, MimeDetectionPolicy::VerifyContent)?;
     std::fs::remove_file(&path).ok();
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
@@ -551,7 +550,7 @@ fn main() -> Result<(), MimeError> {
 | `detect_by_content(bytes)` | Return the first MIME name matched by content magic |
 | `detect_bytes(bytes, filename, policy)` | Detect from bytes and optional filename |
 | `detect_reader(reader, filename, policy)` | Detect from a `Read + Seek` reader and restore its position |
-| `detect_path(path, policy)` | Open and detect a filesystem path |
+| `detect_file(file, policy)` | Open and detect a local file path |
 
 ### `FileCommandMimeDetector`
 
@@ -564,8 +563,8 @@ fn main() -> Result<(), MimeError> {
 | `command_runner()` | Borrow the runner used for command execution |
 | `set_command_runner(runner)` | Replace the runner used for command execution |
 | `is_available()` | Check whether the `file` command can be executed |
-| `detect_path_by_content(path)` | Detect a local file using command output only |
-| `detect_path(path, policy)` | Detect a path by filename and command-backed content inspection |
+| `detect_file_by_content(file)` | Detect a local file using command output only |
+| `detect_file(file, policy)` | Detect a local file by filename and command-backed content inspection |
 | `detect_reader(reader, filename, policy)` | Detect a seekable reader through the file-backed path |
 
 ### `MediaStreamClassifier`

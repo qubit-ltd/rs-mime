@@ -30,9 +30,9 @@ pub use classifier::{
 pub use common_mime_types::*;
 pub use constants::*;
 pub use detector::{
-    AbstractMimeDetector, ArcMimeDetector, BoxMimeDetector, DetectionSource, FileBasedMimeDetector,
-    FileCommandMimeDetector, MimeDetectionPolicy, MimeDetector, RepositoryMimeDetector,
-    StreamBasedMimeDetector, StringListMimeDetectorBackend,
+    ArcMimeDetector, BoxMimeDetector, DetectionSource, FileCommandMimeDetector,
+    MimeDetectionPolicy, MimeDetector, MimeDetectorBackend, MimeDetectorCore,
+    RepositoryMimeDetector,
 };
 pub use mime_config::MimeConfig;
 pub use mime_error::MimeError;
@@ -75,9 +75,7 @@ pub mod coverage_support {
         result.extend(crate::mime_config::coverage_support::exercise_config_edges());
         result.extend(crate::detector::coverage_support::exercise_detector_defaults());
         result.extend(crate::classifier::coverage_support::exercise_classifier_defaults());
-        result.extend(
-            crate::detector::abstract_mime_detector::coverage_support::exercise_abstract_edges(),
-        );
+        result.extend(crate::detector::mime_detector_core::coverage_support::exercise_core_edges());
         result.extend(
             crate::detector::file_based_mime_detector::coverage_support::exercise_file_based_edges(
             ),

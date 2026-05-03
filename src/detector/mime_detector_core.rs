@@ -21,14 +21,14 @@ use super::detection_source::DetectionSource;
 
 /// Shared detector state and merge/refinement logic.
 #[derive(Debug, Clone)]
-pub struct AbstractMimeDetector {
+pub struct MimeDetectorCore {
     /// MIME detector configuration.
     config: MimeConfig,
     /// Media stream classifier.
     media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>,
 }
 
-impl AbstractMimeDetector {
+impl MimeDetectorCore {
     /// Creates detector state from configuration.
     ///
     /// # Parameters
@@ -265,7 +265,7 @@ impl AbstractMimeDetector {
     }
 }
 
-impl Default for AbstractMimeDetector {
+impl Default for MimeDetectorCore {
     /// Loads default detector state.
     fn default() -> Self {
         Self::from_mime_config(MimeConfig::default())
@@ -302,10 +302,10 @@ pub(crate) mod coverage_support {
         CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
         CONFIG_MIME_DETECTOR_DEFAULT, CONFIG_MIME_ENABLE_PRECISE_DETECTION,
         CONFIG_MIME_PRECISE_DETECTION_PATTERNS, MediaStreamClassifier, MediaStreamType, MimeConfig,
-        MimeError, StringListMimeDetectorBackend,
+        MimeError,
     };
 
-    use super::{AbstractMimeDetector, DetectionSource, extension_from_filename};
+    use super::{DetectionSource, MimeDetectorCore, extension_from_filename};
 
     #[derive(Debug)]
     struct StaticClassifier {
@@ -321,20 +321,6 @@ pub(crate) mod coverage_support {
         /// Returns a fixed classification for any content.
         fn classify_reader(&self, _reader: &mut dyn Read) -> crate::MimeResult<MediaStreamType> {
             Ok(self.stream_type)
-        }
-    }
-
-    struct StaticBackend;
-
-    impl StringListMimeDetectorBackend for StaticBackend {
-        /// Returns a static filename candidate list.
-        fn guess_from_filename(&self, _filename: &str) -> Vec<String> {
-            vec!["video/webm".to_owned()]
-        }
-
-        /// Returns a static content candidate list.
-        fn guess_from_content(&self, _content: &[u8]) -> Vec<String> {
-            vec!["audio/webm".to_owned()]
         }
     }
 
@@ -357,8 +343,8 @@ pub(crate) mod coverage_support {
     ///
     /// # Returns
     /// Summary strings from shared detector behavior.
-    pub(crate) fn exercise_abstract_edges() -> Vec<String> {
-        let mut detector = AbstractMimeDetector::new(config_from_values(
+    pub(crate) fn exercise_core_edges() -> Vec<String> {
+        let mut detector = MimeDetectorCore::new(config_from_values(
             true,
             "webm,ogg",
             "webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg",
@@ -389,7 +375,7 @@ pub(crate) mod coverage_support {
             Some("movie.webm"),
             DetectionSource::None,
         );
-        let no_classifier = AbstractMimeDetector::new(config_from_values(
+        let no_classifier = MimeDetectorCore::new(config_from_values(
             true,
             "webm",
             "webm:video/webm,audio/webm",
@@ -399,7 +385,7 @@ pub(crate) mod coverage_support {
             Some("movie.webm"),
             DetectionSource::Content(b""),
         );
-        let disabled = AbstractMimeDetector::new(config_from_values(
+        let disabled = MimeDetectorCore::new(config_from_values(
             false,
             "webm",
             "webm:video/webm,audio/webm",
@@ -409,7 +395,7 @@ pub(crate) mod coverage_support {
             Some("movie.webm"),
             DetectionSource::Content(b""),
         );
-        let missing_mapping = AbstractMimeDetector::new(config_from_values(true, "webm", ""))
+        let missing_mapping = MimeDetectorCore::new(config_from_values(true, "webm", ""))
             .refine_detected_mime_type(
                 "video/webm",
                 Some("movie.webm"),
@@ -420,7 +406,7 @@ pub(crate) mod coverage_support {
             Some("movie.webm"),
             DetectionSource::Content(b""),
         );
-        let mut none_detector = AbstractMimeDetector::new(config_from_values(
+        let mut none_detector = MimeDetectorCore::new(config_from_values(
             true,
             "webm",
             "webm:video/webm,audio/webm",
@@ -436,8 +422,6 @@ pub(crate) mod coverage_support {
             Some("movie.webm"),
             DetectionSource::Path(Path::new("Cargo.toml")),
         );
-        let backend = StaticBackend;
-        let backend_trait: &dyn StringListMimeDetectorBackend = &backend;
         let static_classifier = StaticClassifier {
             stream_type: MediaStreamType::AudioOnly,
         };
@@ -455,8 +439,6 @@ pub(crate) mod coverage_support {
             failed_path_stream,
             detector.merge_results(&[], &[]).is_none().to_string(),
             format!("{:?}", extension_from_filename("no-extension")),
-            backend_trait.guess_from_filename("movie.webm").join(","),
-            backend_trait.guess_from_content(b"webm").join(","),
             format!(
                 "{:?}",
                 classifier_trait.classify_file(Path::new("Cargo.toml"))

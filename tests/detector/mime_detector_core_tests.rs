@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use qubit_mime::{
-    AbstractMimeDetector, DetectionSource, MediaStreamClassifier, MediaStreamType, MimeError,
+    DetectionSource, MediaStreamClassifier, MediaStreamType, MimeDetectorCore, MimeError,
 };
 
 #[derive(Debug)]
@@ -33,7 +33,7 @@ impl MediaStreamClassifier for StaticClassifier {
 
 #[test]
 fn test_merge_results_uses_detector_selection_strategy() {
-    let detector = AbstractMimeDetector::default();
+    let detector = MimeDetectorCore::default();
 
     assert_eq!(
         None,
@@ -63,7 +63,7 @@ fn test_merge_results_uses_detector_selection_strategy() {
 
 #[test]
 fn test_refine_detected_mime_type_uses_media_stream_classifier() {
-    let mut detector = AbstractMimeDetector::default();
+    let mut detector = MimeDetectorCore::default();
     detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
         stream_type: MediaStreamType::AudioOnly,
     })));

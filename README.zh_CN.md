@@ -19,8 +19,8 @@ glob、内容魔数规则和父类型关系。
 
 - `MimeDetector`：顶层检测器 trait。业务代码需要兼容不同检测器实现时依赖它。
 - `detector`：检测器实现和共享检测逻辑，包括
-  `AbstractMimeDetector`、`RepositoryMimeDetector`、`FileCommandMimeDetector`、
-  `StreamBasedMimeDetector` 和 `FileBasedMimeDetector`。
+  `MimeDetectorCore`、`MimeDetectorBackend`、`RepositoryMimeDetector` 和
+  `FileCommandMimeDetector`。
 - `MediaStreamClassifier`：顶层媒体流分类 trait。`classifier` 模块提供
   `FfprobeCommandMediaStreamClassifier`、`MediaStreamClassifierBackend` 和
   `FileBasedMediaStreamClassifier`，用于用更少重复入口代码实现 stream-backed
@@ -75,14 +75,14 @@ glob、内容魔数规则和父类型关系。
 - 仅内容：`detect_by_content`。
 - 文件名与字节组合：`detect` 或 `detect_bytes`。
 - 文件名与 reader 组合：`detect_reader`。
-- 文件系统路径：`detect_path`。
+- 本地文件路径：`detect_file`。
 
 ### 媒体流分类
 
 - 顶层 trait：`MediaStreamClassifier`。
 - 流结果枚举：`MediaStreamType`。
 - FFprobe 实现：`FfprobeCommandMediaStreamClassifier`。
-- 当 `AbstractMimeDetector` 配置了 classifier 时，可对 WebM、Ogg 等有歧义的
+- 当 `MimeDetectorCore` 配置了 classifier 时，可对 WebM、Ogg 等有歧义的
   媒体 MIME 类型做更精确的音视频区分。
 
 ## 安装
@@ -211,7 +211,7 @@ fn main() -> Result<(), MimeError> {
     let path = std::env::temp_dir().join("qubit-mime-example.pdf");
 
     std::fs::write(&path, b"%PDF-1.7\n")?;
-    let detected = detector.detect_path(&path, MimeDetectionPolicy::VerifyContent)?;
+    let detected = detector.detect_file(&path, MimeDetectionPolicy::VerifyContent)?;
     std::fs::remove_file(&path).ok();
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
@@ -541,7 +541,7 @@ fn main() -> Result<(), MimeError> {
 | `detect_by_content(bytes)` | 返回内容 magic 匹配到的第一个 MIME 名称 |
 | `detect_bytes(bytes, filename, policy)` | 根据字节和可选文件名检测 |
 | `detect_reader(reader, filename, policy)` | 从 `Read + Seek` reader 检测并恢复位置 |
-| `detect_path(path, policy)` | 打开并检测文件系统路径 |
+| `detect_file(file, policy)` | 打开并检测本地文件路径 |
 
 ### `FileCommandMimeDetector`
 
@@ -554,8 +554,8 @@ fn main() -> Result<(), MimeError> {
 | `command_runner()` | 借用用于命令执行的 runner |
 | `set_command_runner(runner)` | 替换用于命令执行的 runner |
 | `is_available()` | 检查 `file` 命令是否可执行 |
-| `detect_path_by_content(path)` | 只根据命令输出检测本地文件 |
-| `detect_path(path, policy)` | 根据文件名和命令支持的内容检测来检测路径 |
+| `detect_file_by_content(file)` | 只根据命令输出检测本地文件 |
+| `detect_file(file, policy)` | 根据文件名和命令支持的内容检测来检测本地文件 |
 | `detect_reader(reader, filename, policy)` | 通过 file-backed 路径检测可 seek reader |
 
 ### `MediaStreamClassifier`
