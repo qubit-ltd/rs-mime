@@ -11,16 +11,21 @@
 
 use std::path::Path;
 #[cfg(not(coverage))]
-use std::process::Command;
-#[cfg(not(coverage))]
 use std::sync::OnceLock;
+
+use qubit_command::CommandRunner;
+#[cfg(not(coverage))]
+use qubit_command::{Command, CommandError};
 
 use crate::{FileBasedMediaStreamClassifier, MediaStreamType, MimeResult};
 
 /// Media stream classifier backed by the `ffprobe` command.
 #[derive(Debug, Clone)]
 pub struct FfprobeCommandMediaStreamClassifier {
+    /// The working directory used to execute FFprobe.
     working_directory: Option<String>,
+    /// The command runner used to execute FFprobe.
+    command_runner: CommandRunner,
 }
 
 impl FfprobeCommandMediaStreamClassifier {
@@ -38,7 +43,36 @@ impl FfprobeCommandMediaStreamClassifier {
     pub fn new() -> Self {
         Self {
             working_directory: None,
+            command_runner: Self::default_command_runner(),
         }
+    }
+
+    /// Gets the command runner used by this classifier.
+    ///
+    /// # Returns
+    /// Runner used for `ffprobe` command executions.
+    pub fn command_runner(&self) -> &CommandRunner {
+        &self.command_runner
+    }
+
+    /// Replaces the command runner used by this classifier.
+    ///
+    /// # Parameters
+    /// - `command_runner`: New runner configuration.
+    pub fn set_command_runner(&mut self, command_runner: CommandRunner) {
+        self.command_runner = command_runner;
+    }
+
+    /// Replaces the command runner and returns the updated classifier.
+    ///
+    /// # Parameters
+    /// - `command_runner`: New runner configuration.
+    ///
+    /// # Returns
+    /// The updated classifier.
+    pub fn with_command_runner(mut self, command_runner: CommandRunner) -> Self {
+        self.command_runner = command_runner;
+        self
     }
 
     /// Sets the working directory used to execute FFprobe.
@@ -83,11 +117,9 @@ impl FfprobeCommandMediaStreamClassifier {
     pub fn is_available() -> bool {
         static AVAILABLE: OnceLock<bool> = OnceLock::new();
         *AVAILABLE.get_or_init(|| {
-            Command::new(Self::COMMAND)
-                .arg("-version")
-                .output()
-                .map(|output| output.status.success())
-                .unwrap_or(false)
+            Self::default_command_runner()
+                .run(Command::new(Self::COMMAND).arg("-version"))
+                .is_ok()
         })
     }
 
@@ -111,27 +143,49 @@ impl FfprobeCommandMediaStreamClassifier {
     /// [`MediaStreamType::None`] because stream refinement is best-effort.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`](crate::MimeError::Io) when process execution itself fails.
+    /// Returns [`MimeError::Command`](crate::MimeError::Command) when process
+    /// execution itself fails.
     #[cfg(not(coverage))]
     fn classify_with_ffprobe(&self, path: &Path) -> MimeResult<MediaStreamType> {
-        let mut command = Command::new(Self::COMMAND);
-        command
+        let mut command = Self::command_for_path(path);
+        if let Some(working_directory) = &self.working_directory {
+            command = command.working_directory(working_directory);
+        }
+        match self.command_runner.run(command) {
+            Ok(output) => {
+                let stdout = output.stdout_lossy_text();
+                Ok(Self::classify_stream_listing(&stdout))
+            }
+            Err(CommandError::UnexpectedExit { .. }) => Ok(MediaStreamType::None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Creates the default command runner for FFprobe classification.
+    ///
+    /// # Returns
+    /// Runner used by the default classifier.
+    fn default_command_runner() -> CommandRunner {
+        CommandRunner::new().disable_logging(true)
+    }
+
+    /// Builds the structured `ffprobe` command for one path.
+    ///
+    /// # Parameters
+    /// - `path`: Local file path passed as an argument without shell parsing.
+    ///
+    /// # Returns
+    /// Structured command description.
+    #[cfg(not(coverage))]
+    fn command_for_path(path: &Path) -> Command {
+        Command::new(Self::COMMAND)
             .arg("-v")
             .arg("error")
             .arg("-show_entries")
             .arg("stream=codec_type")
             .arg("-of")
             .arg("csv=p=0")
-            .arg(path);
-        if let Some(working_directory) = &self.working_directory {
-            command.current_dir(working_directory);
-        }
-        let output = command.output()?;
-        if !output.status.success() {
-            return Ok(MediaStreamType::None);
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(Self::classify_stream_listing(&stdout))
+            .arg_os(path)
     }
 
     /// Classifies a local file during coverage builds.

@@ -251,8 +251,7 @@ fn main() -> Result<(), MimeError> {
 
     let runner = CommandRunner::new()
         .timeout(Duration::from_secs(2))
-        .disable_logging(true)
-        .lossy_output(true);
+        .disable_logging(true);
     let detector = FileCommandMimeDetector::new().with_command_runner(runner);
     assert!(detector.command_runner().configured_timeout().is_some());
 

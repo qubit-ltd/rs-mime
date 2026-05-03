@@ -33,8 +33,7 @@ fn test_with_repository_and_runner_uses_runner_configuration() {
     let repository = MimeRepository::empty();
     let runner = CommandRunner::new()
         .timeout(Duration::from_secs(2))
-        .disable_logging(true)
-        .lossy_output(true);
+        .disable_logging(true);
     let mut detector = FileCommandMimeDetector::with_repository_and_runner(&repository, runner);
 
     assert_eq!(
@@ -42,7 +41,6 @@ fn test_with_repository_and_runner_uses_runner_configuration() {
         detector.command_runner().configured_timeout()
     );
     assert!(detector.command_runner().is_logging_disabled());
-    assert!(detector.command_runner().is_lossy_output_enabled());
 
     detector.set_command_runner(detector.command_runner().clone().working_directory("."));
     assert_eq!(

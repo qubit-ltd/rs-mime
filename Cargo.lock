@@ -523,9 +523,9 @@ dependencies = [
 
 [[package]]
 name = "qubit-command"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b57dbb1b897587ef7da385e1812e359f3726e47ee84b391fea3cc52ad5ac73a4"
+checksum = "03663a0313e5dda387b3adaf1b418ac9a1672ac86fb378b1a945585e91dacdf1"
 dependencies = [
  "log",
  "process-wrap",

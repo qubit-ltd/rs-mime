@@ -251,7 +251,6 @@ impl<'a> FileCommandMimeDetector<'a> {
         *AVAILABLE.get_or_init(|| {
             CommandRunner::new()
                 .disable_logging(true)
-                .lossy_output(true)
                 .run(Self::command_for_path(Path::new(".")))
                 .is_ok()
         })
@@ -295,7 +294,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     #[cfg(not(coverage))]
     fn guess_from_file_command(&self, path: &Path) -> MimeResult<Vec<String>> {
         let output = self.command_runner.run(Self::command_for_path(path))?;
-        let text = String::from_utf8_lossy(output.stdout_bytes());
+        let text = output.stdout_lossy_text();
         let result = text.trim();
         if result.is_empty() {
             Ok(Vec::new())
@@ -326,7 +325,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// Runner used by the default detector.
     fn default_command_runner() -> CommandRunner {
-        CommandRunner::new().lossy_output(true)
+        CommandRunner::new()
     }
 
     /// Builds the structured `file` command for one path.
