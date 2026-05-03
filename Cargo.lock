@@ -523,9 +523,9 @@ dependencies = [
 
 [[package]]
 name = "qubit-command"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03663a0313e5dda387b3adaf1b418ac9a1672ac86fb378b1a945585e91dacdf1"
+checksum = "1e6e2edbf39329d8271e351bfe5d2e982a926539d96df90fb8e780745e3c5809"
 dependencies = [
  "log",
  "process-wrap",
@@ -534,9 +534,9 @@ dependencies = [
 
 [[package]]
 name = "qubit-config"
-version = "0.12.0"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75d28b49ffc918f58ed85f76fd79f3327728d291f5f856a3944ca2f2341b9fb8"
+checksum = "2c5430c0abdfab166684f9592ab9f4c258864a6d3e716cbdd52a3261ebeba44c"
 dependencies = [
  "bigdecimal",
  "chrono",
@@ -601,9 +601,9 @@ dependencies = [
 
 [[package]]
 name = "qubit-value"
-version = "0.7.2"
+version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b198c3ddd800a7c5199c31e917c270518ab8032461bd24a604d4c04130e141b"
+checksum = "c06d0f120e351a17e04bec38fca241224ff1cf9dfb4347f0f2ee9bfce699c3f4"
 dependencies = [
  "bigdecimal",
  "chrono",
