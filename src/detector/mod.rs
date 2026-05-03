@@ -11,9 +11,6 @@
 
 pub(crate) mod arc_mime_detector;
 pub(crate) mod box_mime_detector;
-// qubit-style: allow coverage-cfg
-#[cfg(coverage)]
-pub(crate) mod coverage_support;
 pub(crate) mod detection_source;
 pub(crate) mod file_based_mime_detector;
 pub(crate) mod file_command_mime_detector;

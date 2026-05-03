@@ -9,10 +9,44 @@
  ******************************************************************************/
 //! Tests for the repository-backed MIME detector.
 
-use std::io::Cursor;
+use std::io::{Cursor, Error, Read, Result as IoResult, Seek, SeekFrom};
 
-use qubit_mime::{MimeDetectionPolicy, RepositoryMimeDetector};
+use qubit_mime::{MimeDetectionPolicy, MimeRepository, RepositoryMimeDetector};
 use tempfile::NamedTempFile;
+
+#[derive(Debug, Clone, Copy)]
+enum FailureMode {
+    Seek,
+    Read,
+}
+
+struct FailingReader {
+    mode: FailureMode,
+}
+
+impl FailingReader {
+    fn new(mode: FailureMode) -> Self {
+        Self { mode }
+    }
+}
+
+impl Read for FailingReader {
+    fn read(&mut self, _buf: &mut [u8]) -> IoResult<usize> {
+        match self.mode {
+            FailureMode::Read => Err(Error::other("read failed")),
+            FailureMode::Seek => Ok(0),
+        }
+    }
+}
+
+impl Seek for FailingReader {
+    fn seek(&mut self, _pos: SeekFrom) -> IoResult<u64> {
+        match self.mode {
+            FailureMode::Seek => Err(Error::other("seek failed")),
+            FailureMode::Read => Ok(0),
+        }
+    }
+}
 
 #[test]
 fn test_detect_by_filename_uses_default_repository() {
@@ -97,4 +131,45 @@ fn test_detect_file_reads_file_and_uses_file_name() {
         .expect("file detection should succeed");
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
+}
+
+#[test]
+fn test_accessors_empty_repository_and_reader_errors() {
+    let repository = MimeRepository::empty();
+    let mut detector = RepositoryMimeDetector::with_repository(&repository);
+
+    assert!(detector.core().media_stream_classifier().is_some());
+    detector.core_mut().set_media_stream_classifier(None);
+    assert!(detector.core().media_stream_classifier().is_none());
+    assert_eq!(0, detector.repository().all().len());
+    assert_eq!(0, detector.guess_from_filename("unknown.bin").len());
+    assert_eq!(0, detector.guess_from_content(b"unknown").len());
+    assert_eq!(
+        None,
+        detector.detect_bytes(
+            b"",
+            Some("unknown.bin"),
+            MimeDetectionPolicy::PreferFilename
+        )
+    );
+
+    let mut seek_reader = FailingReader::new(FailureMode::Seek);
+    let mut read_reader = FailingReader::new(FailureMode::Read);
+    let mut buffer = [];
+    assert_eq!(
+        0,
+        seek_reader
+            .read(&mut buffer)
+            .expect("seek-mode reader should allow reads")
+    );
+    assert!(
+        detector
+            .detect_reader(&mut seek_reader, None, MimeDetectionPolicy::VerifyContent)
+            .is_err()
+    );
+    assert!(
+        detector
+            .detect_reader(&mut read_reader, None, MimeDetectionPolicy::VerifyContent)
+            .is_err()
+    );
 }

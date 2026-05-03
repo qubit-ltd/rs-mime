@@ -41,8 +41,3 @@ pub use repository::{
     MagicValueType, MimeGlob, MimeMagic, MimeMagicMatcher, MimeRepository, MimeType,
     MimeTypeBuilder,
 };
-
-// qubit-style: allow coverage-cfg
-#[cfg(coverage)]
-#[doc(hidden)]
-pub mod coverage_support;

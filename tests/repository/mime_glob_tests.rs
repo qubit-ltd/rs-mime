@@ -56,3 +56,21 @@ fn test_matches_returns_false_for_empty_inputs() {
     assert!(!empty_pattern.matches("readme.txt"));
     assert!(!normal_pattern.matches(""));
 }
+
+#[test]
+fn test_matches_supports_question_negated_and_literal_class_edges() {
+    let question = MimeGlob::new("file?.txt", 50, false).expect("glob should compile");
+    let negated_class = MimeGlob::new("[!a]ile.txt", 50, false).expect("glob should compile");
+    let unclosed_class = MimeGlob::new("file[.txt", 50, false).expect("glob should compile");
+    let escaped_class = MimeGlob::new("[\\]a].txt", 50, false).expect("glob should compile");
+
+    assert!(question.matches("file1.txt"));
+    assert!(!question.matches("file12.txt"));
+    assert!(negated_class.matches("bile.txt"));
+    assert!(!negated_class.matches("aile.txt"));
+    assert!(unclosed_class.matches("file[.txt"));
+    assert!(escaped_class.matches("\\a].txt"));
+    assert_eq!("file?.txt", question.pattern());
+    assert_eq!(50, question.weight());
+    assert!(!question.case_sensitive());
+}

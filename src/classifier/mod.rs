@@ -11,9 +11,6 @@
 
 pub(crate) mod arc_media_stream_classifier;
 pub(crate) mod box_media_stream_classifier;
-// qubit-style: allow coverage-cfg
-#[cfg(coverage)]
-pub(crate) mod coverage_support;
 pub(crate) mod ffprobe_command_media_stream_classifier;
 pub(crate) mod file_based_media_stream_classifier;
 pub(crate) mod media_stream_classifier;

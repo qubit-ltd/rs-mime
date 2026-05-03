@@ -141,31 +141,3 @@ impl MimeError {
         }
     }
 }
-
-// qubit-style: allow coverage-cfg
-#[cfg(coverage)]
-pub(crate) mod coverage_support {
-    //! Coverage helpers for error builder branches.
-
-    use super::MimeError;
-
-    /// Exercises internal error constructors.
-    ///
-    /// # Returns
-    /// Display strings for constructed errors.
-    pub(crate) fn exercise_error_builders() -> Vec<String> {
-        let command_error = qubit_command::CommandError::SpawnFailed {
-            command: "file --mime-type --brief missing".to_owned(),
-            source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
-        };
-        let config_error = qubit_config::ConfigError::Other("bad config".to_owned());
-        vec![
-            MimeError::invalid_attr("match", "value", "bad", "invalid").to_string(),
-            MimeError::invalid_element("magic", "missing match").to_string(),
-            MimeError::invalid_matcher("bad matcher").to_string(),
-            MimeError::invalid_classifier_input("bad input").to_string(),
-            MimeError::Command(command_error).to_string(),
-            MimeError::Config(config_error).to_string(),
-        ]
-    }
-}

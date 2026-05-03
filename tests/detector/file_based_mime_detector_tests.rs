@@ -15,7 +15,8 @@ use std::sync::Mutex;
 use tempfile::NamedTempFile;
 
 use qubit_mime::{
-    FileBasedMimeDetector, MimeDetectionPolicy, MimeDetector, MimeDetectorCore, MimeResult,
+    FileBasedMimeDetector, MimeDetectionPolicy, MimeDetector, MimeDetectorCore, MimeError,
+    MimeResult,
 };
 
 #[derive(Debug)]
@@ -109,6 +110,39 @@ impl FileBasedMimeDetector for PathRecordingDetector {
     }
 }
 
+#[derive(Debug)]
+struct FailingDetector {
+    core: MimeDetectorCore,
+}
+
+impl FailingDetector {
+    fn new() -> Self {
+        Self {
+            core: MimeDetectorCore::default(),
+        }
+    }
+}
+
+impl FileBasedMimeDetector for FailingDetector {
+    fn core(&self) -> &MimeDetectorCore {
+        &self.core
+    }
+
+    fn max_test_bytes(&self) -> usize {
+        16
+    }
+
+    fn guess_from_filename(&self, _filename: &str) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn guess_from_local_file(&self, _file: &Path) -> MimeResult<Vec<String>> {
+        Err(MimeError::InvalidClassifierInput {
+            reason: "forced".to_owned(),
+        })
+    }
+}
+
 /// Verifies byte input is staged before local-file inspection.
 #[test]
 fn test_detect_by_content_stages_bytes_to_local_file() {
@@ -131,4 +165,24 @@ fn test_detect_file_delegates_to_local_file_hook() {
 
     assert_eq!(Some("application/octet-stream".to_owned()), detected);
     assert_eq!(Some(temp_file.path().to_path_buf()), detector.seen_path());
+}
+
+#[test]
+fn test_detect_reader_propagates_file_based_callback_error() {
+    let detector = FailingDetector::new();
+    let temp_file = NamedTempFile::new().expect("temporary file should be created");
+    let mut reader = std::io::Cursor::new(b"plain text".to_vec());
+
+    let error = detector
+        .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+        .expect_err("failing local-file hook should propagate");
+
+    assert!(error.to_string().contains("forced"));
+    assert!(
+        detector
+            .detect_file(temp_file.path(), MimeDetectionPolicy::VerifyContent)
+            .expect_err("failing local-file hook should propagate from file")
+            .to_string()
+            .contains("forced")
+    );
 }

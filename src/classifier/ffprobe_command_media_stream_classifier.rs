@@ -10,12 +10,9 @@
 //! FFprobe-backed media stream classifier.
 
 use std::path::Path;
-// qubit-style: allow coverage-cfg
-#[cfg(not(coverage))]
 use std::sync::OnceLock;
 
 use qubit_command::CommandRunner;
-#[cfg(not(coverage))]
 use qubit_command::{Command, CommandError};
 
 use crate::{FileBasedMediaStreamClassifier, MediaStreamType, MimeResult};
@@ -114,7 +111,6 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// `true` when `ffprobe -version` executes successfully.
-    #[cfg(not(coverage))]
     pub fn is_available() -> bool {
         static AVAILABLE: OnceLock<bool> = OnceLock::new();
         *AVAILABLE.get_or_init(|| {
@@ -122,16 +118,6 @@ impl FfprobeCommandMediaStreamClassifier {
                 .run(Command::new(Self::COMMAND).arg("-version"))
                 .is_ok()
         })
-    }
-
-    /// Checks FFprobe availability during coverage builds.
-    ///
-    /// # Returns
-    /// Always returns `false` so default classifier selection stays
-    /// deterministic under instrumentation.
-    #[cfg(coverage)]
-    pub fn is_available() -> bool {
-        false
     }
 
     /// Executes FFprobe for one local file.
@@ -146,7 +132,6 @@ impl FfprobeCommandMediaStreamClassifier {
     /// # Errors
     /// Returns [`MimeError::Command`](crate::MimeError::Command) when process
     /// execution itself fails.
-    #[cfg(not(coverage))]
     fn classify_with_ffprobe(&self, path: &Path) -> MimeResult<MediaStreamType> {
         let mut command = Self::command_for_path(path);
         if let Some(working_directory) = &self.working_directory {
@@ -177,7 +162,6 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// Structured command description.
-    #[cfg(not(coverage))]
     fn command_for_path(path: &Path) -> Command {
         Command::new(Self::COMMAND)
             .arg("-v")
@@ -187,23 +171,6 @@ impl FfprobeCommandMediaStreamClassifier {
             .arg("-of")
             .arg("csv=p=0")
             .arg_os(path)
-    }
-
-    /// Classifies a local file during coverage builds.
-    ///
-    /// # Parameters
-    /// - `path`: Local file path.
-    ///
-    /// # Returns
-    /// A deterministic non-media classification after validating readability.
-    ///
-    /// # Errors
-    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the path is not readable.
-    #[cfg(coverage)]
-    fn classify_with_ffprobe(&self, path: &Path) -> MimeResult<MediaStreamType> {
-        let _ = path;
-        let _ = self.working_directory.as_deref();
-        Ok(MediaStreamType::None)
     }
 }
 
@@ -218,60 +185,5 @@ impl FileBasedMediaStreamClassifier for FfprobeCommandMediaStreamClassifier {
     /// Classifies a readable local media file using FFprobe.
     fn classify_by_local_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
         self.classify_with_ffprobe(file)
-    }
-}
-
-#[cfg(coverage)]
-pub(crate) mod coverage_support {
-    //! Coverage helpers for FFprobe classifier branches.
-
-    use crate::MediaStreamClassifier;
-
-    use super::FfprobeCommandMediaStreamClassifier;
-
-    /// Exercises FFprobe classifier configuration and command paths.
-    ///
-    /// # Returns
-    /// Summary strings from classifier behavior.
-    pub(crate) fn exercise_ffprobe_edges() -> Vec<String> {
-        let mut classifier = FfprobeCommandMediaStreamClassifier::new();
-        classifier.set_working_directory(Some(".".to_owned()));
-        let working_directory = classifier.working_directory().unwrap_or("").to_owned();
-        let listing = [
-            FfprobeCommandMediaStreamClassifier::classify_stream_listing("video\naudio\n"),
-            FfprobeCommandMediaStreamClassifier::classify_stream_listing("video\n"),
-            FfprobeCommandMediaStreamClassifier::classify_stream_listing("audio\n"),
-            FfprobeCommandMediaStreamClassifier::classify_stream_listing("data\n"),
-        ]
-        .iter()
-        .map(|stream_type| format!("{stream_type:?}"))
-        .collect::<Vec<_>>()
-        .join(",");
-        let file = format!(
-            "{:?}",
-            classifier.classify_file(std::path::Path::new("Cargo.toml"))
-        );
-        let content = format!("{:?}", classifier.classify_content(b"not media"));
-        let trait_classifier: &dyn MediaStreamClassifier = &classifier;
-        let trait_file = format!(
-            "{:?}",
-            trait_classifier.classify_file(std::path::Path::new("Cargo.toml"))
-        );
-        let trait_content = format!("{:?}", trait_classifier.classify_content(b"not media"));
-        let default = FfprobeCommandMediaStreamClassifier::default()
-            .working_directory()
-            .is_none()
-            .to_string();
-        vec![
-            FfprobeCommandMediaStreamClassifier::COMMAND.to_owned(),
-            working_directory,
-            listing,
-            FfprobeCommandMediaStreamClassifier::is_available().to_string(),
-            file,
-            content,
-            trait_file,
-            trait_content,
-            default,
-        ]
     }
 }

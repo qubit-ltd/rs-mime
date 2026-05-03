@@ -12,10 +12,7 @@
 use std::fmt::Debug;
 use std::fs;
 use std::path::{Path, PathBuf};
-// qubit-style: allow coverage-cfg
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(not(coverage))]
-use std::{fs::OpenOptions, io::Write};
 
 use crate::{MimeDetectorBackend, MimeDetectorCore, MimeResult};
 
@@ -100,34 +97,16 @@ where
 /// The callback result.
 ///
 /// # Errors
-/// Returns [`MimeError::Io`](crate::MimeError::Io) when the temporary file cannot be created,
-/// written, flushed, or removed.
+/// Returns [`MimeError::Io`](crate::MimeError::Io) when the temporary file cannot be written.
 pub(crate) fn with_temp_file<T>(
     content: &[u8],
     detect: impl FnOnce(&PathBuf) -> MimeResult<T>,
 ) -> MimeResult<T> {
-    #[cfg(coverage)]
-    {
-        let path = unique_temp_path("MimeDetectorTemp", ".tmp");
-        fs::write(&path, content).expect("coverage temporary file should be writable");
-        let result = detect(&path);
-        fs::remove_file(&path).expect("coverage temporary file should be removable");
-        return result;
-    }
-    #[cfg(not(coverage))]
-    {
-        let path = unique_temp_path("MimeDetectorTemp", ".tmp");
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)?;
-        file.write_all(content)?;
-        file.flush()?;
-        drop(file);
-        let result = detect(&path);
-        fs::remove_file(&path)?;
-        result
-    }
+    let path = unique_temp_path("MimeDetectorTemp", ".tmp");
+    fs::write(&path, content)?;
+    let result = detect(&path);
+    let _ = fs::remove_file(&path);
+    result
 }
 
 /// Builds a best-effort unique temporary path.
@@ -142,28 +121,4 @@ fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!("{prefix}-{}-{counter}{suffix}", std::process::id()))
-}
-
-#[cfg(coverage)]
-pub(crate) mod coverage_support {
-    //! Coverage helpers for file-based detector staging.
-
-    use crate::{MimeError, MimeResult};
-
-    use super::with_temp_file;
-
-    /// Exercises successful and failing temporary file callbacks.
-    ///
-    /// # Returns
-    /// Summary strings from temporary staging.
-    pub(crate) fn exercise_file_based_edges() -> Vec<String> {
-        let ok = with_temp_file(b"abc", |path| Ok(path.exists().to_string()))
-            .expect("temporary file should be staged");
-        let err = with_temp_file(b"abc", |_path| -> MimeResult<String> {
-            Err(MimeError::invalid_classifier_input("forced"))
-        })
-        .expect_err("callback should fail")
-        .to_string();
-        vec![ok, err]
-    }
 }

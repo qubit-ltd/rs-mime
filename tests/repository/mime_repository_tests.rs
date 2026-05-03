@@ -194,3 +194,138 @@ fn test_detect_returns_empty_when_no_rule_matches() {
             .is_empty()
     );
 }
+
+#[test]
+fn test_from_xml_accepts_doctype_and_reports_structural_errors() {
+    let repository = MimeRepository::from_xml(
+        r#"
+<!DOCTYPE mime-info [
+<!ELEMENT mime-info (mime-type)+>
+]>
+<mime-info>
+  <mime-type type="text/plain">
+    <comment>plain</comment>
+    <glob pattern="*.txt"/>
+  </mime-type>
+</mime-info>
+"#,
+    )
+    .expect("DTD-stripped repository should parse");
+
+    assert_eq!(
+        Some("text/plain"),
+        repository.get("text/plain").map(MimeType::name)
+    );
+    assert!(
+        MimeRepository::from_xml("<bad/>")
+            .expect_err("bad root should fail")
+            .to_string()
+            .contains("root element")
+    );
+    assert!(
+        MimeRepository::from_xml(
+            "<mime-info><mime-type><comment>x</comment></mime-type></mime-info>",
+        )
+        .expect_err("missing type should fail")
+        .to_string()
+        .contains("attribute")
+    );
+    assert!(
+        MimeRepository::from_xml("<!DOCTYPE mime-info [ <mime-info>")
+            .expect_err("malformed DTD should fail")
+            .to_string()
+            .contains("XML")
+    );
+}
+
+#[test]
+fn test_from_xml_reports_invalid_glob_and_magic_attributes() {
+    let cases = [
+        (
+            r#"<mime-info><mime-type type="x"><comment>x</comment><glob pattern="*.x" weight="101"/></mime-type></mime-info>"#,
+            "weight",
+        ),
+        (
+            r#"<mime-info><mime-type type="x"><comment>x</comment><glob pattern="*.x" weight="abc"/></mime-type></mime-info>"#,
+            "weight",
+        ),
+        (
+            r#"<mime-info><mime-type type="x"><comment>x</comment><glob pattern="*.x" case-sensitive="maybe"/></mime-type></mime-info>"#,
+            "case-sensitive",
+        ),
+        (
+            r#"<mime-info><mime-type type="x"><comment>x</comment><magic priority="101"><match type="string" value="x" offset="0"/></magic></mime-type></mime-info>"#,
+            "priority",
+        ),
+        (
+            r#"<mime-info><mime-type type="x"><comment>x</comment><magic/></mime-type></mime-info>"#,
+            "magic",
+        ),
+        (
+            r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="unknown" value="x" offset="0"/></magic></mime-type></mime-info>"#,
+            "type",
+        ),
+        (
+            r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" offset="2:1"/></magic></mime-type></mime-info>"#,
+            "offset",
+        ),
+        (
+            r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" offset="bad"/></magic></mime-type></mime-info>"#,
+            "offset",
+        ),
+    ];
+
+    for (xml, expected) in cases {
+        let error = MimeRepository::from_xml(xml).expect_err("invalid repository XML should fail");
+        assert!(
+            error.to_string().contains(expected),
+            "error `{error}` should contain `{expected}`"
+        );
+    }
+}
+
+#[test]
+fn test_from_xml_reports_invalid_string_and_numeric_magic_values() {
+    let cases = [
+        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="\" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="\x" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="ff" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="0xf" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="0xgg" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="byte" value="bad" offset="0"/></magic></mime-type></mime-info>"#,
+    ];
+
+    for xml in cases {
+        assert!(
+            MimeRepository::from_xml(xml).is_err(),
+            "invalid magic value should fail: {xml}"
+        );
+    }
+}
+
+#[test]
+fn test_detect_by_filename_and_content_preserve_ties() {
+    let repository = MimeRepository::from_xml(
+        r#"
+<mime-info>
+  <mime-type type="text/short"><comment>short</comment><glob pattern="READ*" weight="50"/></mime-type>
+  <mime-type type="text/long"><comment>long</comment><glob pattern="README*" weight="50"/></mime-type>
+  <mime-type type="text/tie-one"><comment>tie one</comment><glob pattern="*.tie" weight="50"/></mime-type>
+  <mime-type type="text/tie-two"><comment>tie two</comment><glob pattern="*.tie" weight="50"/></mime-type>
+  <mime-type type="application/magic-one"><comment>magic one</comment><magic priority="50"><match type="string" value="TIE" offset="0"/></magic></mime-type>
+  <mime-type type="application/magic-two"><comment>magic two</comment><magic priority="50"><match type="string" value="TIE" offset="0"/></magic></mime-type>
+</mime-info>
+"#,
+    )
+    .expect("tie repository should parse");
+
+    assert_eq!(
+        Some("text/long"),
+        repository
+            .detect_by_filename("README.md")
+            .first()
+            .map(|mime_type| mime_type.name())
+    );
+    assert_eq!(2, repository.detect_by_filename("file.tie").len());
+    assert_eq!(2, repository.detect_by_content(b"TIE").len());
+}

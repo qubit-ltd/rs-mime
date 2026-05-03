@@ -7,12 +7,8 @@
  *    Licensed under the Apache License, Version 2.0.
  *
  ******************************************************************************/
-//! Coverage-only tests for defensive and synthetic branches.
+//! Shared integration test support.
 
-#[test]
-fn test_exercise_coverage_support_branches() {
-    let result = qubit_mime::coverage_support::exercise_all();
+mod path_env_guard;
 
-    assert!(!result.is_empty());
-    assert!(result.iter().any(|entry| entry.contains("root element")));
-}
+pub(crate) use path_env_guard::PathEnvGuard;

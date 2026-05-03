@@ -77,32 +77,3 @@ impl MimeMagic {
         self.matchers.iter().any(|matcher| matcher.matches(bytes))
     }
 }
-
-// qubit-style: allow coverage-cfg
-#[cfg(coverage)]
-pub(crate) mod coverage_support {
-    //! Coverage helpers for MIME magic rules.
-
-    use crate::{MagicValueType, MimeMagicMatcher};
-
-    use super::MimeMagic;
-
-    /// Exercises empty and non-empty magic helper methods.
-    ///
-    /// # Returns
-    /// Summary values from magic helpers.
-    pub(crate) fn exercise_magic_edges() -> Vec<String> {
-        let empty = MimeMagic::new(0, Vec::new());
-        let matcher =
-            MimeMagicMatcher::new(MagicValueType::String, 0, 0, b"ABC".to_vec(), None, vec![])
-                .expect("matcher should be valid");
-        let magic = MimeMagic::new(25, vec![matcher]);
-        vec![
-            empty.matchers().len().to_string(),
-            empty.max_test_bytes().to_string(),
-            empty.matches(b"ABC").to_string(),
-            magic.matchers().len().to_string(),
-            magic.matches(b"ABC").to_string(),
-        ]
-    }
-}

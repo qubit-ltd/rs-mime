@@ -182,29 +182,3 @@ fn append_escaped_regex_char(ch: char, regex: &mut String) {
     }
     regex.push(ch);
 }
-
-// qubit-style: allow coverage-cfg
-#[cfg(coverage)]
-pub(crate) mod coverage_support {
-    //! Coverage helpers for glob conversion branches.
-
-    use super::MimeGlob;
-
-    /// Exercises glob parser edge cases not common in the default database.
-    ///
-    /// # Returns
-    /// Match results encoded as strings.
-    pub(crate) fn exercise_glob_edges() -> Vec<String> {
-        let question = MimeGlob::new("file?.txt", 50, false).expect("glob should compile");
-        let negated_class = MimeGlob::new("[!a]ile.txt", 50, false).expect("glob should compile");
-        let unclosed_class = MimeGlob::new("file[.txt", 50, false).expect("glob should compile");
-        let escaped_class = MimeGlob::new("[\\]a].txt", 50, false).expect("glob should compile");
-        vec![
-            question.matches("file1.txt").to_string(),
-            negated_class.matches("bile.txt").to_string(),
-            unclosed_class.matches("file[.txt").to_string(),
-            escaped_class.matches("\\.txt").to_string(),
-            question.case_sensitive().to_string(),
-        ]
-    }
-}

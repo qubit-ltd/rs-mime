@@ -9,13 +9,9 @@
  ******************************************************************************/
 //! MIME detector backed by the system `file` command.
 
-use std::path::Path;
-// qubit-style: allow coverage-cfg
-#[cfg(not(coverage))]
-use std::sync::OnceLock;
-
 use qubit_command::{Command, CommandRunner};
 use qubit_io::ReadSeek;
+use std::path::Path;
 
 use crate::{
     FileBasedMimeDetector, MimeConfig, MimeDetectionPolicy, MimeDetector, MimeDetectorCore,
@@ -227,25 +223,11 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// `true` when the command can be executed.
-    #[cfg(not(coverage))]
     pub fn is_available() -> bool {
-        static AVAILABLE: OnceLock<bool> = OnceLock::new();
-        *AVAILABLE.get_or_init(|| {
-            CommandRunner::new()
-                .disable_logging(true)
-                .run(Self::command_for_path(Path::new(".")))
-                .is_ok()
-        })
-    }
-
-    /// Checks file-command availability during coverage builds.
-    ///
-    /// # Returns
-    /// Always returns `false` so fallback detector selection is deterministic
-    /// under instrumentation.
-    #[cfg(coverage)]
-    pub fn is_available() -> bool {
-        false
+        CommandRunner::new()
+            .disable_logging(true)
+            .run(Self::command_for_path(Path::new(".")))
+            .is_ok()
     }
 
     /// Gets filename candidates from the repository.
@@ -273,7 +255,6 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Errors
     /// Returns [`MimeError::Command`](crate::MimeError::Command) when command execution fails.
-    #[cfg(not(coverage))]
     fn guess_from_file_command(&self, path: &Path) -> MimeResult<Vec<String>> {
         let output = self.command_runner.run(Self::command_for_path(path))?;
         let text = output.stdout_lossy_text();
@@ -283,23 +264,6 @@ impl<'a> FileCommandMimeDetector<'a> {
         } else {
             Ok(vec![result.to_owned()])
         }
-    }
-
-    /// Gets deterministic content candidates during coverage builds.
-    ///
-    /// # Parameters
-    /// - `path`: Local path to inspect.
-    ///
-    /// # Returns
-    /// A stable MIME type candidate when the path exists.
-    ///
-    /// # Errors
-    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the path metadata cannot be read.
-    #[cfg(coverage)]
-    fn guess_from_file_command(&self, path: &Path) -> MimeResult<Vec<String>> {
-        let _ = std::fs::metadata(path)?;
-        let _ = self.command_runner.configured_working_directory();
-        Ok(vec!["text/plain".to_owned()])
     }
 
     /// Creates the default command runner for file detection.
@@ -351,156 +315,5 @@ impl<'a> FileBasedMimeDetector for FileCommandMimeDetector<'a> {
     /// Guesses MIME type names from a local file using the file command.
     fn guess_from_local_file(&self, file: &Path) -> MimeResult<Vec<String>> {
         self.guess_from_file_command(file)
-    }
-}
-
-#[cfg(coverage)]
-pub(crate) mod coverage_support {
-    //! Coverage helpers for file-command detector branches.
-
-    use std::io::Cursor;
-    use std::path::Path;
-
-    use qubit_command::CommandRunner;
-
-    use crate::{MimeDetectionPolicy, MimeDetector, MimeRepository};
-
-    use super::FileCommandMimeDetector;
-
-    /// Exercises file-command detector accessors and best-effort command paths.
-    ///
-    /// # Returns
-    /// Summary strings from the detector.
-    pub(crate) fn exercise_file_command_edges() -> Vec<String> {
-        let repository = MimeRepository::empty();
-        let mut empty_detector = FileCommandMimeDetector::with_repository(&repository);
-        let core_flag = empty_detector
-            .core()
-            .media_stream_classifier()
-            .is_none()
-            .to_string();
-        empty_detector.core_mut().set_media_stream_classifier(None);
-        let core_mut_flag = empty_detector
-            .core()
-            .media_stream_classifier()
-            .is_none()
-            .to_string();
-        empty_detector.set_command_runner(
-            CommandRunner::new()
-                .working_directory(".")
-                .disable_logging(true)
-                .timeout(std::time::Duration::from_secs(1)),
-        );
-        let runner_timeout = empty_detector
-            .command_runner()
-            .configured_timeout()
-            .is_some()
-            .to_string();
-        let working_directory = empty_detector
-            .command_runner()
-            .configured_working_directory()
-            .map(|path| path.display().to_string())
-            .unwrap_or_default();
-        let disable_logging = empty_detector
-            .command_runner()
-            .is_logging_disabled()
-            .to_string();
-        let working_directory_command = format!(
-            "{:?}",
-            empty_detector.detect_file_by_content(Path::new("Cargo.toml"))
-        );
-        let command_description = format!(
-            "{:?}",
-            FileCommandMimeDetector::command_for_path(Path::new("Cargo.toml"))
-        );
-        let repository_len = empty_detector.repository().all().len().to_string();
-        let replaced_runner = FileCommandMimeDetector::with_repository(&repository)
-            .with_command_runner(CommandRunner::new().disable_logging(true))
-            .command_runner()
-            .is_logging_disabled()
-            .to_string();
-        let mut setter_detector = FileCommandMimeDetector::with_repository(&repository);
-        setter_detector.set_command_runner(CommandRunner::new().disable_logging(true));
-        let setter_runner = setter_detector
-            .command_runner()
-            .is_logging_disabled()
-            .to_string();
-
-        let detector = FileCommandMimeDetector::new();
-        let default_detector = FileCommandMimeDetector::default();
-        let filename = format!("{:?}", detector.detect_by_filename("image.png"));
-        let content = format!("{:?}", detector.detect_by_content(b"%PDF-1.7\n"));
-        let combined = format!(
-            "{:?}",
-            detector.detect(
-                b"%PDF-1.7\n",
-                Some("file.pdf"),
-                MimeDetectionPolicy::VerifyContent,
-            )
-        );
-        let filename_only = format!(
-            "{:?}",
-            detector.detect(b"", Some("file.pdf"), MimeDetectionPolicy::PreferFilename,)
-        );
-        let mut reader = Cursor::new(b"%PDF-1.7\n".to_vec());
-        let reader_result = format!(
-            "{:?}",
-            detector.detect_reader(
-                &mut reader,
-                Some("file.pdf"),
-                MimeDetectionPolicy::VerifyContent,
-            )
-        );
-        let path_result = format!(
-            "{:?}",
-            detector.detect_file(Path::new("Cargo.toml"), MimeDetectionPolicy::VerifyContent)
-        );
-        let path_filename_only = format!(
-            "{:?}",
-            detector.detect_file(Path::new("file.pdf"), MimeDetectionPolicy::PreferFilename)
-        );
-        let path_content = format!(
-            "{:?}",
-            detector.detect_file_by_content(Path::new("Cargo.toml"))
-        );
-        let detector_trait: &dyn MimeDetector = &detector;
-        let trait_filename = format!("{:?}", detector_trait.detect_by_filename("image.png"));
-        let trait_content = format!("{:?}", detector_trait.detect_by_content(b"%PDF-1.7\n"));
-        let trait_combined = format!(
-            "{:?}",
-            detector_trait.detect(
-                b"%PDF-1.7\n",
-                Some("file.pdf"),
-                MimeDetectionPolicy::VerifyContent,
-            )
-        );
-        vec![
-            core_flag,
-            core_mut_flag,
-            working_directory,
-            disable_logging,
-            runner_timeout,
-            working_directory_command,
-            command_description,
-            repository_len,
-            replaced_runner,
-            setter_runner,
-            default_detector
-                .detect_by_filename("file.pdf")
-                .is_some()
-                .to_string(),
-            FileCommandMimeDetector::is_available().to_string(),
-            filename,
-            content,
-            combined,
-            filename_only,
-            reader_result,
-            path_result,
-            path_filename_only,
-            path_content,
-            trait_filename,
-            trait_content,
-            trait_combined,
-        ]
     }
 }

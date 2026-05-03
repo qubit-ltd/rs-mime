@@ -13,6 +13,4 @@ mod api;
 mod classifier;
 mod detector;
 mod repository;
-
-#[cfg(coverage)]
-mod coverage_support;
+mod support;

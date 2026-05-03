@@ -113,6 +113,110 @@ fn test_from_config_reports_invalid_boolean_value() {
 }
 
 #[test]
+fn test_reload_default_reports_invalid_config_and_environment() {
+    let _guard = mime_config_test_lock();
+    let _env_restore = EnvRestore::new(&[ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION]);
+    let mut config = Config::new();
+    config
+        .set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, "maybe")
+        .expect("invalid precise detection flag should still be storable");
+
+    assert!(matches!(
+        MimeConfig::reload_default(&config),
+        Err(MimeError::Config(_))
+    ));
+
+    unsafe {
+        std::env::set_var(ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION, "maybe");
+    }
+    assert!(matches!(
+        MimeConfig::reload_default_from_env(),
+        Err(MimeError::Config(_))
+    ));
+    unsafe {
+        std::env::remove_var(ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION);
+    }
+}
+
+#[test]
+fn test_from_config_skips_blank_patterns_and_malformed_mapping_entries() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_MIME_DETECTOR_DEFAULT, " ")
+        .expect("blank detector default should be configurable");
+    config
+        .set(CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, "\t")
+        .expect("blank classifier default should be configurable");
+    config
+        .set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, false)
+        .expect("precise detection flag should be configurable");
+    config
+        .set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, "webm,.ogg,, ")
+        .expect("precise patterns should be configurable");
+    config
+        .set(
+            CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+            "webm:video/webm,audio/webm;bad;empty:,audio/x;extra:video/x,audio/x,other",
+        )
+        .expect("ambiguous mapping should be configurable");
+
+    let mime_config = MimeConfig::from_config(&config).expect("config should parse");
+
+    assert_eq!("repository", mime_config.mime_detector_default());
+    assert_eq!("ffprobe", mime_config.media_stream_classifier_default());
+    assert!(!mime_config.enable_precise_detection());
+    assert!(mime_config.precise_detection_patterns().contains("webm"));
+    assert!(mime_config.precise_detection_patterns().contains("ogg"));
+    assert_eq!(1, mime_config.ambiguous_mime_mapping().len());
+    assert!(mime_config.ambiguous_mime_mapping().contains_key("webm"));
+}
+
+#[test]
+fn test_load_falls_back_to_builtin_default_when_env_is_invalid() {
+    let _guard = mime_config_test_lock();
+    let _env_restore = EnvRestore::new(&[ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION]);
+
+    unsafe {
+        std::env::set_var(ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION, "maybe");
+    }
+    let loaded = MimeConfig::load();
+    unsafe {
+        std::env::remove_var(ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION);
+    }
+
+    assert_eq!(DEFAULT_MIME_DETECTOR, loaded.mime_detector_default());
+    assert_eq!(
+        DEFAULT_MEDIA_STREAM_CLASSIFIER,
+        loaded.media_stream_classifier_default()
+    );
+    assert_eq!(
+        DEFAULT_ENABLE_PRECISE_DETECTION,
+        loaded.enable_precise_detection()
+    );
+}
+
+#[test]
+fn test_load_uses_environment_when_valid() {
+    let _guard = mime_config_test_lock();
+    let _env_restore = EnvRestore::new(&[
+        ENV_MIME_DETECTOR_DEFAULT,
+        ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+        ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
+    ]);
+
+    unsafe {
+        std::env::set_var(ENV_MIME_DETECTOR_DEFAULT, "repository");
+        std::env::set_var(ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT, "ffprobe");
+        std::env::set_var(ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION, "false");
+    }
+    let loaded = MimeConfig::load();
+
+    assert_eq!("repository", loaded.mime_detector_default());
+    assert_eq!("ffprobe", loaded.media_stream_classifier_default());
+    assert!(!loaded.enable_precise_detection());
+}
+
+#[test]
 fn test_set_default_and_reload_default_replace_default_snapshot() {
     let _guard = mime_config_test_lock();
     let original = MimeConfig::default();
