@@ -11,10 +11,20 @@
 
 use std::fmt::Debug;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::{
+    Path,
+    PathBuf,
+};
+use std::sync::atomic::{
+    AtomicU64,
+    Ordering,
+};
 
-use crate::{MimeDetectorBackend, MimeDetectorCore, MimeResult};
+use crate::{
+    MimeDetectorBackend,
+    MimeDetectorCore,
+    MimeResult,
+};
 
 /// Core implementation contract for detectors that only inspect local files.
 pub trait FileBasedMimeDetector: Debug + Send + Sync {

@@ -11,7 +11,11 @@
 
 use std::collections::HashMap;
 
-use crate::{MimeGlob, MimeMagic, MimeType};
+use crate::{
+    MimeGlob,
+    MimeMagic,
+    MimeType,
+};
 
 /// Builder for [`MimeType`].
 #[derive(Debug, Clone)]

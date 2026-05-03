@@ -8,13 +8,23 @@
  *
  ******************************************************************************/
 
-use std::io::{Error, Read, Result as IoResult};
+use std::io::{
+    Error,
+    Read,
+    Result as IoResult,
+};
 use std::path::Path;
 use std::sync::Arc;
 
 use qubit_mime::{
-    ArcMediaStreamClassifier, BoxMediaStreamClassifier, FileBasedMediaStreamClassifier,
-    MediaStreamClassifier, MediaStreamClassifierBackend, MediaStreamType, MimeConfig, MimeError,
+    ArcMediaStreamClassifier,
+    BoxMediaStreamClassifier,
+    FileBasedMediaStreamClassifier,
+    MediaStreamClassifier,
+    MediaStreamClassifierBackend,
+    MediaStreamType,
+    MimeConfig,
+    MimeError,
     MimeResult,
 };
 

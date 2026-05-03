@@ -9,13 +9,21 @@
  ******************************************************************************/
 //! MIME detector backed by the system `file` command.
 
-use qubit_command::{Command, CommandRunner};
+use qubit_command::{
+    Command,
+    CommandRunner,
+};
 use qubit_io::ReadSeek;
 use std::path::Path;
 
 use crate::{
-    FileBasedMimeDetector, MimeConfig, MimeDetectionPolicy, MimeDetector, MimeDetectorCore,
-    MimeRepository, MimeResult,
+    FileBasedMimeDetector,
+    MimeConfig,
+    MimeDetectionPolicy,
+    MimeDetector,
+    MimeDetectorCore,
+    MimeRepository,
+    MimeResult,
 };
 
 use super::repository_mime_detector::default_repository;

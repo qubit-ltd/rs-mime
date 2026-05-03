@@ -9,7 +9,10 @@
  ******************************************************************************/
 //! Tests for MIME glob matching.
 
-use qubit_mime::{MimeError, MimeGlob};
+use qubit_mime::{
+    MimeError,
+    MimeGlob,
+};
 
 #[test]
 fn test_new_rejects_weight_above_maximum() {

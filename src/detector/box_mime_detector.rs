@@ -14,10 +14,18 @@ use std::path::Path;
 
 use qubit_io::ReadSeek;
 
-use crate::{MimeConfig, MimeDetectionPolicy, MimeDetector, MimeResult};
+use crate::{
+    MimeConfig,
+    MimeDetectionPolicy,
+    MimeDetector,
+    MimeResult,
+};
 
 use super::mime_detector_kind::MimeDetectorKind;
-use super::{FileCommandMimeDetector, RepositoryMimeDetector};
+use super::{
+    FileCommandMimeDetector,
+    RepositoryMimeDetector,
+};
 
 /// A MIME detector stored in a [`Box`].
 #[derive(Debug)]

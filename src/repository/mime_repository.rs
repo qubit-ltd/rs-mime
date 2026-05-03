@@ -12,11 +12,21 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use roxmltree::{Document, Node};
+use roxmltree::{
+    Document,
+    Node,
+};
 
 use crate::{
-    MagicValueType, MimeDetectionPolicy, MimeError, MimeGlob, MimeMagic, MimeMagicMatcher,
-    MimeResult, MimeType, MimeTypeBuilder,
+    MagicValueType,
+    MimeDetectionPolicy,
+    MimeError,
+    MimeGlob,
+    MimeMagic,
+    MimeMagicMatcher,
+    MimeResult,
+    MimeType,
+    MimeTypeBuilder,
 };
 
 /// A repository of MIME types and detection indexes.

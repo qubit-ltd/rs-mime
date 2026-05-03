@@ -13,8 +13,13 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::{
-    MimeConfig, MimeDetectionPolicy, MimeDetector, MimeDetectorBackend, MimeDetectorCore,
-    MimeRepository, MimeResult,
+    MimeConfig,
+    MimeDetectionPolicy,
+    MimeDetector,
+    MimeDetectorBackend,
+    MimeDetectorCore,
+    MimeRepository,
+    MimeResult,
 };
 
 const DEFAULT_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");

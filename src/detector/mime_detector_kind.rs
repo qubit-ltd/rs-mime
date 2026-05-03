@@ -11,7 +11,9 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MimeDetectorKind {
+    /// The repository detector.
     Repository,
+    /// The file command detector.
     FileCommand,
 }
 

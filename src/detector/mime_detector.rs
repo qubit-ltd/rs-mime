@@ -14,7 +14,10 @@ use std::path::Path;
 
 use qubit_io::ReadSeek;
 
-use crate::{MimeDetectionPolicy, MimeResult};
+use crate::{
+    MimeDetectionPolicy,
+    MimeResult,
+};
 
 /// Detects MIME types from filenames and content.
 pub trait MimeDetector: Debug + Send + Sync {

@@ -12,9 +12,15 @@ use std::time::Duration;
 
 use qubit_command::CommandRunner;
 use qubit_mime::{
-    CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, CONFIG_MIME_DETECTOR_DEFAULT,
-    CONFIG_MIME_ENABLE_PRECISE_DETECTION, FileBasedMimeDetector, FileCommandMimeDetector,
-    MimeConfig, MimeDetectionPolicy, MimeDetector, MimeRepository,
+    CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+    CONFIG_MIME_DETECTOR_DEFAULT,
+    CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+    FileBasedMimeDetector,
+    FileCommandMimeDetector,
+    MimeConfig,
+    MimeDetectionPolicy,
+    MimeDetector,
+    MimeRepository,
 };
 use tempfile::TempDir;
 

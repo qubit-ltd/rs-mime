@@ -15,7 +15,13 @@ use std::path::Path;
 
 use qubit_io::ReadSeek;
 
-use crate::{DetectionSource, MimeDetectionPolicy, MimeDetector, MimeDetectorCore, MimeResult};
+use crate::{
+    DetectionSource,
+    MimeDetectionPolicy,
+    MimeDetector,
+    MimeDetectorCore,
+    MimeResult,
+};
 
 use super::stream_based_mime_detector::read_prefix;
 

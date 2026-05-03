@@ -11,10 +11,19 @@
 use std::sync::Arc;
 
 use qubit_mime::{
-    ArcMimeDetector, BoxMimeDetector, FileCommandMimeDetector, MimeConfig, MimeDetectionPolicy,
-    MimeDetector, MimeResult, RepositoryMimeDetector,
+    ArcMimeDetector,
+    BoxMimeDetector,
+    FileCommandMimeDetector,
+    MimeConfig,
+    MimeDetectionPolicy,
+    MimeDetector,
+    MimeResult,
+    RepositoryMimeDetector,
 };
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::{
+    NamedTempFile,
+    TempDir,
+};
 
 const CHILD_WITHOUT_FILE_COMMAND: &str = "QUBIT_MIME_CHILD_WITHOUT_FILE_COMMAND";
 
