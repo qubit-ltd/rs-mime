@@ -30,9 +30,9 @@ pub use classifier::{
 pub use common_mime_types::*;
 pub use constants::*;
 pub use detector::{
-    ArcMimeDetector, BoxMimeDetector, DetectionSource, FileCommandMimeDetector,
-    MimeDetectionPolicy, MimeDetector, MimeDetectorBackend, MimeDetectorCore,
-    RepositoryMimeDetector,
+    ArcMimeDetector, BoxMimeDetector, DetectionSource, FileBasedMimeDetector,
+    FileCommandMimeDetector, MimeDetectionPolicy, MimeDetector, MimeDetectorBackend,
+    MimeDetectorCore, RepositoryMimeDetector,
 };
 pub use mime_config::MimeConfig;
 pub use mime_error::MimeError;

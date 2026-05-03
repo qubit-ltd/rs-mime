@@ -17,11 +17,10 @@ use qubit_command::{Command, CommandRunner};
 use qubit_io::ReadSeek;
 
 use crate::{
-    MimeConfig, MimeDetectionPolicy, MimeDetector, MimeDetectorBackend, MimeDetectorCore,
+    FileBasedMimeDetector, MimeConfig, MimeDetectionPolicy, MimeDetector, MimeDetectorCore,
     MimeRepository, MimeResult,
 };
 
-use super::file_based_mime_detector::with_temp_file;
 use super::repository_mime_detector::default_repository;
 
 /// MIME detector backed by `file --mime-type --brief`.
@@ -332,7 +331,7 @@ impl Default for FileCommandMimeDetector<'static> {
     }
 }
 
-impl<'a> MimeDetectorBackend for FileCommandMimeDetector<'a> {
+impl<'a> FileBasedMimeDetector for FileCommandMimeDetector<'a> {
     /// Gets the shared detector core.
     fn core(&self) -> &MimeDetectorCore {
         &self.core
@@ -348,14 +347,9 @@ impl<'a> MimeDetectorBackend for FileCommandMimeDetector<'a> {
         FileCommandMimeDetector::guess_from_filename(self, filename)
     }
 
-    /// Guesses MIME type names from content using a temporary file.
-    fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
-        with_temp_file(content, |path| self.guess_from_file_command(path))
-    }
-
     /// Guesses MIME type names from a local file using the file command.
-    fn guess_from_file(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        Ok((self.guess_from_file_command(file)?, Vec::new()))
+    fn guess_from_local_file(&self, file: &Path) -> MimeResult<Vec<String>> {
+        self.guess_from_file_command(file)
     }
 }
 

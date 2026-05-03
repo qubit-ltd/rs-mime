@@ -27,6 +27,7 @@ pub(crate) mod stream_based_mime_detector;
 pub use arc_mime_detector::ArcMimeDetector;
 pub use box_mime_detector::BoxMimeDetector;
 pub use detection_source::DetectionSource;
+pub use file_based_mime_detector::FileBasedMimeDetector;
 pub use file_command_mime_detector::FileCommandMimeDetector;
 pub use mime_detection_policy::MimeDetectionPolicy;
 pub use mime_detector::MimeDetector;
