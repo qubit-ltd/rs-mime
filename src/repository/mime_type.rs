@@ -9,17 +9,9 @@
  ******************************************************************************/
 //! MIME type metadata and matching helpers.
 
-use std::collections::{
-    HashMap,
-    HashSet,
-};
+use std::collections::{HashMap, HashSet};
 
-use crate::{
-    MimeGlob,
-    MimeMagic,
-    MimeRepository,
-    MimeTypeBuilder,
-};
+use crate::{MimeGlob, MimeMagic, MimeRepository, MimeTypeBuilder};
 
 /// Metadata and matching rules for a MIME type.
 #[derive(Debug, Clone)]

@@ -11,11 +11,7 @@
 use std::time::Duration;
 
 use qubit_command::CommandRunner;
-use qubit_mime::{
-    FfprobeCommandMediaStreamClassifier,
-    MediaStreamClassifier,
-    MediaStreamType,
-};
+use qubit_mime::{FfprobeCommandMediaStreamClassifier, MediaStreamClassifier, MediaStreamType};
 use tempfile::TempDir;
 
 use crate::support::PathEnvGuard;

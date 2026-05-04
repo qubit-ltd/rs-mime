@@ -9,20 +9,13 @@
  ******************************************************************************/
 
 use std::fs;
-use std::path::{
-    Path,
-    PathBuf,
-};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use tempfile::NamedTempFile;
 
 use qubit_mime::{
-    FileBasedMimeDetector,
-    MimeDetectionPolicy,
-    MimeDetector,
-    MimeDetectorCore,
-    MimeError,
+    FileBasedMimeDetector, MimeDetectionPolicy, MimeDetector, MimeDetectorCore, MimeError,
     MimeResult,
 };
 

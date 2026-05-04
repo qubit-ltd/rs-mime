@@ -13,12 +13,7 @@ use std::io::Read;
 use std::ops::Deref;
 use std::path::Path;
 
-use crate::{
-    MediaStreamClassifier,
-    MediaStreamType,
-    MimeConfig,
-    MimeResult,
-};
+use crate::{MediaStreamClassifier, MediaStreamType, MimeConfig, MimeResult};
 
 use super::FfprobeCommandMediaStreamClassifier;
 use super::media_stream_classifier_kind::MediaStreamClassifierKind;

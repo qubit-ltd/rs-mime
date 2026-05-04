@@ -9,10 +9,7 @@
  ******************************************************************************/
 //! Tests for MIME repository parsing and matching.
 
-use qubit_mime::{
-    MimeRepository,
-    MimeType,
-};
+use qubit_mime::{MimeRepository, MimeType};
 
 const TEST_DATABASE: &str = r#"
 <mime-info>
@@ -295,6 +292,7 @@ fn test_from_xml_reports_invalid_string_and_numeric_magic_values() {
         r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="ff" offset="0"/></magic></mime-type></mime-info>"#,
         r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="0xf" offset="0"/></magic></mime-type></mime-info>"#,
         r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="0xgg" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="0x€0" offset="0"/></magic></mime-type></mime-info>"#,
         r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="byte" value="bad" offset="0"/></magic></mime-type></mime-info>"#,
     ];
 
@@ -304,6 +302,28 @@ fn test_from_xml_reports_invalid_string_and_numeric_magic_values() {
             "invalid magic value should fail: {xml}"
         );
     }
+}
+
+#[test]
+fn test_from_xml_accepts_uppercase_hex_mask_prefix() {
+    let repository = MimeRepository::from_xml(
+        r#"
+<mime-info>
+  <mime-type type="application/x-uppercase-mask">
+    <comment>uppercase mask prefix</comment>
+    <magic>
+      <match type="string" value="AB" mask="0XFF00" offset="0"/>
+    </magic>
+  </mime-type>
+</mime-info>
+"#,
+    )
+    .expect("uppercase hex mask prefix should parse");
+
+    assert_eq!(
+        vec!["application/x-uppercase-mask"],
+        names(repository.detect_by_content(b"AX"))
+    );
 }
 
 #[test]

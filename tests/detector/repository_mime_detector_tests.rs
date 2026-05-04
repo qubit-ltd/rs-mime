@@ -9,20 +9,9 @@
  ******************************************************************************/
 //! Tests for the repository-backed MIME detector.
 
-use std::io::{
-    Cursor,
-    Error,
-    Read,
-    Result as IoResult,
-    Seek,
-    SeekFrom,
-};
+use std::io::{Cursor, Error, Read, Result as IoResult, Seek, SeekFrom};
 
-use qubit_mime::{
-    MimeDetectionPolicy,
-    MimeRepository,
-    RepositoryMimeDetector,
-};
+use qubit_mime::{MimeDetectionPolicy, MimeRepository, RepositoryMimeDetector};
 use tempfile::NamedTempFile;
 
 #[derive(Debug, Clone, Copy)]

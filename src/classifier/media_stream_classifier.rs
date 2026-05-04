@@ -11,10 +11,7 @@
 //!
 
 use std::fmt::Debug;
-use std::io::{
-    Cursor,
-    Read,
-};
+use std::io::{Cursor, Read};
 use std::path::Path;
 
 use crate::MimeResult;

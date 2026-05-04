@@ -12,21 +12,12 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use roxmltree::{
-    Document,
-    Node,
-};
+use qubit_codec::{CodecError, HexCodec};
+use roxmltree::{Document, Node};
 
 use crate::{
-    MagicValueType,
-    MimeDetectionPolicy,
-    MimeError,
-    MimeGlob,
-    MimeMagic,
-    MimeMagicMatcher,
-    MimeResult,
-    MimeType,
-    MimeTypeBuilder,
+    MagicValueType, MimeDetectionPolicy, MimeError, MimeGlob, MimeMagic, MimeMagicMatcher,
+    MimeResult, MimeType, MimeTypeBuilder,
 };
 
 /// A repository of MIME types and detection indexes.
@@ -745,24 +736,24 @@ fn push_char_bytes(ch: char, bytes: &mut Vec<u8>) {
 /// Index of the last consumed hex digit.
 ///
 /// # Errors
-/// Returns [`MimeError`](crate::MimeError) when the escape has no hex digit.
+/// Returns [`MimeError`](crate::MimeError) when the escape has no hex digit
+/// or cannot be decoded as hexadecimal.
 fn decode_hex_escape(
     chars: &[char],
     mut index: usize,
     source: &str,
     bytes: &mut Vec<u8>,
 ) -> MimeResult<usize> {
-    let mut value = 0u8;
-    let mut digits = 0;
-    while index + 1 < chars.len() && digits < 2 {
-        let Some(digit) = chars[index + 1].to_digit(16) else {
+    let mut digits = String::with_capacity(2);
+    while index + 1 < chars.len() && digits.len() < 2 {
+        let digit = chars[index + 1];
+        if !digit.is_ascii_hexdigit() {
             break;
-        };
-        value = (value << 4) | digit as u8;
-        digits += 1;
+        }
+        digits.push(digit);
         index += 1;
     }
-    if digits == 0 {
+    if digits.is_empty() {
         return Err(MimeError::invalid_attr(
             "match",
             "value",
@@ -770,7 +761,18 @@ fn decode_hex_escape(
             "hex escape requires at least one digit",
         ));
     }
-    bytes.push(value);
+    if digits.len() == 1 {
+        digits.insert(0, '0');
+    }
+    let decoded = HexCodec::new().decode(&digits).map_err(|error| {
+        MimeError::invalid_attr(
+            "match",
+            "value",
+            source,
+            format!("invalid hex escape: {error}"),
+        )
+    })?;
+    bytes.extend_from_slice(&decoded);
     Ok(index)
 }
 
@@ -858,33 +860,24 @@ fn parse_c_integer(value: &str) -> MimeResult<u64> {
 /// Decoded bytes.
 ///
 /// # Errors
-/// Returns [`MimeError`](crate::MimeError) when the value is not an even-length hex string.
+/// Returns [`MimeError`](crate::MimeError) when the value is not an
+/// even-length hex string or contains non-hex characters.
 fn parse_hex_bytes(value: &str) -> MimeResult<Vec<u8>> {
-    let digits = value
-        .strip_prefix("0x")
-        .or_else(|| value.strip_prefix("0X"))
-        .ok_or_else(|| {
-            MimeError::invalid_attr("match", "mask", value, "string mask must start with 0x")
-        })?;
-    if digits.len() % 2 != 0 {
-        return Err(MimeError::invalid_attr(
-            "match",
-            "mask",
-            value,
-            "hex mask must contain an even number of digits",
-        ));
-    }
-    let mut bytes = Vec::with_capacity(digits.len() / 2);
-    let mut index = 0;
-    while index < digits.len() {
-        let pair = &digits[index..index + 2];
-        let byte = u8::from_str_radix(pair, 16).map_err(|error| {
-            MimeError::invalid_attr("match", "mask", value, format!("invalid hex byte: {error}"))
-        })?;
-        bytes.push(byte);
-        index += 2;
-    }
-    Ok(bytes)
+    HexCodec::new()
+        .with_prefix("0x")
+        .with_ignore_prefix_case(true)
+        .decode(value)
+        .map_err(|error| match error {
+            CodecError::MissingPrefix { .. } => {
+                MimeError::invalid_attr("match", "mask", value, "string mask must start with 0x")
+            }
+            other => MimeError::invalid_attr(
+                "match",
+                "mask",
+                value,
+                format!("invalid hex byte: {other}"),
+            ),
+        })
 }
 
 /// Gets normalized MIME type name.

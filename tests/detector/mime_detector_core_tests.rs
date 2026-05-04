@@ -13,14 +13,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use qubit_mime::{
-    ArcMediaStreamClassifier,
-    DetectionSource,
-    MediaStreamClassifier,
-    MediaStreamType,
-    MimeConfig,
-    MimeDetectionPolicy,
-    MimeDetectorCore,
-    MimeError,
+    ArcMediaStreamClassifier, DetectionSource, MediaStreamClassifier, MediaStreamType, MimeConfig,
+    MimeDetectionPolicy, MimeDetectorCore, MimeError,
 };
 
 #[derive(Debug)]

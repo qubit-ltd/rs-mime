@@ -13,16 +13,9 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use qubit_command::CommandRunner;
-use qubit_command::{
-    Command,
-    CommandError,
-};
+use qubit_command::{Command, CommandError};
 
-use crate::{
-    FileBasedMediaStreamClassifier,
-    MediaStreamType,
-    MimeResult,
-};
+use crate::{FileBasedMediaStreamClassifier, MediaStreamType, MimeResult};
 
 /// Media stream classifier backed by the `ffprobe` command.
 #[derive(Debug, Clone)]

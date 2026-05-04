@@ -9,15 +9,9 @@
  ******************************************************************************/
 //! Filename glob rules for MIME detection.
 
-use regex::{
-    Regex,
-    RegexBuilder,
-};
+use regex::{Regex, RegexBuilder};
 
-use crate::{
-    MimeError,
-    MimeResult,
-};
+use crate::{MimeError, MimeResult};
 
 /// Filename glob rule associated with a MIME type.
 #[derive(Debug, Clone)]

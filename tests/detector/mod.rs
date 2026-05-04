@@ -12,3 +12,4 @@ mod file_command_mime_detector_tests;
 mod mime_detector_core_tests;
 mod mime_detector_tests;
 mod repository_mime_detector_tests;
+mod stream_based_mime_detector_tests;
