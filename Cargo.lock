@@ -33,6 +33,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
 name = "bigdecimal"
 version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -522,6 +528,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "qubit-codec"
+version = "0.2.0"
+dependencies = [
+ "base64",
+ "thiserror",
+]
+
+[[package]]
 name = "qubit-command"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -579,6 +593,7 @@ checksum = "deb73fe2b797cd89c02dbed577c003086ace6d919d0c81cc4b092f0fb3359967"
 name = "qubit-mime"
 version = "0.2.2"
 dependencies = [
+ "qubit-codec",
  "qubit-command",
  "qubit-config",
  "qubit-io",
