@@ -13,6 +13,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use qubit_codec::{
+    CIntegerLiteralCodec,
     CStringLiteralCodec,
     CodecError,
     HexCodec,
@@ -714,7 +715,14 @@ fn parse_c_string_bytes(value: &str) -> MimeResult<Vec<u8>> {
 /// # Errors
 /// Returns [`MimeError`](crate::MimeError) when the value is invalid.
 fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
-    let number = parse_c_integer(value)?;
+    let number = CIntegerLiteralCodec::new().decode(value).map_err(|error| {
+        MimeError::invalid_attr(
+            "match",
+            "value",
+            value,
+            format!("invalid C integer literal: {error}"),
+        )
+    })?;
     match value_type
         .numeric_width()
         .expect("numeric parser should only receive numeric magic types")
@@ -724,33 +732,6 @@ fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> MimeResult<Ve
         4 => Ok((number as u32).to_be_bytes().to_vec()),
         _ => unreachable!("unsupported numeric magic width"),
     }
-}
-
-/// Parses a C-style integer literal.
-///
-/// # Parameters
-/// - `value`: Number text.
-///
-/// # Returns
-/// Parsed integer as `u64`.
-///
-/// # Errors
-/// Returns [`MimeError`](crate::MimeError) when parsing fails.
-fn parse_c_integer(value: &str) -> MimeResult<u64> {
-    let trimmed = value.trim();
-    let (radix, digits) = if let Some(hex) = trimmed
-        .strip_prefix("0x")
-        .or_else(|| trimmed.strip_prefix("0X"))
-    {
-        (16, hex)
-    } else if trimmed.len() > 1 && trimmed.starts_with('0') {
-        (8, &trimmed[1..])
-    } else {
-        (10, trimmed)
-    };
-    u64::from_str_radix(digits, radix).map_err(|error| {
-        MimeError::invalid_attr("match", "value", value, format!("invalid integer: {error}"))
-    })
 }
 
 /// Parses `0x` prefixed hex bytes.
