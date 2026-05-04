@@ -217,6 +217,27 @@ first. If that provider is unknown, unavailable, or fails to initialize, the
 configured fallback chain is tried in order. Set the default selector to `auto`
 to choose the highest-priority available provider from the registry.
 
+The default registry starts with the built-in providers returned by
+`MimeDetectorRegistry::builtin()`. Extension crates can make their providers
+available to all default detector constructors by calling
+`MimeDetectorRegistry::register_default(provider)` during application startup.
+After registration succeeds, every later call to `BoxMimeDetector::from_config()`,
+`BoxMimeDetector::from_name()`, `ArcMimeDetector::from_config()`, or
+`ArcMimeDetector::from_name()` sees the provider through the same process-wide
+registry.
+
+`MimeDetectorRegistry::default_registry()` returns a snapshot clone of the
+current process-wide registry. Mutating that snapshot does not update the global
+registry. Use `register_default()` when a provider should become globally
+visible, and use an explicit `MimeDetectorRegistry::builtin()` or
+`MimeDetectorRegistry::new()` when a caller needs isolation, tests a custom
+provider, or wants to restrict which providers can be selected.
+
+Global registration is process-local and should normally happen once, before
+creating detectors from configuration. Duplicate provider ids or aliases are
+reported as `MimeError::DuplicateDetectorName`; poisoned global registry locks
+are reported as `MimeError::DetectorBackend`.
+
 Built-in detector selectors:
 
 | Selector | Aliases | Behavior |

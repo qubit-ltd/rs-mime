@@ -203,10 +203,27 @@ fn main() -> Result<(), MimeError> {
 
 ### 使用 registry 和 fallback 选择检测器
 
-`BoxMimeDetector::from_config()` 和 `ArcMimeDetector::from_config()` 使用内置
-`MimeDetectorRegistry`。配置的默认 detector 会先被尝试；如果该 provider 未知、
-不可用或初始化失败，则按配置的 fallback 链继续尝试。把默认 selector 设置为
-`auto` 时，会从 registry 中按 provider 优先级选择当前可用的实现。
+`BoxMimeDetector::from_config()` 和 `ArcMimeDetector::from_config()` 使用进程级
+默认 `MimeDetectorRegistry`。配置的默认 detector 会先被尝试；如果该 provider
+未知、不可用或初始化失败，则按配置的 fallback 链继续尝试。把默认 selector
+设置为 `auto` 时，会从 registry 中按 provider 优先级选择当前可用的实现。
+
+默认 registry 初始包含 `MimeDetectorRegistry::builtin()` 返回的内置 provider。
+扩展 crate 可以在应用启动阶段调用
+`MimeDetectorRegistry::register_default(provider)`，把自己的 provider 加入这个
+进程级默认 registry。注册成功后，后续任何地方调用
+`BoxMimeDetector::from_config()`、`BoxMimeDetector::from_name()`、
+`ArcMimeDetector::from_config()` 或 `ArcMimeDetector::from_name()`，都会通过同一个
+进程级默认 registry 看到该 provider。
+
+`MimeDetectorRegistry::default_registry()` 返回当前进程级 registry 的快照克隆。
+修改这个快照不会更新全局 registry。需要让 provider 对默认构造器全局可见时，
+使用 `register_default()`；需要隔离环境、测试自定义 provider，或限制可选 provider
+集合时，使用显式的 `MimeDetectorRegistry::builtin()` 或 `MimeDetectorRegistry::new()`。
+
+全局注册只在当前进程内生效，通常应在根据配置创建 detector 之前执行一次。provider
+id 或 alias 重复时会返回 `MimeError::DuplicateDetectorName`；全局 registry 锁中毒时
+会返回 `MimeError::DetectorBackend`。
 
 内置 detector selector：
 
