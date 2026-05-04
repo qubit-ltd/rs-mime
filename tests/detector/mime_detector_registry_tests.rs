@@ -16,6 +16,7 @@ use std::sync::atomic::{
 use tempfile::TempDir;
 
 use qubit_mime::{
+    BoxMimeDetector,
     FileCommandMimeDetectorProvider,
     MimeConfig,
     MimeDetectionPolicy,
@@ -300,7 +301,7 @@ fn test_provider_default_methods_return_available_zero_priority_without_aliases(
 
 #[test]
 fn test_builtin_registry_exposes_repository_and_file_command_providers() {
-    let registry = MimeDetectorRegistry::with_builtin();
+    let registry = MimeDetectorRegistry::builtin();
     let names = registry.provider_names();
 
     assert!(names.contains(&"repository"));
@@ -325,6 +326,41 @@ fn test_builtin_registry_exposes_repository_and_file_command_providers() {
         .find_provider("file")
         .expect("file provider should be registered");
     assert_eq!(10, file_provider.priority());
+}
+
+#[test]
+fn test_default_registry_starts_with_builtin_providers() {
+    let registry = MimeDetectorRegistry::default_registry()
+        .expect("default registry snapshot should be available");
+    let names = registry.provider_names();
+
+    assert!(names.contains(&"repository"));
+    assert!(names.contains(&"file"));
+}
+
+#[test]
+fn test_register_default_provider_makes_wrapper_constructors_see_provider() {
+    MimeDetectorRegistry::register_default(TestProvider::new(
+        "global-test",
+        &["global-test-detector"],
+        "application/x-global-test",
+    ))
+    .expect("global test provider should register");
+
+    let by_name = BoxMimeDetector::from_name("global-test-detector")
+        .expect("wrapper name constructor should use default registry");
+    let config = create_detector_config("global-test", &[]);
+    let by_config = BoxMimeDetector::from_config(&config)
+        .expect("wrapper config constructor should use default registry");
+
+    assert_eq!(
+        Some("application/x-global-test".to_owned()),
+        by_name.detect_by_filename("file.bin")
+    );
+    assert_eq!(
+        Some("application/x-global-test".to_owned()),
+        by_config.detect_by_content(b"data")
+    );
 }
 
 #[test]

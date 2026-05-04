@@ -254,7 +254,7 @@ use qubit_mime::{
 };
 
 fn main() -> Result<(), MimeError> {
-    let registry = MimeDetectorRegistry::with_builtin();
+    let registry = MimeDetectorRegistry::builtin();
     let detector = registry.create("repository-mime-detector", &MimeConfig::default())?;
 
     assert_eq!(
@@ -612,17 +612,19 @@ fn main() -> Result<(), MimeError> {
 
 | 方法 | 描述 |
 |-----|------|
-| `MimeDetectorRegistry::with_builtin()` | 创建包含内置 detector provider 的 registry |
-| `MimeDetectorRegistry::register(provider)` | 注册外部 detector provider |
+| `MimeDetectorRegistry::builtin()` | 创建只包含内置 detector provider 的隔离 registry |
+| `MimeDetectorRegistry::default_registry()` | 获取进程级默认 detector registry 的快照 |
+| `MimeDetectorRegistry::register_default(provider)` | 将外部 detector provider 注册到全局默认 registry |
+| `MimeDetectorRegistry::register(provider)` | 将外部 detector provider 注册到显式 registry |
 | `MimeDetectorRegistry::create(name, config)` | 按 provider id 或 alias 创建检测器 |
 | `MimeDetectorRegistry::create_default(config)` | 解析配置的默认值、`auto` 和 fallback 链 |
 | `MimeDetectorProvider` | 可插拔 detector 实现的工厂 trait |
-| `BoxMimeDetector::from_config(config)` | 从内置 providers 选择 boxed 检测器 |
+| `BoxMimeDetector::from_config(config)` | 从默认 registry 选择 boxed 检测器 |
 | `BoxMimeDetector::from_registry(registry, config)` | 从显式 registry 选择 boxed 检测器 |
-| `BoxMimeDetector::from_name(name)` | 按实现名称选择内置 boxed 检测器 |
-| `ArcMimeDetector::from_config(config)` | 从内置 providers 选择共享检测器 |
+| `BoxMimeDetector::from_name(name)` | 按实现名称从默认 registry 选择 boxed 检测器 |
+| `ArcMimeDetector::from_config(config)` | 从默认 registry 选择共享检测器 |
 | `ArcMimeDetector::from_registry(registry, config)` | 从显式 registry 选择共享检测器 |
-| `ArcMimeDetector::from_name(name)` | 按实现名称选择内置共享检测器 |
+| `ArcMimeDetector::from_name(name)` | 按实现名称从默认 registry 选择共享检测器 |
 | `detect_by_filename(filename)` | 根据文件名检测一个 MIME 名称 |
 | `detect_by_content(bytes)` | 根据内容字节检测一个 MIME 名称 |
 | `detect(bytes, filename, policy)` | 根据字节和可选文件名检测 |

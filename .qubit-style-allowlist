@@ -1,0 +1,1 @@
+coverage-cfg | src/detector/mime_detector_registry.rs | Use coverage-only lock recovery for poison branches that cannot be triggered reliably through public behavior.

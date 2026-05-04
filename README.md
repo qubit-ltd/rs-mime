@@ -212,7 +212,7 @@ fn main() -> Result<(), MimeError> {
 ### Select detectors with registry and fallbacks
 
 `BoxMimeDetector::from_config()` and `ArcMimeDetector::from_config()` use the
-built-in `MimeDetectorRegistry`. The configured default detector is tried
+process-wide default `MimeDetectorRegistry`. The configured default detector is tried
 first. If that provider is unknown, unavailable, or fails to initialize, the
 configured fallback chain is tried in order. Set the default selector to `auto`
 to choose the highest-priority available provider from the registry.
@@ -263,7 +263,7 @@ use qubit_mime::{
 };
 
 fn main() -> Result<(), MimeError> {
-    let registry = MimeDetectorRegistry::with_builtin();
+    let registry = MimeDetectorRegistry::builtin();
     let detector = registry.create("repository-mime-detector", &MimeConfig::default())?;
 
     assert_eq!(
@@ -624,17 +624,19 @@ fn main() -> Result<(), MimeError> {
 
 | Method | Description |
 |--------|-------------|
-| `MimeDetectorRegistry::with_builtin()` | Create a registry with built-in detector providers |
-| `MimeDetectorRegistry::register(provider)` | Register an external detector provider |
+| `MimeDetectorRegistry::builtin()` | Create an isolated registry with only built-in detector providers |
+| `MimeDetectorRegistry::default_registry()` | Snapshot the process-wide default detector registry |
+| `MimeDetectorRegistry::register_default(provider)` | Register an external detector provider globally |
+| `MimeDetectorRegistry::register(provider)` | Register an external detector provider in an explicit registry |
 | `MimeDetectorRegistry::create(name, config)` | Create one detector by provider id or alias |
 | `MimeDetectorRegistry::create_default(config)` | Resolve the configured default, `auto`, and fallback chain |
 | `MimeDetectorProvider` | Factory trait for pluggable detector implementations |
-| `BoxMimeDetector::from_config(config)` | Select a boxed detector from built-in providers |
+| `BoxMimeDetector::from_config(config)` | Select a boxed detector from the default registry |
 | `BoxMimeDetector::from_registry(registry, config)` | Select a boxed detector from an explicit registry |
-| `BoxMimeDetector::from_name(name)` | Select a boxed built-in detector by implementation name |
-| `ArcMimeDetector::from_config(config)` | Select a shared detector from built-in providers |
+| `BoxMimeDetector::from_name(name)` | Select a boxed detector from the default registry by implementation name |
+| `ArcMimeDetector::from_config(config)` | Select a shared detector from the default registry |
 | `ArcMimeDetector::from_registry(registry, config)` | Select a shared detector from an explicit registry |
-| `ArcMimeDetector::from_name(name)` | Select a shared built-in detector by implementation name |
+| `ArcMimeDetector::from_name(name)` | Select a shared detector from the default registry by implementation name |
 | `detect_by_filename(filename)` | Detect one MIME name from filename |
 | `detect_by_content(bytes)` | Detect one MIME name from content bytes |
 | `detect(bytes, filename, policy)` | Detect from bytes and optional filename |

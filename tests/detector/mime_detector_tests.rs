@@ -238,7 +238,7 @@ fn test_mime_detector_wrappers_select_named_detectors() {
 
 #[test]
 fn test_mime_detector_wrappers_select_from_explicit_registry() {
-    let registry = MimeDetectorRegistry::with_builtin();
+    let registry = MimeDetectorRegistry::builtin();
     let config = create_detector_config("repository");
     let boxed = BoxMimeDetector::from_registry_name(&registry, "repository", &config)
         .expect("boxed registry selector should create detector");

@@ -16,7 +16,7 @@
 //!
 //! # Examples
 //!
-//! Create a detector from the built-in registry and default configuration:
+//! Create a detector from the default registry and default configuration:
 //!
 //! ```rust
 //! use qubit_mime::{
@@ -74,31 +74,31 @@ impl BoxMimeDetector {
     /// - `name`: Detector selector.
     ///
     /// # Returns
-    /// Matching detector from the built-in registry.
+    /// Matching detector from the default registry.
     ///
     /// # Errors
-    /// Returns a [`MimeError`](crate::MimeError) when no built-in provider
+    /// Returns a [`MimeError`](crate::MimeError) when no default provider
     /// matches `name`, when the provider is unavailable, or initialization
     /// fails.
     pub fn from_name(name: &str) -> MimeResult<Self> {
         Self::from_name_with_config(name, &MimeConfig::default())
     }
 
-    /// Creates a boxed detector from a built-in implementation name and config.
+    /// Creates a boxed detector from a default registry implementation name and config.
     ///
     /// # Parameters
     /// - `name`: Detector selector.
     /// - `config`: MIME configuration passed to the provider.
     ///
     /// # Returns
-    /// Matching detector from the built-in registry.
+    /// Matching detector from the default registry.
     ///
     /// # Errors
-    /// Returns a [`MimeError`](crate::MimeError) when no built-in provider
+    /// Returns a [`MimeError`](crate::MimeError) when no default provider
     /// matches `name`, when the provider is unavailable, or initialization
     /// fails.
     pub fn from_name_with_config(name: &str, config: &MimeConfig) -> MimeResult<Self> {
-        MimeDetectorRegistry::with_builtin().create(name, config)
+        MimeDetectorRegistry::default_registry()?.create(name, config)
     }
 
     /// Creates a boxed detector from a registry provider name.
@@ -124,7 +124,7 @@ impl BoxMimeDetector {
 
     /// Creates a boxed detector from MIME configuration.
     ///
-    /// The built-in registry is used. The configured default selector is tried
+    /// The default registry is used. The configured default selector is tried
     /// first unless it is empty or `auto`; configured fallbacks are tried only
     /// when an explicit default cannot be created.
     ///
@@ -132,13 +132,13 @@ impl BoxMimeDetector {
     /// - `config`: MIME configuration containing the default detector selector.
     ///
     /// # Returns
-    /// Configured detector wrapper from the built-in registry.
+    /// Configured detector wrapper from the default registry.
     ///
     /// # Errors
     /// Returns a [`MimeError`](crate::MimeError) when the configured detector
     /// cannot be created.
     pub fn from_config(config: &MimeConfig) -> MimeResult<Self> {
-        Self::from_registry(&MimeDetectorRegistry::with_builtin(), config)
+        Self::from_registry(&MimeDetectorRegistry::default_registry()?, config)
     }
 
     /// Creates a boxed detector from MIME configuration and explicit registry.

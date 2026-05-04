@@ -76,27 +76,27 @@ impl ArcMimeDetector {
     /// - `name`: Detector selector.
     ///
     /// # Returns
-    /// Matching detector from the built-in registry.
+    /// Matching detector from the default registry.
     ///
     /// # Errors
-    /// Returns a [`MimeError`](crate::MimeError) when no built-in provider
+    /// Returns a [`MimeError`](crate::MimeError) when no default provider
     /// matches `name`, when the provider is unavailable, or initialization
     /// fails.
     pub fn from_name(name: &str) -> MimeResult<Self> {
         Self::from_name_with_config(name, &MimeConfig::default())
     }
 
-    /// Creates a shared detector from a built-in implementation name and config.
+    /// Creates a shared detector from a default registry implementation name and config.
     ///
     /// # Parameters
     /// - `name`: Detector selector.
     /// - `config`: MIME configuration passed to the provider.
     ///
     /// # Returns
-    /// Matching detector from the built-in registry.
+    /// Matching detector from the default registry.
     ///
     /// # Errors
-    /// Returns a [`MimeError`](crate::MimeError) when no built-in provider
+    /// Returns a [`MimeError`](crate::MimeError) when no default provider
     /// matches `name`, when the provider is unavailable, or initialization
     /// fails.
     pub fn from_name_with_config(name: &str, config: &MimeConfig) -> MimeResult<Self> {
@@ -126,7 +126,7 @@ impl ArcMimeDetector {
 
     /// Creates a shared detector from MIME configuration.
     ///
-    /// The built-in registry is used. The configured default selector is tried
+    /// The default registry is used. The configured default selector is tried
     /// first unless it is empty or `auto`; configured fallbacks are tried only
     /// when an explicit default cannot be created.
     ///
@@ -134,7 +134,7 @@ impl ArcMimeDetector {
     /// - `config`: MIME configuration containing the default detector selector.
     ///
     /// # Returns
-    /// Configured detector wrapper from the built-in registry.
+    /// Configured detector wrapper from the default registry.
     ///
     /// # Errors
     /// Returns a [`MimeError`](crate::MimeError) when the configured detector

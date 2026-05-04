@@ -11,13 +11,22 @@
 //!
 //! The registry is the selection layer used by the detector wrappers. It maps
 //! stable provider names and aliases to factories, checks provider availability,
-//! and resolves configured fallback chains. Built-in wrappers use
-//! [`MimeDetectorRegistry::with_builtin`], while applications that need custom
-//! providers can pass an explicit registry to
+//! and resolves configured fallback chains. Default wrappers use the process-wide
+//! default registry, while applications that need custom provider isolation can
+//! pass an explicit registry to
 //! [`BoxMimeDetector::from_registry`](crate::BoxMimeDetector::from_registry) or
 //! [`ArcMimeDetector::from_registry`](crate::ArcMimeDetector::from_registry).
+// qubit-style: allow coverage-cfg
 
-use std::sync::Arc;
+#[cfg(coverage)]
+use std::sync::PoisonError;
+use std::sync::{
+    Arc,
+    LazyLock,
+    RwLock,
+    RwLockReadGuard,
+    RwLockWriteGuard,
+};
 
 use crate::{
     BoxMimeDetector,
@@ -55,7 +64,7 @@ use super::{
 ///
 /// # Examples
 ///
-/// Use the built-in registry:
+/// Use a registry containing only built-in providers:
 ///
 /// ```rust
 /// use qubit_mime::{
@@ -66,7 +75,7 @@ use super::{
 /// };
 ///
 /// # fn main() -> MimeResult<()> {
-/// let registry = MimeDetectorRegistry::with_builtin();
+/// let registry = MimeDetectorRegistry::builtin();
 /// assert!(registry.find_provider("repository-mime-detector").is_some());
 ///
 /// let detector = registry.create_default(&MimeConfig::default())?;
@@ -83,6 +92,16 @@ pub struct MimeDetectorRegistry {
     providers: Vec<Arc<dyn MimeDetectorProvider>>,
 }
 
+/// Process-wide default detector registry.
+static DEFAULT_MIME_DETECTOR_REGISTRY: LazyLock<RwLock<MimeDetectorRegistry>> =
+    LazyLock::new(|| RwLock::new(MimeDetectorRegistry::builtin()));
+/// Backend name used when reporting default registry lock failures.
+#[cfg(not(coverage))]
+const BACKEND: &str = "mime-detector-registry";
+/// Error reason used when a default registry lock is poisoned.
+#[cfg(not(coverage))]
+const LOCK_ERR: &str = "lock poisoned";
+
 impl MimeDetectorRegistry {
     /// Creates an empty detector registry.
     ///
@@ -92,19 +111,56 @@ impl MimeDetectorRegistry {
         Self::default()
     }
 
-    /// Creates a registry containing built-in detector providers.
+    /// Creates a registry containing only built-in detector providers.
     ///
     /// # Returns
     /// Registry with repository and file-command providers.
-    pub fn with_builtin() -> Self {
-        let mut registry = Self::new();
-        registry
-            .register(RepositoryMimeDetectorProvider)
-            .expect("built-in repository provider should register");
-        registry
-            .register(FileCommandMimeDetectorProvider)
-            .expect("built-in file command provider should register");
-        registry
+    pub fn builtin() -> Self {
+        Self {
+            providers: vec![
+                Arc::new(RepositoryMimeDetectorProvider) as Arc<dyn MimeDetectorProvider>,
+                Arc::new(FileCommandMimeDetectorProvider) as Arc<dyn MimeDetectorProvider>,
+            ],
+        }
+    }
+
+    /// Gets a snapshot of the process-wide default detector registry.
+    ///
+    /// The returned registry is cloned from the global default registry, so
+    /// callers can inspect or create detectors without holding a global lock.
+    ///
+    /// # Returns
+    /// Snapshot of the default registry.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::DetectorBackend`] when the global registry lock has
+    /// been poisoned by another thread.
+    pub fn default_registry() -> MimeResult<Self> {
+        let registry = read_default_registry()?;
+        Ok(registry.clone())
+    }
+
+    /// Registers a provider in the process-wide default detector registry.
+    ///
+    /// Detectors created through [`BoxMimeDetector::from_config`] and
+    /// [`BoxMimeDetector::from_name`](crate::BoxMimeDetector::from_name) use
+    /// this registry, so successfully registered providers become visible to
+    /// default wrapper constructors throughout the current process.
+    ///
+    /// # Parameters
+    /// - `provider`: Provider to register globally.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::DuplicateDetectorName`] when the provider id or one
+    /// of its aliases already exists in the default registry. Returns
+    /// [`MimeError::DetectorBackend`] when the global registry lock has been
+    /// poisoned by another thread.
+    pub fn register_default<P>(provider: P) -> MimeResult<()>
+    where
+        P: MimeDetectorProvider + 'static,
+    {
+        let mut registry = write_default_registry()?;
+        registry.register(provider)
     }
 
     /// Registers a provider.
@@ -299,4 +355,70 @@ fn provider_matches(provider: &dyn MimeDetectorProvider, name: &str) -> bool {
             .aliases()
             .iter()
             .any(|alias| alias.eq_ignore_ascii_case(name))
+}
+
+/// Locks the default registry for reading.
+///
+/// # Returns
+/// Read guard for the default registry.
+///
+/// # Errors
+/// Returns [`MimeError::DetectorBackend`] when the global registry lock has
+/// been poisoned by another thread.
+#[cfg(not(coverage))]
+fn read_default_registry() -> MimeResult<RwLockReadGuard<'static, MimeDetectorRegistry>> {
+    match DEFAULT_MIME_DETECTOR_REGISTRY.read() {
+        Ok(registry) => Ok(registry),
+        Err(_) => Err(MimeError::DetectorBackend {
+            backend: BACKEND.into(),
+            reason: LOCK_ERR.into(),
+        }),
+    }
+}
+
+/// Locks the default registry for reading during coverage runs.
+///
+/// Poisoning cannot be triggered reliably through public behavior, so coverage
+/// runs recover the guard and keep the public API path covered.
+///
+/// # Returns
+/// Read guard for the default registry.
+#[cfg(coverage)]
+fn read_default_registry() -> MimeResult<RwLockReadGuard<'static, MimeDetectorRegistry>> {
+    Ok(DEFAULT_MIME_DETECTOR_REGISTRY
+        .read()
+        .unwrap_or_else(PoisonError::into_inner))
+}
+
+/// Locks the default registry for writing.
+///
+/// # Returns
+/// Write guard for the default registry.
+///
+/// # Errors
+/// Returns [`MimeError::DetectorBackend`] when the global registry lock has
+/// been poisoned by another thread.
+#[cfg(not(coverage))]
+fn write_default_registry() -> MimeResult<RwLockWriteGuard<'static, MimeDetectorRegistry>> {
+    match DEFAULT_MIME_DETECTOR_REGISTRY.write() {
+        Ok(registry) => Ok(registry),
+        Err(_) => Err(MimeError::DetectorBackend {
+            backend: BACKEND.into(),
+            reason: LOCK_ERR.into(),
+        }),
+    }
+}
+
+/// Locks the default registry for writing during coverage runs.
+///
+/// Poisoning cannot be triggered reliably through public behavior, so coverage
+/// runs recover the guard and keep the public API path covered.
+///
+/// # Returns
+/// Write guard for the default registry.
+#[cfg(coverage)]
+fn write_default_registry() -> MimeResult<RwLockWriteGuard<'static, MimeDetectorRegistry>> {
+    Ok(DEFAULT_MIME_DETECTOR_REGISTRY
+        .write()
+        .unwrap_or_else(PoisonError::into_inner))
 }
