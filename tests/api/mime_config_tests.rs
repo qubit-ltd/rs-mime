@@ -341,7 +341,7 @@ fn test_wrappers_use_mime_config_defaults() {
         DEFAULT_AMBIGUOUS_MIME_MAPPING,
     ));
 
-    let detector = BoxMimeDetector::default();
+    let detector = BoxMimeDetector::from_config(&MimeConfig::default()).expect("default detector");
     let _classifier = BoxMediaStreamClassifier::default();
 
     assert_eq!(

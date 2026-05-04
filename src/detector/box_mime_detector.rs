@@ -21,11 +21,7 @@ use crate::{
     MimeResult,
 };
 
-use super::mime_detector_kind::MimeDetectorKind;
-use super::{
-    FileCommandMimeDetector,
-    RepositoryMimeDetector,
-};
+use super::MimeDetectorRegistry;
 
 /// A MIME detector stored in a [`Box`].
 #[derive(Debug)]
@@ -51,9 +47,52 @@ impl BoxMimeDetector {
     /// - `name`: Detector selector.
     ///
     /// # Returns
-    /// Matching detector, or `None` when the selector is empty or unknown.
-    pub fn from_name(name: &str) -> Option<Self> {
-        MimeDetectorKind::from_name(name).map(Self::from_kind)
+    /// Matching detector from the built-in registry.
+    ///
+    /// # Errors
+    /// Returns a [`MimeError`](crate::MimeError) when no built-in provider
+    /// matches `name`, when the provider is unavailable, or initialization
+    /// fails.
+    pub fn from_name(name: &str) -> MimeResult<Self> {
+        Self::from_name_with_config(name, &MimeConfig::default())
+    }
+
+    /// Creates a boxed detector from a built-in implementation name and config.
+    ///
+    /// # Parameters
+    /// - `name`: Detector selector.
+    /// - `config`: MIME configuration passed to the provider.
+    ///
+    /// # Returns
+    /// Matching detector from the built-in registry.
+    ///
+    /// # Errors
+    /// Returns a [`MimeError`](crate::MimeError) when no built-in provider
+    /// matches `name`, when the provider is unavailable, or initialization
+    /// fails.
+    pub fn from_name_with_config(name: &str, config: &MimeConfig) -> MimeResult<Self> {
+        MimeDetectorRegistry::with_builtin().create(name, config)
+    }
+
+    /// Creates a boxed detector from a registry provider name.
+    ///
+    /// # Parameters
+    /// - `registry`: Registry containing available providers.
+    /// - `name`: Detector selector.
+    /// - `config`: MIME configuration passed to the provider.
+    ///
+    /// # Returns
+    /// Matching detector from `registry`.
+    ///
+    /// # Errors
+    /// Returns a [`MimeError`](crate::MimeError) when no provider matches
+    /// `name`, when the provider is unavailable, or initialization fails.
+    pub fn from_registry_name(
+        registry: &MimeDetectorRegistry,
+        name: &str,
+        config: &MimeConfig,
+    ) -> MimeResult<Self> {
+        registry.create(name, config)
     }
 
     /// Creates a boxed detector from MIME configuration.
@@ -62,13 +101,30 @@ impl BoxMimeDetector {
     /// - `config`: MIME configuration containing the default detector selector.
     ///
     /// # Returns
-    /// Configured detector wrapper.
-    pub fn from_config(config: &MimeConfig) -> Self {
-        let kind = MimeDetectorKind::select(
-            config.mime_detector_default(),
-            FileCommandMimeDetector::is_available(),
-        );
-        Self::from_kind_with_config(kind, config)
+    /// Configured detector wrapper from the built-in registry.
+    ///
+    /// # Errors
+    /// Returns a [`MimeError`](crate::MimeError) when the configured detector
+    /// cannot be created.
+    pub fn from_config(config: &MimeConfig) -> MimeResult<Self> {
+        Self::from_registry(&MimeDetectorRegistry::with_builtin(), config)
+    }
+
+    /// Creates a boxed detector from MIME configuration and explicit registry.
+    ///
+    /// # Parameters
+    /// - `registry`: Registry containing available providers.
+    /// - `config`: MIME configuration containing the default detector selector
+    ///   and fallback chain.
+    ///
+    /// # Returns
+    /// Configured detector wrapper from `registry`.
+    ///
+    /// # Errors
+    /// Returns a [`MimeError`](crate::MimeError) when no configured provider can
+    /// be created.
+    pub fn from_registry(registry: &MimeDetectorRegistry, config: &MimeConfig) -> MimeResult<Self> {
+        registry.create_default(config)
     }
 
     /// Unwraps this wrapper into the inner boxed detector.
@@ -77,27 +133,6 @@ impl BoxMimeDetector {
     /// Inner boxed detector.
     pub fn into_inner(self) -> Box<dyn MimeDetector> {
         self.inner
-    }
-
-    fn from_kind(kind: MimeDetectorKind) -> Self {
-        Self::from_kind_with_config(kind, &MimeConfig::default())
-    }
-
-    fn from_kind_with_config(kind: MimeDetectorKind, config: &MimeConfig) -> Self {
-        match kind {
-            MimeDetectorKind::Repository => Self::new(Box::new(
-                RepositoryMimeDetector::from_mime_config(config.clone()),
-            )),
-            MimeDetectorKind::FileCommand => Self::new(Box::new(
-                FileCommandMimeDetector::from_mime_config(config.clone()),
-            )),
-        }
-    }
-}
-
-impl Default for BoxMimeDetector {
-    fn default() -> Self {
-        Self::from_config(&MimeConfig::default())
     }
 }
 

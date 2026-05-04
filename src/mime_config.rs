@@ -32,15 +32,18 @@ use crate::{
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
+    CONFIG_MIME_DETECTOR_FALLBACKS,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
     DEFAULT_ENABLE_PRECISE_DETECTION,
     DEFAULT_MEDIA_STREAM_CLASSIFIER,
     DEFAULT_MIME_DETECTOR,
+    DEFAULT_MIME_DETECTOR_FALLBACKS,
     ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
     ENV_MIME_DETECTOR_DEFAULT,
     ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
+    ENV_MIME_DETECTOR_FALLBACKS,
     ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
     MimeResult,
 };
@@ -50,6 +53,8 @@ use crate::{
 pub struct MimeConfig {
     /// Default MIME detector selector.
     mime_detector_default: String,
+    /// Fallback MIME detector selectors.
+    mime_detector_fallbacks: Vec<String>,
     /// Default media stream classifier selector.
     media_stream_classifier_default: String,
     /// Whether precise media-stream detection is enabled.
@@ -67,6 +72,17 @@ static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
 /// Value read options.
 static VALUE_READ_OPTIONS: LazyLock<ConfigReadOptions> =
     LazyLock::new(ConfigReadOptions::env_friendly);
+
+/// List value read options.
+static LIST_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
+    ConfigReadOptions::env_friendly().with_collection_options(
+        CollectionReadOptions::default()
+            .with_split_scalar_strings(true)
+            .with_delimiters([',', ';'])
+            .with_trim_items(true)
+            .with_empty_item_policy(EmptyItemPolicy::Skip),
+    )
+});
 
 /// Mapping read options.
 static MAPPING_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
@@ -116,6 +132,11 @@ impl MimeConfig {
             DEFAULT_MIME_DETECTOR.to_owned(),
             &VALUE_READ_OPTIONS,
         )?;
+        let mime_detector_fallbacks = config.get_any_or_with(
+            [CONFIG_MIME_DETECTOR_FALLBACKS, ENV_MIME_DETECTOR_FALLBACKS],
+            fallback_defaults(),
+            &LIST_READ_OPTIONS,
+        )?;
         let media_stream_classifier_default = config.get_any_or_with(
             [
                 CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
@@ -150,6 +171,7 @@ impl MimeConfig {
         )?;
         Ok(Self {
             mime_detector_default,
+            mime_detector_fallbacks: normalize_detector_names(mime_detector_fallbacks),
             media_stream_classifier_default,
             enable_precise_detection,
             precise_detection_patterns: normalize_patterns(precise_detection_patterns),
@@ -212,6 +234,14 @@ impl MimeConfig {
         &self.mime_detector_default
     }
 
+    /// Gets fallback MIME detector selectors.
+    ///
+    /// # Returns
+    /// Ordered fallback backend selectors.
+    pub fn mime_detector_fallbacks(&self) -> &[String] {
+        &self.mime_detector_fallbacks
+    }
+
     /// Gets the configured default media stream classifier selector.
     ///
     /// # Returns
@@ -251,6 +281,7 @@ impl MimeConfig {
     fn builtin_default() -> Self {
         Self {
             mime_detector_default: DEFAULT_MIME_DETECTOR.to_owned(),
+            mime_detector_fallbacks: fallback_defaults(),
             media_stream_classifier_default: DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
             enable_precise_detection: DEFAULT_ENABLE_PRECISE_DETECTION,
             precise_detection_patterns: normalize_patterns(
@@ -277,6 +308,34 @@ impl Default for MimeConfig {
             .expect("default MIME configuration lock should not be poisoned")
             .clone()
     }
+}
+
+/// Gets built-in fallback detector defaults.
+///
+/// # Returns
+/// Default fallback detector names.
+fn fallback_defaults() -> Vec<String> {
+    DEFAULT_MIME_DETECTOR_FALLBACKS
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Normalizes detector names read from configuration.
+///
+/// # Parameters
+/// - `names`: Raw detector names.
+///
+/// # Returns
+/// Trimmed detector names with empty values removed.
+fn normalize_detector_names(names: Vec<String>) -> Vec<String> {
+    names
+        .into_iter()
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+        .collect()
 }
 
 /// Normalizes extension patterns.

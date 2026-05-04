@@ -39,11 +39,16 @@ pub use detector::{
     DetectionSource,
     FileBasedMimeDetector,
     FileCommandMimeDetector,
+    FileCommandMimeDetectorProvider,
     MimeDetectionPolicy,
     MimeDetector,
+    MimeDetectorAvailability,
     MimeDetectorBackend,
     MimeDetectorCore,
+    MimeDetectorProvider,
+    MimeDetectorRegistry,
     RepositoryMimeDetector,
+    RepositoryMimeDetectorProvider,
     StreamBasedMimeDetector,
 };
 pub use mime_config::MimeConfig;

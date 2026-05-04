@@ -13,21 +13,19 @@ use std::sync::Arc;
 use qubit_mime::{
     ArcMimeDetector,
     BoxMimeDetector,
+    CONFIG_MIME_DETECTOR_FALLBACKS,
     FileCommandMimeDetector,
     MimeConfig,
     MimeDetectionPolicy,
     MimeDetector,
     MimeDetectorBackend,
     MimeDetectorCore,
+    MimeDetectorRegistry,
+    MimeError,
     MimeResult,
     RepositoryMimeDetector,
 };
-use tempfile::{
-    NamedTempFile,
-    TempDir,
-};
-
-const CHILD_WITHOUT_FILE_COMMAND: &str = "QUBIT_MIME_CHILD_WITHOUT_FILE_COMMAND";
+use tempfile::NamedTempFile;
 
 #[derive(Debug)]
 struct StaticDetector;
@@ -207,7 +205,7 @@ fn test_mime_detector_backend_prefer_filename_skips_reader_and_file_content() {
 
 #[test]
 fn test_default_mime_detector_returns_usable_detector() {
-    let detector = BoxMimeDetector::default();
+    let detector = BoxMimeDetector::from_config(&MimeConfig::default()).expect("default detector");
     assert!(detector.detect_by_filename("document.pdf").is_some());
 }
 
@@ -234,8 +232,33 @@ fn test_mime_detector_wrappers_select_named_detectors() {
         Some("image/png".to_owned()),
         shared_file.detect_by_filename("image.png")
     );
-    assert!(BoxMimeDetector::from_name("unknown").is_none());
-    assert!(ArcMimeDetector::from_name("unknown").is_none());
+    assert!(BoxMimeDetector::from_name("unknown").is_err());
+    assert!(ArcMimeDetector::from_name("unknown").is_err());
+}
+
+#[test]
+fn test_mime_detector_wrappers_select_from_explicit_registry() {
+    let registry = MimeDetectorRegistry::with_builtin();
+    let config = create_detector_config("repository");
+    let boxed = BoxMimeDetector::from_registry_name(&registry, "repository", &config)
+        .expect("boxed registry selector should create detector");
+    let shared = ArcMimeDetector::from_registry_name(&registry, "repository", &config)
+        .expect("shared registry selector should create detector");
+    let shared_default = ArcMimeDetector::from_registry(&registry, &config)
+        .expect("shared registry default should create detector");
+
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        boxed.detect_by_filename("document.pdf")
+    );
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        shared.detect_by_filename("document.pdf")
+    );
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        shared_default.detect_by_filename("document.pdf")
+    );
 }
 
 #[test]
@@ -351,22 +374,23 @@ fn test_mime_detector_wrappers_build_from_config_defaults() {
     let config = MimeConfig::default();
     let file_config = create_detector_config("file");
     let unknown_config = create_detector_config("unknown");
-    let boxed = BoxMimeDetector::from_config(&config);
-    let shared = ArcMimeDetector::from_config(&config);
-    let default_shared = ArcMimeDetector::default();
-    let boxed_file = BoxMimeDetector::from_config(&file_config);
-    let shared_file = ArcMimeDetector::from_config(&file_config);
-    let fallback = BoxMimeDetector::from_config(&unknown_config);
+    let fallback_config = create_detector_config_with_fallbacks("unknown", &["repository"]);
+    let boxed = BoxMimeDetector::from_config(&config).expect("default boxed detector");
+    let shared = ArcMimeDetector::from_config(&config).expect("default shared detector");
+    let boxed_file = BoxMimeDetector::from_config(&file_config).expect("file boxed detector");
+    let shared_file = ArcMimeDetector::from_config(&file_config).expect("file shared detector");
+    let fallback =
+        BoxMimeDetector::from_config(&fallback_config).expect("repository fallback detector");
     let repository_default = RepositoryMimeDetector::default();
     let file_default = FileCommandMimeDetector::default();
     let file_from_config = FileCommandMimeDetector::from_mime_config(file_config);
 
     assert!(boxed.detect_by_filename("document.pdf").is_some());
     assert!(shared.detect_by_filename("document.pdf").is_some());
-    assert!(default_shared.detect_by_filename("document.pdf").is_some());
     assert!(boxed_file.detect_by_filename("document.pdf").is_some());
     assert!(shared_file.detect_by_filename("document.pdf").is_some());
     assert!(fallback.detect_by_filename("document.pdf").is_some());
+    assert!(BoxMimeDetector::from_config(&unknown_config).is_err());
     assert!(
         repository_default
             .detect_by_filename("document.pdf")
@@ -381,44 +405,44 @@ fn test_mime_detector_wrappers_build_from_config_defaults() {
 }
 
 #[test]
-fn test_unknown_detector_falls_back_to_repository_when_file_command_is_unavailable() {
-    if std::env::var_os(CHILD_WITHOUT_FILE_COMMAND).is_some() {
-        let config = create_detector_config("unknown");
-        let detector = BoxMimeDetector::from_config(&config);
+fn test_configured_fallback_uses_repository_after_unknown_detector() {
+    let config = create_detector_config_with_fallbacks("unknown", &["repository"]);
+    let detector = BoxMimeDetector::from_config(&config).expect("fallback detector");
 
-        assert_eq!(
-            Some("application/pdf".to_owned()),
-            detector.detect_by_filename("document.pdf")
-        );
-        return;
-    }
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        detector.detect_by_filename("document.pdf")
+    );
+}
 
-    let temp_dir = TempDir::new().expect("empty PATH directory should be created");
-    let output = std::process::Command::new(
-        std::env::current_exe().expect("current test executable should be known"),
-    )
-    .arg("--exact")
-    .arg(
-        "detector::mime_detector_tests::test_unknown_detector_falls_back_to_repository_when_file_command_is_unavailable",
-    )
-    .arg("--nocapture")
-    .env(CHILD_WITHOUT_FILE_COMMAND, "1")
-    .env("PATH", temp_dir.path())
-    .output()
-    .expect("child test process should run");
+#[test]
+fn test_detector_backend_error_builder_preserves_context() {
+    let error = MimeError::detector_backend("custom-backend", "command failed");
 
-    assert!(
-        output.status.success(),
-        "child test failed: stdout={}, stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+    assert!(matches!(
+        error,
+        MimeError::DetectorBackend {
+            ref backend,
+            ref reason,
+        } if backend == "custom-backend" && reason == "command failed"
+    ));
+    assert_eq!(
+        "MIME detector backend 'custom-backend' failed: command failed",
+        error.to_string()
     );
 }
 
 fn create_detector_config(detector: &str) -> MimeConfig {
+    create_detector_config_with_fallbacks(detector, &[])
+}
+
+fn create_detector_config_with_fallbacks(detector: &str, fallbacks: &[&str]) -> MimeConfig {
     let mut config = qubit_config::Config::new();
     config
         .set(qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT, detector)
         .expect("detector default should be configurable");
+    config
+        .set(CONFIG_MIME_DETECTOR_FALLBACKS, fallbacks.join(","))
+        .expect("detector fallbacks should be configurable");
     MimeConfig::from_config(&config).expect("detector config should parse")
 }

@@ -135,27 +135,30 @@ fn main() -> Result<(), MimeError> {
 ### Use the Rust-style `MimeDetector` trait
 
 `BoxMimeDetector` and `ArcMimeDetector` provide explicit boxed and shared
-default detector containers selected from `MimeConfig`. Code that only needs
-MIME names can depend on the trait instead of a concrete detector.
+detector containers selected from `MimeConfig` and `MimeDetectorRegistry`. Code
+that only needs MIME names can depend on the trait instead of a concrete
+detector.
 
 ```rust
 use qubit_mime::{
     BoxMimeDetector,
     MimeDetectionPolicy,
     MimeDetector,
+    MimeError,
 };
 
 fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) -> Option<String> {
     detector.detect(content, Some(filename), MimeDetectionPolicy::VerifyContent)
 }
 
-fn main() {
-    let detector = BoxMimeDetector::default();
+fn main() -> Result<(), MimeError> {
+    let detector = BoxMimeDetector::from_config(&qubit_mime::MimeConfig::default())?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
         detect_upload(detector.as_ref(), "upload.bin", b"%PDF-1.7\n"),
     );
+    Ok(())
 }
 ```
 
@@ -173,6 +176,7 @@ use qubit_mime::{
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
+    CONFIG_MIME_DETECTOR_FALLBACKS,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
     DEFAULT_AMBIGUOUS_MIME_MAPPING,
@@ -186,13 +190,14 @@ fn main() -> Result<(), MimeError> {
     let original = MimeConfig::default();
     let mut config = Config::new();
     config.set(CONFIG_MIME_DETECTOR_DEFAULT, "repository")?;
+    config.set(CONFIG_MIME_DETECTOR_FALLBACKS, "")?;
     config.set(CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, "ffprobe")?;
     config.set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)?;
     config.set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, DEFAULT_PRECISE_DETECTION_PATTERNS)?;
     config.set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, DEFAULT_AMBIGUOUS_MIME_MAPPING)?;
 
     MimeConfig::reload_default(&config)?;
-    let detector = BoxMimeDetector::default();
+    let detector = BoxMimeDetector::from_config(&MimeConfig::default())?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -528,12 +533,14 @@ fn main() -> Result<(), MimeError> {
 
 | Method | Description |
 |--------|-------------|
-| `BoxMimeDetector::default()` | Select the configured/default boxed detector |
-| `BoxMimeDetector::from_name(name)` | Select a boxed detector by implementation name |
-| `BoxMimeDetector::from_mime_config(config)` | Select a boxed detector from explicit MIME configuration |
-| `ArcMimeDetector::default()` | Select the configured/default shared detector |
-| `ArcMimeDetector::from_name(name)` | Select a shared detector by implementation name |
-| `ArcMimeDetector::from_mime_config(config)` | Select a shared detector from explicit MIME configuration |
+| `MimeDetectorRegistry::with_builtin()` | Create a registry with built-in detector providers |
+| `MimeDetectorRegistry::register(provider)` | Register an external detector provider |
+| `BoxMimeDetector::from_config(config)` | Select a boxed detector from built-in providers |
+| `BoxMimeDetector::from_registry(registry, config)` | Select a boxed detector from an explicit registry |
+| `BoxMimeDetector::from_name(name)` | Select a boxed built-in detector by implementation name |
+| `ArcMimeDetector::from_config(config)` | Select a shared detector from built-in providers |
+| `ArcMimeDetector::from_registry(registry, config)` | Select a shared detector from an explicit registry |
+| `ArcMimeDetector::from_name(name)` | Select a shared built-in detector by implementation name |
 | `detect_by_filename(filename)` | Detect one MIME name from filename |
 | `detect_by_content(bytes)` | Detect one MIME name from content bytes |
 | `detect(bytes, filename, policy)` | Detect from bytes and optional filename |
@@ -629,6 +636,7 @@ fn main() -> Result<(), MimeError> {
 | `reload_default(config)` | Parse and replace the global default from a `Config` |
 | `reload_default_from_env()` | Parse and replace the global default from process environment |
 | `mime_detector_default()` | Read the configured detector selector |
+| `mime_detector_fallbacks()` | Read the configured detector fallback chain |
 | `media_stream_classifier_default()` | Read the configured media classifier selector |
 
 ## Module Layout

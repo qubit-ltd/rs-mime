@@ -58,6 +58,45 @@ pub enum MimeError {
         reason: String,
     },
 
+    /// A detector provider name or alias is already registered.
+    #[error("duplicate MIME detector name or alias: {name}")]
+    DuplicateDetectorName {
+        /// Duplicate provider name or alias.
+        name: String,
+    },
+
+    /// A detector provider could not be found.
+    #[error("unknown MIME detector: {name}")]
+    UnknownDetector {
+        /// Requested provider name or alias.
+        name: String,
+    },
+
+    /// A detector provider exists but is not available in this environment.
+    #[error("MIME detector '{name}' is unavailable: {reason}")]
+    DetectorUnavailable {
+        /// Requested provider name or alias.
+        name: String,
+        /// Human-readable unavailability reason.
+        reason: String,
+    },
+
+    /// No configured detector provider could be created.
+    #[error("no available MIME detector: {reason}")]
+    NoAvailableDetector {
+        /// Human-readable failure summary.
+        reason: String,
+    },
+
+    /// A detector backend failed with an implementation-specific error.
+    #[error("MIME detector backend '{backend}' failed: {reason}")]
+    DetectorBackend {
+        /// Backend identifier.
+        backend: String,
+        /// Human-readable failure reason.
+        reason: String,
+    },
+
     /// The XML document could not be parsed.
     #[error("failed to parse MIME XML: {0}")]
     Xml(#[from] roxmltree::Error),
@@ -137,6 +176,21 @@ impl MimeError {
     /// A [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) value.
     pub(crate) fn invalid_classifier_input(reason: impl Into<String>) -> Self {
         Self::InvalidClassifierInput {
+            reason: reason.into(),
+        }
+    }
+
+    /// Builds a detector backend error.
+    ///
+    /// # Parameters
+    /// - `backend`: Detector backend identifier.
+    /// - `reason`: Why the backend failed.
+    ///
+    /// # Returns
+    /// A [`MimeError::DetectorBackend`](crate::MimeError::DetectorBackend) value.
+    pub fn detector_backend(backend: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::DetectorBackend {
+            backend: backend.into(),
             reason: reason.into(),
         }
     }

@@ -127,28 +127,30 @@ fn main() -> Result<(), MimeError> {
 
 ### 使用 Rust 风格的 `MimeDetector` trait
 
-`BoxMimeDetector` 和 `ArcMimeDetector` 提供 boxed 和 shared 默认 detector
-容器，默认实现由 `MimeConfig` 决定。只需要 MIME 名称的代码可以依赖 trait，
-而不是依赖具体检测器类型。
+`BoxMimeDetector` 和 `ArcMimeDetector` 提供 boxed 和 shared detector 容器，
+默认实现由 `MimeConfig` 和 `MimeDetectorRegistry` 决定。只需要 MIME 名称的
+代码可以依赖 trait，而不是依赖具体检测器类型。
 
 ```rust
 use qubit_mime::{
     BoxMimeDetector,
     MimeDetectionPolicy,
     MimeDetector,
+    MimeError,
 };
 
 fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) -> Option<String> {
     detector.detect(content, Some(filename), MimeDetectionPolicy::VerifyContent)
 }
 
-fn main() {
-    let detector = BoxMimeDetector::default();
+fn main() -> Result<(), MimeError> {
+    let detector = BoxMimeDetector::from_config(&qubit_mime::MimeConfig::default())?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
         detect_upload(detector.as_ref(), "upload.bin", b"%PDF-1.7\n"),
     );
+    Ok(())
 }
 ```
 
@@ -166,6 +168,7 @@ use qubit_mime::{
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
+    CONFIG_MIME_DETECTOR_FALLBACKS,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
     DEFAULT_AMBIGUOUS_MIME_MAPPING,
@@ -179,13 +182,14 @@ fn main() -> Result<(), MimeError> {
     let original = MimeConfig::default();
     let mut config = Config::new();
     config.set(CONFIG_MIME_DETECTOR_DEFAULT, "repository")?;
+    config.set(CONFIG_MIME_DETECTOR_FALLBACKS, "")?;
     config.set(CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, "ffprobe")?;
     config.set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)?;
     config.set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, DEFAULT_PRECISE_DETECTION_PATTERNS)?;
     config.set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, DEFAULT_AMBIGUOUS_MIME_MAPPING)?;
 
     MimeConfig::reload_default(&config)?;
-    let detector = BoxMimeDetector::default();
+    let detector = BoxMimeDetector::from_config(&MimeConfig::default())?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -519,12 +523,14 @@ fn main() -> Result<(), MimeError> {
 
 | 方法 | 描述 |
 |-----|------|
-| `BoxMimeDetector::default()` | 选择配置或默认的 boxed 检测器 |
-| `BoxMimeDetector::from_name(name)` | 按实现名称选择 boxed 检测器 |
-| `BoxMimeDetector::from_mime_config(config)` | 通过显式 MIME 配置选择 boxed 检测器 |
-| `ArcMimeDetector::default()` | 选择配置或默认的共享检测器 |
-| `ArcMimeDetector::from_name(name)` | 按实现名称选择共享检测器 |
-| `ArcMimeDetector::from_mime_config(config)` | 通过显式 MIME 配置选择共享检测器 |
+| `MimeDetectorRegistry::with_builtin()` | 创建包含内置 detector provider 的 registry |
+| `MimeDetectorRegistry::register(provider)` | 注册外部 detector provider |
+| `BoxMimeDetector::from_config(config)` | 从内置 providers 选择 boxed 检测器 |
+| `BoxMimeDetector::from_registry(registry, config)` | 从显式 registry 选择 boxed 检测器 |
+| `BoxMimeDetector::from_name(name)` | 按实现名称选择内置 boxed 检测器 |
+| `ArcMimeDetector::from_config(config)` | 从内置 providers 选择共享检测器 |
+| `ArcMimeDetector::from_registry(registry, config)` | 从显式 registry 选择共享检测器 |
+| `ArcMimeDetector::from_name(name)` | 按实现名称选择内置共享检测器 |
 | `detect_by_filename(filename)` | 根据文件名检测一个 MIME 名称 |
 | `detect_by_content(bytes)` | 根据内容字节检测一个 MIME 名称 |
 | `detect(bytes, filename, policy)` | 根据字节和可选文件名检测 |
@@ -620,6 +626,7 @@ fn main() -> Result<(), MimeError> {
 | `reload_default(config)` | 从 `Config` 解析并替换全局默认配置 |
 | `reload_default_from_env()` | 从进程环境解析并替换全局默认配置 |
 | `mime_detector_default()` | 读取配置的 detector selector |
+| `mime_detector_fallbacks()` | 读取配置的 detector fallback 链 |
 | `media_stream_classifier_default()` | 读取配置的媒体 classifier selector |
 
 ## 模块结构

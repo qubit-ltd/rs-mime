@@ -13,6 +13,9 @@
 /// Environment variable selecting the default MIME detector implementation.
 pub const ENV_MIME_DETECTOR_DEFAULT: &str = "QUBIT_MIME_DETECTOR_DEFAULT";
 
+/// Environment variable listing fallback MIME detector implementations.
+pub const ENV_MIME_DETECTOR_FALLBACKS: &str = "QUBIT_MIME_DETECTOR_FALLBACKS";
+
 /// Environment variable selecting the default media stream classifier implementation.
 pub const ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT: &str = "QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT";
 
@@ -29,6 +32,9 @@ pub const ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING: &str = "QUBIT_MIME_AMBIGUOUS
 /// Configuration key selecting the default MIME detector implementation.
 pub const CONFIG_MIME_DETECTOR_DEFAULT: &str = "mime.detector.default";
 
+/// Configuration key listing fallback MIME detector implementations.
+pub const CONFIG_MIME_DETECTOR_FALLBACKS: &str = "mime.detector.fallbacks";
+
 /// Configuration key selecting the default media stream classifier implementation.
 pub const CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT: &str = "mime.media.stream.classifier.default";
 
@@ -43,6 +49,9 @@ pub const CONFIG_MIME_AMBIGUOUS_MIME_MAPPING: &str = "mime.ambiguous.mime.mappin
 
 /// Default MIME detector backend selector.
 pub const DEFAULT_MIME_DETECTOR: &str = "repository";
+
+/// Default fallback MIME detector backend selector list.
+pub const DEFAULT_MIME_DETECTOR_FALLBACKS: &str = "";
 
 /// Default media stream classifier backend selector.
 pub const DEFAULT_MEDIA_STREAM_CLASSIFIER: &str = "ffprobe";
