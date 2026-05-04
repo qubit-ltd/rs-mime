@@ -32,3 +32,4 @@ pub use mime_detector::MimeDetector;
 pub use mime_detector_backend::MimeDetectorBackend;
 pub use mime_detector_core::MimeDetectorCore;
 pub use repository_mime_detector::RepositoryMimeDetector;
+pub use stream_based_mime_detector::StreamBasedMimeDetector;

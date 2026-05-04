@@ -16,11 +16,8 @@ use std::path::Path;
 use qubit_io::ReadSeek;
 
 use crate::{
-    DetectionSource,
-    MimeDetectionPolicy,
-    MimeDetector,
-    MimeDetectorCore,
-    MimeResult,
+    DetectionSource, MimeDetectionPolicy, MimeDetector, MimeDetectorCore, MimeResult,
+    StreamBasedMimeDetector,
 };
 
 use super::stream_based_mime_detector::read_prefix;
@@ -185,5 +182,40 @@ where
             policy,
             DetectionSource::Path(file),
         ))
+    }
+}
+
+impl<T> MimeDetectorBackend for T
+where
+    T: StreamBasedMimeDetector,
+{
+    /// Gets the shared detector core.
+    fn core(&self) -> &MimeDetectorCore {
+        StreamBasedMimeDetector::core(self)
+    }
+
+    /// Gets the maximum content prefix length needed by this detector.
+    fn max_test_bytes(&self) -> usize {
+        StreamBasedMimeDetector::max_test_bytes(self)
+    }
+
+    /// Guesses MIME type names from filename rules.
+    fn guess_from_filename(&self, filename: &str) -> Vec<String> {
+        StreamBasedMimeDetector::guess_from_filename(self, filename)
+    }
+
+    /// Guesses MIME type names from content bytes.
+    fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+        StreamBasedMimeDetector::guess_from_content_bytes(self, content)
+    }
+
+    /// Delegates reader inspection to the stream-based hook.
+    fn guess_from_reader(&self, reader: &mut dyn ReadSeek) -> MimeResult<(Vec<String>, Vec<u8>)> {
+        StreamBasedMimeDetector::guess_from_reader_stream(self, reader)
+    }
+
+    /// Delegates local-file inspection to the stream-based hook.
+    fn guess_from_file(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
+        StreamBasedMimeDetector::guess_from_file_stream(self, file)
     }
 }

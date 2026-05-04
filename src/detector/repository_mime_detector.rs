@@ -13,13 +13,8 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::{
-    MimeConfig,
-    MimeDetectionPolicy,
-    MimeDetector,
-    MimeDetectorBackend,
-    MimeDetectorCore,
-    MimeRepository,
-    MimeResult,
+    MimeConfig, MimeDetectionPolicy, MimeDetector, MimeDetectorCore, MimeRepository, MimeResult,
+    StreamBasedMimeDetector,
 };
 
 const DEFAULT_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
@@ -31,6 +26,7 @@ static DEFAULT_REPOSITORY: OnceLock<MimeRepository> = OnceLock::new();
 pub struct RepositoryMimeDetector<'a> {
     /// The shared detector core.
     core: MimeDetectorCore,
+    /// The repository used for all detections.
     repository: &'a MimeRepository,
 }
 
@@ -239,7 +235,7 @@ pub(crate) fn default_repository() -> &'static MimeRepository {
     })
 }
 
-impl<'a> MimeDetectorBackend for RepositoryMimeDetector<'a> {
+impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
     /// Gets the shared detector core.
     fn core(&self) -> &MimeDetectorCore {
         &self.core
@@ -256,7 +252,7 @@ impl<'a> MimeDetectorBackend for RepositoryMimeDetector<'a> {
     }
 
     /// Guesses MIME type names from content magic rules.
-    fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+    fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         Ok(RepositoryMimeDetector::guess_from_content(self, content))
     }
 }
