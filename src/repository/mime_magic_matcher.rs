@@ -9,7 +9,11 @@
  ******************************************************************************/
 //! MIME content magic matcher.
 
-use crate::{MagicValueType, MimeError, MimeResult};
+use crate::{
+    MagicValueType,
+    MimeError,
+    MimeResult,
+};
 
 /// A single MIME magic matcher, optionally with nested sub-matchers.
 #[derive(Debug, Clone, PartialEq, Eq)]

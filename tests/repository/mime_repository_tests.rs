@@ -9,7 +9,10 @@
  ******************************************************************************/
 //! Tests for MIME repository parsing and matching.
 
-use qubit_mime::{MimeRepository, MimeType};
+use qubit_mime::{
+    MimeRepository,
+    MimeType,
+};
 
 const TEST_DATABASE: &str = r#"
 <mime-info>
@@ -175,6 +178,28 @@ fn test_detect_uses_magic_when_verify_content_policy_is_enabled() {
 }
 
 #[test]
+fn test_detect_merges_filename_when_content_missing_or_common() {
+    let repository = create_repository();
+
+    assert_eq!(
+        vec!["application/pdf"],
+        names(repository.detect(
+            "document.pdf",
+            b"nothing recognizable",
+            qubit_mime::MimeDetectionPolicy::VerifyContent,
+        ))
+    );
+    assert_eq!(
+        vec!["application/pdf"],
+        names(repository.detect(
+            "document.pdf",
+            b"%PDF-1.7\n",
+            qubit_mime::MimeDetectionPolicy::VerifyContent,
+        ))
+    );
+}
+
+#[test]
 fn test_detect_returns_empty_when_no_rule_matches() {
     let repository = create_repository();
 
@@ -203,6 +228,7 @@ fn test_from_xml_accepts_doctype_and_reports_structural_errors() {
 <!ELEMENT mime-info (mime-type)+>
 ]>
 <mime-info>
+  <metadata/>
   <mime-type type="text/plain">
     <comment>plain</comment>
     <glob pattern="*.txt"/>
@@ -323,6 +349,38 @@ fn test_from_xml_accepts_uppercase_hex_mask_prefix() {
     assert_eq!(
         vec!["application/x-uppercase-mask"],
         names(repository.detect_by_content(b"AX"))
+    );
+}
+
+#[test]
+fn test_from_xml_decodes_single_quote_and_short_hex_escape_values() {
+    let repository = MimeRepository::from_xml(
+        r#"
+<mime-info>
+  <mime-type type="application/x-escaped-quote">
+    <comment>escaped quote</comment>
+    <magic>
+      <match type="string" value="A\'B" offset="0"/>
+    </magic>
+  </mime-type>
+  <mime-type type="application/x-short-hex">
+    <comment>short hex</comment>
+    <magic>
+      <match type="string" value="\x1Z" offset="0"/>
+    </magic>
+  </mime-type>
+</mime-info>
+"#,
+    )
+    .expect("escaped string magic values should parse");
+
+    assert_eq!(
+        vec!["application/x-escaped-quote"],
+        names(repository.detect_by_content(b"A'B"))
+    );
+    assert_eq!(
+        vec!["application/x-short-hex"],
+        names(repository.detect_by_content(&[0x01, b'Z']))
     );
 }
 

@@ -9,9 +9,21 @@
  ******************************************************************************/
 //! Tests for the repository-backed MIME detector.
 
-use std::io::{Cursor, Error, Read, Result as IoResult, Seek, SeekFrom};
+use std::io::{
+    Cursor,
+    Error,
+    Read,
+    Result as IoResult,
+    Seek,
+    SeekFrom,
+};
 
-use qubit_mime::{MimeDetectionPolicy, MimeRepository, RepositoryMimeDetector};
+use qubit_mime::{
+    MimeConfig,
+    MimeDetectionPolicy,
+    MimeRepository,
+    RepositoryMimeDetector,
+};
 use tempfile::NamedTempFile;
 
 #[derive(Debug, Clone, Copy)]
@@ -136,7 +148,9 @@ fn test_detect_file_reads_file_and_uses_file_name() {
 #[test]
 fn test_accessors_empty_repository_and_reader_errors() {
     let repository = MimeRepository::empty();
-    let mut detector = RepositoryMimeDetector::with_repository(&repository);
+    let config =
+        MimeConfig::from_config(&qubit_config::Config::new()).expect("builtin config should parse");
+    let mut detector = RepositoryMimeDetector::with_repository_and_config(&repository, config);
 
     assert!(detector.core().media_stream_classifier().is_some());
     detector.core_mut().set_media_stream_classifier(None);

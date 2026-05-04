@@ -12,12 +12,25 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use qubit_codec::{CodecError, HexCodec};
-use roxmltree::{Document, Node};
+use qubit_codec::{
+    CodecError,
+    HexCodec,
+};
+use roxmltree::{
+    Document,
+    Node,
+};
 
 use crate::{
-    MagicValueType, MimeDetectionPolicy, MimeError, MimeGlob, MimeMagic, MimeMagicMatcher,
-    MimeResult, MimeType, MimeTypeBuilder,
+    MagicValueType,
+    MimeDetectionPolicy,
+    MimeError,
+    MimeGlob,
+    MimeMagic,
+    MimeMagicMatcher,
+    MimeResult,
+    MimeType,
+    MimeTypeBuilder,
 };
 
 /// A repository of MIME types and detection indexes.
@@ -736,8 +749,7 @@ fn push_char_bytes(ch: char, bytes: &mut Vec<u8>) {
 /// Index of the last consumed hex digit.
 ///
 /// # Errors
-/// Returns [`MimeError`](crate::MimeError) when the escape has no hex digit
-/// or cannot be decoded as hexadecimal.
+/// Returns [`MimeError`](crate::MimeError) when the escape has no hex digit.
 fn decode_hex_escape(
     chars: &[char],
     mut index: usize,
@@ -764,15 +776,9 @@ fn decode_hex_escape(
     if digits.len() == 1 {
         digits.insert(0, '0');
     }
-    let decoded = HexCodec::new().decode(&digits).map_err(|error| {
-        MimeError::invalid_attr(
-            "match",
-            "value",
-            source,
-            format!("invalid hex escape: {error}"),
-        )
-    })?;
-    bytes.extend_from_slice(&decoded);
+    let decoded =
+        u8::from_str_radix(&digits, 16).expect("validated hex escape should decode as u8");
+    bytes.push(decoded);
     Ok(index)
 }
 

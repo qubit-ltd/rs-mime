@@ -13,7 +13,12 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::{
-    MimeConfig, MimeDetectionPolicy, MimeDetector, MimeDetectorCore, MimeRepository, MimeResult,
+    MimeConfig,
+    MimeDetectionPolicy,
+    MimeDetector,
+    MimeDetectorCore,
+    MimeRepository,
+    MimeResult,
     StreamBasedMimeDetector,
 };
 

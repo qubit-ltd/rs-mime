@@ -9,7 +9,11 @@
  ******************************************************************************/
 //! Tests for MIME type metadata helpers.
 
-use qubit_mime::{MimeGlob, MimeRepository, MimeType};
+use qubit_mime::{
+    MimeGlob,
+    MimeRepository,
+    MimeType,
+};
 
 #[test]
 fn test_get_preferred_extension_prefers_simple_extension_over_complex_extension() {

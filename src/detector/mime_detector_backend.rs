@@ -16,7 +16,11 @@ use std::path::Path;
 use qubit_io::ReadSeek;
 
 use crate::{
-    DetectionSource, MimeDetectionPolicy, MimeDetector, MimeDetectorCore, MimeResult,
+    DetectionSource,
+    MimeDetectionPolicy,
+    MimeDetector,
+    MimeDetectorCore,
+    MimeResult,
     StreamBasedMimeDetector,
 };
 

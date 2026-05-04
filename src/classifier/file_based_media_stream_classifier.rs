@@ -13,7 +13,11 @@ use std::fmt::Debug;
 use std::io::Read;
 use std::path::Path;
 
-use crate::{MediaStreamClassifierBackend, MediaStreamType, MimeResult};
+use crate::{
+    MediaStreamClassifierBackend,
+    MediaStreamType,
+    MimeResult,
+};
 
 use super::media_stream_classifier_helpers::with_temp_reader;
 

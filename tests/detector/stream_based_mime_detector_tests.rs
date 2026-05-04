@@ -13,7 +13,12 @@ use std::io::Cursor;
 use tempfile::NamedTempFile;
 
 use qubit_mime::{
-    MimeDetectionPolicy, MimeDetector, MimeDetectorCore, MimeResult, StreamBasedMimeDetector,
+    MimeDetectionPolicy,
+    MimeDetector,
+    MimeDetectorBackend,
+    MimeDetectorCore,
+    MimeResult,
+    StreamBasedMimeDetector,
 };
 
 #[derive(Debug)]
@@ -83,4 +88,17 @@ fn test_detect_file_uses_stream_based_defaults() {
         .expect("stream-based file detection should succeed");
 
     assert_eq!(Some("text/plain".to_owned()), detected);
+}
+
+#[test]
+fn test_stream_based_backend_max_bytes_and_file_open_error_are_covered() {
+    let detector = PrefixDetector::new();
+    let missing_path =
+        std::env::temp_dir().join(format!("qubit-mime-missing-{}", std::process::id()));
+
+    assert_eq!(5, MimeDetectorBackend::max_test_bytes(&detector));
+    assert!(
+        StreamBasedMimeDetector::guess_from_file_stream(&detector, &missing_path).is_err(),
+        "missing file should propagate the open error"
+    );
 }

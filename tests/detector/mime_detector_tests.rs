@@ -11,10 +11,21 @@
 use std::sync::Arc;
 
 use qubit_mime::{
-    ArcMimeDetector, BoxMimeDetector, FileCommandMimeDetector, MimeConfig, MimeDetectionPolicy,
-    MimeDetector, MimeResult, RepositoryMimeDetector,
+    ArcMimeDetector,
+    BoxMimeDetector,
+    FileCommandMimeDetector,
+    MimeConfig,
+    MimeDetectionPolicy,
+    MimeDetector,
+    MimeDetectorBackend,
+    MimeDetectorCore,
+    MimeResult,
+    RepositoryMimeDetector,
 };
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::{
+    NamedTempFile,
+    TempDir,
+};
 
 const CHILD_WITHOUT_FILE_COMMAND: &str = "QUBIT_MIME_CHILD_WITHOUT_FILE_COMMAND";
 
@@ -54,6 +65,50 @@ impl MimeDetector for StaticDetector {
         _policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
         Ok(Some("application/x-static-file".to_owned()))
+    }
+}
+
+#[derive(Debug)]
+struct DirectBackendDetector {
+    core: MimeDetectorCore,
+}
+
+impl DirectBackendDetector {
+    /// Creates a detector that exercises the backend default methods directly.
+    fn new() -> Self {
+        Self {
+            core: MimeDetectorCore::default(),
+        }
+    }
+}
+
+impl MimeDetectorBackend for DirectBackendDetector {
+    /// Gets the shared detector core.
+    fn core(&self) -> &MimeDetectorCore {
+        &self.core
+    }
+
+    /// Gets the content prefix length used by backend defaults.
+    fn max_test_bytes(&self) -> usize {
+        5
+    }
+
+    /// Recognizes plain text filenames.
+    fn guess_from_filename(&self, filename: &str) -> Vec<String> {
+        if filename.ends_with(".txt") {
+            vec!["text/plain".to_owned()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Recognizes the content prefix read by backend defaults.
+    fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+        if content == b"hello" {
+            Ok(vec!["text/plain".to_owned()])
+        } else {
+            Ok(Vec::new())
+        }
     }
 }
 
@@ -101,6 +156,52 @@ fn test_mime_detector_trait_supports_reader_and_file_detection() {
 
     assert_eq!(Some("application/pdf".to_owned()), from_reader);
     assert_eq!(Some("application/pdf".to_owned()), from_file);
+    assert_eq!(0, reader.position());
+}
+
+#[test]
+fn test_mime_detector_backend_defaults_read_reader_and_file_prefix() {
+    let detector = DirectBackendDetector::new();
+    let mut reader = std::io::Cursor::new(b"hello world".to_vec());
+
+    let (reader_candidates, reader_content) =
+        MimeDetectorBackend::guess_from_reader(&detector, &mut reader)
+            .expect("backend reader default should read content prefix");
+
+    let mut file = NamedTempFile::new().expect("temp file should be created");
+    std::io::Write::write_all(&mut file, b"hello world").expect("temp file should be writable");
+    let (file_candidates, file_content) =
+        MimeDetectorBackend::guess_from_file(&detector, file.path())
+            .expect("backend file default should read content prefix");
+
+    assert_eq!(vec!["text/plain".to_owned()], reader_candidates);
+    assert_eq!(b"hello".to_vec(), reader_content);
+    assert_eq!(vec!["text/plain".to_owned()], file_candidates);
+    assert_eq!(b"hello".to_vec(), file_content);
+    assert_eq!(0, reader.position());
+}
+
+#[test]
+fn test_mime_detector_backend_prefer_filename_skips_reader_and_file_content() {
+    let detector = DirectBackendDetector::new();
+    let mut reader = std::io::Cursor::new(b"xxxxx".to_vec());
+
+    let from_reader = detector
+        .detect_reader(
+            &mut reader,
+            Some("note.txt"),
+            MimeDetectionPolicy::PreferFilename,
+        )
+        .expect("filename-preferred reader detection should succeed");
+
+    let mut file = NamedTempFile::with_suffix(".txt").expect("temp file should be created");
+    std::io::Write::write_all(&mut file, b"xxxxx").expect("temp file should be writable");
+    let from_file = detector
+        .detect_file(file.path(), MimeDetectionPolicy::PreferFilename)
+        .expect("filename-preferred file detection should succeed");
+
+    assert_eq!(Some("text/plain".to_owned()), from_reader);
+    assert_eq!(Some("text/plain".to_owned()), from_file);
     assert_eq!(0, reader.position());
 }
 

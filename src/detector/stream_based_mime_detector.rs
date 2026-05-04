@@ -16,7 +16,10 @@ use std::path::Path;
 
 use qubit_io::ReadSeek;
 
-use crate::{MimeDetectorCore, MimeResult};
+use crate::{
+    MimeDetectorCore,
+    MimeResult,
+};
 
 /// Core implementation contract for detectors that can inspect content bytes.
 pub trait StreamBasedMimeDetector: Debug + Send + Sync {

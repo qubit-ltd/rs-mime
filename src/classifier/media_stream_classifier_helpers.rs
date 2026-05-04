@@ -13,9 +13,15 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{
+    AtomicU64,
+    Ordering,
+};
 
-use crate::{MimeError, MimeResult};
+use crate::{
+    MimeError,
+    MimeResult,
+};
 
 /// Validates that a path is a readable local file.
 ///

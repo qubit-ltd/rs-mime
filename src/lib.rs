@@ -23,21 +23,38 @@ mod mime_error;
 mod mime_result;
 
 pub use classifier::{
-    ArcMediaStreamClassifier, BoxMediaStreamClassifier, FfprobeCommandMediaStreamClassifier,
-    FileBasedMediaStreamClassifier, MediaStreamClassifier, MediaStreamClassifierBackend,
+    ArcMediaStreamClassifier,
+    BoxMediaStreamClassifier,
+    FfprobeCommandMediaStreamClassifier,
+    FileBasedMediaStreamClassifier,
+    MediaStreamClassifier,
+    MediaStreamClassifierBackend,
     MediaStreamType,
 };
 pub use common_mime_types::*;
 pub use constants::*;
 pub use detector::{
-    ArcMimeDetector, BoxMimeDetector, DetectionSource, FileBasedMimeDetector,
-    FileCommandMimeDetector, MimeDetectionPolicy, MimeDetector, MimeDetectorBackend,
-    MimeDetectorCore, RepositoryMimeDetector, StreamBasedMimeDetector,
+    ArcMimeDetector,
+    BoxMimeDetector,
+    DetectionSource,
+    FileBasedMimeDetector,
+    FileCommandMimeDetector,
+    MimeDetectionPolicy,
+    MimeDetector,
+    MimeDetectorBackend,
+    MimeDetectorCore,
+    RepositoryMimeDetector,
+    StreamBasedMimeDetector,
 };
 pub use mime_config::MimeConfig;
 pub use mime_error::MimeError;
 pub use mime_result::MimeResult;
 pub use repository::{
-    MagicValueType, MimeGlob, MimeMagic, MimeMagicMatcher, MimeRepository, MimeType,
+    MagicValueType,
+    MimeGlob,
+    MimeMagic,
+    MimeMagicMatcher,
+    MimeRepository,
+    MimeType,
     MimeTypeBuilder,
 };

@@ -12,7 +12,10 @@
 use std::path::Path;
 
 use crate::{
-    ArcMediaStreamClassifier, MediaStreamClassifier, MediaStreamType, MimeConfig,
+    ArcMediaStreamClassifier,
+    MediaStreamClassifier,
+    MediaStreamType,
+    MimeConfig,
     MimeDetectionPolicy,
 };
 
