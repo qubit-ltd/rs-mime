@@ -209,6 +209,97 @@ fn main() -> Result<(), MimeError> {
 }
 ```
 
+### Select detectors with registry and fallbacks
+
+`BoxMimeDetector::from_config()` and `ArcMimeDetector::from_config()` use the
+built-in `MimeDetectorRegistry`. The configured default detector is tried
+first. If that provider is unknown, unavailable, or fails to initialize, the
+configured fallback chain is tried in order. Set the default selector to `auto`
+to choose the highest-priority available provider from the registry.
+
+Built-in detector selectors:
+
+| Selector | Aliases | Behavior |
+|----------|---------|----------|
+| `repository` | `repo`, `repository-mime-detector` | Uses the embedded freedesktop MIME repository |
+| `file` | `file-command`, `file-command-mime-detector` | Uses the repository for filenames and `file --mime-type --brief` for local content |
+| `auto` | - | Chooses available providers by priority, then provider id |
+
+```rust
+use qubit_config::Config;
+use qubit_mime::{
+    BoxMimeDetector,
+    CONFIG_MIME_DETECTOR_DEFAULT,
+    CONFIG_MIME_DETECTOR_FALLBACKS,
+    MimeConfig,
+    MimeDetector,
+    MimeError,
+};
+
+fn main() -> Result<(), MimeError> {
+    let mut source = Config::new();
+    source.set(CONFIG_MIME_DETECTOR_DEFAULT, "file")?;
+    source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
+
+    let config = MimeConfig::from_config(&source)?;
+    let detector = BoxMimeDetector::from_config(&config)?;
+
+    assert_eq!(
+        Some("image/png".to_owned()),
+        detector.detect_by_filename("image.png"),
+    );
+    Ok(())
+}
+```
+
+Use an explicit registry when you need custom providers:
+
+```rust
+use qubit_mime::{
+    MimeConfig,
+    MimeDetector,
+    MimeDetectorRegistry,
+    MimeError,
+};
+
+fn main() -> Result<(), MimeError> {
+    let registry = MimeDetectorRegistry::with_builtin();
+    let detector = registry.create("repository-mime-detector", &MimeConfig::default())?;
+
+    assert_eq!(
+        Some("text/plain".to_owned()),
+        detector.detect_by_filename("notes.txt"),
+    );
+    Ok(())
+}
+```
+
+Registry selection uses these error categories:
+
+| Error | Meaning |
+|-------|---------|
+| `DuplicateDetectorName` | A provider id or alias conflicts with an existing provider |
+| `UnknownDetector` | No registered provider matches the requested selector |
+| `DetectorUnavailable` | The provider exists but its backend is not available in this process environment |
+| `NoAvailableDetector` | Every default or fallback candidate failed |
+| `DetectorBackend` | A provider backend failed while initializing or detecting |
+
+### Configuration keys
+
+`MimeConfig::from_config()` accepts both logical keys and environment-style keys.
+Environment variables use the environment-style names. List values can be arrays
+or scalar strings split on `,` and `;`; empty items are ignored. Ambiguous MIME
+mapping values are split on `;` as `extension:video-mime,audio-mime`.
+
+| Setting | Logical key | Environment key | Default |
+|---------|-------------|-----------------|---------|
+| Default MIME detector | `mime.detector.default` | `QUBIT_MIME_DETECTOR_DEFAULT` | `repository` |
+| MIME detector fallbacks | `mime.detector.fallbacks` | `QUBIT_MIME_DETECTOR_FALLBACKS` | empty |
+| Media stream classifier | `mime.media.stream.classifier.default` | `QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT` | `ffprobe` |
+| Precise detection enabled | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` |
+| Precise detection patterns | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` |
+| Ambiguous MIME mapping | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` |
+
 ### Detect a filesystem path
 
 ```rust
@@ -535,6 +626,9 @@ fn main() -> Result<(), MimeError> {
 |--------|-------------|
 | `MimeDetectorRegistry::with_builtin()` | Create a registry with built-in detector providers |
 | `MimeDetectorRegistry::register(provider)` | Register an external detector provider |
+| `MimeDetectorRegistry::create(name, config)` | Create one detector by provider id or alias |
+| `MimeDetectorRegistry::create_default(config)` | Resolve the configured default, `auto`, and fallback chain |
+| `MimeDetectorProvider` | Factory trait for pluggable detector implementations |
 | `BoxMimeDetector::from_config(config)` | Select a boxed detector from built-in providers |
 | `BoxMimeDetector::from_registry(registry, config)` | Select a boxed detector from an explicit registry |
 | `BoxMimeDetector::from_name(name)` | Select a boxed built-in detector by implementation name |
@@ -628,7 +722,6 @@ fn main() -> Result<(), MimeError> {
 
 | Method | Description |
 |--------|-------------|
-| `new(detector, classifier, enabled, patterns, mapping)` | Create explicit MIME configuration |
 | `from_config(config)` | Parse MIME configuration from a `qubit_config::Config` |
 | `from_env()` | Parse MIME configuration from `Config::from_env()` |
 | `default()` | Clone the current global default MIME configuration |

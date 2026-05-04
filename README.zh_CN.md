@@ -201,6 +201,95 @@ fn main() -> Result<(), MimeError> {
 }
 ```
 
+### 使用 registry 和 fallback 选择检测器
+
+`BoxMimeDetector::from_config()` 和 `ArcMimeDetector::from_config()` 使用内置
+`MimeDetectorRegistry`。配置的默认 detector 会先被尝试；如果该 provider 未知、
+不可用或初始化失败，则按配置的 fallback 链继续尝试。把默认 selector 设置为
+`auto` 时，会从 registry 中按 provider 优先级选择当前可用的实现。
+
+内置 detector selector：
+
+| Selector | 别名 | 行为 |
+|----------|------|------|
+| `repository` | `repo`, `repository-mime-detector` | 使用内置 freedesktop MIME 仓库 |
+| `file` | `file-command`, `file-command-mime-detector` | 文件名使用仓库，内容使用 `file --mime-type --brief` |
+| `auto` | - | 按优先级和 provider id 选择可用 provider |
+
+```rust
+use qubit_config::Config;
+use qubit_mime::{
+    BoxMimeDetector,
+    CONFIG_MIME_DETECTOR_DEFAULT,
+    CONFIG_MIME_DETECTOR_FALLBACKS,
+    MimeConfig,
+    MimeDetector,
+    MimeError,
+};
+
+fn main() -> Result<(), MimeError> {
+    let mut source = Config::new();
+    source.set(CONFIG_MIME_DETECTOR_DEFAULT, "file")?;
+    source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
+
+    let config = MimeConfig::from_config(&source)?;
+    let detector = BoxMimeDetector::from_config(&config)?;
+
+    assert_eq!(
+        Some("image/png".to_owned()),
+        detector.detect_by_filename("image.png"),
+    );
+    Ok(())
+}
+```
+
+需要自定义 provider 时，使用显式 registry：
+
+```rust
+use qubit_mime::{
+    MimeConfig,
+    MimeDetector,
+    MimeDetectorRegistry,
+    MimeError,
+};
+
+fn main() -> Result<(), MimeError> {
+    let registry = MimeDetectorRegistry::with_builtin();
+    let detector = registry.create("repository-mime-detector", &MimeConfig::default())?;
+
+    assert_eq!(
+        Some("text/plain".to_owned()),
+        detector.detect_by_filename("notes.txt"),
+    );
+    Ok(())
+}
+```
+
+Registry 选择相关错误：
+
+| 错误 | 含义 |
+|------|------|
+| `DuplicateDetectorName` | provider id 或 alias 与已有 provider 冲突 |
+| `UnknownDetector` | 没有已注册 provider 匹配请求的 selector |
+| `DetectorUnavailable` | provider 存在，但当前进程环境中后端不可用 |
+| `NoAvailableDetector` | 默认候选和所有 fallback 候选都失败 |
+| `DetectorBackend` | provider 后端在初始化或检测过程中失败 |
+
+### 配置键
+
+`MimeConfig::from_config()` 同时接受逻辑键和环境变量风格键。环境变量使用环境变量
+风格名称。列表值既可以是数组，也可以是用 `,` 或 `;` 分隔的字符串；空项会被忽略。
+有歧义 MIME 映射按 `;` 分隔，每项格式为 `extension:video-mime,audio-mime`。
+
+| 设置 | 逻辑键 | 环境键 | 默认值 |
+|------|--------|--------|--------|
+| 默认 MIME detector | `mime.detector.default` | `QUBIT_MIME_DETECTOR_DEFAULT` | `repository` |
+| MIME detector fallback | `mime.detector.fallbacks` | `QUBIT_MIME_DETECTOR_FALLBACKS` | 空 |
+| 媒体流 classifier | `mime.media.stream.classifier.default` | `QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT` | `ffprobe` |
+| 启用精确检测 | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` |
+| 精确检测扩展名 | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` |
+| 有歧义 MIME 映射 | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` |
+
 ### 检测文件系统路径
 
 ```rust
@@ -525,6 +614,9 @@ fn main() -> Result<(), MimeError> {
 |-----|------|
 | `MimeDetectorRegistry::with_builtin()` | 创建包含内置 detector provider 的 registry |
 | `MimeDetectorRegistry::register(provider)` | 注册外部 detector provider |
+| `MimeDetectorRegistry::create(name, config)` | 按 provider id 或 alias 创建检测器 |
+| `MimeDetectorRegistry::create_default(config)` | 解析配置的默认值、`auto` 和 fallback 链 |
+| `MimeDetectorProvider` | 可插拔 detector 实现的工厂 trait |
 | `BoxMimeDetector::from_config(config)` | 从内置 providers 选择 boxed 检测器 |
 | `BoxMimeDetector::from_registry(registry, config)` | 从显式 registry 选择 boxed 检测器 |
 | `BoxMimeDetector::from_name(name)` | 按实现名称选择内置 boxed 检测器 |
@@ -618,7 +710,6 @@ fn main() -> Result<(), MimeError> {
 
 | 方法 | 描述 |
 |-----|------|
-| `new(detector, classifier, enabled, patterns, mapping)` | 创建显式 MIME 配置 |
 | `from_config(config)` | 从 `qubit_config::Config` 解析 MIME 配置 |
 | `from_env()` | 从 `Config::from_env()` 解析 MIME 配置 |
 | `default()` | 克隆当前全局默认 MIME 配置 |
