@@ -8,6 +8,33 @@
  *
  ******************************************************************************/
 //! Boxed MIME detector wrapper.
+//!
+//! [`BoxMimeDetector`] is the owning detector wrapper used when callers want a
+//! single dynamically selected detector instance. It delegates construction to a
+//! [`MimeDetectorRegistry`], so the same wrapper can be backed by built-in
+//! providers or by application-provided detectors.
+//!
+//! # Examples
+//!
+//! Create a detector from the built-in registry and default configuration:
+//!
+//! ```rust
+//! use qubit_mime::{
+//!     BoxMimeDetector,
+//!     MimeConfig,
+//!     MimeDetector,
+//!     MimeResult,
+//! };
+//!
+//! # fn main() -> MimeResult<()> {
+//! let detector = BoxMimeDetector::from_config(&MimeConfig::default())?;
+//! assert_eq!(
+//!     Some("application/json".to_owned()),
+//!     detector.detect_by_filename("payload.json"),
+//! );
+//! # Ok(())
+//! # }
+//! ```
 
 use std::ops::Deref;
 use std::path::Path;
@@ -97,6 +124,10 @@ impl BoxMimeDetector {
 
     /// Creates a boxed detector from MIME configuration.
     ///
+    /// The built-in registry is used. The configured default selector is tried
+    /// first unless it is empty or `auto`; configured fallbacks are tried only
+    /// when an explicit default cannot be created.
+    ///
     /// # Parameters
     /// - `config`: MIME configuration containing the default detector selector.
     ///
@@ -111,6 +142,11 @@ impl BoxMimeDetector {
     }
 
     /// Creates a boxed detector from MIME configuration and explicit registry.
+    ///
+    /// Use this constructor when an application has registered custom detector
+    /// providers or wants to restrict the available providers. Resolution uses
+    /// the same default, `auto`, and fallback semantics as
+    /// [`MimeDetectorRegistry::create_default`].
     ///
     /// # Parameters
     /// - `registry`: Registry containing available providers.

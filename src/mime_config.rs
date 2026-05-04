@@ -9,6 +9,11 @@
  ******************************************************************************/
 //! Configuration values for MIME detection.
 //!
+//! [`MimeConfig`] is the runtime configuration shared by detector wrappers,
+//! detector providers, and media-stream refinement. It can be loaded from a
+//! [`Config`] object, from process environment variables, or from built-in
+//! defaults.
+//!
 
 use std::collections::{
     HashMap,
@@ -49,6 +54,26 @@ use crate::{
 };
 
 /// Runtime configuration for MIME detectors.
+///
+/// # Supported keys
+///
+/// Logical keys and environment-style keys are both accepted by
+/// [`MimeConfig::from_config`]. Environment variables use the same names as the
+/// environment-style keys.
+///
+/// | Field | Logical key | Environment key | Default | Format |
+/// | --- | --- | --- | --- | --- |
+/// | Default MIME detector | `mime.detector.default` | `QUBIT_MIME_DETECTOR_DEFAULT` | `repository` | Provider id, alias, or `auto` |
+/// | MIME detector fallbacks | `mime.detector.fallbacks` | `QUBIT_MIME_DETECTOR_FALLBACKS` | empty | List split on `,` or `;` |
+/// | Media stream classifier | `mime.media.stream.classifier.default` | `QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT` | `ffprobe` | Classifier selector |
+/// | Precise detection switch | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` | Boolean |
+/// | Precise detection patterns | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` | Extension list |
+/// | Ambiguous MIME mapping | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` | `ext:video,audio` entries split on `;` |
+///
+/// Detector fallback selection is performed by
+/// [`MimeDetectorRegistry`](crate::MimeDetectorRegistry), not by this config
+/// object. The config only stores the default selector and ordered fallback
+/// names.
 #[derive(Debug, Clone)]
 pub struct MimeConfig {
     /// Default MIME detector selector.
@@ -115,6 +140,40 @@ impl MimeConfig {
     }
 
     /// Creates MIME configuration from a config object.
+    ///
+    /// Values are read with environment-friendly options, so both logical keys
+    /// such as `mime.detector.default` and environment-style keys such as
+    /// `QUBIT_MIME_DETECTOR_DEFAULT` are accepted. List values may be provided
+    /// as arrays or as scalar strings split on `,` and `;`; empty items are
+    /// ignored.
+    ///
+    /// # Examples
+    ///
+    /// Configure a preferred native detector and a repository fallback:
+    ///
+    /// ```rust
+    /// use qubit_config::Config;
+    /// use qubit_mime::{
+    ///     CONFIG_MIME_DETECTOR_DEFAULT,
+    ///     CONFIG_MIME_DETECTOR_FALLBACKS,
+    ///     MimeConfig,
+    ///     MimeResult,
+    /// };
+    ///
+    /// # fn main() -> MimeResult<()> {
+    /// let mut source = Config::new();
+    /// source.set(CONFIG_MIME_DETECTOR_DEFAULT, "file")?;
+    /// source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
+    ///
+    /// let config = MimeConfig::from_config(&source)?;
+    /// assert_eq!("file", config.mime_detector_default());
+    /// assert_eq!(
+    ///     ["repository".to_owned()].as_slice(),
+    ///     config.mime_detector_fallbacks(),
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// # Parameters
     /// - `config`: Configuration object containing logical keys or environment

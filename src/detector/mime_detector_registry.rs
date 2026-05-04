@@ -8,6 +8,14 @@
  *
  ******************************************************************************/
 //! Registry for pluggable MIME detector providers.
+//!
+//! The registry is the selection layer used by the detector wrappers. It maps
+//! stable provider names and aliases to factories, checks provider availability,
+//! and resolves configured fallback chains. Built-in wrappers use
+//! [`MimeDetectorRegistry::with_builtin`], while applications that need custom
+//! providers can pass an explicit registry to
+//! [`BoxMimeDetector::from_registry`](crate::BoxMimeDetector::from_registry) or
+//! [`ArcMimeDetector::from_registry`](crate::ArcMimeDetector::from_registry).
 
 use std::sync::Arc;
 
@@ -26,6 +34,49 @@ use super::{
 };
 
 /// Registry of MIME detector providers.
+///
+/// Provider names and aliases are matched case-insensitively. Duplicate ids or
+/// aliases are rejected at registration time so a selector always resolves to
+/// at most one provider.
+///
+/// # Default and fallback selection
+///
+/// [`MimeDetectorRegistry::create_default`] reads
+/// [`MimeConfig::mime_detector_default`](crate::MimeConfig::mime_detector_default)
+/// first. When the default selector is empty or `auto`, the registry tries all
+/// available providers ordered by descending provider priority and then by
+/// provider id. Otherwise it tries the configured default followed by
+/// [`MimeConfig::mime_detector_fallbacks`](crate::MimeConfig::mime_detector_fallbacks).
+///
+/// Selection stops at the first provider that can create a detector. Unknown,
+/// unavailable, or failing providers are collected into
+/// [`MimeError::NoAvailableDetector`](crate::MimeError::NoAvailableDetector)
+/// only when the whole candidate chain fails.
+///
+/// # Examples
+///
+/// Use the built-in registry:
+///
+/// ```rust
+/// use qubit_mime::{
+///     MimeConfig,
+///     MimeDetector,
+///     MimeDetectorRegistry,
+///     MimeResult,
+/// };
+///
+/// # fn main() -> MimeResult<()> {
+/// let registry = MimeDetectorRegistry::with_builtin();
+/// assert!(registry.find_provider("repository-mime-detector").is_some());
+///
+/// let detector = registry.create_default(&MimeConfig::default())?;
+/// assert_eq!(
+///     Some("text/plain".to_owned()),
+///     detector.detect_by_filename("notes.txt"),
+/// );
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct MimeDetectorRegistry {
     /// Registered detector providers.

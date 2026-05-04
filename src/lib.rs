@@ -9,8 +9,73 @@
  ******************************************************************************/
 //! # Qubit MIME
 //!
-//! MIME type detection based on filename glob rules and content magic rules.
+//! MIME type detection based on filename glob rules, content magic rules, and
+//! optional native command backends.
 //!
+//! The crate ships with two detector providers:
+//!
+//! - `repository`: an embedded detector that uses the bundled MIME repository.
+//! - `file`: a detector that delegates content detection to the system
+//!   `file --mime-type --brief` command and uses the repository for filename
+//!   guesses.
+//!
+//! Detector wrappers such as [`BoxMimeDetector`] and [`ArcMimeDetector`] are
+//! created through [`MimeConfig`]. The configured default detector is tried
+//! first, followed by the configured fallback chain. The special selector
+//! `auto` chooses the highest-priority available provider from a
+//! [`MimeDetectorRegistry`].
+//!
+//! # Examples
+//!
+//! Create a detector from the default configuration:
+//!
+//! ```rust
+//! use qubit_mime::{
+//!     BoxMimeDetector,
+//!     MimeConfig,
+//!     MimeDetector,
+//!     MimeResult,
+//! };
+//!
+//! # fn main() -> MimeResult<()> {
+//! let detector = BoxMimeDetector::from_config(&MimeConfig::default())?;
+//! assert_eq!(
+//!     Some("application/pdf".to_owned()),
+//!     detector.detect_by_filename("document.pdf"),
+//! );
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Configure a preferred detector and an explicit fallback. This is useful when
+//! `file` should be used on systems where it is available, while still allowing
+//! deterministic repository detection on minimal CI images:
+//!
+//! ```rust
+//! use qubit_config::Config;
+//! use qubit_mime::{
+//!     BoxMimeDetector,
+//!     CONFIG_MIME_DETECTOR_DEFAULT,
+//!     CONFIG_MIME_DETECTOR_FALLBACKS,
+//!     MimeConfig,
+//!     MimeDetector,
+//!     MimeResult,
+//! };
+//!
+//! # fn main() -> MimeResult<()> {
+//! let mut source = Config::new();
+//! source.set(CONFIG_MIME_DETECTOR_DEFAULT, "file")?;
+//! source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
+//!
+//! let config = MimeConfig::from_config(&source)?;
+//! let detector = BoxMimeDetector::from_config(&config)?;
+//! assert_eq!(
+//!     Some("image/png".to_owned()),
+//!     detector.detect_by_filename("image.png"),
+//! );
+//! # Ok(())
+//! # }
+//! ```
 
 pub mod classifier;
 pub mod detector;

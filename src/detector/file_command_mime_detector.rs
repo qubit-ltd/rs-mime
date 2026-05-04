@@ -8,6 +8,11 @@
  *
  ******************************************************************************/
 //! MIME detector backed by the system `file` command.
+//!
+//! This detector uses the embedded repository for filename guesses and invokes
+//! `file --mime-type --brief <path>` for content guesses on local files or
+//! temporary files staged from seekable readers. It is registered under the
+//! built-in provider id `file` and aliases such as `file-command`.
 
 use qubit_command::{
     Command,
@@ -228,6 +233,11 @@ impl<'a> FileCommandMimeDetector<'a> {
     }
 
     /// Checks whether the `file` command is available.
+    ///
+    /// Availability is checked by executing `file --mime-type --brief .` with a
+    /// quiet command runner. This only validates that the command can be
+    /// started successfully in the current process environment; it does not
+    /// guarantee that every future file path can be inspected.
     ///
     /// # Returns
     /// `true` when the command can be executed.

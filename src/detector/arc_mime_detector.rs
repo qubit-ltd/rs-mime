@@ -8,6 +8,33 @@
  *
  ******************************************************************************/
 //! Shared MIME detector wrapper.
+//!
+//! [`ArcMimeDetector`] is the shared detector wrapper used when one configured
+//! detector instance must be cloned and reused across tasks, services, or
+//! caches. Construction follows the same provider registry and fallback rules
+//! as [`BoxMimeDetector`].
+//!
+//! # Examples
+//!
+//! ```rust
+//! use qubit_mime::{
+//!     ArcMimeDetector,
+//!     MimeConfig,
+//!     MimeDetector,
+//!     MimeResult,
+//! };
+//!
+//! # fn main() -> MimeResult<()> {
+//! let detector = ArcMimeDetector::from_config(&MimeConfig::default())?;
+//! let cloned = detector.clone();
+//!
+//! assert_eq!(
+//!     Some("text/html".to_owned()),
+//!     cloned.detect_by_filename("index.html"),
+//! );
+//! # Ok(())
+//! # }
+//! ```
 
 use std::ops::Deref;
 use std::path::Path;
@@ -99,6 +126,10 @@ impl ArcMimeDetector {
 
     /// Creates a shared detector from MIME configuration.
     ///
+    /// The built-in registry is used. The configured default selector is tried
+    /// first unless it is empty or `auto`; configured fallbacks are tried only
+    /// when an explicit default cannot be created.
+    ///
     /// # Parameters
     /// - `config`: MIME configuration containing the default detector selector.
     ///
@@ -113,6 +144,11 @@ impl ArcMimeDetector {
     }
 
     /// Creates a shared detector from MIME configuration and explicit registry.
+    ///
+    /// Use this constructor when an application has registered custom detector
+    /// providers or wants to restrict the available providers. Resolution uses
+    /// the same default, `auto`, and fallback semantics as
+    /// [`MimeDetectorRegistry::create_default`].
     ///
     /// # Parameters
     /// - `registry`: Registry containing available providers.

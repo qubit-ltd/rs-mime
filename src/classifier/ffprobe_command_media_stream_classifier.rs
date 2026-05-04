@@ -116,6 +116,11 @@ impl FfprobeCommandMediaStreamClassifier {
 
     /// Checks whether the `ffprobe` command is available.
     ///
+    /// Availability is checked once per process by executing
+    /// `ffprobe -version` with the default quiet command runner. The cached
+    /// result only describes whether the command can be started successfully; a
+    /// particular media file may still be unreadable or unsupported.
+    ///
     /// # Returns
     /// `true` when `ffprobe -version` executes successfully.
     pub fn is_available() -> bool {
