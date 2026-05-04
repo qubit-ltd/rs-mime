@@ -1,0 +1,4 @@
+Some test file with textual content.
+
+$Author: stuelten $
+$Id: test.txt,v 1.1 2005/06/29 20:38:29 stuelten Exp $
