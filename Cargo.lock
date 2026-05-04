@@ -529,9 +529,9 @@ dependencies = [
 
 [[package]]
 name = "qubit-codec"
-version = "0.2.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f131cfaacf6576974438a201029885d79dcb409fd70ceb8dd704f9ae10a79019"
+checksum = "1c3750dc7d8bb602381de85e7593d0d6aef52117f1c3718784780470521dd0b2"
 dependencies = [
  "base64",
  "thiserror",

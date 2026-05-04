@@ -32,7 +32,7 @@ roxmltree = "0.21"
 thiserror = "2.0"
 
 qubit-io = "0.1"
-qubit-codec = "0.2"
+qubit-codec = "0.3"
 qubit-command = "0.3"
 qubit-config = "0.12"
 

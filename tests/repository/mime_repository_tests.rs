@@ -369,6 +369,12 @@ fn test_from_xml_decodes_single_quote_and_short_hex_escape_values() {
       <match type="string" value="\x1Z" offset="0"/>
     </magic>
   </mime-type>
+  <mime-type type="application/x-escaped-space">
+    <comment>escaped space</comment>
+    <magic>
+      <match type="string" value="DOCTYPE\ xbel" offset="0"/>
+    </magic>
+  </mime-type>
 </mime-info>
 "#,
     )
@@ -381,6 +387,10 @@ fn test_from_xml_decodes_single_quote_and_short_hex_escape_values() {
     assert_eq!(
         vec!["application/x-short-hex"],
         names(repository.detect_by_content(&[0x01, b'Z']))
+    );
+    assert_eq!(
+        vec!["application/x-escaped-space"],
+        names(repository.detect_by_content(b"DOCTYPE xbel"))
     );
 }
 

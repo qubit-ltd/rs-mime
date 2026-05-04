@@ -13,6 +13,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use qubit_codec::{
+    CStringLiteralCodec,
     CodecError,
     HexCodec,
 };
@@ -657,7 +658,7 @@ fn parse_usize(value: &str, attribute: &str) -> MimeResult<usize> {
 /// Returns [`MimeError`](crate::MimeError) when the value cannot be decoded.
 fn parse_value(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
     match value_type {
-        MagicValueType::String => decode_c_string(value),
+        MagicValueType::String => parse_c_string_bytes(value),
         _ => parse_numeric_bytes(value_type, value),
     }
 }
@@ -680,7 +681,7 @@ fn parse_mask(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
     }
 }
 
-/// Parses a C-style string literal used by shared MIME-info magic values.
+/// Parses a C string literal used by shared MIME-info magic values.
 ///
 /// # Parameters
 /// - `value`: Attribute value after XML entity decoding.
@@ -689,121 +690,16 @@ fn parse_mask(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
 /// Decoded bytes.
 ///
 /// # Errors
-/// Returns [`MimeError`](crate::MimeError) when an escape sequence is incomplete or invalid.
-fn decode_c_string(value: &str) -> MimeResult<Vec<u8>> {
-    let chars: Vec<char> = value.chars().collect();
-    let mut bytes = Vec::with_capacity(value.len());
-    let mut index = 0;
-    while index < chars.len() {
-        if chars[index] != '\\' {
-            push_char_bytes(chars[index], &mut bytes);
-            index += 1;
-            continue;
-        }
-        index += 1;
-        if index >= chars.len() {
-            return Err(MimeError::invalid_attr(
-                "match",
-                "value",
-                value,
-                "trailing backslash",
-            ));
-        }
-        match chars[index] {
-            'n' => bytes.push(b'\n'),
-            'r' => bytes.push(b'\r'),
-            't' => bytes.push(b'\t'),
-            '\\' => bytes.push(b'\\'),
-            '"' => bytes.push(b'"'),
-            '\'' => bytes.push(b'\''),
-            'x' | 'X' => index = decode_hex_escape(&chars, index, value, &mut bytes)?,
-            ch if ch.is_ascii_digit() && ch < '8' => {
-                index = decode_octal_escape(&chars, index, &mut bytes);
-            }
-            ch => push_char_bytes(ch, &mut bytes),
-        }
-        index += 1;
-    }
-    Ok(bytes)
-}
-
-/// Appends a Unicode scalar value as UTF-8 bytes.
-///
-/// # Parameters
-/// - `ch`: Character to append.
-/// - `bytes`: Destination byte buffer.
-fn push_char_bytes(ch: char, bytes: &mut Vec<u8>) {
-    let mut buffer = [0; 4];
-    bytes.extend_from_slice(ch.encode_utf8(&mut buffer).as_bytes());
-}
-
-/// Decodes a `\xNN` escape.
-///
-/// # Parameters
-/// - `chars`: Source characters.
-/// - `index`: Index of the `x` marker.
-/// - `source`: Original attribute value for diagnostics.
-/// - `bytes`: Destination byte buffer.
-///
-/// # Returns
-/// Index of the last consumed hex digit.
-///
-/// # Errors
-/// Returns [`MimeError`](crate::MimeError) when the escape has no hex digit.
-fn decode_hex_escape(
-    chars: &[char],
-    mut index: usize,
-    source: &str,
-    bytes: &mut Vec<u8>,
-) -> MimeResult<usize> {
-    let mut digits = String::with_capacity(2);
-    while index + 1 < chars.len() && digits.len() < 2 {
-        let digit = chars[index + 1];
-        if !digit.is_ascii_hexdigit() {
-            break;
-        }
-        digits.push(digit);
-        index += 1;
-    }
-    if digits.is_empty() {
-        return Err(MimeError::invalid_attr(
+/// Returns [`MimeError`](crate::MimeError) when the literal cannot be decoded.
+fn parse_c_string_bytes(value: &str) -> MimeResult<Vec<u8>> {
+    CStringLiteralCodec::new().decode(value).map_err(|error| {
+        MimeError::invalid_attr(
             "match",
             "value",
-            source,
-            "hex escape requires at least one digit",
-        ));
-    }
-    if digits.len() == 1 {
-        digits.insert(0, '0');
-    }
-    let decoded =
-        u8::from_str_radix(&digits, 16).expect("validated hex escape should decode as u8");
-    bytes.push(decoded);
-    Ok(index)
-}
-
-/// Decodes an octal escape.
-///
-/// # Parameters
-/// - `chars`: Source characters.
-/// - `index`: Index of the first octal digit.
-/// - `bytes`: Destination byte buffer.
-///
-/// # Returns
-/// Index of the last consumed octal digit.
-fn decode_octal_escape(chars: &[char], mut index: usize, bytes: &mut Vec<u8>) -> usize {
-    let mut value = 0u8;
-    let mut digits = 0;
-    while index < chars.len() && digits < 3 {
-        let Some(digit) = chars[index].to_digit(8) else {
-            break;
-        };
-        value = (value << 3) | digit as u8;
-        digits += 1;
-        index += 1;
-    }
-    bytes.push(value);
-    index - 1
+            value,
+            format!("invalid C string literal: {error}"),
+        )
+    })
 }
 
 /// Parses a numeric magic value into big-endian bytes.
