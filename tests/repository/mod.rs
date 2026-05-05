@@ -7,8 +7,11 @@
  *    Licensed under the Apache License, Version 2.0.
  *
  ******************************************************************************/
+mod magic_value_type_tests;
 mod mime_glob_tests;
 mod mime_magic_matcher_tests;
+mod mime_magic_tests;
 mod mime_repository_tests;
+mod mime_type_builder_tests;
 mod mime_type_tests;
 mod real_file_integration_tests;
