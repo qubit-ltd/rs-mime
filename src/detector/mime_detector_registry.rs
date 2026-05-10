@@ -219,7 +219,28 @@ impl MimeDetectorRegistry {
     /// # Returns
     /// Matching provider, or `None`.
     pub fn find_provider(&self, name: &str) -> Option<&dyn ServiceProvider<MimeDetectorSpec>> {
-        self.providers.find_provider(name)
+        self.resolve_provider(name).ok()
+    }
+
+    /// Resolves a provider by id or alias.
+    ///
+    /// # Parameters
+    /// - `name`: Provider id or alias. Names are normalized before lookup.
+    ///
+    /// # Returns
+    /// Matching provider.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::EmptyDetectorName`] or [`MimeError::InvalidDetectorName`]
+    /// when `name` is invalid, or [`MimeError::UnknownDetector`] when no provider
+    /// matches.
+    pub fn resolve_provider(
+        &self,
+        name: &str,
+    ) -> MimeResult<&dyn ServiceProvider<MimeDetectorSpec>> {
+        self.providers
+            .resolve_provider(name)
+            .map_err(MimeError::from)
     }
 
     /// Creates a boxed detector from a provider name.

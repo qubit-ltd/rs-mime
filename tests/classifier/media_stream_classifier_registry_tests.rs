@@ -449,6 +449,51 @@ fn test_builtin_registry_exposes_ffprobe_provider() {
 }
 
 #[test]
+fn test_resolve_provider_matches_find_provider_for_builtin_names() {
+    let registry = MediaStreamClassifierRegistry::builtin();
+    for name in [
+        "ffprobe",
+        "ffprobe-command",
+        "ffprobe-command-media-stream-classifier",
+    ] {
+        let via_resolve = registry
+            .resolve_provider(name)
+            .unwrap_or_else(|_| panic!("resolve_provider should succeed for '{name}'"));
+        let via_find = registry
+            .find_provider(name)
+            .unwrap_or_else(|| panic!("find_provider should succeed for '{name}'"));
+        assert!(
+            std::ptr::eq(via_resolve, via_find),
+            "find_provider should delegate to resolve_provider for '{name}'"
+        );
+    }
+}
+
+#[test]
+fn test_resolve_provider_reports_empty_invalid_and_unknown_names() {
+    let registry = MediaStreamClassifierRegistry::builtin();
+
+    assert!(matches!(
+        registry
+            .resolve_provider("")
+            .expect_err("empty name should be rejected"),
+        MimeError::EmptyClassifierName
+    ));
+    assert!(matches!(
+        registry
+            .resolve_provider("bad name")
+            .expect_err("invalid name should be rejected"),
+        MimeError::InvalidClassifierName { ref name, .. } if name == "bad name"
+    ));
+    assert!(matches!(
+        registry
+            .resolve_provider("missing-classifier-provider")
+            .expect_err("unknown name should be rejected"),
+        MimeError::UnknownClassifier { ref name } if name == "missing-classifier-provider"
+    ));
+}
+
+#[test]
 fn test_ffprobe_provider_metadata_matches_builtin_registry_entry() {
     let provider = FfprobeCommandMediaStreamClassifierProvider;
     let descriptor = provider

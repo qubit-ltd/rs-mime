@@ -60,9 +60,11 @@ pub struct MediaStreamClassifierRegistry {
 /// Process-wide default classifier registry.
 static DEFAULT_MEDIA_STREAM_CLASSIFIER_REGISTRY: LazyLock<RwLock<MediaStreamClassifierRegistry>> =
     LazyLock::new(|| RwLock::new(MediaStreamClassifierRegistry::builtin()));
+
 /// Backend name used when reporting default registry lock failures.
 #[cfg(not(coverage))]
 const BACKEND: &str = "media-stream-classifier-registry";
+
 /// Error reason used when a default registry lock is poisoned.
 #[cfg(not(coverage))]
 const LOCK_ERR: &str = "lock poisoned";
@@ -194,7 +196,28 @@ impl MediaStreamClassifierRegistry {
         &self,
         name: &str,
     ) -> Option<&dyn ServiceProvider<MediaStreamClassifierSpec>> {
-        self.providers.find_provider(name)
+        self.resolve_provider(name).ok()
+    }
+
+    /// Resolves a provider by id or alias.
+    ///
+    /// # Parameters
+    /// - `name`: Provider id or alias. Names are normalized before lookup.
+    ///
+    /// # Returns
+    /// Matching provider.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::EmptyClassifierName`] or [`MimeError::InvalidClassifierName`]
+    /// when `name` is invalid, or [`MimeError::UnknownClassifier`] when no provider
+    /// matches.
+    pub fn resolve_provider(
+        &self,
+        name: &str,
+    ) -> MimeResult<&dyn ServiceProvider<MediaStreamClassifierSpec>> {
+        self.providers
+            .resolve_provider(name)
+            .map_err(MimeError::classifier_registry_error)
     }
 
     /// Creates a boxed classifier from a provider name.
