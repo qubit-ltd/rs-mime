@@ -98,7 +98,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qubit-mime = "0.2"
+qubit-mime = "0.3"
 ```
 
 ## Quick Start
@@ -134,16 +134,16 @@ fn main() -> Result<(), MimeError> {
 
 ### Use the Rust-style `MimeDetector` trait
 
-`BoxMimeDetector` and `ArcMimeDetector` provide explicit boxed and shared
-detector containers selected from `MimeConfig` and `MimeDetectorRegistry`. Code
-that only needs MIME names can depend on the trait instead of a concrete
-detector.
+`MimeDetectorRegistry` creates boxed or shared `MimeDetector` trait objects
+from `MimeConfig`. Code that only needs MIME names can depend on the trait
+instead of a concrete detector.
 
 ```rust
 use qubit_mime::{
-    BoxMimeDetector,
+    MimeConfig,
     MimeDetectionPolicy,
     MimeDetector,
+    MimeDetectorRegistry,
     MimeError,
 };
 
@@ -152,7 +152,8 @@ fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) ->
 }
 
 fn main() -> Result<(), MimeError> {
-    let detector = BoxMimeDetector::from_config(&qubit_mime::MimeConfig::default())?;
+    let detector =
+        MimeDetectorRegistry::default_registry()?.create_default_box(&MimeConfig::default())?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -172,7 +173,6 @@ configuration. Use `MimeConfig::reload_default()` to replace it from an
 ```rust
 use qubit_config::Config;
 use qubit_mime::{
-    BoxMimeDetector,
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
@@ -183,6 +183,7 @@ use qubit_mime::{
     DEFAULT_PRECISE_DETECTION_PATTERNS,
     MimeConfig,
     MimeDetector,
+    MimeDetectorRegistry,
     MimeError,
 };
 
@@ -197,7 +198,8 @@ fn main() -> Result<(), MimeError> {
     config.set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, DEFAULT_AMBIGUOUS_MIME_MAPPING)?;
 
     MimeConfig::reload_default(&config)?;
-    let detector = BoxMimeDetector::from_config(&MimeConfig::default())?;
+    let detector =
+        MimeDetectorRegistry::default_registry()?.create_default_box(&MimeConfig::default())?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -211,20 +213,19 @@ fn main() -> Result<(), MimeError> {
 
 ### Select detectors with registry and fallbacks
 
-`BoxMimeDetector::from_config()` and `ArcMimeDetector::from_config()` use the
-process-wide default `MimeDetectorRegistry`. The configured default detector is tried
-first. If that provider is unknown, unavailable, or fails to initialize, the
-configured fallback chain is tried in order. Set the default selector to `auto`
-to choose the highest-priority available provider from the registry.
+`MimeDetectorRegistry::create_default_box()` and
+`MimeDetectorRegistry::create_default_arc()` use the configured default
+detector first. If that provider is unknown, unavailable, or fails to
+initialize, the configured fallback chain is tried in order. Set the default
+selector to `auto` to choose the highest-priority available provider from the
+registry.
 
 The default registry starts with the built-in providers returned by
 `MimeDetectorRegistry::builtin()`. Extension crates can make their providers
-available to all default detector constructors by calling
+available to all default registry snapshots by calling
 `MimeDetectorRegistry::register_default(provider)` during application startup.
-After registration succeeds, every later call to `BoxMimeDetector::from_config()`,
-`BoxMimeDetector::from_name()`, `ArcMimeDetector::from_config()`, or
-`ArcMimeDetector::from_name()` sees the provider through the same process-wide
-registry.
+After registration succeeds, later `MimeDetectorRegistry::default_registry()`
+snapshots see the provider through the same process-wide registry.
 
 `MimeDetectorRegistry::default_registry()` returns a snapshot clone of the
 current process-wide registry. Mutating that snapshot does not update the global
@@ -242,18 +243,18 @@ Built-in detector selectors:
 
 | Selector | Aliases | Behavior |
 |----------|---------|----------|
-| `repository` | `repo`, `repository-mime-detector` | Uses the embedded freedesktop MIME repository |
+| `repository` | `repository-mime-detector` | Uses the embedded freedesktop MIME repository |
 | `file` | `file-command`, `file-command-mime-detector` | Uses the repository for filenames and `file --mime-type --brief` for local content |
 | `auto` | - | Chooses available providers by priority, then provider id |
 
 ```rust
 use qubit_config::Config;
 use qubit_mime::{
-    BoxMimeDetector,
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_DETECTOR_FALLBACKS,
     MimeConfig,
     MimeDetector,
+    MimeDetectorRegistry,
     MimeError,
 };
 
@@ -263,7 +264,7 @@ fn main() -> Result<(), MimeError> {
     source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
 
     let config = MimeConfig::from_config(&source)?;
-    let detector = BoxMimeDetector::from_config(&config)?;
+    let detector = MimeDetectorRegistry::default_registry()?.create_default_box(&config)?;
 
     assert_eq!(
         Some("image/png".to_owned()),
@@ -285,7 +286,7 @@ use qubit_mime::{
 
 fn main() -> Result<(), MimeError> {
     let registry = MimeDetectorRegistry::builtin();
-    let detector = registry.create("repository-mime-detector", &MimeConfig::default())?;
+    let detector = registry.create_box("repository-mime-detector", &MimeConfig::default())?;
 
     assert_eq!(
         Some("text/plain".to_owned()),
@@ -649,15 +650,11 @@ fn main() -> Result<(), MimeError> {
 | `MimeDetectorRegistry::default_registry()` | Snapshot the process-wide default detector registry |
 | `MimeDetectorRegistry::register_default(provider)` | Register an external detector provider globally |
 | `MimeDetectorRegistry::register(provider)` | Register an external detector provider in an explicit registry |
-| `MimeDetectorRegistry::create(name, config)` | Create one detector by provider id or alias |
-| `MimeDetectorRegistry::create_default(config)` | Resolve the configured default, `auto`, and fallback chain |
+| `MimeDetectorRegistry::create_box(name, config)` | Create a boxed detector by provider id or alias |
+| `MimeDetectorRegistry::create_arc(name, config)` | Create a shared detector by provider id or alias |
+| `MimeDetectorRegistry::create_default_box(config)` | Resolve the configured default, `auto`, and fallback chain into a boxed detector |
+| `MimeDetectorRegistry::create_default_arc(config)` | Resolve the configured default, `auto`, and fallback chain into a shared detector |
 | `MimeDetectorProvider` | Factory trait for pluggable detector implementations |
-| `BoxMimeDetector::from_config(config)` | Select a boxed detector from the default registry |
-| `BoxMimeDetector::from_registry(registry, config)` | Select a boxed detector from an explicit registry |
-| `BoxMimeDetector::from_name(name)` | Select a boxed detector from the default registry by implementation name |
-| `ArcMimeDetector::from_config(config)` | Select a shared detector from the default registry |
-| `ArcMimeDetector::from_registry(registry, config)` | Select a shared detector from an explicit registry |
-| `ArcMimeDetector::from_name(name)` | Select a shared detector from the default registry by implementation name |
 | `detect_by_filename(filename)` | Detect one MIME name from filename |
 | `detect_by_content(bytes)` | Detect one MIME name from content bytes |
 | `detect(bytes, filename, policy)` | Detect from bytes and optional filename |
@@ -695,12 +692,15 @@ fn main() -> Result<(), MimeError> {
 
 | Method | Description |
 |--------|-------------|
-| `BoxMediaStreamClassifier::default()` | Select the configured/default boxed classifier |
-| `BoxMediaStreamClassifier::from_name(name)` | Select a boxed classifier by implementation name |
-| `BoxMediaStreamClassifier::from_config(config)` | Select a boxed classifier from explicit MIME configuration |
-| `ArcMediaStreamClassifier::default()` | Select the configured/default shared classifier |
-| `ArcMediaStreamClassifier::from_name(name)` | Select a shared classifier by implementation name |
-| `ArcMediaStreamClassifier::from_config(config)` | Select a shared classifier from explicit MIME configuration |
+| `MediaStreamClassifierRegistry::builtin()` | Create an isolated registry with built-in classifier providers |
+| `MediaStreamClassifierRegistry::default_registry()` | Snapshot the process-wide default classifier registry |
+| `MediaStreamClassifierRegistry::register_default(provider)` | Register an external classifier provider globally |
+| `MediaStreamClassifierRegistry::register(provider)` | Register an external classifier provider in an explicit registry |
+| `MediaStreamClassifierRegistry::create_box(name, config)` | Create a boxed classifier by provider id or alias |
+| `MediaStreamClassifierRegistry::create_arc(name, config)` | Create a shared classifier by provider id or alias |
+| `MediaStreamClassifierRegistry::create_default_box(config)` | Resolve the configured default or `auto` into a boxed classifier |
+| `MediaStreamClassifierRegistry::create_default_arc(config)` | Resolve the configured default or `auto` into a shared classifier |
+| `MediaStreamClassifierProvider` | Factory trait for pluggable classifier implementations |
 | `classify_file(file)` | Classify a local media file |
 | `classify_reader(reader)` | Classify media content from a reader |
 | `classify_content(bytes)` | Classify in-memory media content |

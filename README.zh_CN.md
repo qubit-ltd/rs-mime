@@ -91,7 +91,7 @@ glob、内容魔数规则和父类型关系。
 
 ```toml
 [dependencies]
-qubit-mime = "0.2"
+qubit-mime = "0.3"
 ```
 
 ## 快速开始
@@ -127,15 +127,16 @@ fn main() -> Result<(), MimeError> {
 
 ### 使用 Rust 风格的 `MimeDetector` trait
 
-`BoxMimeDetector` 和 `ArcMimeDetector` 提供 boxed 和 shared detector 容器，
-默认实现由 `MimeConfig` 和 `MimeDetectorRegistry` 决定。只需要 MIME 名称的
-代码可以依赖 trait，而不是依赖具体检测器类型。
+`MimeDetectorRegistry` 根据 `MimeConfig` 创建 boxed 或 shared
+`MimeDetector` trait object。只需要 MIME 名称的代码可以依赖 trait，而不是依赖
+具体检测器类型。
 
 ```rust
 use qubit_mime::{
-    BoxMimeDetector,
+    MimeConfig,
     MimeDetectionPolicy,
     MimeDetector,
+    MimeDetectorRegistry,
     MimeError,
 };
 
@@ -144,7 +145,8 @@ fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) ->
 }
 
 fn main() -> Result<(), MimeError> {
-    let detector = BoxMimeDetector::from_config(&qubit_mime::MimeConfig::default())?;
+    let detector =
+        MimeDetectorRegistry::default_registry()?.create_default_box(&MimeConfig::default())?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -164,7 +166,6 @@ fn main() -> Result<(), MimeError> {
 ```rust
 use qubit_config::Config;
 use qubit_mime::{
-    BoxMimeDetector,
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
@@ -175,6 +176,7 @@ use qubit_mime::{
     DEFAULT_PRECISE_DETECTION_PATTERNS,
     MimeConfig,
     MimeDetector,
+    MimeDetectorRegistry,
     MimeError,
 };
 
@@ -189,7 +191,8 @@ fn main() -> Result<(), MimeError> {
     config.set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, DEFAULT_AMBIGUOUS_MIME_MAPPING)?;
 
     MimeConfig::reload_default(&config)?;
-    let detector = BoxMimeDetector::from_config(&MimeConfig::default())?;
+    let detector =
+        MimeDetectorRegistry::default_registry()?.create_default_box(&MimeConfig::default())?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -203,17 +206,16 @@ fn main() -> Result<(), MimeError> {
 
 ### 使用 registry 和 fallback 选择检测器
 
-`BoxMimeDetector::from_config()` 和 `ArcMimeDetector::from_config()` 使用进程级
-默认 `MimeDetectorRegistry`。配置的默认 detector 会先被尝试；如果该 provider
-未知、不可用或初始化失败，则按配置的 fallback 链继续尝试。把默认 selector
-设置为 `auto` 时，会从 registry 中按 provider 优先级选择当前可用的实现。
+`MimeDetectorRegistry::create_default_box()` 和
+`MimeDetectorRegistry::create_default_arc()` 先尝试配置的默认 detector；如果该
+provider 未知、不可用或初始化失败，则按配置的 fallback 链继续尝试。把默认
+selector 设置为 `auto` 时，会从 registry 中按 provider 优先级选择当前可用的实现。
 
 默认 registry 初始包含 `MimeDetectorRegistry::builtin()` 返回的内置 provider。
 扩展 crate 可以在应用启动阶段调用
 `MimeDetectorRegistry::register_default(provider)`，把自己的 provider 加入这个
 进程级默认 registry。注册成功后，后续任何地方调用
-`BoxMimeDetector::from_config()`、`BoxMimeDetector::from_name()`、
-`ArcMimeDetector::from_config()` 或 `ArcMimeDetector::from_name()`，都会通过同一个
+`MimeDetectorRegistry::default_registry()` 获取到的 registry 快照，都会通过同一个
 进程级默认 registry 看到该 provider。
 
 `MimeDetectorRegistry::default_registry()` 返回当前进程级 registry 的快照克隆。
@@ -229,18 +231,18 @@ id 或 alias 重复时会返回 `MimeError::DuplicateDetectorName`；全局 regi
 
 | Selector | 别名 | 行为 |
 |----------|------|------|
-| `repository` | `repo`, `repository-mime-detector` | 使用内置 freedesktop MIME 仓库 |
+| `repository` | `repository-mime-detector` | 使用内置 freedesktop MIME 仓库 |
 | `file` | `file-command`, `file-command-mime-detector` | 文件名使用仓库，内容使用 `file --mime-type --brief` |
 | `auto` | - | 按优先级和 provider id 选择可用 provider |
 
 ```rust
 use qubit_config::Config;
 use qubit_mime::{
-    BoxMimeDetector,
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_DETECTOR_FALLBACKS,
     MimeConfig,
     MimeDetector,
+    MimeDetectorRegistry,
     MimeError,
 };
 
@@ -250,7 +252,7 @@ fn main() -> Result<(), MimeError> {
     source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
 
     let config = MimeConfig::from_config(&source)?;
-    let detector = BoxMimeDetector::from_config(&config)?;
+    let detector = MimeDetectorRegistry::default_registry()?.create_default_box(&config)?;
 
     assert_eq!(
         Some("image/png".to_owned()),
@@ -272,7 +274,7 @@ use qubit_mime::{
 
 fn main() -> Result<(), MimeError> {
     let registry = MimeDetectorRegistry::builtin();
-    let detector = registry.create("repository-mime-detector", &MimeConfig::default())?;
+    let detector = registry.create_box("repository-mime-detector", &MimeConfig::default())?;
 
     assert_eq!(
         Some("text/plain".to_owned()),
@@ -633,15 +635,11 @@ fn main() -> Result<(), MimeError> {
 | `MimeDetectorRegistry::default_registry()` | 获取进程级默认 detector registry 的快照 |
 | `MimeDetectorRegistry::register_default(provider)` | 将外部 detector provider 注册到全局默认 registry |
 | `MimeDetectorRegistry::register(provider)` | 将外部 detector provider 注册到显式 registry |
-| `MimeDetectorRegistry::create(name, config)` | 按 provider id 或 alias 创建检测器 |
-| `MimeDetectorRegistry::create_default(config)` | 解析配置的默认值、`auto` 和 fallback 链 |
+| `MimeDetectorRegistry::create_box(name, config)` | 按 provider id 或 alias 创建 boxed 检测器 |
+| `MimeDetectorRegistry::create_arc(name, config)` | 按 provider id 或 alias 创建共享检测器 |
+| `MimeDetectorRegistry::create_default_box(config)` | 将配置的默认值、`auto` 和 fallback 链解析为 boxed 检测器 |
+| `MimeDetectorRegistry::create_default_arc(config)` | 将配置的默认值、`auto` 和 fallback 链解析为共享检测器 |
 | `MimeDetectorProvider` | 可插拔 detector 实现的工厂 trait |
-| `BoxMimeDetector::from_config(config)` | 从默认 registry 选择 boxed 检测器 |
-| `BoxMimeDetector::from_registry(registry, config)` | 从显式 registry 选择 boxed 检测器 |
-| `BoxMimeDetector::from_name(name)` | 按实现名称从默认 registry 选择 boxed 检测器 |
-| `ArcMimeDetector::from_config(config)` | 从默认 registry 选择共享检测器 |
-| `ArcMimeDetector::from_registry(registry, config)` | 从显式 registry 选择共享检测器 |
-| `ArcMimeDetector::from_name(name)` | 按实现名称从默认 registry 选择共享检测器 |
 | `detect_by_filename(filename)` | 根据文件名检测一个 MIME 名称 |
 | `detect_by_content(bytes)` | 根据内容字节检测一个 MIME 名称 |
 | `detect(bytes, filename, policy)` | 根据字节和可选文件名检测 |
@@ -679,12 +677,15 @@ fn main() -> Result<(), MimeError> {
 
 | 方法 | 描述 |
 |-----|------|
-| `BoxMediaStreamClassifier::default()` | 选择配置或默认的 boxed classifier |
-| `BoxMediaStreamClassifier::from_name(name)` | 按实现名称选择 boxed classifier |
-| `BoxMediaStreamClassifier::from_config(config)` | 通过显式 MIME 配置选择 boxed classifier |
-| `ArcMediaStreamClassifier::default()` | 选择配置或默认的共享 classifier |
-| `ArcMediaStreamClassifier::from_name(name)` | 按实现名称选择共享 classifier |
-| `ArcMediaStreamClassifier::from_config(config)` | 通过显式 MIME 配置选择共享 classifier |
+| `MediaStreamClassifierRegistry::builtin()` | 创建只包含内置 classifier provider 的隔离 registry |
+| `MediaStreamClassifierRegistry::default_registry()` | 获取进程级默认 classifier registry 的快照 |
+| `MediaStreamClassifierRegistry::register_default(provider)` | 将外部 classifier provider 注册到全局默认 registry |
+| `MediaStreamClassifierRegistry::register(provider)` | 将外部 classifier provider 注册到显式 registry |
+| `MediaStreamClassifierRegistry::create_box(name, config)` | 按 provider id 或 alias 创建 boxed classifier |
+| `MediaStreamClassifierRegistry::create_arc(name, config)` | 按 provider id 或 alias 创建共享 classifier |
+| `MediaStreamClassifierRegistry::create_default_box(config)` | 将配置的默认值或 `auto` 解析为 boxed classifier |
+| `MediaStreamClassifierRegistry::create_default_arc(config)` | 将配置的默认值或 `auto` 解析为共享 classifier |
+| `MediaStreamClassifierProvider` | 可插拔 classifier 实现的工厂 trait |
 | `classify_file(file)` | 分类本地媒体文件 |
 | `classify_reader(reader)` | 从 reader 分类媒体内容 |
 | `classify_content(bytes)` | 分类内存中的媒体内容 |

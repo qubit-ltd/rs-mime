@@ -8,11 +8,7 @@
  *
  ******************************************************************************/
 
-use std::sync::Arc;
-
 use qubit_mime::{
-    ArcMimeDetector,
-    BoxMimeDetector,
     CONFIG_MIME_DETECTOR_FALLBACKS,
     FileCommandMimeDetector,
     MimeConfig,
@@ -205,16 +201,29 @@ fn test_mime_detector_backend_prefer_filename_skips_reader_and_file_content() {
 
 #[test]
 fn test_default_mime_detector_returns_usable_detector() {
-    let detector = BoxMimeDetector::from_config(&MimeConfig::default()).expect("default detector");
+    let registry = MimeDetectorRegistry::default_registry().expect("default registry");
+    let detector = registry
+        .create_default_box(&MimeConfig::default())
+        .expect("default detector");
     assert!(detector.detect_by_filename("document.pdf").is_some());
 }
 
 #[test]
-fn test_mime_detector_wrappers_select_named_detectors() {
-    let boxed = BoxMimeDetector::from_name("repository").expect("repository detector");
-    let shared = ArcMimeDetector::from_name("repository").expect("repository detector");
-    let boxed_file = BoxMimeDetector::from_name("file").expect("file detector");
-    let shared_file = ArcMimeDetector::from_name("file").expect("file detector");
+fn test_mime_detector_registry_creates_boxed_and_shared_named_detectors() {
+    let registry = MimeDetectorRegistry::default_registry().expect("default registry");
+    let config = MimeConfig::default();
+    let boxed = registry
+        .create_box("repository", &config)
+        .expect("repository boxed detector");
+    let shared = registry
+        .create_arc("repository", &config)
+        .expect("repository shared detector");
+    let boxed_file = registry
+        .create_box("file", &config)
+        .expect("file boxed detector");
+    let shared_file = registry
+        .create_arc("file", &config)
+        .expect("file shared detector");
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -232,19 +241,22 @@ fn test_mime_detector_wrappers_select_named_detectors() {
         Some("image/png".to_owned()),
         shared_file.detect_by_filename("image.png")
     );
-    assert!(BoxMimeDetector::from_name("unknown").is_err());
-    assert!(ArcMimeDetector::from_name("unknown").is_err());
+    assert!(registry.create_box("unknown", &config).is_err());
+    assert!(registry.create_arc("unknown", &config).is_err());
 }
 
 #[test]
-fn test_mime_detector_wrappers_select_from_explicit_registry() {
+fn test_mime_detector_registry_creates_from_explicit_registry() {
     let registry = MimeDetectorRegistry::builtin();
     let config = create_detector_config("repository");
-    let boxed = BoxMimeDetector::from_registry_name(&registry, "repository", &config)
+    let boxed = registry
+        .create_box("repository", &config)
         .expect("boxed registry selector should create detector");
-    let shared = ArcMimeDetector::from_registry_name(&registry, "repository", &config)
+    let shared = registry
+        .create_arc("repository", &config)
         .expect("shared registry selector should create detector");
-    let shared_default = ArcMimeDetector::from_registry(&registry, &config)
+    let shared_default = registry
+        .create_default_arc(&config)
         .expect("shared registry default should create detector");
 
     assert_eq!(
@@ -262,25 +274,21 @@ fn test_mime_detector_wrappers_select_from_explicit_registry() {
 }
 
 #[test]
-fn test_box_mime_detector_wrapper_delegates_all_entry_points() {
-    let wrapper = BoxMimeDetector::new(Box::new(StaticDetector));
+fn test_boxed_mime_detector_trait_object_delegates_all_entry_points() {
+    let detector: Box<dyn MimeDetector> = Box::new(StaticDetector);
     let mut reader = std::io::Cursor::new(b"data".to_vec());
 
     assert_eq!(
         Some("application/x-static-name".to_owned()),
-        wrapper.as_ref().detect_by_filename("file.bin")
+        detector.as_ref().detect_by_filename("file.bin")
     );
     assert_eq!(
         Some("application/x-static-content".to_owned()),
-        std::ops::Deref::deref(&wrapper).detect_by_content(b"data")
-    );
-    assert_eq!(
-        Some("application/x-static-content".to_owned()),
-        wrapper.detect_by_content(b"data")
+        detector.detect_by_content(b"data")
     );
     assert_eq!(
         Some("application/x-static-detect".to_owned()),
-        wrapper.detect(
+        detector.detect(
             b"data",
             Some("file.bin"),
             MimeDetectionPolicy::PreferFilename
@@ -288,53 +296,38 @@ fn test_box_mime_detector_wrapper_delegates_all_entry_points() {
     );
     assert_eq!(
         Some("application/x-static-reader".to_owned()),
-        wrapper
+        detector
             .detect_reader(&mut reader, None, MimeDetectionPolicy::PreferFilename)
             .expect("boxed reader delegation should succeed")
     );
     assert_eq!(
         Some("application/x-static-file".to_owned()),
-        wrapper
+        detector
             .detect_file(
                 std::path::Path::new("Cargo.toml"),
                 MimeDetectionPolicy::PreferFilename
             )
             .expect("boxed file delegation should succeed")
     );
-
-    let trait_object: Box<dyn MimeDetector> = wrapper.into();
-    assert_eq!(
-        Some("application/x-static-name".to_owned()),
-        trait_object.detect_by_filename("file.bin")
-    );
-
-    let from_trait = BoxMimeDetector::from(Box::new(StaticDetector) as Box<dyn MimeDetector>);
-    assert_eq!(
-        Some("application/x-static-content".to_owned()),
-        from_trait.into_inner().detect_by_content(b"data")
-    );
 }
 
 #[test]
-fn test_arc_mime_detector_wrapper_delegates_all_entry_points() {
-    let wrapper = ArcMimeDetector::new(Arc::new(StaticDetector));
+fn test_shared_mime_detector_trait_object_delegates_all_entry_points() {
+    let detector: std::sync::Arc<dyn MimeDetector> = std::sync::Arc::new(StaticDetector);
+    let cloned = detector.clone();
     let mut reader = std::io::Cursor::new(b"data".to_vec());
 
     assert_eq!(
         Some("application/x-static-name".to_owned()),
-        wrapper.as_ref().detect_by_filename("file.bin")
+        cloned.as_ref().detect_by_filename("file.bin")
     );
     assert_eq!(
         Some("application/x-static-content".to_owned()),
-        std::ops::Deref::deref(&wrapper).detect_by_content(b"data")
-    );
-    assert_eq!(
-        Some("application/x-static-content".to_owned()),
-        wrapper.detect_by_content(b"data")
+        detector.detect_by_content(b"data")
     );
     assert_eq!(
         Some("application/x-static-detect".to_owned()),
-        wrapper.detect(
+        detector.detect(
             b"data",
             Some("file.bin"),
             MimeDetectionPolicy::PreferFilename
@@ -342,45 +335,43 @@ fn test_arc_mime_detector_wrapper_delegates_all_entry_points() {
     );
     assert_eq!(
         Some("application/x-static-reader".to_owned()),
-        wrapper
+        detector
             .detect_reader(&mut reader, None, MimeDetectionPolicy::PreferFilename)
             .expect("arc reader delegation should succeed")
     );
     assert_eq!(
         Some("application/x-static-file".to_owned()),
-        wrapper
+        detector
             .detect_file(
                 std::path::Path::new("Cargo.toml"),
                 MimeDetectionPolicy::PreferFilename
             )
             .expect("arc file delegation should succeed")
     );
-
-    let trait_object: Arc<dyn MimeDetector> = wrapper.into();
-    assert_eq!(
-        Some("application/x-static-name".to_owned()),
-        trait_object.detect_by_filename("file.bin")
-    );
-
-    let from_trait = ArcMimeDetector::from(Arc::new(StaticDetector) as Arc<dyn MimeDetector>);
-    assert_eq!(
-        Some("application/x-static-content".to_owned()),
-        from_trait.into_inner().detect_by_content(b"data")
-    );
 }
 
 #[test]
-fn test_mime_detector_wrappers_build_from_config_defaults() {
+fn test_mime_detector_registry_builds_from_config_defaults() {
+    let registry = MimeDetectorRegistry::default_registry().expect("default registry");
     let config = MimeConfig::default();
     let file_config = create_detector_config("file");
     let unknown_config = create_detector_config("unknown");
     let fallback_config = create_detector_config_with_fallbacks("unknown", &["repository"]);
-    let boxed = BoxMimeDetector::from_config(&config).expect("default boxed detector");
-    let shared = ArcMimeDetector::from_config(&config).expect("default shared detector");
-    let boxed_file = BoxMimeDetector::from_config(&file_config).expect("file boxed detector");
-    let shared_file = ArcMimeDetector::from_config(&file_config).expect("file shared detector");
-    let fallback =
-        BoxMimeDetector::from_config(&fallback_config).expect("repository fallback detector");
+    let boxed = registry
+        .create_default_box(&config)
+        .expect("default boxed detector");
+    let shared = registry
+        .create_default_arc(&config)
+        .expect("default shared detector");
+    let boxed_file = registry
+        .create_default_box(&file_config)
+        .expect("file boxed detector");
+    let shared_file = registry
+        .create_default_arc(&file_config)
+        .expect("file shared detector");
+    let fallback = registry
+        .create_default_box(&fallback_config)
+        .expect("repository fallback detector");
     let repository_default = RepositoryMimeDetector::default();
     let file_default = FileCommandMimeDetector::default();
     let file_from_config = FileCommandMimeDetector::from_mime_config(file_config);
@@ -390,7 +381,7 @@ fn test_mime_detector_wrappers_build_from_config_defaults() {
     assert!(boxed_file.detect_by_filename("document.pdf").is_some());
     assert!(shared_file.detect_by_filename("document.pdf").is_some());
     assert!(fallback.detect_by_filename("document.pdf").is_some());
-    assert!(BoxMimeDetector::from_config(&unknown_config).is_err());
+    assert!(registry.create_default_box(&unknown_config).is_err());
     assert!(
         repository_default
             .detect_by_filename("document.pdf")
@@ -406,8 +397,11 @@ fn test_mime_detector_wrappers_build_from_config_defaults() {
 
 #[test]
 fn test_configured_fallback_uses_repository_after_unknown_detector() {
+    let registry = MimeDetectorRegistry::default_registry().expect("default registry");
     let config = create_detector_config_with_fallbacks("unknown", &["repository"]);
-    let detector = BoxMimeDetector::from_config(&config).expect("fallback detector");
+    let detector = registry
+        .create_default_box(&config)
+        .expect("fallback detector");
 
     assert_eq!(
         Some("application/pdf".to_owned()),

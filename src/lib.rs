@@ -19,11 +19,10 @@
 //!   `file --mime-type --brief` command and uses the repository for filename
 //!   guesses.
 //!
-//! Detector wrappers such as [`BoxMimeDetector`] and [`ArcMimeDetector`] are
-//! created through [`MimeConfig`]. The configured default detector is tried
-//! first, followed by the configured fallback chain. The special selector
-//! `auto` chooses the highest-priority available provider from a
-//! [`MimeDetectorRegistry`].
+//! Detectors are created through [`MimeDetectorRegistry`]. The configured
+//! default detector is tried first, followed by the configured fallback chain.
+//! The special selector `auto` chooses the highest-priority available provider
+//! from the registry.
 //!
 //! # Examples
 //!
@@ -31,14 +30,15 @@
 //!
 //! ```rust
 //! use qubit_mime::{
-//!     BoxMimeDetector,
 //!     MimeConfig,
 //!     MimeDetector,
+//!     MimeDetectorRegistry,
 //!     MimeResult,
 //! };
 //!
 //! # fn main() -> MimeResult<()> {
-//! let detector = BoxMimeDetector::from_config(&MimeConfig::default())?;
+//! let detector =
+//!     MimeDetectorRegistry::default_registry()?.create_default_box(&MimeConfig::default())?;
 //! assert_eq!(
 //!     Some("application/pdf".to_owned()),
 //!     detector.detect_by_filename("document.pdf"),
@@ -54,11 +54,11 @@
 //! ```rust
 //! use qubit_config::Config;
 //! use qubit_mime::{
-//!     BoxMimeDetector,
 //!     CONFIG_MIME_DETECTOR_DEFAULT,
 //!     CONFIG_MIME_DETECTOR_FALLBACKS,
 //!     MimeConfig,
 //!     MimeDetector,
+//!     MimeDetectorRegistry,
 //!     MimeResult,
 //! };
 //!
@@ -68,7 +68,7 @@
 //! source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
 //!
 //! let config = MimeConfig::from_config(&source)?;
-//! let detector = BoxMimeDetector::from_config(&config)?;
+//! let detector = MimeDetectorRegistry::default_registry()?.create_default_box(&config)?;
 //! assert_eq!(
 //!     Some("image/png".to_owned()),
 //!     detector.detect_by_filename("image.png"),
@@ -81,6 +81,18 @@ pub mod classifier;
 pub mod detector;
 pub mod repository;
 
+pub use qubit_spi::{
+    ProviderAvailability,
+    ProviderCreateError,
+    ProviderDescriptor,
+    ProviderFailure,
+    ProviderName,
+    ProviderRegistryError,
+    ProviderSelection,
+    ServiceProvider,
+    ServiceSpec,
+};
+
 mod common_mime_types;
 mod constants;
 mod mime_config;
@@ -88,19 +100,20 @@ mod mime_error;
 mod mime_result;
 
 pub use classifier::{
-    ArcMediaStreamClassifier,
-    BoxMediaStreamClassifier,
     FfprobeCommandMediaStreamClassifier,
+    FfprobeCommandMediaStreamClassifierProvider,
     FileBasedMediaStreamClassifier,
     MediaStreamClassifier,
+    MediaStreamClassifierAvailability,
     MediaStreamClassifierBackend,
+    MediaStreamClassifierProvider,
+    MediaStreamClassifierRegistry,
+    MediaStreamClassifierSpec,
     MediaStreamType,
 };
 pub use common_mime_types::*;
 pub use constants::*;
 pub use detector::{
-    ArcMimeDetector,
-    BoxMimeDetector,
     DetectionSource,
     FileBasedMimeDetector,
     FileCommandMimeDetector,
@@ -112,6 +125,7 @@ pub use detector::{
     MimeDetectorCore,
     MimeDetectorProvider,
     MimeDetectorRegistry,
+    MimeDetectorSpec,
     RepositoryMimeDetector,
     RepositoryMimeDetectorProvider,
     StreamBasedMimeDetector,

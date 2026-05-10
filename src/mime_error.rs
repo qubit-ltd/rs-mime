@@ -12,6 +12,8 @@
 
 use thiserror::Error;
 
+use crate::ProviderRegistryError;
+
 /// Error type for MIME repository parsing and I/O backed detection.
 #[derive(Debug, Error)]
 pub enum MimeError {
@@ -65,6 +67,19 @@ pub enum MimeError {
         name: String,
     },
 
+    /// A detector provider name or alias is empty.
+    #[error("MIME detector name must not be empty")]
+    EmptyDetectorName,
+
+    /// A detector provider name or alias is malformed.
+    #[error("invalid MIME detector name '{name}': {reason}")]
+    InvalidDetectorName {
+        /// Invalid provider name.
+        name: String,
+        /// Human-readable validation failure.
+        reason: String,
+    },
+
     /// A detector provider could not be found.
     #[error("unknown MIME detector: {name}")]
     UnknownDetector {
@@ -97,6 +112,58 @@ pub enum MimeError {
         reason: String,
     },
 
+    /// A media stream classifier provider name or alias is already registered.
+    #[error("duplicate media stream classifier name or alias: {name}")]
+    DuplicateClassifierName {
+        /// Duplicate provider name or alias.
+        name: String,
+    },
+
+    /// A media stream classifier provider name or alias is empty.
+    #[error("media stream classifier name must not be empty")]
+    EmptyClassifierName,
+
+    /// A media stream classifier provider name or alias is malformed.
+    #[error("invalid media stream classifier name '{name}': {reason}")]
+    InvalidClassifierName {
+        /// Invalid provider name.
+        name: String,
+        /// Human-readable validation failure.
+        reason: String,
+    },
+
+    /// A media stream classifier provider could not be found.
+    #[error("unknown media stream classifier: {name}")]
+    UnknownClassifier {
+        /// Requested provider name or alias.
+        name: String,
+    },
+
+    /// A media stream classifier provider exists but is not available in this environment.
+    #[error("media stream classifier '{name}' is unavailable: {reason}")]
+    ClassifierUnavailable {
+        /// Requested provider name or alias.
+        name: String,
+        /// Human-readable unavailability reason.
+        reason: String,
+    },
+
+    /// No configured media stream classifier provider could be created.
+    #[error("no available media stream classifier: {reason}")]
+    NoAvailableClassifier {
+        /// Human-readable failure summary.
+        reason: String,
+    },
+
+    /// A media stream classifier backend failed with an implementation-specific error.
+    #[error("media stream classifier backend '{backend}' failed: {reason}")]
+    ClassifierBackend {
+        /// Backend identifier.
+        backend: String,
+        /// Human-readable failure reason.
+        reason: String,
+    },
+
     /// The XML document could not be parsed.
     #[error("failed to parse MIME XML: {0}")]
     Xml(#[from] roxmltree::Error),
@@ -112,6 +179,44 @@ pub enum MimeError {
     /// Loading MIME configuration failed.
     #[error("configuration error while loading MIME settings: {0}")]
     Config(#[from] qubit_config::ConfigError),
+}
+
+impl From<ProviderRegistryError> for MimeError {
+    /// Converts a generic SPI registry error into a MIME-domain error.
+    fn from(error: ProviderRegistryError) -> Self {
+        match error {
+            ProviderRegistryError::EmptyProviderName => Self::EmptyDetectorName,
+            ProviderRegistryError::InvalidProviderName { name, reason } => {
+                Self::InvalidDetectorName { name, reason }
+            }
+            ProviderRegistryError::DuplicateProviderName { name } => Self::DuplicateDetectorName {
+                name: name.as_str().to_owned(),
+            },
+            ProviderRegistryError::UnknownProvider { name } => Self::UnknownDetector {
+                name: name.as_str().to_owned(),
+            },
+            ProviderRegistryError::ProviderUnavailable { name, source } => {
+                Self::DetectorUnavailable {
+                    name: name.as_str().to_owned(),
+                    reason: source.reason().to_owned(),
+                }
+            }
+            ProviderRegistryError::ProviderCreate { name, source } => Self::DetectorBackend {
+                backend: name.as_str().to_owned(),
+                reason: source.reason().to_owned(),
+            },
+            ProviderRegistryError::NoAvailableProvider { failures } => Self::NoAvailableDetector {
+                reason: failures
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            },
+            ProviderRegistryError::EmptyRegistry => Self::NoAvailableDetector {
+                reason: "detector registry is empty".to_owned(),
+            },
+        }
+    }
 }
 
 impl MimeError {
@@ -192,6 +297,52 @@ impl MimeError {
         Self::DetectorBackend {
             backend: backend.into(),
             reason: reason.into(),
+        }
+    }
+
+    /// Converts a generic SPI registry error into a classifier-domain error.
+    ///
+    /// # Parameters
+    /// - `error`: Provider registry error returned by `qubit-spi`.
+    ///
+    /// # Returns
+    /// Classifier-specific MIME error.
+    pub(crate) fn classifier_registry_error(error: ProviderRegistryError) -> Self {
+        match error {
+            ProviderRegistryError::EmptyProviderName => Self::EmptyClassifierName,
+            ProviderRegistryError::InvalidProviderName { name, reason } => {
+                Self::InvalidClassifierName { name, reason }
+            }
+            ProviderRegistryError::DuplicateProviderName { name } => {
+                Self::DuplicateClassifierName {
+                    name: name.as_str().to_owned(),
+                }
+            }
+            ProviderRegistryError::UnknownProvider { name } => Self::UnknownClassifier {
+                name: name.as_str().to_owned(),
+            },
+            ProviderRegistryError::ProviderUnavailable { name, source } => {
+                Self::ClassifierUnavailable {
+                    name: name.as_str().to_owned(),
+                    reason: source.reason().to_owned(),
+                }
+            }
+            ProviderRegistryError::ProviderCreate { name, source } => Self::ClassifierBackend {
+                backend: name.as_str().to_owned(),
+                reason: source.reason().to_owned(),
+            },
+            ProviderRegistryError::NoAvailableProvider { failures } => {
+                Self::NoAvailableClassifier {
+                    reason: failures
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                }
+            }
+            ProviderRegistryError::EmptyRegistry => Self::NoAvailableClassifier {
+                reason: "classifier registry is empty".to_owned(),
+            },
         }
     }
 }
