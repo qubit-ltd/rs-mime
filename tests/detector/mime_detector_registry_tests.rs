@@ -432,6 +432,52 @@ fn test_builtin_registry_exposes_repository_and_file_command_providers() {
 }
 
 #[test]
+fn test_resolve_provider_matches_find_provider_for_builtin_names() {
+    let registry = MimeDetectorRegistry::builtin();
+    for name in [
+        "repository",
+        "repository-mime-detector",
+        "file",
+        "file-command-mime-detector",
+    ] {
+        let via_resolve = registry
+            .resolve_provider(name)
+            .unwrap_or_else(|_| panic!("resolve_provider should succeed for '{name}'"));
+        let via_find = registry
+            .find_provider(name)
+            .unwrap_or_else(|| panic!("find_provider should succeed for '{name}'"));
+        assert!(
+            std::ptr::eq(via_resolve, via_find),
+            "find_provider should delegate to resolve_provider for '{name}'"
+        );
+    }
+}
+
+#[test]
+fn test_resolve_provider_reports_empty_invalid_and_unknown_names() {
+    let registry = MimeDetectorRegistry::builtin();
+
+    assert!(matches!(
+        registry
+            .resolve_provider("")
+            .expect_err("empty name should be rejected"),
+        MimeError::EmptyDetectorName
+    ));
+    assert!(matches!(
+        registry
+            .resolve_provider("bad name")
+            .expect_err("invalid name should be rejected"),
+        MimeError::InvalidDetectorName { ref name, .. } if name == "bad name"
+    ));
+    assert!(matches!(
+        registry
+            .resolve_provider("missing-detector-provider")
+            .expect_err("unknown name should be rejected"),
+        MimeError::UnknownDetector { ref name } if name == "missing-detector-provider"
+    ));
+}
+
+#[test]
 fn test_default_registry_starts_with_builtin_providers() {
     let registry = MimeDetectorRegistry::default_registry()
         .expect("default registry snapshot should be available");
