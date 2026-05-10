@@ -9,6 +9,8 @@
  ******************************************************************************/
 //! Shared integration test support.
 
+#[cfg(unix)]
 mod path_env_guard;
 
+#[cfg(unix)]
 pub(crate) use path_env_guard::PathEnvGuard;

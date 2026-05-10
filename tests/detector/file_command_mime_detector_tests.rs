@@ -11,6 +11,8 @@
 use std::time::Duration;
 
 use qubit_command::CommandRunner;
+#[cfg(unix)]
+use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::{
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MIME_DETECTOR_DEFAULT,
@@ -18,12 +20,13 @@ use qubit_mime::{
     FileBasedMimeDetector,
     FileCommandMimeDetector,
     MimeConfig,
-    MimeDetectionPolicy,
     MimeDetector,
     MimeRepository,
 };
+#[cfg(unix)]
 use tempfile::TempDir;
 
+#[cfg(unix)]
 use crate::support::PathEnvGuard;
 
 #[test]
