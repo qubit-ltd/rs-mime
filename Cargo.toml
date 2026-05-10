@@ -35,7 +35,7 @@ qubit-io = "0.1"
 qubit-codec = "0.3"
 qubit-command = "0.3"
 qubit-config = "0.12"
-qubit-spi = { version = "0.2.1", path = "../rs-spi" }
+qubit-spi = "0.2.1"
 
 [dev-dependencies]
 tempfile = "3.23"
