@@ -35,7 +35,7 @@ qubit-io = "0.1"
 qubit-codec = "0.3"
 qubit-command = "0.3"
 qubit-config = "0.12"
-qubit-spi = "0.2.1"
+qubit-spi = "0.2"
 
 [dev-dependencies]
 tempfile = "3.23"
