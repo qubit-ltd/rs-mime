@@ -13,7 +13,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use qubit_mime::{
-    ArcMediaStreamClassifier,
     DetectionSource,
     MediaStreamClassifier,
     MediaStreamType,
@@ -92,11 +91,9 @@ fn test_refine_detected_mime_type_uses_media_stream_classifier() {
         "webm",
         "webm:video/webm,audio/webm",
     ));
-    detector.set_media_stream_classifier(Some(ArcMediaStreamClassifier::new(Arc::new(
-        StaticClassifier {
-            stream_type: MediaStreamType::AudioOnly,
-        },
-    ))));
+    detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
+        stream_type: MediaStreamType::AudioOnly,
+    })));
 
     let refined = detector.refine_detected_mime_type(
         "video/webm",
@@ -114,11 +111,9 @@ fn test_select_result_honors_prefer_filename_and_refines_content_result() {
         "webm",
         "webm:video/webm,audio/webm",
     ));
-    detector.set_media_stream_classifier(Some(ArcMediaStreamClassifier::new(Arc::new(
-        StaticClassifier {
-            stream_type: MediaStreamType::VideoOnly,
-        },
-    ))));
+    detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
+        stream_type: MediaStreamType::VideoOnly,
+    })));
 
     assert_eq!(
         Some("image/jpeg".to_owned()),
@@ -149,11 +144,9 @@ fn test_refine_detected_mime_type_handles_disabled_missing_and_failing_cases() {
         "webm,ogg",
         "webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg",
     ));
-    detector.set_media_stream_classifier(Some(ArcMediaStreamClassifier::new(Arc::new(
-        StaticClassifier {
-            stream_type: MediaStreamType::VideoOnly,
-        },
-    ))));
+    detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
+        stream_type: MediaStreamType::VideoOnly,
+    })));
 
     assert!(detector.media_stream_classifier().is_some());
     assert_eq!(
@@ -217,9 +210,7 @@ fn test_refine_detected_mime_type_handles_disabled_missing_and_failing_cases() {
         "webm",
         "webm:video/webm,audio/webm",
     ));
-    failing.set_media_stream_classifier(Some(ArcMediaStreamClassifier::new(Arc::new(
-        FailingClassifier,
-    ))));
+    failing.set_media_stream_classifier(Some(Arc::new(FailingClassifier)));
 
     assert_eq!(
         "video/webm",

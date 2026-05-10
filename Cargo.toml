@@ -1,6 +1,6 @@
 [package]
 name = "qubit-mime"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Haixing Hu <starfish.hu@gmail.com>"]
@@ -35,6 +35,7 @@ qubit-io = "0.1"
 qubit-codec = "0.3"
 qubit-command = "0.3"
 qubit-config = "0.12"
+qubit-spi = { version = "0.2.1", path = "../rs-spi" }
 
 [dev-dependencies]
 tempfile = "3.23"

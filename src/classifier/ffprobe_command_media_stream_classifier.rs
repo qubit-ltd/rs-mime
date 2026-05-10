@@ -10,7 +10,6 @@
 //! FFprobe-backed media stream classifier.
 
 use std::path::Path;
-use std::sync::OnceLock;
 
 use qubit_command::CommandRunner;
 use qubit_command::{
@@ -116,20 +115,17 @@ impl FfprobeCommandMediaStreamClassifier {
 
     /// Checks whether the `ffprobe` command is available.
     ///
-    /// Availability is checked once per process by executing
-    /// `ffprobe -version` with the default quiet command runner. The cached
-    /// result only describes whether the command can be started successfully; a
-    /// particular media file may still be unreadable or unsupported.
+    /// Availability is checked by executing `ffprobe -version` with the default
+    /// quiet command runner. The result only describes whether the command can
+    /// be started successfully; a particular media file may still be unreadable
+    /// or unsupported.
     ///
     /// # Returns
     /// `true` when `ffprobe -version` executes successfully.
     pub fn is_available() -> bool {
-        static AVAILABLE: OnceLock<bool> = OnceLock::new();
-        *AVAILABLE.get_or_init(|| {
-            Self::default_command_runner()
-                .run(Command::new(Self::COMMAND).arg("-version"))
-                .is_ok()
-        })
+        Self::default_command_runner()
+            .run(Command::new(Self::COMMAND).arg("-version"))
+            .is_ok()
     }
 
     /// Executes FFprobe for one local file.

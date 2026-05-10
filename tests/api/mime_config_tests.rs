@@ -16,8 +16,6 @@ use std::sync::{
 
 use qubit_config::Config;
 use qubit_mime::{
-    BoxMediaStreamClassifier,
-    BoxMimeDetector,
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
@@ -35,6 +33,7 @@ use qubit_mime::{
     ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
     MimeConfig,
     MimeDetector,
+    MimeDetectorRegistry,
     MimeError,
 };
 
@@ -328,7 +327,7 @@ fn test_reload_default_from_env_uses_config_from_env() {
 }
 
 #[test]
-fn test_wrappers_use_mime_config_defaults() {
+fn test_registries_use_mime_config_defaults() {
     let _guard = mime_config_test_lock();
     let original = MimeConfig::default();
     let _restore = DefaultConfigRestore::new(original);
@@ -341,8 +340,10 @@ fn test_wrappers_use_mime_config_defaults() {
         DEFAULT_AMBIGUOUS_MIME_MAPPING,
     ));
 
-    let detector = BoxMimeDetector::from_config(&MimeConfig::default()).expect("default detector");
-    let _classifier = BoxMediaStreamClassifier::default();
+    let detector_registry = MimeDetectorRegistry::default_registry().expect("default registry");
+    let detector = detector_registry
+        .create_default_box(&MimeConfig::default())
+        .expect("default detector");
 
     assert_eq!(
         DEFAULT_MIME_DETECTOR,

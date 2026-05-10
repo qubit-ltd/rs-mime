@@ -7,9 +7,9 @@
  *    Licensed under the Apache License, Version 2.0.
  *
  ******************************************************************************/
-//! Availability state for MIME detector providers.
+//! Availability state for media stream classifier providers.
 
 use qubit_spi::ProviderAvailability;
 
-/// Availability of a detector provider in the current runtime environment.
-pub type MimeDetectorAvailability = ProviderAvailability;
+/// Availability of a classifier provider in the current runtime environment.
+pub type MediaStreamClassifierAvailability = ProviderAvailability;

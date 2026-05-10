@@ -11,6 +11,7 @@
 
 use std::fmt::Debug;
 use std::path::Path;
+use std::sync::Arc;
 
 use qubit_io::ReadSeek;
 
@@ -87,4 +88,78 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be opened or read, or
     /// another [`MimeError`](crate::MimeError) when a detector backend fails.
     fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>>;
+}
+
+impl MimeDetector for Box<dyn MimeDetector> {
+    /// Delegates filename detection to the boxed detector.
+    fn detect_by_filename(&self, filename: &str) -> Option<String> {
+        self.as_ref().detect_by_filename(filename)
+    }
+
+    /// Delegates content detection to the boxed detector.
+    fn detect_by_content(&self, content: &[u8]) -> Option<String> {
+        self.as_ref().detect_by_content(content)
+    }
+
+    /// Delegates combined detection to the boxed detector.
+    fn detect(
+        &self,
+        content: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> Option<String> {
+        self.as_ref().detect(content, filename, policy)
+    }
+
+    /// Delegates reader detection to the boxed detector.
+    fn detect_reader(
+        &self,
+        reader: &mut dyn ReadSeek,
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        self.as_ref().detect_reader(reader, filename, policy)
+    }
+
+    /// Delegates file detection to the boxed detector.
+    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+        self.as_ref().detect_file(file, policy)
+    }
+}
+
+impl MimeDetector for Arc<dyn MimeDetector> {
+    /// Delegates filename detection to the shared detector.
+    fn detect_by_filename(&self, filename: &str) -> Option<String> {
+        self.as_ref().detect_by_filename(filename)
+    }
+
+    /// Delegates content detection to the shared detector.
+    fn detect_by_content(&self, content: &[u8]) -> Option<String> {
+        self.as_ref().detect_by_content(content)
+    }
+
+    /// Delegates combined detection to the shared detector.
+    fn detect(
+        &self,
+        content: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> Option<String> {
+        self.as_ref().detect(content, filename, policy)
+    }
+
+    /// Delegates reader detection to the shared detector.
+    fn detect_reader(
+        &self,
+        reader: &mut dyn ReadSeek,
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        self.as_ref().detect_reader(reader, filename, policy)
+    }
+
+    /// Delegates file detection to the shared detector.
+    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+        self.as_ref().detect_file(file, policy)
+    }
 }

@@ -9,13 +9,11 @@
  ******************************************************************************/
 //! Registry for pluggable MIME detector providers.
 //!
-//! The registry is the selection layer used by the detector wrappers. It maps
+//! The registry is the selection layer used by MIME detector factories. It maps
 //! stable provider names and aliases to factories, checks provider availability,
-//! and resolves configured fallback chains. Default wrappers use the process-wide
-//! default registry, while applications that need custom provider isolation can
-//! pass an explicit registry to
-//! [`BoxMimeDetector::from_registry`](crate::BoxMimeDetector::from_registry) or
-//! [`ArcMimeDetector::from_registry`](crate::ArcMimeDetector::from_registry).
+//! and resolves configured fallback chains. Applications can use the
+//! process-wide default registry or keep an explicit registry for provider
+//! isolation.
 // qubit-style: allow coverage-cfg
 
 #[cfg(coverage)]
@@ -28,17 +26,23 @@ use std::sync::{
     RwLockWriteGuard,
 };
 
+use qubit_spi::{
+    ProviderRegistry,
+    ProviderSelection,
+    ServiceProvider,
+};
+
 use crate::{
-    BoxMimeDetector,
     MimeConfig,
+    MimeDetector,
     MimeError,
     MimeResult,
 };
 
 use super::{
     FileCommandMimeDetectorProvider,
-    MimeDetectorAvailability,
     MimeDetectorProvider,
+    MimeDetectorSpec,
     RepositoryMimeDetectorProvider,
 };
 
@@ -50,7 +54,8 @@ use super::{
 ///
 /// # Default and fallback selection
 ///
-/// [`MimeDetectorRegistry::create_default`] reads
+/// [`MimeDetectorRegistry::create_default_box`] and
+/// [`MimeDetectorRegistry::create_default_arc`] read
 /// [`MimeConfig::mime_detector_default`](crate::MimeConfig::mime_detector_default)
 /// first. When the default selector is empty or `auto`, the registry tries all
 /// available providers ordered by descending provider priority and then by
@@ -78,7 +83,7 @@ use super::{
 /// let registry = MimeDetectorRegistry::builtin();
 /// assert!(registry.find_provider("repository-mime-detector").is_some());
 ///
-/// let detector = registry.create_default(&MimeConfig::default())?;
+/// let detector = registry.create_default_box(&MimeConfig::default())?;
 /// assert_eq!(
 ///     Some("text/plain".to_owned()),
 ///     detector.detect_by_filename("notes.txt"),
@@ -88,16 +93,18 @@ use super::{
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct MimeDetectorRegistry {
-    /// Registered detector providers.
-    providers: Vec<Arc<dyn MimeDetectorProvider>>,
+    /// Typed provider registry supplied by `qubit-spi`.
+    providers: ProviderRegistry<MimeDetectorSpec>,
 }
 
 /// Process-wide default detector registry.
 static DEFAULT_MIME_DETECTOR_REGISTRY: LazyLock<RwLock<MimeDetectorRegistry>> =
     LazyLock::new(|| RwLock::new(MimeDetectorRegistry::builtin()));
+
 /// Backend name used when reporting default registry lock failures.
 #[cfg(not(coverage))]
 const BACKEND: &str = "mime-detector-registry";
+
 /// Error reason used when a default registry lock is poisoned.
 #[cfg(not(coverage))]
 const LOCK_ERR: &str = "lock poisoned";
@@ -116,12 +123,14 @@ impl MimeDetectorRegistry {
     /// # Returns
     /// Registry with repository and file-command providers.
     pub fn builtin() -> Self {
-        Self {
-            providers: vec![
-                Arc::new(RepositoryMimeDetectorProvider) as Arc<dyn MimeDetectorProvider>,
-                Arc::new(FileCommandMimeDetectorProvider) as Arc<dyn MimeDetectorProvider>,
-            ],
-        }
+        let mut registry = Self::new();
+        registry
+            .register(RepositoryMimeDetectorProvider)
+            .expect("built-in repository MIME provider should register");
+        registry
+            .register(FileCommandMimeDetectorProvider)
+            .expect("built-in file MIME provider should register");
+        registry
     }
 
     /// Gets a snapshot of the process-wide default detector registry.
@@ -142,10 +151,9 @@ impl MimeDetectorRegistry {
 
     /// Registers a provider in the process-wide default detector registry.
     ///
-    /// Detectors created through [`BoxMimeDetector::from_config`] and
-    /// [`BoxMimeDetector::from_name`](crate::BoxMimeDetector::from_name) use
-    /// this registry, so successfully registered providers become visible to
-    /// default wrapper constructors throughout the current process.
+    /// Successfully registered providers become visible to
+    /// [`MimeDetectorRegistry::default_registry`] snapshots throughout the
+    /// current process.
     ///
     /// # Parameters
     /// - `provider`: Provider to register globally.
@@ -175,7 +183,7 @@ impl MimeDetectorRegistry {
     where
         P: MimeDetectorProvider + 'static,
     {
-        self.register_arc(Arc::new(provider))
+        self.providers.register(provider).map_err(MimeError::from)
     }
 
     /// Registers a shared provider.
@@ -186,25 +194,21 @@ impl MimeDetectorRegistry {
     /// # Errors
     /// Returns [`MimeError::DuplicateDetectorName`] when the provider id or one
     /// of its aliases conflicts with an existing provider.
-    pub fn register_arc(&mut self, provider: Arc<dyn MimeDetectorProvider>) -> MimeResult<()> {
-        for name in provider_names(provider.as_ref()) {
-            if self.find_provider(&name).is_some() {
-                return Err(MimeError::DuplicateDetectorName { name });
-            }
-        }
-        self.providers.push(provider);
-        Ok(())
+    pub fn register_shared<P>(&mut self, provider: Arc<P>) -> MimeResult<()>
+    where
+        P: MimeDetectorProvider + 'static,
+    {
+        self.providers
+            .register_shared(provider)
+            .map_err(MimeError::from)
     }
 
     /// Gets canonical provider names in registration order.
     ///
     /// # Returns
     /// Provider ids.
-    pub fn provider_names(&self) -> Vec<&'static str> {
-        self.providers
-            .iter()
-            .map(|provider| provider.id())
-            .collect()
+    pub fn provider_names(&self) -> Vec<&str> {
+        self.providers.provider_names()
     }
 
     /// Finds a provider by id or alias.
@@ -214,147 +218,102 @@ impl MimeDetectorRegistry {
     ///
     /// # Returns
     /// Matching provider, or `None`.
-    pub fn find_provider(&self, name: &str) -> Option<&dyn MimeDetectorProvider> {
-        self.providers
-            .iter()
-            .map(Arc::as_ref)
-            .find(|provider| provider_matches(*provider, name))
+    pub fn find_provider(&self, name: &str) -> Option<&dyn ServiceProvider<MimeDetectorSpec>> {
+        self.providers.find_provider(name)
     }
 
-    /// Creates a detector from a provider name.
+    /// Creates a boxed detector from a provider name.
     ///
     /// # Parameters
     /// - `name`: Provider id or alias.
     /// - `config`: MIME configuration passed to the provider.
     ///
     /// # Returns
-    /// Boxed MIME detector.
+    /// Boxed MIME detector trait object.
     ///
     /// # Errors
     /// Returns [`MimeError::UnknownDetector`] when no provider matches `name`,
     /// [`MimeError::DetectorUnavailable`] when the provider is unavailable, or
     /// another [`MimeError`] when provider initialization fails.
-    pub fn create(&self, name: &str, config: &MimeConfig) -> MimeResult<BoxMimeDetector> {
-        let provider = self
-            .find_provider(name)
-            .ok_or_else(|| MimeError::UnknownDetector {
-                name: name.to_owned(),
-            })?;
-        match provider.availability(config) {
-            MimeDetectorAvailability::Available => {
-                provider.create(config).map(BoxMimeDetector::new)
-            }
-            MimeDetectorAvailability::Unavailable { reason } => {
-                Err(MimeError::DetectorUnavailable {
-                    name: name.to_owned(),
-                    reason,
-                })
-            }
-        }
+    pub fn create_box(&self, name: &str, config: &MimeConfig) -> MimeResult<Box<dyn MimeDetector>> {
+        self.providers
+            .create_box(name, config)
+            .map_err(MimeError::from)
     }
 
-    /// Creates a detector from the configured default and fallback chain.
+    /// Creates a shared detector from a provider name.
+    ///
+    /// # Parameters
+    /// - `name`: Provider id or alias.
+    /// - `config`: MIME configuration passed to the provider.
+    ///
+    /// # Returns
+    /// Shared MIME detector trait object.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::UnknownDetector`] when no provider matches `name`,
+    /// [`MimeError::DetectorUnavailable`] when the provider is unavailable, or
+    /// another [`MimeError`] when provider initialization fails.
+    pub fn create_arc(&self, name: &str, config: &MimeConfig) -> MimeResult<Arc<dyn MimeDetector>> {
+        self.providers
+            .create_arc(name, config)
+            .map_err(MimeError::from)
+    }
+
+    /// Creates a boxed detector from the configured default and fallback chain.
     ///
     /// # Parameters
     /// - `config`: MIME configuration.
     ///
     /// # Returns
-    /// First detector that can be created.
+    /// First boxed detector that can be created.
     ///
     /// # Errors
     /// Returns [`MimeError::NoAvailableDetector`] when all configured providers
     /// are unknown, unavailable, or fail during initialization.
-    pub fn create_default(&self, config: &MimeConfig) -> MimeResult<BoxMimeDetector> {
-        let candidates = self.default_candidates(config);
-        if candidates.is_empty() {
-            return Err(MimeError::NoAvailableDetector {
-                reason: "detector registry is empty".to_owned(),
-            });
-        }
-        let mut errors = Vec::new();
-        for candidate in candidates {
-            match self.create(&candidate, config) {
-                Ok(detector) => return Ok(detector),
-                Err(error) => errors.push(error.to_string()),
-            }
-        }
-        Err(MimeError::NoAvailableDetector {
-            reason: errors.join("; "),
-        })
+    pub fn create_default_box(&self, config: &MimeConfig) -> MimeResult<Box<dyn MimeDetector>> {
+        let selection = provider_selection_from_config(config)?;
+        self.providers
+            .create_selected_box(&selection, config)
+            .map_err(MimeError::from)
     }
 
-    /// Builds the default provider candidate chain.
+    /// Creates a shared detector from the configured default and fallback chain.
     ///
     /// # Parameters
     /// - `config`: MIME configuration.
     ///
     /// # Returns
-    /// Ordered provider names to try.
-    fn default_candidates(&self, config: &MimeConfig) -> Vec<String> {
-        let configured = config.mime_detector_default().trim();
-        if configured.is_empty() || configured.eq_ignore_ascii_case("auto") {
-            return self.auto_candidates(config);
-        }
-        let mut candidates = vec![configured.to_owned()];
-        candidates.extend(config.mime_detector_fallbacks().iter().cloned());
-        candidates
-    }
-
-    /// Builds provider candidates for automatic selection.
+    /// First shared detector that can be created.
     ///
-    /// # Parameters
-    /// - `config`: MIME configuration.
-    ///
-    /// # Returns
-    /// Available provider ids ordered by descending priority.
-    fn auto_candidates(&self, config: &MimeConfig) -> Vec<String> {
-        let mut providers: Vec<&dyn MimeDetectorProvider> = self
-            .providers
-            .iter()
-            .map(Arc::as_ref)
-            .filter(|provider| provider.availability(config).is_available())
-            .collect();
-        providers.sort_by(|left, right| {
-            right
-                .priority()
-                .cmp(&left.priority())
-                .then_with(|| left.id().cmp(right.id()))
-        });
-        providers
-            .into_iter()
-            .map(|provider| provider.id().to_owned())
-            .collect()
+    /// # Errors
+    /// Returns [`MimeError::NoAvailableDetector`] when all configured providers
+    /// are unknown, unavailable, or fail during initialization.
+    pub fn create_default_arc(&self, config: &MimeConfig) -> MimeResult<Arc<dyn MimeDetector>> {
+        let selection = provider_selection_from_config(config)?;
+        self.providers
+            .create_selected_arc(&selection, config)
+            .map_err(MimeError::from)
     }
 }
 
-/// Gets all names exposed by a provider.
+/// Builds the provider selection policy from MIME configuration.
 ///
 /// # Parameters
-/// - `provider`: Provider to inspect.
+/// - `config`: MIME configuration.
 ///
 /// # Returns
-/// Provider id and aliases.
-fn provider_names(provider: &dyn MimeDetectorProvider) -> Vec<String> {
-    let mut names = Vec::with_capacity(provider.aliases().len() + 1);
-    names.push(provider.id().to_owned());
-    names.extend(provider.aliases().iter().map(|alias| (*alias).to_owned()));
-    names
-}
-
-/// Tells whether a provider matches a requested name.
+/// Provider selection used by `qubit-spi`.
 ///
-/// # Parameters
-/// - `provider`: Provider to inspect.
-/// - `name`: Requested id or alias.
-///
-/// # Returns
-/// `true` when `name` matches the provider id or any alias.
-fn provider_matches(provider: &dyn MimeDetectorProvider, name: &str) -> bool {
-    provider.id().eq_ignore_ascii_case(name)
-        || provider
-            .aliases()
-            .iter()
-            .any(|alias| alias.eq_ignore_ascii_case(name))
+/// # Errors
+/// Returns [`MimeError`] when a configured provider name is invalid.
+fn provider_selection_from_config(config: &MimeConfig) -> MimeResult<ProviderSelection> {
+    let configured = config.mime_detector_default().trim();
+    if configured.is_empty() || configured.eq_ignore_ascii_case("auto") {
+        return Ok(ProviderSelection::Auto);
+    }
+    ProviderSelection::from_owned_names(configured, config.mime_detector_fallbacks())
+        .map_err(MimeError::from)
 }
 
 /// Locks the default registry for reading.

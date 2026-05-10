@@ -593,12 +593,13 @@ checksum = "deb73fe2b797cd89c02dbed577c003086ace6d919d0c81cc4b092f0fb3359967"
 
 [[package]]
 name = "qubit-mime"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "qubit-codec",
  "qubit-command",
  "qubit-config",
  "qubit-io",
+ "qubit-spi",
  "regex",
  "roxmltree",
  "tempfile",
@@ -614,6 +615,14 @@ dependencies = [
  "qubit-datatype",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "qubit-spi"
+version = "0.2.1"
+dependencies = [
+ "log",
+ "thiserror",
 ]
 
 [[package]]

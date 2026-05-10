@@ -10,10 +10,11 @@
 //! Shared MIME detector behavior.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::{
-    ArcMediaStreamClassifier,
     MediaStreamClassifier,
+    MediaStreamClassifierRegistry,
     MediaStreamType,
     MimeConfig,
     MimeDetectionPolicy,
@@ -27,7 +28,7 @@ pub struct MimeDetectorCore {
     /// MIME detector configuration.
     config: MimeConfig,
     /// Media stream classifier.
-    media_stream_classifier: Option<ArcMediaStreamClassifier>,
+    media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>,
 }
 
 impl MimeDetectorCore {
@@ -56,8 +57,10 @@ impl MimeDetectorCore {
     pub fn from_mime_config(config: MimeConfig) -> Self {
         let mut detector = Self::new(config.clone());
         if config.enable_precise_detection() {
-            let classifier = ArcMediaStreamClassifier::from_config(&config);
-            detector.set_media_stream_classifier(Some(classifier));
+            let classifier = MediaStreamClassifierRegistry::default_registry()
+                .and_then(|registry| registry.create_default_arc(&config))
+                .ok();
+            detector.set_media_stream_classifier(classifier);
         }
         detector
     }
@@ -69,7 +72,7 @@ impl MimeDetectorCore {
     ///   runtime media stream refinement.
     pub fn set_media_stream_classifier(
         &mut self,
-        media_stream_classifier: Option<ArcMediaStreamClassifier>,
+        media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>,
     ) {
         self.media_stream_classifier = media_stream_classifier;
     }
@@ -78,8 +81,8 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Configured classifier, or `None`.
-    pub fn media_stream_classifier(&self) -> Option<&ArcMediaStreamClassifier> {
-        self.media_stream_classifier.as_ref()
+    pub fn media_stream_classifier(&self) -> Option<&dyn MediaStreamClassifier> {
+        self.media_stream_classifier.as_deref()
     }
 
     /// Merges filename and content candidates using the detector selection strategy.

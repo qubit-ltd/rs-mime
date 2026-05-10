@@ -16,6 +16,7 @@ use std::io::{
     Read,
 };
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::MimeResult;
 
@@ -63,5 +64,29 @@ pub trait MediaStreamClassifier: Debug + Send + Sync {
     fn classify_content(&self, content: &[u8]) -> MimeResult<MediaStreamType> {
         let mut cursor = Cursor::new(content);
         self.classify_reader(&mut cursor)
+    }
+}
+
+impl MediaStreamClassifier for Box<dyn MediaStreamClassifier> {
+    /// Delegates file classification to the boxed classifier.
+    fn classify_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
+        self.as_ref().classify_file(file)
+    }
+
+    /// Delegates stream classification to the boxed classifier.
+    fn classify_reader(&self, reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
+        self.as_ref().classify_reader(reader)
+    }
+}
+
+impl MediaStreamClassifier for Arc<dyn MediaStreamClassifier> {
+    /// Delegates file classification to the shared classifier.
+    fn classify_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
+        self.as_ref().classify_file(file)
+    }
+
+    /// Delegates stream classification to the shared classifier.
+    fn classify_reader(&self, reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
+        self.as_ref().classify_reader(reader)
     }
 }

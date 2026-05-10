@@ -9,20 +9,25 @@
  ******************************************************************************/
 //! Media stream classifier implementations.
 
-pub(crate) mod arc_media_stream_classifier;
-pub(crate) mod box_media_stream_classifier;
 pub(crate) mod ffprobe_command_media_stream_classifier;
+pub(crate) mod ffprobe_command_media_stream_classifier_provider;
 pub(crate) mod file_based_media_stream_classifier;
 pub(crate) mod media_stream_classifier;
+pub(crate) mod media_stream_classifier_availability;
 pub(crate) mod media_stream_classifier_backend;
 pub(crate) mod media_stream_classifier_helpers;
-pub(crate) mod media_stream_classifier_kind;
+pub(crate) mod media_stream_classifier_provider;
+pub(crate) mod media_stream_classifier_registry;
+pub(crate) mod media_stream_classifier_spec;
 mod media_stream_type;
 
-pub use arc_media_stream_classifier::ArcMediaStreamClassifier;
-pub use box_media_stream_classifier::BoxMediaStreamClassifier;
 pub use ffprobe_command_media_stream_classifier::FfprobeCommandMediaStreamClassifier;
+pub use ffprobe_command_media_stream_classifier_provider::FfprobeCommandMediaStreamClassifierProvider;
 pub use file_based_media_stream_classifier::FileBasedMediaStreamClassifier;
 pub use media_stream_classifier::MediaStreamClassifier;
+pub use media_stream_classifier_availability::MediaStreamClassifierAvailability;
 pub use media_stream_classifier_backend::MediaStreamClassifierBackend;
+pub use media_stream_classifier_provider::MediaStreamClassifierProvider;
+pub use media_stream_classifier_registry::MediaStreamClassifierRegistry;
+pub use media_stream_classifier_spec::MediaStreamClassifierSpec;
 pub use media_stream_type::MediaStreamType;
