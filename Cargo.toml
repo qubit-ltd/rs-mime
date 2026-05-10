@@ -16,7 +16,7 @@ exclude = [
     "coverage.sh",
     "COVERAGE.md",
     "COVERAGE.zh_CN.md",
-    ".circleci/*",
+    ".github/workflows/*",
     "ci-check.sh",
     ".llvm-cov.toml",
     ".cargo-audit.toml.example",
