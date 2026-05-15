@@ -98,7 +98,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qubit-mime = "0.5.1"
+qubit-mime = "0.5.2"
 ```
 
 ## Quick Start
