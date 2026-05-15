@@ -44,6 +44,12 @@ fn test_provider_registry_errors_convert_to_detector_errors() {
         MimeError::DuplicateDetectorName { ref name } if name == "duplicate"
     ));
     assert!(matches!(
+        MimeError::from(ProviderRegistryError::DuplicateProviderCandidate {
+            name: provider_name("duplicate"),
+        }),
+        MimeError::DuplicateDetectorName { ref name } if name == "duplicate"
+    ));
+    assert!(matches!(
         MimeError::from(ProviderRegistryError::UnknownProvider {
             name: provider_name("missing"),
         }),

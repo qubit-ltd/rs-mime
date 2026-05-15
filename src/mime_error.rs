@@ -189,9 +189,12 @@ impl From<ProviderRegistryError> for MimeError {
             ProviderRegistryError::InvalidProviderName { name, reason } => {
                 Self::InvalidDetectorName { name, reason }
             }
-            ProviderRegistryError::DuplicateProviderName { name } => Self::DuplicateDetectorName {
-                name: name.as_str().to_owned(),
-            },
+            ProviderRegistryError::DuplicateProviderName { name }
+            | ProviderRegistryError::DuplicateProviderCandidate { name } => {
+                Self::DuplicateDetectorName {
+                    name: name.as_str().to_owned(),
+                }
+            }
             ProviderRegistryError::UnknownProvider { name } => Self::UnknownDetector {
                 name: name.as_str().to_owned(),
             },
@@ -313,7 +316,8 @@ impl MimeError {
             ProviderRegistryError::InvalidProviderName { name, reason } => {
                 Self::InvalidClassifierName { name, reason }
             }
-            ProviderRegistryError::DuplicateProviderName { name } => {
+            ProviderRegistryError::DuplicateProviderName { name }
+            | ProviderRegistryError::DuplicateProviderCandidate { name } => {
                 Self::DuplicateClassifierName {
                     name: name.as_str().to_owned(),
                 }
