@@ -162,21 +162,6 @@ impl MediaStreamClassifierRegistry {
             .map_err(MimeError::classifier_registry_error)
     }
 
-    /// Registers a shared provider.
-    ///
-    /// # Parameters
-    /// - `provider`: Shared provider to register.
-    ///
-    /// # Errors
-    /// Returns a [`MimeError`] when the provider descriptor is invalid or one
-    /// of its names conflicts with an existing provider.
-    pub fn register_arc<P>(&mut self, provider: Arc<P>) -> MimeResult<()>
-    where
-        P: MediaStreamClassifierProvider + 'static,
-    {
-        self.register_shared(provider)
-    }
-
     /// Gets canonical provider names in registration order.
     ///
     /// # Returns
