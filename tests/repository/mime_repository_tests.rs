@@ -96,6 +96,27 @@ fn test_from_xml_indexes_names_aliases_and_max_test_bytes() {
 }
 
 #[test]
+fn test_from_xml_preserves_default_comment_when_localized_comment_follows() {
+    let repository = MimeRepository::from_xml(
+        r#"
+<mime-info>
+  <mime-type type="application/x-localized-comment">
+    <comment>Default description</comment>
+    <comment xml:lang="en">English description</comment>
+  </mime-type>
+</mime-info>
+"#,
+    )
+    .expect("localized comment repository should parse");
+
+    let mime_type = repository
+        .get("application/x-localized-comment")
+        .expect("localized comment type should exist");
+
+    assert_eq!(Some("Default description"), mime_type.description());
+}
+
+#[test]
 fn test_detect_by_filename_prefers_longer_equal_weight_extension() {
     let repository = create_repository();
 
@@ -326,6 +347,22 @@ fn test_from_xml_reports_invalid_string_and_numeric_magic_values() {
         assert!(
             MimeRepository::from_xml(xml).is_err(),
             "invalid magic value should fail: {xml}"
+        );
+    }
+}
+
+#[test]
+fn test_from_xml_rejects_numeric_magic_values_that_exceed_matcher_width() {
+    let cases = [
+        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="byte" value="0x100" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="big16" value="0x10000" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="big32" value="0x100000000" offset="0"/></magic></mime-type></mime-info>"#,
+    ];
+
+    for xml in cases {
+        assert!(
+            MimeRepository::from_xml(xml).is_err(),
+            "oversized numeric magic value should fail: {xml}"
         );
     }
 }

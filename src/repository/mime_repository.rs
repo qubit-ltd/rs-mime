@@ -20,6 +20,7 @@ use qubit_codec::{
 };
 use roxmltree::{
     Document,
+    NS_XML_URI,
     Node,
 };
 
@@ -405,7 +406,7 @@ fn parse_mime_type(node: Node<'_, '_>) -> MimeResult<MimeType> {
     for child in node.children().filter(Node::is_element) {
         match child.tag_name().name() {
             "comment" => {
-                let language = child.attribute("xml:lang").unwrap_or("");
+                let language = comment_language(child);
                 builder = builder.description(language, child.text().unwrap_or(""));
             }
             "alias" => builder = builder.alias(required_attr(child, "type")?),
@@ -509,6 +510,19 @@ fn parse_matcher(node: Node<'_, '_>) -> MimeResult<MimeMagicMatcher> {
         mask,
         sub_matchers?,
     )
+}
+
+/// Reads the language key from a `comment` element.
+///
+/// # Parameters
+/// - `node`: `comment` element to inspect.
+///
+/// # Returns
+/// XML language key, or an empty string for the default comment.
+fn comment_language<'a>(node: Node<'a, '_>) -> &'a str {
+    node.attribute((NS_XML_URI, "lang"))
+        .or_else(|| node.attribute("xml:lang"))
+        .unwrap_or("")
 }
 
 /// Reads a required XML attribute.
@@ -727,11 +741,37 @@ fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> MimeResult<Ve
         .numeric_width()
         .expect("numeric parser should only receive numeric magic types")
     {
-        1 => Ok(vec![number as u8]),
-        2 => Ok((number as u16).to_be_bytes().to_vec()),
-        4 => Ok((number as u32).to_be_bytes().to_vec()),
+        1 => u8::try_from(number)
+            .map(|number| vec![number])
+            .map_err(|_| numeric_value_out_of_range(value_type, value)),
+        2 => u16::try_from(number)
+            .map(|number| number.to_be_bytes().to_vec())
+            .map_err(|_| numeric_value_out_of_range(value_type, value)),
+        4 => u32::try_from(number)
+            .map(|number| number.to_be_bytes().to_vec())
+            .map_err(|_| numeric_value_out_of_range(value_type, value)),
         _ => unreachable!("unsupported numeric magic width"),
     }
+}
+
+/// Builds an out-of-range numeric magic value error.
+///
+/// # Parameters
+/// - `value_type`: Numeric matcher type.
+/// - `value`: Numeric text from the XML attribute.
+///
+/// # Returns
+/// Invalid XML attribute error for an oversized numeric value.
+fn numeric_value_out_of_range(value_type: MagicValueType, value: &str) -> MimeError {
+    let width = value_type
+        .numeric_width()
+        .expect("numeric parser should only receive numeric magic types");
+    MimeError::invalid_attr(
+        "match",
+        "value",
+        value,
+        format!("{} value must fit in {width} byte(s)", value_type.name()),
+    )
 }
 
 /// Parses `0x` prefixed hex bytes.
