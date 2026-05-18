@@ -13,10 +13,13 @@ use std::io::Cursor;
 use tempfile::NamedTempFile;
 
 use qubit_mime::{
+    CONFIG_MIME_MAX_BUFFER_SIZE,
+    MimeConfig,
     MimeDetectionPolicy,
     MimeDetector,
     MimeDetectorBackend,
     MimeDetectorCore,
+    MimeError,
     MimeResult,
     StreamBasedMimeDetector,
 };
@@ -29,9 +32,12 @@ struct PrefixDetector {
 impl PrefixDetector {
     /// Creates a detector that recognizes one content prefix.
     fn new() -> Self {
-        Self {
-            core: MimeDetectorCore::default(),
-        }
+        Self::with_core(MimeDetectorCore::default())
+    }
+
+    /// Creates a detector with explicit shared core settings.
+    fn with_core(core: MimeDetectorCore) -> Self {
+        Self { core }
     }
 }
 
@@ -101,4 +107,30 @@ fn test_stream_based_backend_max_bytes_and_file_open_error_are_covered() {
         StreamBasedMimeDetector::guess_from_file_stream(&detector, &missing_path).is_err(),
         "missing file should propagate the open error"
     );
+}
+
+#[test]
+fn test_detect_reader_rejects_prefix_buffer_larger_than_configured_limit() {
+    let mut config = qubit_config::Config::new();
+    config
+        .set(CONFIG_MIME_MAX_BUFFER_SIZE, 4_usize)
+        .expect("maximum buffer size should be configurable");
+    let detector = PrefixDetector::with_core(MimeDetectorCore::new(
+        MimeConfig::from_config(&config)
+            .expect("MIME config should parse with a custom maximum buffer size"),
+    ));
+    let mut reader = Cursor::new(b"hello world".to_vec());
+
+    let error = detector
+        .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+        .expect_err("oversized prefix allocation should be rejected");
+
+    assert!(matches!(
+        error,
+        MimeError::BufferLimitExceeded {
+            requested: 5,
+            limit: 4,
+        }
+    ));
+    assert_eq!(0, reader.position());
 }

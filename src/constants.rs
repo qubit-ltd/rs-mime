@@ -29,6 +29,9 @@ pub const ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS: &str =
 /// Environment variable defining ambiguous extension to MIME mappings.
 pub const ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING: &str = "QUBIT_MIME_AMBIGUOUS_MIME_MAPPING";
 
+/// Environment variable limiting detector buffer allocations.
+pub const ENV_MIME_MAX_BUFFER_SIZE: &str = "QUBIT_MIME_MAX_BUFFER_SIZE";
+
 /// Configuration key selecting the default MIME detector implementation.
 pub const CONFIG_MIME_DETECTOR_DEFAULT: &str = "mime.detector.default";
 
@@ -46,6 +49,9 @@ pub const CONFIG_MIME_PRECISE_DETECTION_PATTERNS: &str = "mime.precise.detection
 
 /// Configuration key defining ambiguous extension to MIME mappings.
 pub const CONFIG_MIME_AMBIGUOUS_MIME_MAPPING: &str = "mime.ambiguous.mime.mapping";
+
+/// Configuration key limiting detector buffer allocations.
+pub const CONFIG_MIME_MAX_BUFFER_SIZE: &str = "mime.max.buffer.size";
 
 /// Default MIME detector backend selector.
 pub const DEFAULT_MIME_DETECTOR: &str = "repository";
@@ -65,3 +71,6 @@ pub const DEFAULT_PRECISE_DETECTION_PATTERNS: &str = "webm,ogg";
 /// Default ambiguous extension mapping: `extension:video_mime,audio_mime`.
 pub const DEFAULT_AMBIGUOUS_MIME_MAPPING: &str =
     "webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg";
+
+/// Default maximum byte buffer size used by detector read paths.
+pub const DEFAULT_MIME_MAX_BUFFER_SIZE: usize = 16 * 1024 * 1024;
