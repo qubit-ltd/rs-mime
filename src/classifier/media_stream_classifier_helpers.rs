@@ -10,13 +10,13 @@
 //! Shared media stream classifier helpers.
 
 use std::fs;
-use std::io::Read;
-use std::path::Path;
-use std::path::PathBuf;
-use std::sync::atomic::{
-    AtomicU64,
-    Ordering,
+use std::io::{
+    Read,
+    copy,
 };
+use std::path::Path;
+
+use tempfile::Builder;
 
 use crate::{
     MimeError,
@@ -60,25 +60,10 @@ pub(crate) fn with_temp_reader<T>(
     reader: &mut dyn Read,
     classify: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
-    let path = unique_temp_path("FileBasedMediaStreamClassifier", ".tmp");
-    let mut content = Vec::new();
-    reader.read_to_end(&mut content)?;
-    fs::write(&path, content)?;
-    let result = classify(&path);
-    let _ = fs::remove_file(&path);
-    result
-}
-
-/// Builds a best-effort unique temporary path.
-///
-/// # Parameters
-/// - `prefix`: Filename prefix.
-/// - `suffix`: Filename suffix.
-///
-/// # Returns
-/// Path under the OS temporary directory.
-fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("{prefix}-{}-{counter}{suffix}", std::process::id()))
+    let mut file = Builder::new()
+        .prefix("FileBasedMediaStreamClassifier-")
+        .suffix(".tmp")
+        .tempfile()?;
+    copy(reader, file.as_file_mut())?;
+    classify(file.path())
 }

@@ -10,15 +10,10 @@
 //! File-backed MIME detector helpers.
 
 use std::fmt::Debug;
-use std::fs;
-use std::path::{
-    Path,
-    PathBuf,
-};
-use std::sync::atomic::{
-    AtomicU64,
-    Ordering,
-};
+use std::io::Write;
+use std::path::Path;
+
+use tempfile::Builder;
 
 use crate::{
     MimeDetectorCore,
@@ -110,25 +105,12 @@ where
 /// Returns [`MimeError::Io`](crate::MimeError::Io) when the temporary file cannot be written.
 pub(crate) fn with_temp_file<T>(
     content: &[u8],
-    detect: impl FnOnce(&PathBuf) -> MimeResult<T>,
+    detect: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
-    let path = unique_temp_path("MimeDetectorTemp", ".tmp");
-    fs::write(&path, content)?;
-    let result = detect(&path);
-    let _ = fs::remove_file(&path);
-    result
-}
-
-/// Builds a best-effort unique temporary path.
-///
-/// # Parameters
-/// - `prefix`: Filename prefix.
-/// - `suffix`: Filename suffix.
-///
-/// # Returns
-/// Path under the OS temporary directory.
-fn unique_temp_path(prefix: &str, suffix: &str) -> PathBuf {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("{prefix}-{}-{counter}{suffix}", std::process::id()))
+    let mut file = Builder::new()
+        .prefix("MimeDetectorTemp-")
+        .suffix(".tmp")
+        .tempfile()?;
+    file.write_all(content)?;
+    detect(file.path())
 }
