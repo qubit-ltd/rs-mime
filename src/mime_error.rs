@@ -60,6 +60,17 @@ pub enum MimeError {
         reason: String,
     },
 
+    /// A detector read path would allocate a buffer above the configured limit.
+    #[error(
+        "MIME detector buffer allocation exceeds configured limit: requested {requested} bytes, limit {limit} bytes"
+    )]
+    BufferLimitExceeded {
+        /// Requested byte buffer size.
+        requested: usize,
+        /// Configured maximum byte buffer size.
+        limit: usize,
+    },
+
     /// A detector provider name or alias is already registered.
     #[error("duplicate MIME detector name or alias: {name}")]
     DuplicateDetectorName {

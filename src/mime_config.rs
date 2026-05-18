@@ -39,17 +39,20 @@ use crate::{
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_DETECTOR_FALLBACKS,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+    CONFIG_MIME_MAX_BUFFER_SIZE,
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
     DEFAULT_ENABLE_PRECISE_DETECTION,
     DEFAULT_MEDIA_STREAM_CLASSIFIER,
     DEFAULT_MIME_DETECTOR,
     DEFAULT_MIME_DETECTOR_FALLBACKS,
+    DEFAULT_MIME_MAX_BUFFER_SIZE,
     ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
     ENV_MIME_DETECTOR_DEFAULT,
     ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
     ENV_MIME_DETECTOR_FALLBACKS,
     ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
+    ENV_MIME_MAX_BUFFER_SIZE,
     MimeResult,
 };
 
@@ -69,6 +72,7 @@ use crate::{
 /// | Precise detection switch | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` | Boolean |
 /// | Precise detection patterns | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` | Extension list |
 /// | Ambiguous MIME mapping | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` | `ext:video,audio` entries split on `;` |
+/// | Maximum detector buffer size | `mime.max.buffer.size` | `QUBIT_MIME_MAX_BUFFER_SIZE` | `16777216` | Byte count |
 ///
 /// Detector fallback selection is performed by
 /// [`MimeDetectorRegistry`](crate::MimeDetectorRegistry), not by this config
@@ -88,6 +92,8 @@ pub struct MimeConfig {
     precise_detection_patterns: HashSet<String>,
     /// Ambiguous MIME mappings.
     ambiguous_mime_mapping: HashMap<String, [String; 2]>,
+    /// Maximum byte buffer size used by detector read paths.
+    max_buffer_size: usize,
 }
 
 /// Default MIME configuration.
@@ -228,6 +234,11 @@ impl MimeConfig {
             DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES,
             &MAPPING_READ_OPTIONS,
         )?;
+        let max_buffer_size = config.get_any_or_with(
+            [CONFIG_MIME_MAX_BUFFER_SIZE, ENV_MIME_MAX_BUFFER_SIZE],
+            DEFAULT_MIME_MAX_BUFFER_SIZE,
+            &VALUE_READ_OPTIONS,
+        )?;
         Ok(Self {
             mime_detector_default,
             mime_detector_fallbacks: normalize_detector_names(mime_detector_fallbacks),
@@ -235,6 +246,7 @@ impl MimeConfig {
             enable_precise_detection,
             precise_detection_patterns: normalize_patterns(precise_detection_patterns),
             ambiguous_mime_mapping: build_ambiguous_mime_mapping(ambiguous_mime_mapping),
+            max_buffer_size,
         })
     }
 
@@ -333,6 +345,14 @@ impl MimeConfig {
         &self.ambiguous_mime_mapping
     }
 
+    /// Gets the maximum byte buffer size allowed for detector read paths.
+    ///
+    /// # Returns
+    /// Maximum number of bytes a detector may allocate for one read buffer.
+    pub fn max_buffer_size(&self) -> usize {
+        self.max_buffer_size
+    }
+
     /// Creates the built-in MIME configuration.
     ///
     /// # Returns
@@ -355,6 +375,7 @@ impl MimeConfig {
                     .map(|entry| entry.to_string())
                     .collect(),
             ),
+            max_buffer_size: DEFAULT_MIME_MAX_BUFFER_SIZE,
         }
     }
 }

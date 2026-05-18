@@ -18,6 +18,7 @@ use qubit_io::ReadSeek;
 
 use crate::{
     MimeDetectorCore,
+    MimeError,
     MimeResult,
 };
 
@@ -70,7 +71,7 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
         &self,
         reader: &mut dyn ReadSeek,
     ) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let content = read_prefix(reader, self.max_test_bytes())?;
+        let content = read_prefix(reader, self.max_test_bytes(), self.core().max_buffer_size())?;
         let candidates = self.guess_from_content_bytes(&content)?;
         Ok((candidates, content))
     }
@@ -96,13 +97,26 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
 /// # Parameters
 /// - `reader`: Stream to inspect.
 /// - `max_bytes`: Maximum number of bytes to read.
+/// - `max_buffer_size`: Maximum allowed byte buffer allocation.
 ///
 /// # Returns
 /// Bytes read from the stream.
 ///
 /// # Errors
-/// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking fails.
-pub(crate) fn read_prefix(reader: &mut dyn ReadSeek, max_bytes: usize) -> MimeResult<Vec<u8>> {
+/// Returns [`MimeError::BufferLimitExceeded`](crate::MimeError::BufferLimitExceeded) when
+/// `max_bytes` exceeds `max_buffer_size`. Returns [`MimeError::Io`](crate::MimeError::Io) when
+/// reading or seeking fails.
+pub(crate) fn read_prefix(
+    reader: &mut dyn ReadSeek,
+    max_bytes: usize,
+    max_buffer_size: usize,
+) -> MimeResult<Vec<u8>> {
+    if max_bytes > max_buffer_size {
+        return Err(MimeError::BufferLimitExceeded {
+            requested: max_bytes,
+            limit: max_buffer_size,
+        });
+    }
     let position = reader.stream_position()?;
     let mut buffer = vec![0; max_bytes];
     let bytes_read = reader.read(&mut buffer)?;

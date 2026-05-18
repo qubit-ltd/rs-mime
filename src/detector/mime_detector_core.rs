@@ -85,6 +85,14 @@ impl MimeDetectorCore {
         self.media_stream_classifier.as_deref()
     }
 
+    /// Gets the maximum byte buffer size allowed for detector read paths.
+    ///
+    /// # Returns
+    /// Maximum number of bytes this detector may allocate for one read buffer.
+    pub fn max_buffer_size(&self) -> usize {
+        self.config.max_buffer_size()
+    }
+
     /// Merges filename and content candidates using the detector selection strategy.
     ///
     /// # Parameters

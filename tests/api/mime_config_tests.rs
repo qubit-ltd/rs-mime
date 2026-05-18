@@ -20,17 +20,20 @@ use qubit_mime::{
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+    CONFIG_MIME_MAX_BUFFER_SIZE,
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
     DEFAULT_AMBIGUOUS_MIME_MAPPING,
     DEFAULT_ENABLE_PRECISE_DETECTION,
     DEFAULT_MEDIA_STREAM_CLASSIFIER,
     DEFAULT_MIME_DETECTOR,
+    DEFAULT_MIME_MAX_BUFFER_SIZE,
     DEFAULT_PRECISE_DETECTION_PATTERNS,
     ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
     ENV_MIME_DETECTOR_DEFAULT,
     ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
     ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
+    ENV_MIME_MAX_BUFFER_SIZE,
     MimeConfig,
     MimeDetector,
     MimeDetectorRegistry,
@@ -60,6 +63,9 @@ fn test_from_config_reads_logical_config_keys() {
             "mkv:video/x-matroska,audio/x-matroska",
         )
         .expect("ambiguous mapping should be configurable");
+    config
+        .set(CONFIG_MIME_MAX_BUFFER_SIZE, 4096_usize)
+        .expect("maximum buffer size should be configurable");
 
     let mime_config = MimeConfig::from_config(&config).expect("config should parse");
 
@@ -71,6 +77,7 @@ fn test_from_config_reads_logical_config_keys() {
         Some(&["video/x-matroska".to_owned(), "audio/x-matroska".to_owned(),]),
         mime_config.ambiguous_mime_mapping().get("mkv")
     );
+    assert_eq!(4096, mime_config.max_buffer_size());
 }
 
 #[test]
@@ -100,6 +107,9 @@ fn test_from_config_reads_env_aliases_with_env_friendly_options() {
             "mkv:video/x-matroska,audio/x-matroska; webm:video/webm,audio/webm",
         )
         .expect("ambiguous mapping env value should be configurable");
+    config
+        .set(ENV_MIME_MAX_BUFFER_SIZE, "8192")
+        .expect("maximum buffer size env value should be configurable");
 
     let mime_config = MimeConfig::from_config(&config).expect("env aliases should parse");
 
@@ -112,6 +122,7 @@ fn test_from_config_reads_env_aliases_with_env_friendly_options() {
         Some(&["video/webm".to_owned(), "audio/webm".to_owned()]),
         mime_config.ambiguous_mime_mapping().get("webm")
     );
+    assert_eq!(8192, mime_config.max_buffer_size());
 }
 
 #[test]
@@ -207,6 +218,7 @@ fn test_load_falls_back_to_builtin_default_when_env_is_invalid() {
         DEFAULT_ENABLE_PRECISE_DETECTION,
         loaded.enable_precise_detection()
     );
+    assert_eq!(DEFAULT_MIME_MAX_BUFFER_SIZE, loaded.max_buffer_size());
 }
 
 #[test]

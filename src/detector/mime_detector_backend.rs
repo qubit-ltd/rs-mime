@@ -72,7 +72,7 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// # Errors
     /// Returns an error when reading, seeking, or backend inspection fails.
     fn guess_from_reader(&self, reader: &mut dyn ReadSeek) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let content = read_prefix(reader, self.max_test_bytes())?;
+        let content = read_prefix(reader, self.max_test_bytes(), self.core().max_buffer_size())?;
         let candidates = self.guess_from_content(&content)?;
         Ok((candidates, content))
     }

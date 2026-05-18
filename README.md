@@ -178,8 +178,10 @@ use qubit_mime::{
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_DETECTOR_FALLBACKS,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+    CONFIG_MIME_MAX_BUFFER_SIZE,
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
     DEFAULT_AMBIGUOUS_MIME_MAPPING,
+    DEFAULT_MIME_MAX_BUFFER_SIZE,
     DEFAULT_PRECISE_DETECTION_PATTERNS,
     MimeConfig,
     MimeDetector,
@@ -196,6 +198,7 @@ fn main() -> Result<(), MimeError> {
     config.set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)?;
     config.set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, DEFAULT_PRECISE_DETECTION_PATTERNS)?;
     config.set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, DEFAULT_AMBIGUOUS_MIME_MAPPING)?;
+    config.set(CONFIG_MIME_MAX_BUFFER_SIZE, DEFAULT_MIME_MAX_BUFFER_SIZE)?;
 
     MimeConfig::reload_default(&config)?;
     let detector =
@@ -321,6 +324,7 @@ mapping values are split on `;` as `extension:video-mime,audio-mime`.
 | Precise detection enabled | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` |
 | Precise detection patterns | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` |
 | Ambiguous MIME mapping | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` |
+| Maximum detector buffer size | `mime.max.buffer.size` | `QUBIT_MIME_MAX_BUFFER_SIZE` | `16777216` |
 
 ### Detect a filesystem path
 
