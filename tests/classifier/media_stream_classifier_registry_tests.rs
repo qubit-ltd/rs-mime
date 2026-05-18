@@ -198,7 +198,7 @@ fn test_registry_rejects_duplicate_provider_names_and_aliases() {
 }
 
 #[test]
-fn test_registry_registers_shared_and_arc_providers() {
+fn test_registry_registers_multiple_shared_providers() {
     let mut registry = MediaStreamClassifierRegistry::new();
     registry
         .register_shared(Arc::new(TestProvider::new(
@@ -208,12 +208,12 @@ fn test_registry_registers_shared_and_arc_providers() {
         )))
         .expect("shared provider should register");
     registry
-        .register_arc(Arc::new(TestProvider::new(
+        .register_shared(Arc::new(TestProvider::new(
             "arc",
             &["arc-classifier"],
             MediaStreamType::VideoOnly,
         )))
-        .expect("arc provider should register");
+        .expect("second shared provider should register");
 
     let config = MimeConfig::default();
     assert_eq!(
