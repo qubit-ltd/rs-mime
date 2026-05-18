@@ -14,8 +14,14 @@ use std::io::{
     Read,
     Result as IoResult,
 };
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{
+    Path,
+    PathBuf,
+};
+use std::sync::{
+    Arc,
+    Mutex,
+};
 
 use qubit_mime::{
     FileBasedMediaStreamClassifier,
@@ -25,6 +31,7 @@ use qubit_mime::{
     MimeError,
     MimeResult,
 };
+use tempfile::TempDir;
 
 #[derive(Debug)]
 struct StaticClassifier {
@@ -74,6 +81,38 @@ impl FileBasedMediaStreamClassifier for LocalFileOnlyClassifier {
 }
 
 #[derive(Debug)]
+struct PathRecordingFileClassifier {
+    seen_path: Mutex<Option<PathBuf>>,
+}
+
+impl PathRecordingFileClassifier {
+    /// Creates a classifier that records staged local file paths.
+    fn new() -> Self {
+        Self {
+            seen_path: Mutex::new(None),
+        }
+    }
+
+    /// Gets the last staged path.
+    fn seen_path(&self) -> Option<PathBuf> {
+        self.seen_path
+            .lock()
+            .expect("path recorder lock should not be poisoned")
+            .clone()
+    }
+}
+
+impl FileBasedMediaStreamClassifier for PathRecordingFileClassifier {
+    fn classify_by_local_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
+        *self
+            .seen_path
+            .lock()
+            .expect("path recorder lock should not be poisoned") = Some(file.to_path_buf());
+        Ok(MediaStreamType::VideoOnly)
+    }
+}
+
+#[derive(Debug)]
 struct FailingLocalFileOnlyClassifier;
 
 impl FileBasedMediaStreamClassifier for FailingLocalFileOnlyClassifier {
@@ -89,6 +128,40 @@ struct ErrorReader;
 impl Read for ErrorReader {
     fn read(&mut self, _buf: &mut [u8]) -> IoResult<usize> {
         Err(Error::other("forced read error"))
+    }
+}
+
+struct BufferLimitedReader {
+    remaining: usize,
+    max_buffer_len: usize,
+}
+
+impl BufferLimitedReader {
+    /// Creates a reader that fails when callers request overly large buffers.
+    fn new(remaining: usize, max_buffer_len: usize) -> Self {
+        Self {
+            remaining,
+            max_buffer_len,
+        }
+    }
+}
+
+impl Read for BufferLimitedReader {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+        if buf.len() > self.max_buffer_len {
+            return Err(Error::other(format!(
+                "buffer too large: {} > {}",
+                buf.len(),
+                self.max_buffer_len,
+            )));
+        }
+        if self.remaining == 0 {
+            return Ok(0);
+        }
+        let bytes_to_write = self.remaining.min(buf.len());
+        buf[..bytes_to_write].fill(b'm');
+        self.remaining -= bytes_to_write;
+        Ok(bytes_to_write)
     }
 }
 
@@ -142,6 +215,79 @@ fn test_file_based_classifier_stages_content_to_local_file() {
         classifier
             .classify_content(b"media")
             .expect("content should be staged to a temporary file")
+    );
+}
+
+#[test]
+fn test_file_based_classifier_uses_non_predictable_temporary_file_name() {
+    let classifier = PathRecordingFileClassifier::new();
+
+    let classified = classifier
+        .classify_content(b"media")
+        .expect("content should be staged to a temporary file");
+
+    assert_eq!(MediaStreamType::VideoOnly, classified);
+    let staged_path = classifier
+        .seen_path()
+        .expect("staged path should be recorded");
+    let filename = staged_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("staged filename should be UTF-8");
+    let predictable_prefix = format!("FileBasedMediaStreamClassifier-{}-", std::process::id(),);
+    assert!(
+        !filename.starts_with(&predictable_prefix),
+        "staged temp filename should not use a predictable pid/counter pattern: {filename}",
+    );
+}
+
+#[test]
+fn test_file_based_classifier_streams_reader_to_temporary_file_in_bounded_chunks() {
+    let classifier = LocalFileOnlyClassifier;
+    let mut reader = BufferLimitedReader::new(256 * 1024, 8 * 1024);
+
+    let classified = classifier
+        .classify_reader(&mut reader)
+        .expect("reader should be staged without requesting oversized buffers");
+
+    assert_eq!(MediaStreamType::VideoWithAudio, classified);
+}
+
+#[test]
+fn test_file_based_classifier_reports_temporary_file_creation_error() {
+    const CHILD_ENV: &str = "QUBIT_MIME_CHECK_CLASSIFIER_TEMPFILE_ERROR";
+    const TEST_NAME: &str = "classifier::media_stream_classifier_tests::test_file_based_classifier_reports_temporary_file_creation_error";
+
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let classifier = LocalFileOnlyClassifier;
+
+        let error = classifier
+            .classify_content(b"media")
+            .expect_err("invalid temporary directory should fail content classification");
+
+        assert!(error.to_string().contains("I/O error"));
+        return;
+    }
+
+    let temp_dir = TempDir::new().expect("temporary parent directory should be created");
+    let missing_temp_dir = temp_dir.path().join("missing");
+    let output = std::process::Command::new(
+        std::env::current_exe().expect("current test binary path should be available"),
+    )
+    .arg(TEST_NAME)
+    .arg("--exact")
+    .arg("--nocapture")
+    .arg("--test-threads=1")
+    .env(CHILD_ENV, "1")
+    .env("TMPDIR", missing_temp_dir)
+    .output()
+    .expect("child test process should run");
+
+    assert!(
+        output.status.success(),
+        "child test failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
