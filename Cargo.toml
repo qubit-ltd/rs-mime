@@ -39,7 +39,10 @@ qubit-io = "0.2"
 qubit-codec = "0.3"
 qubit-command = "0.4"
 qubit-config = "0.13"
+qubit-local-fs = { path = "../rs-local-fs" }
 qubit-spi = "0.3"
+
+[dev-dependencies]
 tempfile = "3.27"
 
 [lints.rust]

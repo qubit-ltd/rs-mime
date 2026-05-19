@@ -13,7 +13,7 @@ use std::fmt::Debug;
 use std::io::Write;
 use std::path::Path;
 
-use tempfile::Builder;
+use qubit_local_fs::LocalTempFile;
 
 use crate::{
     MimeDetectorCore,
@@ -103,14 +103,17 @@ where
 ///
 /// # Errors
 /// Returns [`MimeError::Io`](crate::MimeError::Io) when the temporary file cannot be written.
+///
+/// # Panics
+/// Panics if a newly created temporary file does not expose its open file handle.
 pub(crate) fn with_temp_file<T>(
     content: &[u8],
     detect: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
-    let mut file = Builder::new()
-        .prefix("MimeDetectorTemp-")
-        .suffix(".tmp")
-        .tempfile()?;
-    file.write_all(content)?;
+    let mut file = LocalTempFile::with_name(Some("MimeDetectorTemp-"), Some(".tmp"))?;
+    let handle = file
+        .file_mut()
+        .expect("new temporary file handle should be open");
+    handle.write_all(content)?;
     detect(file.path())
 }

@@ -10,13 +10,13 @@
 //! Helpers for stream-backed MIME detectors.
 
 use std::fmt::Debug;
-use std::fs::File;
 use std::path::Path;
 
 use qubit_io::{
     ReadSeek,
     ReadSeekExt,
 };
+use qubit_local_fs::LocalFiles;
 
 use crate::{
     MimeDetectorCore,
@@ -89,7 +89,7 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     /// # Errors
     /// Returns an error when opening, reading, seeking, or backend inspection fails.
     fn guess_from_file_stream(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let mut reader = File::open(file)?;
+        let mut reader = LocalFiles::open_buffered_reader(file)?;
         self.guess_from_reader_stream(&mut reader)
     }
 }
