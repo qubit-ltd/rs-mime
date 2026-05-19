@@ -11,10 +11,12 @@
 
 use std::fmt::Debug;
 use std::fs::File;
-use std::io::SeekFrom;
 use std::path::Path;
 
-use qubit_io::ReadSeek;
+use qubit_io::{
+    ReadSeek,
+    ReadSeekExt,
+};
 
 use crate::{
     MimeDetectorCore,
@@ -117,10 +119,8 @@ pub(crate) fn read_prefix(
             limit: max_buffer_size,
         });
     }
-    let position = reader.stream_position()?;
     let mut buffer = vec![0; max_bytes];
-    let bytes_read = reader.read(&mut buffer)?;
+    let bytes_read = reader.peek_exact_or_eof(&mut buffer)?;
     buffer.truncate(bytes_read);
-    reader.seek(SeekFrom::Start(position))?;
     Ok(buffer)
 }

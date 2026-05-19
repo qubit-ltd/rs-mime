@@ -181,9 +181,8 @@ fn test_accessors_empty_repository_and_reader_errors() {
             .detect_reader(&mut seek_reader, None, MimeDetectionPolicy::VerifyContent)
             .is_err()
     );
-    assert!(
-        detector
-            .detect_reader(&mut read_reader, None, MimeDetectionPolicy::VerifyContent)
-            .is_err()
-    );
+    let detected = detector
+        .detect_reader(&mut read_reader, None, MimeDetectionPolicy::VerifyContent)
+        .expect("empty repositories should not read content bytes");
+    assert_eq!(None, detected);
 }
