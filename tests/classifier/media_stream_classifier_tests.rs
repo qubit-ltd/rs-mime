@@ -23,6 +23,10 @@ use std::sync::{
     Mutex,
 };
 
+use qubit_local_fs::{
+    LocalFiles,
+    LocalTempDir,
+};
 use qubit_mime::{
     FileBasedMediaStreamClassifier,
     MediaStreamClassifier,
@@ -31,7 +35,6 @@ use qubit_mime::{
     MimeError,
     MimeResult,
 };
-use tempfile::TempDir;
 
 #[derive(Debug)]
 struct StaticClassifier {
@@ -269,8 +272,11 @@ fn test_file_based_classifier_reports_temporary_file_creation_error() {
         return;
     }
 
-    let temp_dir = TempDir::new().expect("temporary parent directory should be created");
-    let missing_temp_dir = temp_dir.path().join("missing");
+    let temp_dir = LocalTempDir::with_prefix(Some("qubit-mime-classifier-error-"))
+        .expect("temporary parent directory should be created");
+    let invalid_temp_dir = temp_dir.path().join("not-a-directory");
+    LocalFiles::atomic_write(&invalid_temp_dir, b"not a directory")
+        .expect("invalid temporary directory placeholder should be created");
     let output = std::process::Command::new(
         std::env::current_exe().expect("current test binary path should be available"),
     )
@@ -279,7 +285,7 @@ fn test_file_based_classifier_reports_temporary_file_creation_error() {
     .arg("--nocapture")
     .arg("--test-threads=1")
     .env(CHILD_ENV, "1")
-    .env("TMPDIR", missing_temp_dir)
+    .env("TMPDIR", invalid_temp_dir)
     .output()
     .expect("child test process should run");
 
@@ -288,6 +294,49 @@ fn test_file_based_classifier_reports_temporary_file_creation_error() {
         "child test failed\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_file_based_classifier_creates_missing_temporary_directory() {
+    const CHILD_ENV: &str = "QUBIT_MIME_CHECK_CLASSIFIER_MISSING_TMPDIR";
+    const TEST_NAME: &str = "classifier::media_stream_classifier_tests::test_file_based_classifier_creates_missing_temporary_directory";
+
+    if std::env::var_os(CHILD_ENV).is_some() {
+        let classifier = LocalFileOnlyClassifier;
+
+        let classified = classifier
+            .classify_content(b"media")
+            .expect("missing temporary directory should be created");
+
+        assert_eq!(MediaStreamType::VideoWithAudio, classified);
+        return;
+    }
+
+    let temp_dir = LocalTempDir::with_prefix(Some("qubit-mime-classifier-missing-"))
+        .expect("temporary parent directory should be created");
+    let missing_temp_dir = temp_dir.path().join("missing").join("nested");
+    let output = std::process::Command::new(
+        std::env::current_exe().expect("current test binary path should be available"),
+    )
+    .arg(TEST_NAME)
+    .arg("--exact")
+    .arg("--nocapture")
+    .arg("--test-threads=1")
+    .env(CHILD_ENV, "1")
+    .env("TMPDIR", &missing_temp_dir)
+    .output()
+    .expect("child test process should run");
+
+    assert!(
+        output.status.success(),
+        "child test failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        missing_temp_dir.is_dir(),
+        "missing temporary directory should be created"
     );
 }
 

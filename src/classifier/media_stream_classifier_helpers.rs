@@ -9,14 +9,16 @@
  ******************************************************************************/
 //! Shared media stream classifier helpers.
 
-use std::fs;
 use std::io::{
     Read,
     copy,
 };
 use std::path::Path;
 
-use tempfile::Builder;
+use qubit_local_fs::{
+    LocalFiles,
+    LocalTempFile,
+};
 
 use crate::{
     MimeError,
@@ -33,14 +35,14 @@ use crate::{
 /// be opened, and [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput)
 /// when the path is not a regular file.
 pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
-    let metadata = fs::metadata(path)?;
+    let metadata = path.metadata()?;
     if !metadata.is_file() {
         return Err(MimeError::invalid_classifier_input(format!(
             "path is not a regular file: {}",
             path.display()
         )));
     }
-    fs::File::open(path)?;
+    LocalFiles::open_buffered_reader(path)?;
     Ok(())
 }
 
@@ -56,14 +58,17 @@ pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
 /// # Errors
 /// Returns [`MimeError::Io`](crate::MimeError::Io) when the stream cannot be read or the
 /// temporary file cannot be written, or returns the callback error when classification fails.
+///
+/// # Panics
+/// Panics if a newly created temporary file does not expose its open file handle.
 pub(crate) fn with_temp_reader<T>(
     reader: &mut dyn Read,
     classify: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
-    let mut file = Builder::new()
-        .prefix("FileBasedMediaStreamClassifier-")
-        .suffix(".tmp")
-        .tempfile()?;
-    copy(reader, file.as_file_mut())?;
+    let mut file = LocalTempFile::with_name(Some("FileBasedMediaStreamClassifier-"), Some(".tmp"))?;
+    let handle = file
+        .file_mut()
+        .expect("new temporary file handle should be open");
+    copy(reader, handle)?;
     classify(file.path())
 }

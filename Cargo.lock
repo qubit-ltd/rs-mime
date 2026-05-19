@@ -609,6 +609,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "110abf9c3dabc719a66294acdf55efc18c0ba36711935751e8964674d3f9e3d5"
 
 [[package]]
+name = "qubit-local-fs"
+version = "0.1.0"
+dependencies = [
+ "getrandom",
+ "log",
+]
+
+[[package]]
 name = "qubit-mime"
 version = "0.6.0"
 dependencies = [
@@ -616,6 +624,7 @@ dependencies = [
  "qubit-command",
  "qubit-config",
  "qubit-io",
+ "qubit-local-fs",
  "qubit-spi",
  "regex",
  "roxmltree",
