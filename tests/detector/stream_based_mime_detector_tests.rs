@@ -8,7 +8,14 @@
  *
  ******************************************************************************/
 
-use std::io::Cursor;
+use std::io::{
+    Cursor,
+    Error,
+    Read,
+    Result as IoResult,
+    Seek,
+    SeekFrom,
+};
 
 use tempfile::NamedTempFile;
 
@@ -27,6 +34,81 @@ use qubit_mime::{
 #[derive(Debug)]
 struct PrefixDetector {
     core: MimeDetectorCore,
+}
+
+struct ShortReadSeek {
+    inner: Cursor<Vec<u8>>,
+    max_chunk_size: usize,
+}
+
+impl ShortReadSeek {
+    /// Creates a seekable reader that returns at most `max_chunk_size` bytes per read.
+    fn new(content: &[u8], max_chunk_size: usize) -> Self {
+        Self {
+            inner: Cursor::new(content.to_vec()),
+            max_chunk_size,
+        }
+    }
+
+    /// Gets the current stream position.
+    fn position(&self) -> u64 {
+        self.inner.position()
+    }
+}
+
+impl Read for ShortReadSeek {
+    /// Reads at most the configured chunk size from the wrapped cursor.
+    fn read(&mut self, buffer: &mut [u8]) -> IoResult<usize> {
+        let requested = buffer.len().min(self.max_chunk_size);
+        self.inner.read(&mut buffer[..requested])
+    }
+}
+
+impl Seek for ShortReadSeek {
+    /// Delegates seeking to the wrapped cursor.
+    fn seek(&mut self, position: SeekFrom) -> IoResult<u64> {
+        self.inner.seek(position)
+    }
+}
+
+struct ReadErrorAfterPositionChange {
+    position: u64,
+}
+
+impl ReadErrorAfterPositionChange {
+    /// Creates a reader that moves position before returning a read error.
+    fn new(position: u64) -> Self {
+        Self { position }
+    }
+
+    /// Gets the current simulated stream position.
+    fn position(&self) -> u64 {
+        self.position
+    }
+}
+
+impl Read for ReadErrorAfterPositionChange {
+    /// Moves the stream position and reports a read failure.
+    fn read(&mut self, _buffer: &mut [u8]) -> IoResult<usize> {
+        self.position += 2;
+        Err(Error::other("forced read failure"))
+    }
+}
+
+impl Seek for ReadErrorAfterPositionChange {
+    /// Supports position lookup and absolute restoration.
+    fn seek(&mut self, position: SeekFrom) -> IoResult<u64> {
+        match position {
+            SeekFrom::Current(0) => Ok(self.position),
+            SeekFrom::Start(position) => {
+                self.position = position;
+                Ok(position)
+            }
+            SeekFrom::Current(_) | SeekFrom::End(_) => {
+                Err(Error::other("unsupported seek operation"))
+            }
+        }
+    }
 }
 
 impl PrefixDetector {
@@ -79,6 +161,32 @@ fn test_detect_reader_uses_stream_based_defaults() {
 
     assert_eq!(Some("text/plain".to_owned()), detected);
     assert_eq!(0, reader.position());
+}
+
+#[test]
+fn test_detect_reader_reads_prefix_across_short_reads() {
+    let detector = PrefixDetector::new();
+    let mut reader = ShortReadSeek::new(b"hello world", 2);
+
+    let detected = detector
+        .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+        .expect("short-read stream detection should succeed");
+
+    assert_eq!(Some("text/plain".to_owned()), detected);
+    assert_eq!(0, reader.position());
+}
+
+#[test]
+fn test_detect_reader_restores_position_after_read_error() {
+    let detector = PrefixDetector::new();
+    let mut reader = ReadErrorAfterPositionChange::new(3);
+
+    let error = detector
+        .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+        .expect_err("read failure should be reported");
+
+    assert!(matches!(error, MimeError::Io(_)));
+    assert_eq!(3, reader.position());
 }
 
 /// Verifies a stream-based detector gets local-file detection without backend boilerplate.

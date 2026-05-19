@@ -604,9 +604,9 @@ dependencies = [
 
 [[package]]
 name = "qubit-io"
-version = "0.1.4"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa2c1ee9ffdd63e79bbd41fefeaba0ceeec50a65d713c96dbd4417b3033f38ff"
+checksum = "110abf9c3dabc719a66294acdf55efc18c0ba36711935751e8964674d3f9e3d5"
 
 [[package]]
 name = "qubit-mime"
