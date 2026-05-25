@@ -19,6 +19,9 @@ pub const ENV_MIME_DETECTOR_FALLBACKS: &str = "QUBIT_MIME_DETECTOR_FALLBACKS";
 /// Environment variable selecting the default media stream classifier implementation.
 pub const ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT: &str = "QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT";
 
+/// Environment variable limiting temporary staging for media stream classifier input.
+pub const ENV_MEDIA_STREAM_MAX_STAGING_SIZE: &str = "QUBIT_MEDIA_STREAM_MAX_STAGING_SIZE";
+
 /// Environment variable controlling precise MIME detection.
 pub const ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION: &str = "QUBIT_MIME_ENABLE_PRECISE_DETECTION";
 
@@ -41,6 +44,9 @@ pub const CONFIG_MIME_DETECTOR_FALLBACKS: &str = "mime.detector.fallbacks";
 /// Configuration key selecting the default media stream classifier implementation.
 pub const CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT: &str = "mime.media.stream.classifier.default";
 
+/// Configuration key limiting temporary staging for media stream classifier input.
+pub const CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE: &str = "mime.media.stream.max.staging.size";
+
 /// Configuration key controlling precise MIME detection.
 pub const CONFIG_MIME_ENABLE_PRECISE_DETECTION: &str = "mime.enable.precise.detection";
 
@@ -61,6 +67,9 @@ pub const DEFAULT_MIME_DETECTOR_FALLBACKS: &str = "";
 
 /// Default media stream classifier backend selector.
 pub const DEFAULT_MEDIA_STREAM_CLASSIFIER: &str = "ffprobe";
+
+/// Default maximum bytes staged from reader/content input for media stream classification.
+pub const DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE: u64 = 64 * 1024 * 1024;
 
 /// Default value for precise media stream based detection.
 pub const DEFAULT_ENABLE_PRECISE_DETECTION: bool = true;

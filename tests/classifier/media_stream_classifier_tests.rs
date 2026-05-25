@@ -23,7 +23,7 @@ use std::sync::{
     Mutex,
 };
 
-use qubit_local_fs::{
+use qubit_local_files::{
     LocalFiles,
     LocalTempDir,
 };
@@ -80,6 +80,25 @@ impl FileBasedMediaStreamClassifier for LocalFileOnlyClassifier {
         } else {
             Ok(MediaStreamType::None)
         }
+    }
+}
+
+#[derive(Debug)]
+struct LimitedLocalFileOnlyClassifier {
+    max_staging_size: u64,
+}
+
+impl FileBasedMediaStreamClassifier for LimitedLocalFileOnlyClassifier {
+    fn classify_by_local_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
+        if file.is_file() {
+            Ok(MediaStreamType::VideoWithAudio)
+        } else {
+            Ok(MediaStreamType::None)
+        }
+    }
+
+    fn max_staging_size(&self) -> u64 {
+        self.max_staging_size
     }
 }
 
@@ -247,13 +266,32 @@ fn test_file_based_classifier_uses_non_predictable_temporary_file_name() {
 #[test]
 fn test_file_based_classifier_streams_reader_to_temporary_file_in_bounded_chunks() {
     let classifier = LocalFileOnlyClassifier;
-    let mut reader = BufferLimitedReader::new(256 * 1024, 8 * 1024);
+    let mut reader = BufferLimitedReader::new(256 * 1024, 16 * 1024);
 
     let classified = classifier
         .classify_reader(&mut reader)
         .expect("reader should be staged without requesting oversized buffers");
 
     assert_eq!(MediaStreamType::VideoWithAudio, classified);
+}
+
+#[test]
+fn test_file_based_classifier_rejects_reader_exceeding_staging_limit() {
+    let classifier = LimitedLocalFileOnlyClassifier {
+        max_staging_size: 4,
+    };
+    let mut reader = Cursor::new(b"media".to_vec());
+
+    let error = classifier
+        .classify_reader(&mut reader)
+        .expect_err("oversized reader should be rejected before classification");
+
+    assert!(matches!(
+        error,
+        MimeError::InvalidClassifierInput {
+            reason,
+        } if reason.contains("staging limit") && reason.contains("4")
+    ));
 }
 
 #[test]

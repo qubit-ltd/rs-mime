@@ -10,12 +10,16 @@
 //! Shared media stream classifier helpers.
 
 use std::io::{
+    ErrorKind,
     Read,
-    copy,
+    Write,
 };
 use std::path::Path;
 
-use qubit_local_fs::{
+use qubit_io::Streams;
+use qubit_local_files::{
+    FileReadOptions,
+    FileWriteOptions,
     LocalFiles,
     LocalTempFile,
 };
@@ -42,7 +46,7 @@ pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
             path.display()
         )));
     }
-    LocalFiles::open_buffered_reader(path)?;
+    LocalFiles::open_reader(path, FileReadOptions::buffered())?;
     Ok(())
 }
 
@@ -50,6 +54,7 @@ pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
 ///
 /// # Parameters
 /// - `reader`: Stream whose content should be staged.
+/// - `max_staging_size`: Maximum accepted stream size in bytes.
 /// - `classify`: Callback receiving the temporary local file path.
 ///
 /// # Returns
@@ -57,18 +62,48 @@ pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
 ///
 /// # Errors
 /// Returns [`MimeError::Io`](crate::MimeError::Io) when the stream cannot be read or the
-/// temporary file cannot be written, or returns the callback error when classification fails.
-///
-/// # Panics
-/// Panics if a newly created temporary file does not expose its open file handle.
+/// temporary file cannot be written. Returns
+/// [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) when the
+/// stream exceeds `max_staging_size`, or returns the callback error when classification fails.
 pub(crate) fn with_temp_reader<T>(
     reader: &mut dyn Read,
+    max_staging_size: u64,
     classify: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
     let mut file = LocalTempFile::with_name(Some("FileBasedMediaStreamClassifier-"), Some(".tmp"))?;
-    let handle = file
-        .file_mut()
-        .expect("new temporary file handle should be open");
-    copy(reader, handle)?;
+    {
+        let handle = file.writer(FileWriteOptions::default().buffered())?;
+        copy_to_temp_file(reader, handle, max_staging_size)?;
+    }
+    file.close()?;
     classify(file.path())
+}
+
+/// Copies a reader into a temporary file while enforcing a byte limit.
+///
+/// # Parameters
+/// - `reader`: Source stream.
+/// - `writer`: Temporary file writer.
+/// - `max_staging_size`: Maximum accepted stream size in bytes.
+///
+/// # Errors
+/// Returns [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) when
+/// the stream exceeds `max_staging_size`, or [`MimeError::Io`](crate::MimeError::Io) for I/O
+/// failures.
+fn copy_to_temp_file(
+    reader: &mut dyn Read,
+    writer: &mut dyn Write,
+    max_staging_size: u64,
+) -> MimeResult<()> {
+    Streams::copy_to_end_limited(reader, writer, max_staging_size)
+        .map(|_| ())
+        .map_err(|error| {
+            if error.kind() == ErrorKind::InvalidData {
+                MimeError::invalid_classifier_input(format!(
+                    "media stream input exceeds staging limit of {max_staging_size} bytes"
+                ))
+            } else {
+                error.into()
+            }
+        })
 }

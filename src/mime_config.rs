@@ -35,6 +35,7 @@ use qubit_config::{
 
 use crate::{
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+    CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_DETECTOR_FALLBACKS,
@@ -43,10 +44,12 @@ use crate::{
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
     DEFAULT_ENABLE_PRECISE_DETECTION,
     DEFAULT_MEDIA_STREAM_CLASSIFIER,
+    DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
     DEFAULT_MIME_DETECTOR,
     DEFAULT_MIME_DETECTOR_FALLBACKS,
     DEFAULT_MIME_MAX_BUFFER_SIZE,
     ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+    ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
     ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
     ENV_MIME_DETECTOR_DEFAULT,
     ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
@@ -69,6 +72,7 @@ use crate::{
 /// | Default MIME detector | `mime.detector.default` | `QUBIT_MIME_DETECTOR_DEFAULT` | `repository` | Provider id, alias, or `auto` |
 /// | MIME detector fallbacks | `mime.detector.fallbacks` | `QUBIT_MIME_DETECTOR_FALLBACKS` | empty | List split on `,` or `;` |
 /// | Media stream classifier | `mime.media.stream.classifier.default` | `QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT` | `ffprobe` | Classifier selector |
+/// | Media stream staging limit | `mime.media.stream.max.staging.size` | `QUBIT_MEDIA_STREAM_MAX_STAGING_SIZE` | `67108864` | Byte count |
 /// | Precise detection switch | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` | Boolean |
 /// | Precise detection patterns | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` | Extension list |
 /// | Ambiguous MIME mapping | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` | `ext:video,audio` entries split on `;` |
@@ -86,6 +90,8 @@ pub struct MimeConfig {
     mime_detector_fallbacks: Vec<String>,
     /// Default media stream classifier selector.
     media_stream_classifier_default: String,
+    /// Maximum bytes staged from reader/content input for media stream classification.
+    media_stream_max_staging_size: u64,
     /// Whether precise media-stream detection is enabled.
     enable_precise_detection: bool,
     /// Extensions requiring precise detection.
@@ -210,6 +216,14 @@ impl MimeConfig {
             DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
             &VALUE_READ_OPTIONS,
         )?;
+        let media_stream_max_staging_size = config.get_any_or_with(
+            [
+                CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
+                ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
+            ],
+            DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
+            &VALUE_READ_OPTIONS,
+        )?;
         let enable_precise_detection = config.get_any_or_with(
             [
                 CONFIG_MIME_ENABLE_PRECISE_DETECTION,
@@ -243,6 +257,7 @@ impl MimeConfig {
             mime_detector_default,
             mime_detector_fallbacks: normalize_detector_names(mime_detector_fallbacks),
             media_stream_classifier_default,
+            media_stream_max_staging_size,
             enable_precise_detection,
             precise_detection_patterns: normalize_patterns(precise_detection_patterns),
             ambiguous_mime_mapping: build_ambiguous_mime_mapping(ambiguous_mime_mapping),
@@ -321,6 +336,14 @@ impl MimeConfig {
         &self.media_stream_classifier_default
     }
 
+    /// Gets the maximum staging size for reader/content media stream classification.
+    ///
+    /// # Returns
+    /// Maximum number of bytes copied to a temporary file for one classifier input.
+    pub fn media_stream_max_staging_size(&self) -> u64 {
+        self.media_stream_max_staging_size
+    }
+
     /// Tells whether precise media-stream detection is enabled.
     ///
     /// # Returns
@@ -362,6 +385,7 @@ impl MimeConfig {
             mime_detector_default: DEFAULT_MIME_DETECTOR.to_owned(),
             mime_detector_fallbacks: fallback_defaults(),
             media_stream_classifier_default: DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
+            media_stream_max_staging_size: DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
             enable_precise_detection: DEFAULT_ENABLE_PRECISE_DETECTION,
             precise_detection_patterns: normalize_patterns(
                 DEFAULT_PRECISE_DETECTION_PATTERNS

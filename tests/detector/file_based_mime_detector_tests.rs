@@ -15,7 +15,7 @@ use std::path::{
 };
 use std::sync::Mutex;
 
-use qubit_local_fs::{
+use qubit_local_files::{
     LocalFiles,
     LocalTempDir,
 };
