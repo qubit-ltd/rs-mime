@@ -91,7 +91,7 @@ glob、内容魔数规则和父类型关系。
 
 ```toml
 [dependencies]
-qubit-mime = "0.6"
+qubit-mime = "0.7"
 ```
 
 ## 快速开始
