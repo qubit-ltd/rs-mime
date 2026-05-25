@@ -17,6 +17,7 @@ use std::sync::{
 use qubit_config::Config;
 use qubit_mime::{
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+    CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
@@ -25,10 +26,12 @@ use qubit_mime::{
     DEFAULT_AMBIGUOUS_MIME_MAPPING,
     DEFAULT_ENABLE_PRECISE_DETECTION,
     DEFAULT_MEDIA_STREAM_CLASSIFIER,
+    DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
     DEFAULT_MIME_DETECTOR,
     DEFAULT_MIME_MAX_BUFFER_SIZE,
     DEFAULT_PRECISE_DETECTION_PATTERNS,
     ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+    ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
     ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
     ENV_MIME_DETECTOR_DEFAULT,
     ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
@@ -66,6 +69,9 @@ fn test_from_config_reads_logical_config_keys() {
     config
         .set(CONFIG_MIME_MAX_BUFFER_SIZE, 4096_usize)
         .expect("maximum buffer size should be configurable");
+    config
+        .set(CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE, 8_388_608_u64)
+        .expect("maximum staging size should be configurable");
 
     let mime_config = MimeConfig::from_config(&config).expect("config should parse");
 
@@ -78,6 +84,7 @@ fn test_from_config_reads_logical_config_keys() {
         mime_config.ambiguous_mime_mapping().get("mkv")
     );
     assert_eq!(4096, mime_config.max_buffer_size());
+    assert_eq!(8_388_608, mime_config.media_stream_max_staging_size());
 }
 
 #[test]
@@ -110,6 +117,9 @@ fn test_from_config_reads_env_aliases_with_env_friendly_options() {
     config
         .set(ENV_MIME_MAX_BUFFER_SIZE, "8192")
         .expect("maximum buffer size env value should be configurable");
+    config
+        .set(ENV_MEDIA_STREAM_MAX_STAGING_SIZE, "16777216")
+        .expect("maximum staging size env value should be configurable");
 
     let mime_config = MimeConfig::from_config(&config).expect("env aliases should parse");
 
@@ -123,6 +133,7 @@ fn test_from_config_reads_env_aliases_with_env_friendly_options() {
         mime_config.ambiguous_mime_mapping().get("webm")
     );
     assert_eq!(8192, mime_config.max_buffer_size());
+    assert_eq!(16_777_216, mime_config.media_stream_max_staging_size());
 }
 
 #[test]
@@ -219,6 +230,10 @@ fn test_load_falls_back_to_builtin_default_when_env_is_invalid() {
         loaded.enable_precise_detection()
     );
     assert_eq!(DEFAULT_MIME_MAX_BUFFER_SIZE, loaded.max_buffer_size());
+    assert_eq!(
+        DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
+        loaded.media_stream_max_staging_size()
+    );
 }
 
 #[test]
@@ -227,18 +242,21 @@ fn test_load_uses_environment_when_valid() {
     let _env_restore = EnvRestore::new(&[
         ENV_MIME_DETECTOR_DEFAULT,
         ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+        ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
         ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
     ]);
 
     unsafe {
         std::env::set_var(ENV_MIME_DETECTOR_DEFAULT, "repository");
         std::env::set_var(ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT, "ffprobe");
+        std::env::set_var(ENV_MEDIA_STREAM_MAX_STAGING_SIZE, "33554432");
         std::env::set_var(ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION, "false");
     }
     let loaded = MimeConfig::load();
 
     assert_eq!("repository", loaded.mime_detector_default());
     assert_eq!("ffprobe", loaded.media_stream_classifier_default());
+    assert_eq!(33_554_432, loaded.media_stream_max_staging_size());
     assert!(!loaded.enable_precise_detection());
 }
 

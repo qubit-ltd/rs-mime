@@ -20,6 +20,7 @@ use qubit_command::{
 use crate::{
     FileBasedMediaStreamClassifier,
     MediaStreamType,
+    MimeConfig,
     MimeResult,
 };
 
@@ -30,6 +31,8 @@ pub struct FfprobeCommandMediaStreamClassifier {
     working_directory: Option<String>,
     /// The command runner used to execute FFprobe.
     command_runner: CommandRunner,
+    /// Maximum bytes staged from reader/content input.
+    max_staging_size: u64,
 }
 
 impl FfprobeCommandMediaStreamClassifier {
@@ -45,9 +48,21 @@ impl FfprobeCommandMediaStreamClassifier {
     /// # Returns
     /// A classifier using the current process working directory.
     pub fn new() -> Self {
+        Self::from_mime_config(MimeConfig::default())
+    }
+
+    /// Creates a FFprobe-backed classifier from MIME configuration.
+    ///
+    /// # Parameters
+    /// - `config`: MIME configuration providing reader/content staging limits.
+    ///
+    /// # Returns
+    /// A classifier using the current process working directory.
+    pub fn from_mime_config(config: MimeConfig) -> Self {
         Self {
             working_directory: None,
             command_runner: Self::default_command_runner(),
+            max_staging_size: config.media_stream_max_staging_size(),
         }
     }
 
@@ -57,6 +72,34 @@ impl FfprobeCommandMediaStreamClassifier {
     /// Runner used for `ffprobe` command executions.
     pub fn command_runner(&self) -> &CommandRunner {
         &self.command_runner
+    }
+
+    /// Gets the maximum bytes staged from reader/content input.
+    ///
+    /// # Returns
+    /// Maximum accepted stream size before staging is rejected.
+    pub fn max_staging_size(&self) -> u64 {
+        self.max_staging_size
+    }
+
+    /// Replaces the maximum bytes staged from reader/content input.
+    ///
+    /// # Parameters
+    /// - `max_staging_size`: Maximum accepted stream size.
+    pub fn set_max_staging_size(&mut self, max_staging_size: u64) {
+        self.max_staging_size = max_staging_size;
+    }
+
+    /// Replaces the maximum staging size and returns the updated classifier.
+    ///
+    /// # Parameters
+    /// - `max_staging_size`: Maximum accepted stream size.
+    ///
+    /// # Returns
+    /// The updated classifier.
+    pub fn with_max_staging_size(mut self, max_staging_size: u64) -> Self {
+        self.max_staging_size = max_staging_size;
+        self
     }
 
     /// Replaces the command runner used by this classifier.
@@ -190,6 +233,11 @@ impl Default for FfprobeCommandMediaStreamClassifier {
 }
 
 impl FileBasedMediaStreamClassifier for FfprobeCommandMediaStreamClassifier {
+    /// Gets the maximum bytes staged from reader/content input.
+    fn max_staging_size(&self) -> u64 {
+        self.max_staging_size
+    }
+
     /// Classifies a readable local media file using FFprobe.
     fn classify_by_local_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
         self.classify_with_ffprobe(file)

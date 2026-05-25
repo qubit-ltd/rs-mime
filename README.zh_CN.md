@@ -167,6 +167,7 @@ fn main() -> Result<(), MimeError> {
 use qubit_config::Config;
 use qubit_mime::{
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+    CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_DETECTOR_FALLBACKS,
@@ -174,6 +175,7 @@ use qubit_mime::{
     CONFIG_MIME_MAX_BUFFER_SIZE,
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
     DEFAULT_AMBIGUOUS_MIME_MAPPING,
+    DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
     DEFAULT_MIME_MAX_BUFFER_SIZE,
     DEFAULT_PRECISE_DETECTION_PATTERNS,
     MimeConfig,
@@ -192,6 +194,7 @@ fn main() -> Result<(), MimeError> {
     config.set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, DEFAULT_PRECISE_DETECTION_PATTERNS)?;
     config.set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, DEFAULT_AMBIGUOUS_MIME_MAPPING)?;
     config.set(CONFIG_MIME_MAX_BUFFER_SIZE, DEFAULT_MIME_MAX_BUFFER_SIZE)?;
+    config.set(CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE, DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE)?;
 
     MimeConfig::reload_default(&config)?;
     let detector =
@@ -308,6 +311,7 @@ Registry 选择相关错误：
 | 默认 MIME detector | `mime.detector.default` | `QUBIT_MIME_DETECTOR_DEFAULT` | `repository` |
 | MIME detector fallback | `mime.detector.fallbacks` | `QUBIT_MIME_DETECTOR_FALLBACKS` | 空 |
 | 媒体流 classifier | `mime.media.stream.classifier.default` | `QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT` | `ffprobe` |
+| 媒体流临时 staging 上限 | `mime.media.stream.max.staging.size` | `QUBIT_MEDIA_STREAM_MAX_STAGING_SIZE` | `67108864` |
 | 启用精确检测 | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` |
 | 精确检测扩展名 | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` |
 | 有歧义 MIME 映射 | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` |
@@ -743,6 +747,7 @@ fn main() -> Result<(), MimeError> {
 | `mime_detector_default()` | 读取配置的 detector selector |
 | `mime_detector_fallbacks()` | 读取配置的 detector fallback 链 |
 | `media_stream_classifier_default()` | 读取配置的媒体 classifier selector |
+| `media_stream_max_staging_size()` | 读取媒体 classifier 的 reader/content staging 上限 |
 
 ## 模块结构
 

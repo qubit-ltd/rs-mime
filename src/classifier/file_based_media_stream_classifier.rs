@@ -13,6 +13,7 @@ use std::fmt::Debug;
 use std::io::Read;
 use std::path::Path;
 
+use crate::DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE;
 use crate::{
     MediaStreamClassifierBackend,
     MediaStreamType,
@@ -23,6 +24,14 @@ use super::media_stream_classifier_helpers::with_temp_reader;
 
 /// Core implementation contract for classifiers that only operate on local files.
 pub trait FileBasedMediaStreamClassifier: Debug + Send + Sync {
+    /// Gets the maximum bytes staged from reader/content input.
+    ///
+    /// # Returns
+    /// Maximum accepted stream size before staging is rejected.
+    fn max_staging_size(&self) -> u64 {
+        DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE
+    }
+
     /// Classifies one validated local file.
     ///
     /// # Parameters
@@ -48,7 +57,7 @@ where
 
     /// Stages stream content to a temporary local file before classification.
     fn classify_by_content(&self, reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
-        with_temp_reader(reader, |path| {
+        with_temp_reader(reader, self.max_staging_size(), |path| {
             FileBasedMediaStreamClassifier::classify_by_local_file(self, path)
         })
     }

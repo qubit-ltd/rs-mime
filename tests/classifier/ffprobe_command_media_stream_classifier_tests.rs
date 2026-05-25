@@ -11,11 +11,14 @@
 use std::time::Duration;
 
 use qubit_command::CommandRunner;
+use qubit_config::Config;
 #[cfg(unix)]
 use qubit_mime::MediaStreamClassifier;
 use qubit_mime::{
+    CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
     FfprobeCommandMediaStreamClassifier,
     MediaStreamType,
+    MimeConfig,
 };
 #[cfg(unix)]
 use tempfile::TempDir;
@@ -68,6 +71,19 @@ fn test_default_uses_disabled_logging_runner() {
     let classifier = FfprobeCommandMediaStreamClassifier::default();
 
     assert!(classifier.command_runner().is_logging_disabled());
+}
+
+#[test]
+fn test_from_mime_config_sets_max_staging_size() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE, 1024_u64)
+        .expect("maximum staging size should be configurable");
+    let classifier = FfprobeCommandMediaStreamClassifier::from_mime_config(
+        MimeConfig::from_config(&config).expect("MIME config should parse"),
+    );
+
+    assert_eq!(1024, classifier.max_staging_size());
 }
 
 #[test]

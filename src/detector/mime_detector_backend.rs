@@ -10,10 +10,11 @@
 //! Backend contract for MIME detector implementations.
 
 use std::fmt::Debug;
+use std::fs::File;
+use std::io::BufReader;
 use std::path::Path;
 
 use qubit_io::ReadSeek;
-use qubit_local_fs::LocalFiles;
 
 use crate::{
     DetectionSource,
@@ -88,7 +89,7 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// # Errors
     /// Returns an error when opening, reading, seeking, or backend inspection fails.
     fn guess_from_file(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let mut reader = LocalFiles::open_buffered_reader(file)?;
+        let mut reader = BufReader::new(File::open(file)?);
         self.guess_from_reader(&mut reader)
     }
 }
