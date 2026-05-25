@@ -36,12 +36,7 @@ impl ServiceProvider<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
     }
 
     /// Creates a repository-backed detector.
-    fn create_box(
-        &self,
-        config: &MimeConfig,
-    ) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
-        Ok(Box::new(RepositoryMimeDetector::from_mime_config(
-            config.clone(),
-        )))
+    fn create_box(&self, config: &MimeConfig) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
+        Ok(Box::new(RepositoryMimeDetector::from_mime_config(config.clone())))
     }
 }

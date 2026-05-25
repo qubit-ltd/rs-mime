@@ -49,12 +49,7 @@ pub trait MimeDetector: Debug + Send + Sync {
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
-    fn detect(
-        &self,
-        content: &[u8],
-        filename: Option<&str>,
-        policy: MimeDetectionPolicy,
-    ) -> Option<String>;
+    fn detect(&self, content: &[u8], filename: Option<&str>, policy: MimeDetectionPolicy) -> Option<String>;
 
     /// Detects a MIME type from a seekable reader without consuming its position.
     ///
@@ -102,12 +97,7 @@ impl MimeDetector for Box<dyn MimeDetector> {
     }
 
     /// Delegates combined detection to the boxed detector.
-    fn detect(
-        &self,
-        content: &[u8],
-        filename: Option<&str>,
-        policy: MimeDetectionPolicy,
-    ) -> Option<String> {
+    fn detect(&self, content: &[u8], filename: Option<&str>, policy: MimeDetectionPolicy) -> Option<String> {
         self.as_ref().detect(content, filename, policy)
     }
 
@@ -139,12 +129,7 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     }
 
     /// Delegates combined detection to the shared detector.
-    fn detect(
-        &self,
-        content: &[u8],
-        filename: Option<&str>,
-        policy: MimeDetectionPolicy,
-    ) -> Option<String> {
+    fn detect(&self, content: &[u8], filename: Option<&str>, policy: MimeDetectionPolicy) -> Option<String> {
         self.as_ref().detect(content, filename, policy)
     }
 

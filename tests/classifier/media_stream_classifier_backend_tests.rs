@@ -36,10 +36,7 @@ fn test_media_stream_classifier_backend_blanket_impl_validates_files() {
         MediaStreamType::VideoOnly,
         backend.classify_file(Path::new("Cargo.toml")).unwrap()
     );
-    assert_eq!(
-        MediaStreamType::AudioOnly,
-        backend.classify_content(b"audio").unwrap()
-    );
+    assert_eq!(MediaStreamType::AudioOnly, backend.classify_content(b"audio").unwrap());
     assert!(matches!(
         backend.classify_file(Path::new(".")),
         Err(MimeError::InvalidClassifierInput { .. })

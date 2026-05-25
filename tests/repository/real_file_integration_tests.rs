@@ -135,9 +135,7 @@ fn fixture_path(filename: &str) -> PathBuf {
 fn read_magic_prefix(repository: &MimeRepository, path: &Path) -> Vec<u8> {
     let mut file = File::open(path).expect("real fixture should open");
     let mut buffer = vec![0; repository.max_test_bytes()];
-    let bytes_read = file
-        .read(&mut buffer)
-        .expect("real fixture prefix should be readable");
+    let bytes_read = file.read(&mut buffer).expect("real fixture prefix should be readable");
     buffer.truncate(bytes_read);
     buffer
 }

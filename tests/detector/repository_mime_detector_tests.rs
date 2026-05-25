@@ -64,10 +64,7 @@ impl Seek for FailingReader {
 fn test_detect_by_filename_uses_default_repository() {
     let detector = RepositoryMimeDetector::new().expect("default repository should load");
 
-    assert_eq!(
-        Some("image/jpeg".to_owned()),
-        detector.detect_by_filename("photo.JPG")
-    );
+    assert_eq!(Some("image/jpeg".to_owned()), detector.detect_by_filename("photo.JPG"));
     assert_eq!(
         Some("application/x-compressed-tar".to_owned()),
         detector.detect_by_filename("/tmp/archive.tar.gz")
@@ -95,19 +92,11 @@ fn test_detect_bytes_merges_filename_and_content_results() {
 
     assert_eq!(
         Some("image/jpeg".to_owned()),
-        detector.detect_bytes(
-            b"%PDF-1.7\n",
-            Some("photo.jpg"),
-            MimeDetectionPolicy::PreferFilename,
-        )
+        detector.detect_bytes(b"%PDF-1.7\n", Some("photo.jpg"), MimeDetectionPolicy::PreferFilename,)
     );
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detector.detect_bytes(
-            b"%PDF-1.7\n",
-            Some("photo.jpg"),
-            MimeDetectionPolicy::VerifyContent,
-        )
+        detector.detect_bytes(b"%PDF-1.7\n", Some("photo.jpg"), MimeDetectionPolicy::VerifyContent,)
     );
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -121,11 +110,7 @@ fn test_detect_reader_does_not_consume_reader_position() {
     let mut reader = Cursor::new(b"%PDF-1.7\n".to_vec());
 
     let detected = detector
-        .detect_reader(
-            &mut reader,
-            Some("document.pdf"),
-            MimeDetectionPolicy::VerifyContent,
-        )
+        .detect_reader(&mut reader, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
         .expect("reader detection should succeed");
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
@@ -148,8 +133,7 @@ fn test_detect_file_reads_file_and_uses_file_name() {
 #[test]
 fn test_accessors_empty_repository_and_reader_errors() {
     let repository = MimeRepository::empty();
-    let config =
-        MimeConfig::from_config(&qubit_config::Config::new()).expect("builtin config should parse");
+    let config = MimeConfig::from_config(&qubit_config::Config::new()).expect("builtin config should parse");
     let mut detector = RepositoryMimeDetector::with_repository_and_config(&repository, config);
 
     assert!(detector.core().media_stream_classifier().is_some());
@@ -160,11 +144,7 @@ fn test_accessors_empty_repository_and_reader_errors() {
     assert_eq!(0, detector.guess_from_content(b"unknown").len());
     assert_eq!(
         None,
-        detector.detect_bytes(
-            b"",
-            Some("unknown.bin"),
-            MimeDetectionPolicy::PreferFilename
-        )
+        detector.detect_bytes(b"", Some("unknown.bin"), MimeDetectionPolicy::PreferFilename)
     );
 
     let mut seek_reader = FailingReader::new(FailureMode::Seek);

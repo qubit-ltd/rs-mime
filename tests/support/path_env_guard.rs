@@ -25,9 +25,7 @@ pub(crate) struct PathEnvGuard {
 impl PathEnvGuard {
     /// Prepends `directory` to `PATH` and holds a process-wide environment lock.
     pub(crate) fn prepend(directory: &Path) -> Self {
-        let guard = ENV_LOCK
-            .lock()
-            .expect("environment lock should not be poisoned");
+        let guard = ENV_LOCK.lock().expect("environment lock should not be poisoned");
         let original_path = std::env::var("PATH").ok();
         let separator = if cfg!(windows) { ";" } else { ":" };
         let mut path = directory.display().to_string();

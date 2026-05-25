@@ -197,34 +197,24 @@ impl From<ProviderRegistryError> for MimeError {
     fn from(error: ProviderRegistryError) -> Self {
         match error {
             ProviderRegistryError::EmptyProviderName => Self::EmptyDetectorName,
-            ProviderRegistryError::InvalidProviderName { name, reason } => {
-                Self::InvalidDetectorName { name, reason }
-            }
+            ProviderRegistryError::InvalidProviderName { name, reason } => Self::InvalidDetectorName { name, reason },
             ProviderRegistryError::DuplicateProviderName { name }
-            | ProviderRegistryError::DuplicateProviderCandidate { name } => {
-                Self::DuplicateDetectorName {
-                    name: name.as_str().to_owned(),
-                }
-            }
+            | ProviderRegistryError::DuplicateProviderCandidate { name } => Self::DuplicateDetectorName {
+                name: name.as_str().to_owned(),
+            },
             ProviderRegistryError::UnknownProvider { name } => Self::UnknownDetector {
                 name: name.as_str().to_owned(),
             },
-            ProviderRegistryError::ProviderUnavailable { name, source } => {
-                Self::DetectorUnavailable {
-                    name: name.as_str().to_owned(),
-                    reason: source.reason().to_owned(),
-                }
-            }
+            ProviderRegistryError::ProviderUnavailable { name, source } => Self::DetectorUnavailable {
+                name: name.as_str().to_owned(),
+                reason: source.reason().to_owned(),
+            },
             ProviderRegistryError::ProviderCreate { name, source } => Self::DetectorBackend {
                 backend: name.as_str().to_owned(),
                 reason: source.reason().to_owned(),
             },
             ProviderRegistryError::NoAvailableProvider { failures } => Self::NoAvailableDetector {
-                reason: failures
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("; "),
+                reason: failures.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "),
             },
             ProviderRegistryError::EmptyRegistry => Self::NoAvailableDetector {
                 reason: "detector registry is empty".to_owned(),
@@ -244,12 +234,7 @@ impl MimeError {
     ///
     /// # Returns
     /// A [`MimeError::InvalidXmlAttribute`](crate::MimeError::InvalidXmlAttribute) value.
-    pub(crate) fn invalid_attr(
-        element: &str,
-        attribute: &str,
-        value: &str,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn invalid_attr(element: &str, attribute: &str, value: &str, reason: impl Into<String>) -> Self {
         Self::InvalidXmlAttribute {
             element: element.to_owned(),
             attribute: attribute.to_owned(),
@@ -281,9 +266,7 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher) value.
     pub(crate) fn invalid_matcher(reason: impl Into<String>) -> Self {
-        Self::InvalidMagicMatcher {
-            reason: reason.into(),
-        }
+        Self::InvalidMagicMatcher { reason: reason.into() }
     }
 
     /// Builds an invalid classifier input error.
@@ -294,9 +277,7 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) value.
     pub(crate) fn invalid_classifier_input(reason: impl Into<String>) -> Self {
-        Self::InvalidClassifierInput {
-            reason: reason.into(),
-        }
+        Self::InvalidClassifierInput { reason: reason.into() }
     }
 
     /// Builds a detector backend error.
@@ -324,37 +305,25 @@ impl MimeError {
     pub(crate) fn classifier_registry_error(error: ProviderRegistryError) -> Self {
         match error {
             ProviderRegistryError::EmptyProviderName => Self::EmptyClassifierName,
-            ProviderRegistryError::InvalidProviderName { name, reason } => {
-                Self::InvalidClassifierName { name, reason }
-            }
+            ProviderRegistryError::InvalidProviderName { name, reason } => Self::InvalidClassifierName { name, reason },
             ProviderRegistryError::DuplicateProviderName { name }
-            | ProviderRegistryError::DuplicateProviderCandidate { name } => {
-                Self::DuplicateClassifierName {
-                    name: name.as_str().to_owned(),
-                }
-            }
+            | ProviderRegistryError::DuplicateProviderCandidate { name } => Self::DuplicateClassifierName {
+                name: name.as_str().to_owned(),
+            },
             ProviderRegistryError::UnknownProvider { name } => Self::UnknownClassifier {
                 name: name.as_str().to_owned(),
             },
-            ProviderRegistryError::ProviderUnavailable { name, source } => {
-                Self::ClassifierUnavailable {
-                    name: name.as_str().to_owned(),
-                    reason: source.reason().to_owned(),
-                }
-            }
+            ProviderRegistryError::ProviderUnavailable { name, source } => Self::ClassifierUnavailable {
+                name: name.as_str().to_owned(),
+                reason: source.reason().to_owned(),
+            },
             ProviderRegistryError::ProviderCreate { name, source } => Self::ClassifierBackend {
                 backend: name.as_str().to_owned(),
                 reason: source.reason().to_owned(),
             },
-            ProviderRegistryError::NoAvailableProvider { failures } => {
-                Self::NoAvailableClassifier {
-                    reason: failures
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join("; "),
-                }
-            }
+            ProviderRegistryError::NoAvailableProvider { failures } => Self::NoAvailableClassifier {
+                reason: failures.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "),
+            },
             ProviderRegistryError::EmptyRegistry => Self::NoAvailableClassifier {
                 reason: "classifier registry is empty".to_owned(),
             },

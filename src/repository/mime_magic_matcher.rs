@@ -156,11 +156,7 @@ impl MimeMagicMatcher {
         if !parent_matches {
             return false;
         }
-        self.sub_matchers.is_empty()
-            || self
-                .sub_matchers
-                .iter()
-                .any(|sub_matcher| sub_matcher.matches(bytes))
+        self.sub_matchers.is_empty() || self.sub_matchers.iter().any(|sub_matcher| sub_matcher.matches(bytes))
     }
 
     /// Tests raw value bytes over this matcher's offset range.
@@ -212,9 +208,7 @@ fn validate_offsets(offset_begin: usize, offset_end: usize) -> MimeResult<()> {
 /// Returns [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher) when a numeric value has the wrong width.
 fn validate_value_width(value_type: MagicValueType, value: &[u8]) -> MimeResult<()> {
     if value.is_empty() {
-        return Err(MimeError::invalid_matcher(
-            "magic matcher value must not be empty",
-        ));
+        return Err(MimeError::invalid_matcher("magic matcher value must not be empty"));
     }
     if let Some(width) = value_type.numeric_width()
         && value.len() != width
@@ -274,15 +268,11 @@ fn ordered_numeric_bytes(value_type: MagicValueType, bytes: &[u8]) -> Vec<u8> {
 /// `true` when the byte range matches.
 fn value_matches_at(bytes: &[u8], offset: usize, value: &[u8], mask: Option<&[u8]>) -> bool {
     match mask {
-        Some(mask) => {
-            value
-                .iter()
-                .zip(mask.iter())
-                .enumerate()
-                .all(|(index, (value_byte, mask_byte))| {
-                    (bytes[offset + index] & mask_byte) == (*value_byte & mask_byte)
-                })
-        }
+        Some(mask) => value
+            .iter()
+            .zip(mask.iter())
+            .enumerate()
+            .all(|(index, (value_byte, mask_byte))| (bytes[offset + index] & mask_byte) == (*value_byte & mask_byte)),
         None => value
             .iter()
             .enumerate()

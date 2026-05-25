@@ -198,9 +198,7 @@ impl MimeDetectorRegistry {
     where
         P: MimeDetectorProvider + 'static,
     {
-        self.providers
-            .register_shared(provider)
-            .map_err(MimeError::from)
+        self.providers.register_shared(provider).map_err(MimeError::from)
     }
 
     /// Gets canonical provider names in registration order.
@@ -234,13 +232,8 @@ impl MimeDetectorRegistry {
     /// Returns [`MimeError::EmptyDetectorName`] or [`MimeError::InvalidDetectorName`]
     /// when `name` is invalid, or [`MimeError::UnknownDetector`] when no provider
     /// matches.
-    pub fn resolve_provider(
-        &self,
-        name: &str,
-    ) -> MimeResult<&dyn ServiceProvider<MimeDetectorSpec>> {
-        self.providers
-            .resolve_provider(name)
-            .map_err(MimeError::from)
+    pub fn resolve_provider(&self, name: &str) -> MimeResult<&dyn ServiceProvider<MimeDetectorSpec>> {
+        self.providers.resolve_provider(name).map_err(MimeError::from)
     }
 
     /// Creates a boxed detector from a provider name.
@@ -257,9 +250,7 @@ impl MimeDetectorRegistry {
     /// [`MimeError::DetectorUnavailable`] when the provider is unavailable, or
     /// another [`MimeError`] when provider initialization fails.
     pub fn create_box(&self, name: &str, config: &MimeConfig) -> MimeResult<Box<dyn MimeDetector>> {
-        self.providers
-            .create_box(name, config)
-            .map_err(MimeError::from)
+        self.providers.create_box(name, config).map_err(MimeError::from)
     }
 
     /// Creates a shared detector from a provider name.
@@ -276,9 +267,7 @@ impl MimeDetectorRegistry {
     /// [`MimeError::DetectorUnavailable`] when the provider is unavailable, or
     /// another [`MimeError`] when provider initialization fails.
     pub fn create_arc(&self, name: &str, config: &MimeConfig) -> MimeResult<Arc<dyn MimeDetector>> {
-        self.providers
-            .create_arc(name, config)
-            .map_err(MimeError::from)
+        self.providers.create_arc(name, config).map_err(MimeError::from)
     }
 
     /// Creates a boxed detector from the configured default and fallback chain.
@@ -333,8 +322,7 @@ fn provider_selection_from_config(config: &MimeConfig) -> MimeResult<ProviderSel
     if configured.is_empty() || configured.eq_ignore_ascii_case("auto") {
         return Ok(ProviderSelection::Auto);
     }
-    ProviderSelection::from_owned_names(configured, config.mime_detector_fallbacks())
-        .map_err(MimeError::from)
+    ProviderSelection::from_owned_names(configured, config.mime_detector_fallbacks()).map_err(MimeError::from)
 }
 
 /// Locks the default registry for reading.

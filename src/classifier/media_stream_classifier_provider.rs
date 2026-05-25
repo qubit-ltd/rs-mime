@@ -20,7 +20,4 @@ use super::MediaStreamClassifierSpec;
 /// delegating provider behavior to `qubit-spi`.
 pub trait MediaStreamClassifierProvider: ServiceProvider<MediaStreamClassifierSpec> {}
 
-impl<T> MediaStreamClassifierProvider for T where
-    T: ServiceProvider<MediaStreamClassifierSpec> + ?Sized
-{
-}
+impl<T> MediaStreamClassifierProvider for T where T: ServiceProvider<MediaStreamClassifierSpec> + ?Sized {}

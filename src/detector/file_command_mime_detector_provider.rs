@@ -50,12 +50,7 @@ impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
     }
 
     /// Creates a file-command-backed detector.
-    fn create_box(
-        &self,
-        config: &MimeConfig,
-    ) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
-        Ok(Box::new(FileCommandMimeDetector::from_mime_config(
-            config.clone(),
-        )))
+    fn create_box(&self, config: &MimeConfig) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
+        Ok(Box::new(FileCommandMimeDetector::from_mime_config(config.clone())))
     }
 }

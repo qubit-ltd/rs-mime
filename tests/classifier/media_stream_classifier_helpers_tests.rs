@@ -39,11 +39,7 @@ fn test_media_stream_classifier_helpers_validate_public_file_entrypoint() {
         backend.classify_file(Path::new(".")),
         Err(MimeError::InvalidClassifierInput { .. }),
     ));
-    assert!(
-        backend
-            .classify_file(Path::new("__missing_media_file__"))
-            .is_err(),
-    );
+    assert!(backend.classify_file(Path::new("__missing_media_file__")).is_err(),);
 }
 
 #[cfg(unix)]

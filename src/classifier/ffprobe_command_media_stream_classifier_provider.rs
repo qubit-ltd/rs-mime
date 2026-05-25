@@ -50,12 +50,9 @@ impl ServiceProvider<MediaStreamClassifierSpec> for FfprobeCommandMediaStreamCla
     }
 
     /// Creates an FFprobe-backed classifier.
-    fn create_box(
-        &self,
-        config: &MimeConfig,
-    ) -> Result<Box<dyn MediaStreamClassifier>, ProviderCreateError> {
-        Ok(Box::new(
-            FfprobeCommandMediaStreamClassifier::from_mime_config(config.clone()),
-        ))
+    fn create_box(&self, config: &MimeConfig) -> Result<Box<dyn MediaStreamClassifier>, ProviderCreateError> {
+        Ok(Box::new(FfprobeCommandMediaStreamClassifier::from_mime_config(
+            config.clone(),
+        )))
     }
 }

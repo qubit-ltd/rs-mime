@@ -90,11 +90,8 @@ fn test_from_mime_config_sets_max_staging_size() {
 #[cfg(unix)]
 fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
     let temp_dir = TempDir::new().expect("temporary command directory should be created");
-    let script_path = temp_dir
-        .path()
-        .join(FfprobeCommandMediaStreamClassifier::COMMAND);
-    std::fs::write(&script_path, "#!/bin/sh\nprintf 'video\\naudio\\n'\n")
-        .expect("fake ffprobe should be written");
+    let script_path = temp_dir.path().join(FfprobeCommandMediaStreamClassifier::COMMAND);
+    std::fs::write(&script_path, "#!/bin/sh\nprintf 'video\\naudio\\n'\n").expect("fake ffprobe should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake ffprobe metadata should be readable")
         .permissions();
@@ -103,8 +100,8 @@ fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
     std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
 
-    let classifier = FfprobeCommandMediaStreamClassifier::new()
-        .with_command_runner(CommandRunner::new().disable_logging(true));
+    let classifier =
+        FfprobeCommandMediaStreamClassifier::new().with_command_runner(CommandRunner::new().disable_logging(true));
     let mut working_classifier = classifier.clone();
     working_classifier.set_working_directory(Some(".".to_owned()));
 
@@ -136,9 +133,7 @@ fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
 #[cfg(unix)]
 fn test_classify_file_maps_unexpected_ffprobe_exit_to_none() {
     let temp_dir = TempDir::new().expect("temporary command directory should be created");
-    let script_path = temp_dir
-        .path()
-        .join(FfprobeCommandMediaStreamClassifier::COMMAND);
+    let script_path = temp_dir.path().join(FfprobeCommandMediaStreamClassifier::COMMAND);
     std::fs::write(&script_path, "#!/bin/sh\nexit 7\n").expect("fake ffprobe should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake ffprobe metadata should be readable")
@@ -148,8 +143,8 @@ fn test_classify_file_maps_unexpected_ffprobe_exit_to_none() {
     std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
 
-    let classifier = FfprobeCommandMediaStreamClassifier::new()
-        .with_command_runner(CommandRunner::new().disable_logging(true));
+    let classifier =
+        FfprobeCommandMediaStreamClassifier::new().with_command_runner(CommandRunner::new().disable_logging(true));
 
     assert_eq!(
         MediaStreamType::None,

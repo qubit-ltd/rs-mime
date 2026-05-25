@@ -177,10 +177,7 @@ impl MediaStreamClassifierRegistry {
     ///
     /// # Returns
     /// Matching provider, or `None`.
-    pub fn find_provider(
-        &self,
-        name: &str,
-    ) -> Option<&dyn ServiceProvider<MediaStreamClassifierSpec>> {
+    pub fn find_provider(&self, name: &str) -> Option<&dyn ServiceProvider<MediaStreamClassifierSpec>> {
         self.resolve_provider(name).ok()
     }
 
@@ -196,10 +193,7 @@ impl MediaStreamClassifierRegistry {
     /// Returns [`MimeError::EmptyClassifierName`] or [`MimeError::InvalidClassifierName`]
     /// when `name` is invalid, or [`MimeError::UnknownClassifier`] when no provider
     /// matches.
-    pub fn resolve_provider(
-        &self,
-        name: &str,
-    ) -> MimeResult<&dyn ServiceProvider<MediaStreamClassifierSpec>> {
+    pub fn resolve_provider(&self, name: &str) -> MimeResult<&dyn ServiceProvider<MediaStreamClassifierSpec>> {
         self.providers
             .resolve_provider(name)
             .map_err(MimeError::classifier_registry_error)
@@ -218,11 +212,7 @@ impl MediaStreamClassifierRegistry {
     /// Returns [`MimeError::UnknownClassifier`] when no provider matches
     /// `name`, [`MimeError::ClassifierUnavailable`] when the provider is
     /// unavailable, or another [`MimeError`] when provider initialization fails.
-    pub fn create_box(
-        &self,
-        name: &str,
-        config: &MimeConfig,
-    ) -> MimeResult<Box<dyn MediaStreamClassifier>> {
+    pub fn create_box(&self, name: &str, config: &MimeConfig) -> MimeResult<Box<dyn MediaStreamClassifier>> {
         self.providers
             .create_box(name, config)
             .map_err(MimeError::classifier_registry_error)
@@ -241,11 +231,7 @@ impl MediaStreamClassifierRegistry {
     /// Returns [`MimeError::UnknownClassifier`] when no provider matches
     /// `name`, [`MimeError::ClassifierUnavailable`] when the provider is
     /// unavailable, or another [`MimeError`] when provider initialization fails.
-    pub fn create_arc(
-        &self,
-        name: &str,
-        config: &MimeConfig,
-    ) -> MimeResult<Arc<dyn MediaStreamClassifier>> {
+    pub fn create_arc(&self, name: &str, config: &MimeConfig) -> MimeResult<Arc<dyn MediaStreamClassifier>> {
         self.providers
             .create_arc(name, config)
             .map_err(MimeError::classifier_registry_error)
@@ -262,10 +248,7 @@ impl MediaStreamClassifierRegistry {
     /// # Errors
     /// Returns [`MimeError::NoAvailableClassifier`] when no configured provider
     /// can be created.
-    pub fn create_default_box(
-        &self,
-        config: &MimeConfig,
-    ) -> MimeResult<Box<dyn MediaStreamClassifier>> {
+    pub fn create_default_box(&self, config: &MimeConfig) -> MimeResult<Box<dyn MediaStreamClassifier>> {
         let selection = provider_selection_from_config(config)?;
         self.providers
             .create_selected_box(&selection, config)
@@ -283,10 +266,7 @@ impl MediaStreamClassifierRegistry {
     /// # Errors
     /// Returns [`MimeError::NoAvailableClassifier`] when no configured provider
     /// can be created.
-    pub fn create_default_arc(
-        &self,
-        config: &MimeConfig,
-    ) -> MimeResult<Arc<dyn MediaStreamClassifier>> {
+    pub fn create_default_arc(&self, config: &MimeConfig) -> MimeResult<Arc<dyn MediaStreamClassifier>> {
         let selection = provider_selection_from_config(config)?;
         self.providers
             .create_selected_arc(&selection, config)
@@ -354,8 +334,7 @@ fn read_default_registry() -> MimeResult<RwLockReadGuard<'static, MediaStreamCla
 /// Returns [`MimeError::ClassifierBackend`] when the global registry lock has
 /// been poisoned by another thread.
 #[cfg(not(coverage))]
-fn write_default_registry() -> MimeResult<RwLockWriteGuard<'static, MediaStreamClassifierRegistry>>
-{
+fn write_default_registry() -> MimeResult<RwLockWriteGuard<'static, MediaStreamClassifierRegistry>> {
     match DEFAULT_MEDIA_STREAM_CLASSIFIER_REGISTRY.write() {
         Ok(registry) => Ok(registry),
         Err(_) => Err(MimeError::ClassifierBackend {
@@ -373,8 +352,7 @@ fn write_default_registry() -> MimeResult<RwLockWriteGuard<'static, MediaStreamC
 /// # Returns
 /// Write guard for the default registry.
 #[cfg(coverage)]
-fn write_default_registry() -> MimeResult<RwLockWriteGuard<'static, MediaStreamClassifierRegistry>>
-{
+fn write_default_registry() -> MimeResult<RwLockWriteGuard<'static, MediaStreamClassifierRegistry>> {
     Ok(DEFAULT_MEDIA_STREAM_CLASSIFIER_REGISTRY
         .write()
         .unwrap_or_else(PoisonError::into_inner))

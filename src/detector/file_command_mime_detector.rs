@@ -61,11 +61,7 @@ impl FileCommandMimeDetector<'static> {
     /// # Returns
     /// File command detector.
     pub fn from_mime_config(config: MimeConfig) -> Self {
-        Self::with_repository_runner_and_config(
-            default_repository(),
-            Self::default_command_runner(),
-            config,
-        )
+        Self::with_repository_runner_and_config(default_repository(), Self::default_command_runner(), config)
     }
 }
 
@@ -97,10 +93,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// File command detector borrowing `repository` and owning the supplied
     /// runner.
-    pub fn with_repository_and_runner(
-        repository: &'a MimeRepository,
-        command_runner: CommandRunner,
-    ) -> Self {
+    pub fn with_repository_and_runner(repository: &'a MimeRepository, command_runner: CommandRunner) -> Self {
         Self::with_repository_runner_and_config(repository, command_runner, MimeConfig::default())
     }
 
@@ -203,11 +196,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Errors
     /// Returns [`MimeError::Command`](crate::MimeError::Command) when command execution fails.
-    pub fn detect_file(
-        &self,
-        file: &Path,
-        policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>> {
+    pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }
 

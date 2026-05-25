@@ -77,10 +77,7 @@ fn create_repository() -> MimeRepository {
 }
 
 fn names(mime_types: Vec<&MimeType>) -> Vec<String> {
-    mime_types
-        .iter()
-        .map(|mime_type| mime_type.name().to_owned())
-        .collect()
+    mime_types.iter().map(|mime_type| mime_type.name().to_owned()).collect()
 }
 
 #[test]
@@ -142,14 +139,8 @@ fn test_detect_by_filename_handles_literal_other_and_case_sensitive_globs() {
         vec!["text/x-makefile"],
         names(repository.detect_by_filename("README.zh_CN.md"))
     );
-    assert_eq!(
-        vec!["text/x-c++src"],
-        names(repository.detect_by_filename("main.C"))
-    );
-    assert_eq!(
-        vec!["text/x-csrc"],
-        names(repository.detect_by_filename("main.c"))
-    );
+    assert_eq!(vec!["text/x-c++src"], names(repository.detect_by_filename("main.C")));
+    assert_eq!(vec!["text/x-csrc"], names(repository.detect_by_filename("main.c")));
 }
 
 #[test]
@@ -225,11 +216,7 @@ fn test_detect_returns_empty_when_no_rule_matches() {
     let repository = create_repository();
 
     assert!(repository.detect_by_filename("unknown.nope").is_empty());
-    assert!(
-        repository
-            .detect_by_content(b"nothing recognizable")
-            .is_empty()
-    );
+    assert!(repository.detect_by_content(b"nothing recognizable").is_empty());
     assert!(
         repository
             .detect(
@@ -259,10 +246,7 @@ fn test_from_xml_accepts_doctype_and_reports_structural_errors() {
     )
     .expect("DTD-stripped repository should parse");
 
-    assert_eq!(
-        Some("text/plain"),
-        repository.get("text/plain").map(MimeType::name)
-    );
+    assert_eq!(Some("text/plain"), repository.get("text/plain").map(MimeType::name));
     assert!(
         MimeRepository::from_xml("<bad/>")
             .expect_err("bad root should fail")
@@ -270,12 +254,10 @@ fn test_from_xml_accepts_doctype_and_reports_structural_errors() {
             .contains("root element")
     );
     assert!(
-        MimeRepository::from_xml(
-            "<mime-info><mime-type><comment>x</comment></mime-type></mime-info>",
-        )
-        .expect_err("missing type should fail")
-        .to_string()
-        .contains("attribute")
+        MimeRepository::from_xml("<mime-info><mime-type><comment>x</comment></mime-type></mime-info>",)
+            .expect_err("missing type should fail")
+            .to_string()
+            .contains("attribute")
     );
     assert!(
         MimeRepository::from_xml("<!DOCTYPE mime-info [ <mime-info>")

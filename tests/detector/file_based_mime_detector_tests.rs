@@ -171,9 +171,7 @@ fn test_detect_by_content_uses_non_predictable_temporary_file_name() {
     let detected = detector.detect_by_content(b"plain text");
 
     assert_eq!(Some("application/octet-stream".to_owned()), detected);
-    let staged_path = detector
-        .seen_path()
-        .expect("staged path should be recorded");
+    let staged_path = detector.seen_path().expect("staged path should be recorded");
     let filename = staged_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -188,7 +186,8 @@ fn test_detect_by_content_uses_non_predictable_temporary_file_name() {
 #[test]
 fn test_detect_reader_reports_temporary_file_creation_error() {
     const CHILD_ENV: &str = "QUBIT_MIME_CHECK_DETECTOR_TEMPFILE_ERROR";
-    const TEST_NAME: &str = "detector::file_based_mime_detector_tests::test_detect_reader_reports_temporary_file_creation_error";
+    const TEST_NAME: &str =
+        "detector::file_based_mime_detector_tests::test_detect_reader_reports_temporary_file_creation_error";
 
     if std::env::var_os(CHILD_ENV).is_some() {
         let detector = ContentReadingDetector::new();
@@ -207,17 +206,16 @@ fn test_detect_reader_reports_temporary_file_creation_error() {
     let invalid_temp_dir = temp_dir.path().join("not-a-directory");
     LocalFiles::atomic_write(&invalid_temp_dir, b"not a directory")
         .expect("invalid temporary directory placeholder should be created");
-    let output = std::process::Command::new(
-        std::env::current_exe().expect("current test binary path should be available"),
-    )
-    .arg(TEST_NAME)
-    .arg("--exact")
-    .arg("--nocapture")
-    .arg("--test-threads=1")
-    .env(CHILD_ENV, "1")
-    .env("TMPDIR", invalid_temp_dir)
-    .output()
-    .expect("child test process should run");
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test binary path should be available"))
+            .arg(TEST_NAME)
+            .arg("--exact")
+            .arg("--nocapture")
+            .arg("--test-threads=1")
+            .env(CHILD_ENV, "1")
+            .env("TMPDIR", invalid_temp_dir)
+            .output()
+            .expect("child test process should run");
 
     assert!(
         output.status.success(),
@@ -230,7 +228,8 @@ fn test_detect_reader_reports_temporary_file_creation_error() {
 #[test]
 fn test_detect_reader_creates_missing_temporary_directory() {
     const CHILD_ENV: &str = "QUBIT_MIME_CHECK_DETECTOR_MISSING_TMPDIR";
-    const TEST_NAME: &str = "detector::file_based_mime_detector_tests::test_detect_reader_creates_missing_temporary_directory";
+    const TEST_NAME: &str =
+        "detector::file_based_mime_detector_tests::test_detect_reader_creates_missing_temporary_directory";
 
     if std::env::var_os(CHILD_ENV).is_some() {
         let detector = ContentReadingDetector::new();
@@ -247,17 +246,16 @@ fn test_detect_reader_creates_missing_temporary_directory() {
     let temp_dir = LocalTempDir::with_prefix(Some("qubit-mime-detector-missing-"))
         .expect("temporary parent directory should be created");
     let missing_temp_dir = temp_dir.path().join("missing").join("nested");
-    let output = std::process::Command::new(
-        std::env::current_exe().expect("current test binary path should be available"),
-    )
-    .arg(TEST_NAME)
-    .arg("--exact")
-    .arg("--nocapture")
-    .arg("--test-threads=1")
-    .env(CHILD_ENV, "1")
-    .env("TMPDIR", &missing_temp_dir)
-    .output()
-    .expect("child test process should run");
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test binary path should be available"))
+            .arg(TEST_NAME)
+            .arg("--exact")
+            .arg("--nocapture")
+            .arg("--test-threads=1")
+            .env(CHILD_ENV, "1")
+            .env("TMPDIR", &missing_temp_dir)
+            .output()
+            .expect("child test process should run");
 
     assert!(
         output.status.success(),

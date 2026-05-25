@@ -103,12 +103,10 @@ pub struct MimeConfig {
 }
 
 /// Default MIME configuration.
-static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
-    LazyLock::new(|| RwLock::new(MimeConfig::load()));
+static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> = LazyLock::new(|| RwLock::new(MimeConfig::load()));
 
 /// Value read options.
-static VALUE_READ_OPTIONS: LazyLock<ConfigReadOptions> =
-    LazyLock::new(ConfigReadOptions::env_friendly);
+static VALUE_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(ConfigReadOptions::env_friendly);
 
 /// List value read options.
 static LIST_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
@@ -136,8 +134,7 @@ static MAPPING_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
 static DEFAULT_PRECISE_DETECTION_PATTERNS: &[&str] = &["webm", "ogg"];
 
 /// Built-in ambiguous MIME mapping entries.
-static DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES: &[&str] =
-    &["webm:video/webm,audio/webm", "ogg:video/ogg,audio/ogg"];
+static DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES: &[&str] = &["webm:video/webm,audio/webm", "ogg:video/ogg,audio/ogg"];
 
 impl MimeConfig {
     /// Loads configuration from environment variables and defaults.
@@ -217,10 +214,7 @@ impl MimeConfig {
             &VALUE_READ_OPTIONS,
         )?;
         let media_stream_max_staging_size = config.get_any_or_with(
-            [
-                CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
-                ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
-            ],
+            [CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE, ENV_MEDIA_STREAM_MAX_STAGING_SIZE],
             DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
             &VALUE_READ_OPTIONS,
         )?;
@@ -481,10 +475,7 @@ fn build_ambiguous_mime_mapping(entries: Vec<String>) -> HashMap<String, [String
                 None
             } else {
                 Some((
-                    extension
-                        .trim()
-                        .trim_start_matches('.')
-                        .to_ascii_lowercase(),
+                    extension.trim().trim_start_matches('.').to_ascii_lowercase(),
                     [video_type, audio_type],
                 ))
             }
