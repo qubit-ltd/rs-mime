@@ -29,15 +29,8 @@ fn test_new_rejects_inverted_offset_range() {
 
 #[test]
 fn test_matches_string_at_fixed_offset() {
-    let matcher = MimeMagicMatcher::new(
-        MagicValueType::String,
-        0,
-        0,
-        b"%PDF-".to_vec(),
-        None,
-        vec![],
-    )
-    .expect("matcher should be valid");
+    let matcher = MimeMagicMatcher::new(MagicValueType::String, 0, 0, b"%PDF-".to_vec(), None, vec![])
+        .expect("matcher should be valid");
 
     assert!(matcher.matches(b"%PDF-1.7"));
     assert!(!matcher.matches(b"not a pdf"));
@@ -45,15 +38,8 @@ fn test_matches_string_at_fixed_offset() {
 
 #[test]
 fn test_matches_string_in_offset_range() {
-    let matcher = MimeMagicMatcher::new(
-        MagicValueType::String,
-        0,
-        8,
-        b"SQLite".to_vec(),
-        None,
-        vec![],
-    )
-    .expect("matcher should be valid");
+    let matcher = MimeMagicMatcher::new(MagicValueType::String, 0, 8, b"SQLite".to_vec(), None, vec![])
+        .expect("matcher should be valid");
 
     assert!(matcher.matches(b"xxSQLite format 3"));
     assert!(!matcher.matches(b"too far away SQLite"));
@@ -77,15 +63,8 @@ fn test_matches_string_with_mask() {
 
 #[test]
 fn test_matches_byte_with_mask() {
-    let matcher = MimeMagicMatcher::new(
-        MagicValueType::Byte,
-        3,
-        3,
-        vec![0x80],
-        Some(vec![0x80]),
-        vec![],
-    )
-    .expect("matcher should be valid");
+    let matcher = MimeMagicMatcher::new(MagicValueType::Byte, 3, 3, vec![0x80], Some(vec![0x80]), vec![])
+        .expect("matcher should be valid");
 
     assert!(matcher.matches(&[0, 0, 0, 0x80]));
     assert!(matcher.matches(&[0, 0, 0, 0xff]));
@@ -110,24 +89,10 @@ fn test_matches_little32_integer() {
 
 #[test]
 fn test_matches_requires_one_submatcher_when_children_exist() {
-    let child = MimeMagicMatcher::new(
-        MagicValueType::String,
-        4,
-        4,
-        b"child".to_vec(),
-        None,
-        vec![],
-    )
-    .expect("child matcher should be valid");
-    let matcher = MimeMagicMatcher::new(
-        MagicValueType::String,
-        0,
-        0,
-        b"root".to_vec(),
-        None,
-        vec![child],
-    )
-    .expect("parent matcher should be valid");
+    let child = MimeMagicMatcher::new(MagicValueType::String, 4, 4, b"child".to_vec(), None, vec![])
+        .expect("child matcher should be valid");
+    let matcher = MimeMagicMatcher::new(MagicValueType::String, 0, 0, b"root".to_vec(), None, vec![child])
+        .expect("parent matcher should be valid");
 
     assert!(matcher.matches(b"rootchild"));
     assert!(!matcher.matches(b"rootxxxxx"));
@@ -144,14 +109,7 @@ fn test_new_rejects_empty_value_bad_numeric_width_and_bad_mask_width() {
         Err(MimeError::InvalidMagicMatcher { .. })
     ));
     assert!(matches!(
-        MimeMagicMatcher::new(
-            MagicValueType::String,
-            0,
-            0,
-            b"ABC".to_vec(),
-            Some(vec![0xff]),
-            vec![],
-        ),
+        MimeMagicMatcher::new(MagicValueType::String, 0, 0, b"ABC".to_vec(), Some(vec![0xff]), vec![],),
         Err(MimeError::InvalidMagicMatcher { .. })
     ));
 }
@@ -248,9 +206,8 @@ fn test_magic_value_type_names_and_lookup_cover_all_variants() {
 #[test]
 fn test_mime_magic_empty_and_non_empty_matching() {
     let empty = MimeMagic::new(0, Vec::new());
-    let matcher =
-        MimeMagicMatcher::new(MagicValueType::String, 0, 0, b"ABC".to_vec(), None, vec![])
-            .expect("matcher should be valid");
+    let matcher = MimeMagicMatcher::new(MagicValueType::String, 0, 0, b"ABC".to_vec(), None, vec![])
+        .expect("matcher should be valid");
     let magic = MimeMagic::new(25, vec![matcher]);
 
     assert_eq!(0, empty.priority());

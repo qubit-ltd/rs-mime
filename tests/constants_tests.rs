@@ -17,10 +17,7 @@ fn test_mime_configuration_constants_expose_expected_keys_and_defaults() {
     assert_eq!("mime.detector.default", CONFIG_MIME_DETECTOR_DEFAULT);
     assert_eq!("QUBIT_MIME_MAX_BUFFER_SIZE", ENV_MIME_MAX_BUFFER_SIZE);
     assert_eq!("mime.max.buffer.size", CONFIG_MIME_MAX_BUFFER_SIZE);
-    assert_eq!(
-        "QUBIT_MEDIA_STREAM_MAX_STAGING_SIZE",
-        ENV_MEDIA_STREAM_MAX_STAGING_SIZE
-    );
+    assert_eq!("QUBIT_MEDIA_STREAM_MAX_STAGING_SIZE", ENV_MEDIA_STREAM_MAX_STAGING_SIZE);
     assert_eq!(
         "mime.media.stream.max.staging.size",
         CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE

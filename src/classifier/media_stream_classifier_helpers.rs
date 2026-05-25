@@ -90,11 +90,7 @@ pub(crate) fn with_temp_reader<T>(
 /// Returns [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) when
 /// the stream exceeds `max_staging_size`, or [`MimeError::Io`](crate::MimeError::Io) for I/O
 /// failures.
-fn copy_to_temp_file(
-    reader: &mut dyn Read,
-    writer: &mut dyn Write,
-    max_staging_size: u64,
-) -> MimeResult<()> {
+fn copy_to_temp_file(reader: &mut dyn Read, writer: &mut dyn Write, max_staging_size: u64) -> MimeResult<()> {
     Streams::copy_to_end_limited(reader, writer, max_staging_size)
         .map(|_| ())
         .map_err(|error| {

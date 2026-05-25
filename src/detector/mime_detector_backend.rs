@@ -108,34 +108,22 @@ where
 
     /// Detects a MIME type from content candidates.
     fn detect_by_content(&self, content: &[u8]) -> Option<String> {
-        self.guess_from_content(content)
-            .ok()?
-            .first()
-            .map(|mime_type| {
-                self.core().refine_detected_mime_type(
-                    mime_type,
-                    None,
-                    DetectionSource::Content(content),
-                )
-            })
+        self.guess_from_content(content).ok()?.first().map(|mime_type| {
+            self.core()
+                .refine_detected_mime_type(mime_type, None, DetectionSource::Content(content))
+        })
     }
 
     /// Detects a MIME type from content bytes and an optional filename.
-    fn detect(
-        &self,
-        content: &[u8],
-        filename: Option<&str>,
-        policy: MimeDetectionPolicy,
-    ) -> Option<String> {
+    fn detect(&self, content: &[u8], filename: Option<&str>, policy: MimeDetectionPolicy) -> Option<String> {
         let from_filename = filename
             .map(|filename| self.guess_from_filename(filename))
             .unwrap_or_default();
-        let from_content =
-            if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
-                Vec::new()
-            } else {
-                self.guess_from_content(content).unwrap_or_default()
-            };
+        let from_content = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+            Vec::new()
+        } else {
+            self.guess_from_content(content).unwrap_or_default()
+        };
         self.core().select_result(
             &from_filename,
             &from_content,
@@ -155,12 +143,11 @@ where
         let from_filename = filename
             .map(|filename| self.guess_from_filename(filename))
             .unwrap_or_default();
-        let (from_content, content) =
-            if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
-                (Vec::new(), Vec::new())
-            } else {
-                self.guess_from_reader(reader)?
-            };
+        let (from_content, content) = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+            (Vec::new(), Vec::new())
+        } else {
+            self.guess_from_reader(reader)?
+        };
         Ok(self.core().select_result(
             &from_filename,
             &from_content,
@@ -174,12 +161,11 @@ where
     fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         let filename = file.to_string_lossy();
         let from_filename = self.guess_from_filename(&filename);
-        let (from_content, _content) =
-            if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
-                (Vec::new(), Vec::new())
-            } else {
-                self.guess_from_file(file)?
-            };
+        let (from_content, _content) = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+            (Vec::new(), Vec::new())
+        } else {
+            self.guess_from_file(file)?
+        };
         Ok(self.core().select_result(
             &from_filename,
             &from_content,

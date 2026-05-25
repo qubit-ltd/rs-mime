@@ -53,11 +53,7 @@ struct TestProvider {
 
 impl TestProvider {
     /// Creates a classifier provider used by registry tests.
-    fn new(
-        id: &'static str,
-        aliases: &'static [&'static str],
-        stream_type: MediaStreamType,
-    ) -> Self {
+    fn new(id: &'static str, aliases: &'static [&'static str], stream_type: MediaStreamType) -> Self {
         Self {
             id,
             aliases,
@@ -95,10 +91,7 @@ impl ServiceProvider<MediaStreamClassifierSpec> for TestProvider {
         }
     }
 
-    fn create_box(
-        &self,
-        _config: &MimeConfig,
-    ) -> Result<Box<dyn MediaStreamClassifier>, ProviderCreateError> {
+    fn create_box(&self, _config: &MimeConfig) -> Result<Box<dyn MediaStreamClassifier>, ProviderCreateError> {
         Ok(Box::new(NamedClassifier {
             stream_type: self.stream_type,
         }))
@@ -113,10 +106,7 @@ impl ServiceProvider<MediaStreamClassifierSpec> for DefaultMethodProvider {
         ProviderDescriptor::new("default-method")
     }
 
-    fn create_box(
-        &self,
-        _config: &MimeConfig,
-    ) -> Result<Box<dyn MediaStreamClassifier>, ProviderCreateError> {
+    fn create_box(&self, _config: &MimeConfig) -> Result<Box<dyn MediaStreamClassifier>, ProviderCreateError> {
         Ok(Box::new(NamedClassifier {
             stream_type: MediaStreamType::AudioOnly,
         }))
@@ -131,10 +121,7 @@ impl ServiceProvider<MediaStreamClassifierSpec> for FailingProvider {
         ProviderDescriptor::new("failing")
     }
 
-    fn create_box(
-        &self,
-        _config: &MimeConfig,
-    ) -> Result<Box<dyn MediaStreamClassifier>, ProviderCreateError> {
+    fn create_box(&self, _config: &MimeConfig) -> Result<Box<dyn MediaStreamClassifier>, ProviderCreateError> {
         Err(ProviderCreateError::failed("forced failure"))
     }
 }
@@ -299,11 +286,7 @@ fn test_registry_auto_selects_highest_priority_available_provider() {
 fn test_registry_creates_configured_default_by_name() {
     let mut registry = MediaStreamClassifierRegistry::new();
     registry
-        .register(TestProvider::new(
-            "primary",
-            &[],
-            MediaStreamType::VideoWithAudio,
-        ))
+        .register(TestProvider::new("primary", &[], MediaStreamType::VideoWithAudio))
         .expect("primary provider should register");
 
     let classifier = registry
@@ -329,11 +312,7 @@ fn test_registry_skips_unavailable_provider_in_auto_selection() {
         )
         .expect("unavailable provider should register");
     registry
-        .register(TestProvider::new(
-            "available",
-            &[],
-            MediaStreamType::VideoOnly,
-        ))
+        .register(TestProvider::new("available", &[], MediaStreamType::VideoOnly))
         .expect("available provider should register");
 
     let classifier = registry
@@ -443,19 +422,14 @@ fn test_builtin_registry_exposes_ffprobe_provider() {
     );
     assert!(matches!(
         provider.availability(&MimeConfig::default()),
-        MediaStreamClassifierAvailability::Available
-            | MediaStreamClassifierAvailability::Unavailable { .. }
+        MediaStreamClassifierAvailability::Available | MediaStreamClassifierAvailability::Unavailable { .. }
     ));
 }
 
 #[test]
 fn test_resolve_provider_matches_find_provider_for_builtin_names() {
     let registry = MediaStreamClassifierRegistry::builtin();
-    for name in [
-        "ffprobe",
-        "ffprobe-command",
-        "ffprobe-command-media-stream-classifier",
-    ] {
+    for name in ["ffprobe", "ffprobe-command", "ffprobe-command-media-stream-classifier"] {
         let via_resolve = registry
             .resolve_provider(name)
             .unwrap_or_else(|_| panic!("resolve_provider should succeed for '{name}'"));
@@ -517,8 +491,8 @@ fn test_register_default_provider_makes_default_registry_see_provider() {
     ))
     .expect("global test provider should register");
 
-    let registry = MediaStreamClassifierRegistry::default_registry()
-        .expect("default registry snapshot should be available");
+    let registry =
+        MediaStreamClassifierRegistry::default_registry().expect("default registry snapshot should be available");
     let by_name = registry
         .create_box("global-test-classifier", &MimeConfig::default())
         .expect("default registry should create provider by name");
@@ -544,10 +518,7 @@ fn test_register_default_provider_makes_default_registry_see_provider() {
 fn create_classifier_config(classifier: &str) -> MimeConfig {
     let mut config = qubit_config::Config::new();
     config
-        .set(
-            qubit_mime::CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
-            classifier,
-        )
+        .set(qubit_mime::CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, classifier)
         .expect("classifier default should be configurable");
     MimeConfig::from_config(&config).expect("classifier config should parse")
 }

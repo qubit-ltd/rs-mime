@@ -148,12 +148,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
-    pub fn detect_bytes(
-        &self,
-        bytes: &[u8],
-        filename: Option<&str>,
-        policy: MimeDetectionPolicy,
-    ) -> Option<String> {
+    pub fn detect_bytes(&self, bytes: &[u8], filename: Option<&str>, policy: MimeDetectionPolicy) -> Option<String> {
         self.detect(bytes, filename, policy)
     }
 
@@ -189,11 +184,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be opened or read.
-    pub fn detect_file(
-        &self,
-        file: &Path,
-        policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>> {
+    pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }
 
@@ -235,8 +226,7 @@ impl<'a> RepositoryMimeDetector<'a> {
 ///
 pub(crate) fn default_repository() -> &'static MimeRepository {
     DEFAULT_REPOSITORY.get_or_init(|| {
-        MimeRepository::from_xml(DEFAULT_DATABASE)
-            .expect("embedded freedesktop MIME database should parse")
+        MimeRepository::from_xml(DEFAULT_DATABASE).expect("embedded freedesktop MIME database should parse")
     })
 }
 

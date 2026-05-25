@@ -26,8 +26,7 @@ pub const ENV_MEDIA_STREAM_MAX_STAGING_SIZE: &str = "QUBIT_MEDIA_STREAM_MAX_STAG
 pub const ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION: &str = "QUBIT_MIME_ENABLE_PRECISE_DETECTION";
 
 /// Environment variable listing extensions that should use precise detection.
-pub const ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS: &str =
-    "QUBIT_MIME_PRECISE_DETECTION_PATTERNS";
+pub const ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS: &str = "QUBIT_MIME_PRECISE_DETECTION_PATTERNS";
 
 /// Environment variable defining ambiguous extension to MIME mappings.
 pub const ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING: &str = "QUBIT_MIME_AMBIGUOUS_MIME_MAPPING";
@@ -78,8 +77,7 @@ pub const DEFAULT_ENABLE_PRECISE_DETECTION: bool = true;
 pub const DEFAULT_PRECISE_DETECTION_PATTERNS: &str = "webm,ogg";
 
 /// Default ambiguous extension mapping: `extension:video_mime,audio_mime`.
-pub const DEFAULT_AMBIGUOUS_MIME_MAPPING: &str =
-    "webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg";
+pub const DEFAULT_AMBIGUOUS_MIME_MAPPING: &str = "webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg";
 
 /// Default maximum byte buffer size used by detector read paths.
 pub const DEFAULT_MIME_MAX_BUFFER_SIZE: usize = 16 * 1024 * 1024;

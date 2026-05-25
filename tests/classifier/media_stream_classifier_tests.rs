@@ -221,11 +221,7 @@ fn test_backend_classifier_gets_default_content_and_file_entries() {
         classifier.classify_file(Path::new(".")),
         Err(MimeError::InvalidClassifierInput { .. })
     ));
-    assert!(
-        classifier
-            .classify_file(Path::new("__missing_media__"))
-            .is_err()
-    );
+    assert!(classifier.classify_file(Path::new("__missing_media__")).is_err());
 }
 
 #[test]
@@ -249,9 +245,7 @@ fn test_file_based_classifier_uses_non_predictable_temporary_file_name() {
         .expect("content should be staged to a temporary file");
 
     assert_eq!(MediaStreamType::VideoOnly, classified);
-    let staged_path = classifier
-        .seen_path()
-        .expect("staged path should be recorded");
+    let staged_path = classifier.seen_path().expect("staged path should be recorded");
     let filename = staged_path
         .file_name()
         .and_then(|name| name.to_str())
@@ -277,9 +271,7 @@ fn test_file_based_classifier_streams_reader_to_temporary_file_in_bounded_chunks
 
 #[test]
 fn test_file_based_classifier_rejects_reader_exceeding_staging_limit() {
-    let classifier = LimitedLocalFileOnlyClassifier {
-        max_staging_size: 4,
-    };
+    let classifier = LimitedLocalFileOnlyClassifier { max_staging_size: 4 };
     let mut reader = Cursor::new(b"media".to_vec());
 
     let error = classifier
@@ -297,7 +289,8 @@ fn test_file_based_classifier_rejects_reader_exceeding_staging_limit() {
 #[test]
 fn test_file_based_classifier_reports_temporary_file_creation_error() {
     const CHILD_ENV: &str = "QUBIT_MIME_CHECK_CLASSIFIER_TEMPFILE_ERROR";
-    const TEST_NAME: &str = "classifier::media_stream_classifier_tests::test_file_based_classifier_reports_temporary_file_creation_error";
+    const TEST_NAME: &str =
+        "classifier::media_stream_classifier_tests::test_file_based_classifier_reports_temporary_file_creation_error";
 
     if std::env::var_os(CHILD_ENV).is_some() {
         let classifier = LocalFileOnlyClassifier;
@@ -315,17 +308,16 @@ fn test_file_based_classifier_reports_temporary_file_creation_error() {
     let invalid_temp_dir = temp_dir.path().join("not-a-directory");
     LocalFiles::atomic_write(&invalid_temp_dir, b"not a directory")
         .expect("invalid temporary directory placeholder should be created");
-    let output = std::process::Command::new(
-        std::env::current_exe().expect("current test binary path should be available"),
-    )
-    .arg(TEST_NAME)
-    .arg("--exact")
-    .arg("--nocapture")
-    .arg("--test-threads=1")
-    .env(CHILD_ENV, "1")
-    .env("TMPDIR", invalid_temp_dir)
-    .output()
-    .expect("child test process should run");
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test binary path should be available"))
+            .arg(TEST_NAME)
+            .arg("--exact")
+            .arg("--nocapture")
+            .arg("--test-threads=1")
+            .env(CHILD_ENV, "1")
+            .env("TMPDIR", invalid_temp_dir)
+            .output()
+            .expect("child test process should run");
 
     assert!(
         output.status.success(),
@@ -338,7 +330,8 @@ fn test_file_based_classifier_reports_temporary_file_creation_error() {
 #[test]
 fn test_file_based_classifier_creates_missing_temporary_directory() {
     const CHILD_ENV: &str = "QUBIT_MIME_CHECK_CLASSIFIER_MISSING_TMPDIR";
-    const TEST_NAME: &str = "classifier::media_stream_classifier_tests::test_file_based_classifier_creates_missing_temporary_directory";
+    const TEST_NAME: &str =
+        "classifier::media_stream_classifier_tests::test_file_based_classifier_creates_missing_temporary_directory";
 
     if std::env::var_os(CHILD_ENV).is_some() {
         let classifier = LocalFileOnlyClassifier;
@@ -354,17 +347,16 @@ fn test_file_based_classifier_creates_missing_temporary_directory() {
     let temp_dir = LocalTempDir::with_prefix(Some("qubit-mime-classifier-missing-"))
         .expect("temporary parent directory should be created");
     let missing_temp_dir = temp_dir.path().join("missing").join("nested");
-    let output = std::process::Command::new(
-        std::env::current_exe().expect("current test binary path should be available"),
-    )
-    .arg(TEST_NAME)
-    .arg("--exact")
-    .arg("--nocapture")
-    .arg("--test-threads=1")
-    .env(CHILD_ENV, "1")
-    .env("TMPDIR", &missing_temp_dir)
-    .output()
-    .expect("child test process should run");
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test binary path should be available"))
+            .arg(TEST_NAME)
+            .arg("--exact")
+            .arg("--nocapture")
+            .arg("--test-threads=1")
+            .env(CHILD_ENV, "1")
+            .env("TMPDIR", &missing_temp_dir)
+            .output()
+            .expect("child test process should run");
 
     assert!(
         output.status.success(),

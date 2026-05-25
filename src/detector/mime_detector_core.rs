@@ -70,10 +70,7 @@ impl MimeDetectorCore {
     /// # Parameters
     /// - `media_stream_classifier`: Classifier to use, or `None` to disable
     ///   runtime media stream refinement.
-    pub fn set_media_stream_classifier(
-        &mut self,
-        media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>,
-    ) {
+    pub fn set_media_stream_classifier(&mut self, media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>) {
         self.media_stream_classifier = media_stream_classifier;
     }
 
@@ -101,11 +98,7 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
-    pub fn merge_results(
-        &self,
-        from_filename: &[String],
-        from_content: &[String],
-    ) -> Option<String> {
+    pub fn merge_results(&self, from_filename: &[String], from_content: &[String]) -> Option<String> {
         if from_filename.is_empty() {
             return from_content.first().cloned();
         }
@@ -162,9 +155,7 @@ impl MimeDetectorCore {
         filename: Option<&str>,
         source: DetectionSource<'_>,
     ) -> String {
-        let Some([video_type, audio_type]) =
-            self.precise_detection_mapping(detected_mime_type, filename)
-        else {
+        let Some([video_type, audio_type]) = self.precise_detection_mapping(detected_mime_type, filename) else {
             return detected_mime_type.to_owned();
         };
         let Some(classifier) = &self.media_stream_classifier else {
@@ -190,11 +181,7 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Video/audio MIME pair when precise detection should run.
-    fn precise_detection_mapping(
-        &self,
-        detected_mime_type: &str,
-        filename: Option<&str>,
-    ) -> Option<&[String; 2]> {
+    fn precise_detection_mapping(&self, detected_mime_type: &str, filename: Option<&str>) -> Option<&[String; 2]> {
         let mapping_key = self.precise_detection_mapping_key(detected_mime_type, filename)?;
         self.config.ambiguous_mime_mapping().get(&mapping_key)
     }
@@ -207,11 +194,7 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Extension mapping key when precise detection should run.
-    fn precise_detection_mapping_key(
-        &self,
-        detected_mime_type: &str,
-        filename: Option<&str>,
-    ) -> Option<String> {
+    fn precise_detection_mapping_key(&self, detected_mime_type: &str, filename: Option<&str>) -> Option<String> {
         if !self.config.enable_precise_detection() || detected_mime_type.is_empty() {
             return None;
         }
@@ -231,16 +214,8 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Mapping key when the extension and MIME type are ambiguous.
-    fn precise_detection_mapping_key_by_filename(
-        &self,
-        detected_mime_type: &str,
-        extension: String,
-    ) -> Option<String> {
-        if !self
-            .config
-            .precise_detection_patterns()
-            .contains(&extension)
-        {
+    fn precise_detection_mapping_key_by_filename(&self, detected_mime_type: &str, extension: String) -> Option<String> {
+        if !self.config.precise_detection_patterns().contains(&extension) {
             return None;
         }
         let possible_mime_types = self.config.ambiguous_mime_mapping().get(&extension)?;
@@ -261,10 +236,7 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Mapping key when the MIME type is part of an ambiguous mapping.
-    fn precise_detection_mapping_key_by_mime_type(
-        &self,
-        detected_mime_type: &str,
-    ) -> Option<String> {
+    fn precise_detection_mapping_key_by_mime_type(&self, detected_mime_type: &str) -> Option<String> {
         self.config
             .ambiguous_mime_mapping()
             .iter()

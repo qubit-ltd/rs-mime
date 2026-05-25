@@ -92,9 +92,7 @@ fn test_metadata_getters_filename_matching_and_supertype_content_matching() {
 "#,
     )
     .expect("repository should parse");
-    let child = repository
-        .get("application/child")
-        .expect("child type should exist");
+    let child = repository.get("application/child").expect("child type should exist");
 
     assert!(child.matches_content(&repository, b"BASE data"));
     assert!(!child.matches_content(&repository, b"MISS"));
