@@ -35,11 +35,11 @@ regex = "1.12"
 roxmltree = "0.21"
 thiserror = "2.0"
 
-qubit-io = { version = "0.5" }
-qubit-codec = "0.3"
+qubit-io = { version = "0.6" }
+qubit-codec-misc = "0.1"
 qubit-command = "0.4"
 qubit-config = "0.13"
-qubit-local-files = { version = "0.1" }
+qubit-local-files = { version = "0.2" }
 qubit-spi = "0.3"
 
 [dev-dependencies]
