@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! MIME detector backed by the system `file` command.
 //!
 //! This detector uses the embedded repository for filename guesses and invokes
@@ -61,7 +59,11 @@ impl FileCommandMimeDetector<'static> {
     /// # Returns
     /// File command detector.
     pub fn from_mime_config(config: MimeConfig) -> Self {
-        Self::with_repository_runner_and_config(default_repository(), Self::default_command_runner(), config)
+        Self::with_repository_runner_and_config(
+            default_repository(),
+            Self::default_command_runner(),
+            config,
+        )
     }
 }
 
@@ -81,7 +83,10 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// File command detector borrowing `repository`.
     pub fn with_repository(repository: &'a MimeRepository) -> Self {
-        Self::with_repository_and_runner(repository, Self::default_command_runner())
+        Self::with_repository_and_runner(
+            repository,
+            Self::default_command_runner(),
+        )
     }
 
     /// Creates a detector using an explicit repository and command runner.
@@ -93,8 +98,15 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// File command detector borrowing `repository` and owning the supplied
     /// runner.
-    pub fn with_repository_and_runner(repository: &'a MimeRepository, command_runner: CommandRunner) -> Self {
-        Self::with_repository_runner_and_config(repository, command_runner, MimeConfig::default())
+    pub fn with_repository_and_runner(
+        repository: &'a MimeRepository,
+        command_runner: CommandRunner,
+    ) -> Self {
+        Self::with_repository_runner_and_config(
+            repository,
+            command_runner,
+            MimeConfig::default(),
+        )
     }
 
     /// Creates a detector using an explicit repository, runner, and config.
@@ -166,7 +178,10 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// The updated detector.
-    pub fn with_command_runner(mut self, command_runner: CommandRunner) -> Self {
+    pub fn with_command_runner(
+        mut self,
+        command_runner: CommandRunner,
+    ) -> Self {
         self.command_runner = command_runner;
         self
     }
@@ -180,8 +195,12 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Command`](crate::MimeError::Command) when the command cannot be executed.
-    pub fn detect_file_by_content(&self, file: &Path) -> MimeResult<Option<String>> {
+    /// Returns [`MimeError::Command`](crate::MimeError::Command) when the
+    /// command cannot be executed.
+    pub fn detect_file_by_content(
+        &self,
+        file: &Path,
+    ) -> MimeResult<Option<String>> {
         Ok(self.guess_from_file_command(file)?.into_iter().next())
     }
 
@@ -195,8 +214,13 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Command`](crate::MimeError::Command) when command execution fails.
-    pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+    /// Returns [`MimeError::Command`](crate::MimeError::Command) when command
+    /// execution fails.
+    pub fn detect_file(
+        &self,
+        file: &Path,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }
 
@@ -211,7 +235,8 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`](crate::MimeError::Io) when stream operations fail.
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when stream operations
+    /// fail.
     pub fn detect_reader(
         &self,
         reader: &mut dyn ReadSeek,
@@ -261,7 +286,8 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// Zero or one MIME type names.
     ///
     /// # Errors
-    /// Returns [`MimeError::Command`](crate::MimeError::Command) when command execution fails.
+    /// Returns [`MimeError::Command`](crate::MimeError::Command) when command
+    /// execution fails.
     fn guess_from_file_command(&self, path: &Path) -> MimeResult<Vec<String>> {
         let output = self.command_runner.run(Self::command_for_path(path))?;
         let text = output.stdout_lossy_text();

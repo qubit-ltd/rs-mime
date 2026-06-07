@@ -19,14 +19,21 @@ struct StaticDetector;
 
 impl MimeDetector for StaticDetector {
     fn detect_by_filename(&self, filename: &str) -> Option<String> {
-        filename.ends_with(".static").then(|| "application/x-static".to_owned())
+        filename
+            .ends_with(".static")
+            .then(|| "application/x-static".to_owned())
     }
 
     fn detect_by_content(&self, _content: &[u8]) -> Option<String> {
         None
     }
 
-    fn detect(&self, _content: &[u8], filename: Option<&str>, _policy: MimeDetectionPolicy) -> Option<String> {
+    fn detect(
+        &self,
+        _content: &[u8],
+        filename: Option<&str>,
+        _policy: MimeDetectionPolicy,
+    ) -> Option<String> {
         filename.and_then(|name| self.detect_by_filename(name))
     }
 
@@ -39,8 +46,16 @@ impl MimeDetector for StaticDetector {
         Ok(self.detect(&[], filename, policy))
     }
 
-    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
-        Ok(self.detect(&[], file.file_name().and_then(|name| name.to_str()), policy))
+    fn detect_file(
+        &self,
+        file: &Path,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        Ok(self.detect(
+            &[],
+            file.file_name().and_then(|name| name.to_str()),
+            policy,
+        ))
     }
 }
 
@@ -52,7 +67,10 @@ impl ServiceProvider<MimeDetectorSpec> for StaticProvider {
         ProviderDescriptor::new("static")
     }
 
-    fn create_box(&self, _config: &MimeConfig) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
+    fn create_box(
+        &self,
+        _config: &MimeConfig,
+    ) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
         Ok(Box::new(StaticDetector))
     }
 }

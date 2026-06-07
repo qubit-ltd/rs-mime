@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Shared media stream classifier helpers.
 
 use std::io::{
@@ -35,8 +33,9 @@ use crate::{
 /// - `path`: Path to validate.
 ///
 /// # Errors
-/// Returns [`MimeError::Io`](crate::MimeError::Io) when metadata cannot be read or the file cannot
-/// be opened, and [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput)
+/// Returns [`MimeError::Io`](crate::MimeError::Io) when metadata cannot be read
+/// or the file cannot be opened, and
+/// [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput)
 /// when the path is not a regular file.
 pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
     let metadata = path.metadata()?;
@@ -61,16 +60,20 @@ pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
 /// The callback result.
 ///
 /// # Errors
-/// Returns [`MimeError::Io`](crate::MimeError::Io) when the stream cannot be read or the
-/// temporary file cannot be written. Returns
+/// Returns [`MimeError::Io`](crate::MimeError::Io) when the stream cannot be
+/// read or the temporary file cannot be written. Returns
 /// [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) when the
-/// stream exceeds `max_staging_size`, or returns the callback error when classification fails.
+/// stream exceeds `max_staging_size`, or returns the callback error when
+/// classification fails.
 pub(crate) fn with_temp_reader<T>(
     reader: &mut dyn Read,
     max_staging_size: u64,
     classify: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
-    let mut file = LocalTempFile::with_name(Some("FileBasedMediaStreamClassifier-"), Some(".tmp"))?;
+    let mut file = LocalTempFile::with_name(
+        Some("FileBasedMediaStreamClassifier-"),
+        Some(".tmp"),
+    )?;
     {
         let handle = file.writer(FileWriteOptions::default().buffered())?;
         copy_to_temp_file(reader, handle, max_staging_size)?;
@@ -88,9 +91,13 @@ pub(crate) fn with_temp_reader<T>(
 ///
 /// # Errors
 /// Returns [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) when
-/// the stream exceeds `max_staging_size`, or [`MimeError::Io`](crate::MimeError::Io) for I/O
-/// failures.
-fn copy_to_temp_file(reader: &mut dyn Read, writer: &mut dyn Write, max_staging_size: u64) -> MimeResult<()> {
+/// the stream exceeds `max_staging_size`, or
+/// [`MimeError::Io`](crate::MimeError::Io) for I/O failures.
+fn copy_to_temp_file(
+    reader: &mut dyn Read,
+    writer: &mut dyn Write,
+    max_staging_size: u64,
+) -> MimeResult<()> {
     Streams::copy_to_end_limited(reader, writer, max_staging_size)
         .map(|_| ())
         .map_err(|error| {

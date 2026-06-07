@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Tests for MIME type metadata helpers.
 
 use qubit_mime::{
@@ -16,9 +14,12 @@ use qubit_mime::{
 };
 
 #[test]
-fn test_get_preferred_extension_prefers_simple_extension_over_complex_extension() {
-    let simple = MimeGlob::new("*.pdf", 40, false).expect("simple glob should be valid");
-    let complex = MimeGlob::new("*.tar.gz", 100, false).expect("complex glob should be valid");
+fn test_get_preferred_extension_prefers_simple_extension_over_complex_extension()
+ {
+    let simple =
+        MimeGlob::new("*.pdf", 40, false).expect("simple glob should be valid");
+    let complex = MimeGlob::new("*.tar.gz", 100, false)
+        .expect("complex glob should be valid");
     let mime_type = MimeType::builder("application/example")
         .description("", "Example")
         .glob(complex)
@@ -31,7 +32,8 @@ fn test_get_preferred_extension_prefers_simple_extension_over_complex_extension(
 #[test]
 fn test_get_all_extensions_sorts_by_weight_descending() {
     let low = MimeGlob::new("*.low", 10, false).expect("glob should be valid");
-    let high = MimeGlob::new("*.high", 90, false).expect("glob should be valid");
+    let high =
+        MimeGlob::new("*.high", 90, false).expect("glob should be valid");
     let mime_type = MimeType::builder("application/example")
         .description("", "Example")
         .glob(low)
@@ -56,8 +58,10 @@ fn test_description_falls_back_to_default_and_english_entries() {
 
 #[test]
 fn test_metadata_getters_filename_matching_and_supertype_content_matching() {
-    let complex = MimeGlob::new("*.tar.gz", 80, false).expect("glob should be valid");
-    let literal = MimeGlob::new("Makefile", 50, false).expect("glob should be valid");
+    let complex =
+        MimeGlob::new("*.tar.gz", 80, false).expect("glob should be valid");
+    let literal =
+        MimeGlob::new("Makefile", 50, false).expect("glob should be valid");
     let mime_type = MimeType::builder("application/example")
         .alias("application/x-example")
         .glob(complex)
@@ -92,7 +96,9 @@ fn test_metadata_getters_filename_matching_and_supertype_content_matching() {
 "#,
     )
     .expect("repository should parse");
-    let child = repository.get("application/child").expect("child type should exist");
+    let child = repository
+        .get("application/child")
+        .expect("child type should exist");
 
     assert!(child.matches_content(&repository, b"BASE data"));
     assert!(!child.matches_content(&repository, b"MISS"));

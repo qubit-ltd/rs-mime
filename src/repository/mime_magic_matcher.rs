@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! MIME content magic matcher.
 
 use crate::{
@@ -33,9 +31,11 @@ impl MimeMagicMatcher {
     /// - `value_type`: Matcher value type.
     /// - `offset_begin`: First byte offset where the value may match.
     /// - `offset_end`: Last byte offset where the value may match.
-    /// - `value`: Expected value bytes. Numeric values must be stored big-endian.
+    /// - `value`: Expected value bytes. Numeric values must be stored
+    ///   big-endian.
     /// - `mask`: Optional mask bytes with the same length as `value`.
-    /// - `sub_matchers`: Nested matchers; at least one child must match after the parent.
+    /// - `sub_matchers`: Nested matchers; at least one child must match after
+    ///   the parent.
     ///
     /// # Returns
     /// A validated [`MimeMagicMatcher`].
@@ -137,8 +137,12 @@ impl MimeMagicMatcher {
     /// matcher also matches.
     pub fn matches(&self, bytes: &[u8]) -> bool {
         let parent_matches = match self.value_type {
-            MagicValueType::String => self.matches_bytes(bytes, &self.value, self.mask.as_deref()),
-            MagicValueType::Byte => self.matches_bytes(bytes, &self.value, self.mask.as_deref()),
+            MagicValueType::String => {
+                self.matches_bytes(bytes, &self.value, self.mask.as_deref())
+            }
+            MagicValueType::Byte => {
+                self.matches_bytes(bytes, &self.value, self.mask.as_deref())
+            }
             MagicValueType::Host16
             | MagicValueType::Host32
             | MagicValueType::Big16
@@ -156,7 +160,11 @@ impl MimeMagicMatcher {
         if !parent_matches {
             return false;
         }
-        self.sub_matchers.is_empty() || self.sub_matchers.iter().any(|sub_matcher| sub_matcher.matches(bytes))
+        self.sub_matchers.is_empty()
+            || self
+                .sub_matchers
+                .iter()
+                .any(|sub_matcher| sub_matcher.matches(bytes))
     }
 
     /// Tests raw value bytes over this matcher's offset range.
@@ -168,8 +176,16 @@ impl MimeMagicMatcher {
     ///
     /// # Returns
     /// `true` when any allowed offset matches.
-    fn matches_bytes(&self, bytes: &[u8], value: &[u8], mask: Option<&[u8]>) -> bool {
-        if value.is_empty() || bytes.len() < value.len() || self.offset_begin >= bytes.len() {
+    fn matches_bytes(
+        &self,
+        bytes: &[u8],
+        value: &[u8],
+        mask: Option<&[u8]>,
+    ) -> bool {
+        if value.is_empty()
+            || bytes.len() < value.len()
+            || self.offset_begin >= bytes.len()
+        {
             return false;
         }
         let last_possible = bytes.len() - value.len();
@@ -177,7 +193,8 @@ impl MimeMagicMatcher {
         if self.offset_begin > end {
             return false;
         }
-        (self.offset_begin..=end).any(|offset| value_matches_at(bytes, offset, value, mask))
+        (self.offset_begin..=end)
+            .any(|offset| value_matches_at(bytes, offset, value, mask))
     }
 }
 
@@ -206,9 +223,14 @@ fn validate_offsets(offset_begin: usize, offset_end: usize) -> MimeResult<()> {
 ///
 /// # Errors
 /// Returns [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher) when a numeric value has the wrong width.
-fn validate_value_width(value_type: MagicValueType, value: &[u8]) -> MimeResult<()> {
+fn validate_value_width(
+    value_type: MagicValueType,
+    value: &[u8],
+) -> MimeResult<()> {
     if value.is_empty() {
-        return Err(MimeError::invalid_matcher("magic matcher value must not be empty"));
+        return Err(MimeError::invalid_matcher(
+            "magic matcher value must not be empty",
+        ));
     }
     if let Some(width) = value_type.numeric_width()
         && value.len() != width
@@ -266,13 +288,18 @@ fn ordered_numeric_bytes(value_type: MagicValueType, bytes: &[u8]) -> Vec<u8> {
 ///
 /// # Returns
 /// `true` when the byte range matches.
-fn value_matches_at(bytes: &[u8], offset: usize, value: &[u8], mask: Option<&[u8]>) -> bool {
+fn value_matches_at(
+    bytes: &[u8],
+    offset: usize,
+    value: &[u8],
+    mask: Option<&[u8]>,
+) -> bool {
     match mask {
-        Some(mask) => value
-            .iter()
-            .zip(mask.iter())
-            .enumerate()
-            .all(|(index, (value_byte, mask_byte))| (bytes[offset + index] & mask_byte) == (*value_byte & mask_byte)),
+        Some(mask) => value.iter().zip(mask.iter()).enumerate().all(
+            |(index, (value_byte, mask_byte))| {
+                (bytes[offset + index] & mask_byte) == (*value_byte & mask_byte)
+            },
+        ),
         None => value
             .iter()
             .enumerate()

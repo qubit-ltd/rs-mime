@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! MIME type metadata and matching helpers.
 
 use std::collections::{
@@ -151,10 +149,16 @@ impl MimeType {
         let mut extensions: Vec<(&str, u16)> = self
             .globs
             .iter()
-            .filter_map(|glob| extension_from_pattern(glob.pattern()).map(|ext| (ext, glob.weight())))
+            .filter_map(|glob| {
+                extension_from_pattern(glob.pattern())
+                    .map(|ext| (ext, glob.weight()))
+            })
             .collect();
         extensions.sort_by_key(|(_, weight)| std::cmp::Reverse(*weight));
-        extensions.into_iter().map(|(extension, _)| extension).collect()
+        extensions
+            .into_iter()
+            .map(|(extension, _)| extension)
+            .collect()
     }
 
     /// Tests whether any glob rule matches a filename.
@@ -176,7 +180,11 @@ impl MimeType {
     ///
     /// # Returns
     /// `true` when this type or a parent type has matching magic.
-    pub fn matches_content(&self, repository: &MimeRepository, bytes: &[u8]) -> bool {
+    pub fn matches_content(
+        &self,
+        repository: &MimeRepository,
+        bytes: &[u8],
+    ) -> bool {
         self.matched_magic(repository, bytes, 0).is_some()
     }
 
@@ -229,7 +237,12 @@ impl MimeType {
         }
         for parent_name in &self.super_types {
             if let Some(parent) = repository.get(parent_name)
-                && let Some(magic) = parent.matched_magic_inner(repository, bytes, best_priority, visited)
+                && let Some(magic) = parent.matched_magic_inner(
+                    repository,
+                    bytes,
+                    best_priority,
+                    visited,
+                )
             {
                 best_priority = magic.priority();
                 result = Some(magic);
@@ -278,9 +291,9 @@ fn best_extension(globs: &[MimeGlob], complex: bool) -> Option<&str> {
 fn extension_from_pattern(pattern: &str) -> Option<&str> {
     let extension = pattern.strip_prefix("*.")?;
     if extension.is_empty()
-        || extension
-            .chars()
-            .any(|ch| matches!(ch, '*' | '?' | '{' | '}' | '!' | '[' | ']' | '^'))
+        || extension.chars().any(|ch| {
+            matches!(ch, '*' | '?' | '{' | '}' | '!' | '[' | ']' | '^')
+        })
     {
         None
     } else {

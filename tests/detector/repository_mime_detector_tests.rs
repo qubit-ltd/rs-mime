@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Tests for the repository-backed MIME detector.
 
 use std::io::{
@@ -62,9 +60,13 @@ impl Seek for FailingReader {
 
 #[test]
 fn test_detect_by_filename_uses_default_repository() {
-    let detector = RepositoryMimeDetector::new().expect("default repository should load");
+    let detector =
+        RepositoryMimeDetector::new().expect("default repository should load");
 
-    assert_eq!(Some("image/jpeg".to_owned()), detector.detect_by_filename("photo.JPG"));
+    assert_eq!(
+        Some("image/jpeg".to_owned()),
+        detector.detect_by_filename("photo.JPG")
+    );
     assert_eq!(
         Some("application/x-compressed-tar".to_owned()),
         detector.detect_by_filename("/tmp/archive.tar.gz")
@@ -74,7 +76,8 @@ fn test_detect_by_filename_uses_default_repository() {
 
 #[test]
 fn test_detect_by_content_uses_default_repository_magic() {
-    let detector = RepositoryMimeDetector::new().expect("default repository should load");
+    let detector =
+        RepositoryMimeDetector::new().expect("default repository should load");
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -88,29 +91,47 @@ fn test_detect_by_content_uses_default_repository_magic() {
 
 #[test]
 fn test_detect_bytes_merges_filename_and_content_results() {
-    let detector = RepositoryMimeDetector::new().expect("default repository should load");
+    let detector =
+        RepositoryMimeDetector::new().expect("default repository should load");
 
     assert_eq!(
         Some("image/jpeg".to_owned()),
-        detector.detect_bytes(b"%PDF-1.7\n", Some("photo.jpg"), MimeDetectionPolicy::PreferFilename,)
+        detector.detect_bytes(
+            b"%PDF-1.7\n",
+            Some("photo.jpg"),
+            MimeDetectionPolicy::PreferFilename,
+        )
     );
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detector.detect_bytes(b"%PDF-1.7\n", Some("photo.jpg"), MimeDetectionPolicy::VerifyContent,)
+        detector.detect_bytes(
+            b"%PDF-1.7\n",
+            Some("photo.jpg"),
+            MimeDetectionPolicy::VerifyContent,
+        )
     );
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detector.detect_bytes(b"%PDF-1.7\n", None, MimeDetectionPolicy::VerifyContent)
+        detector.detect_bytes(
+            b"%PDF-1.7\n",
+            None,
+            MimeDetectionPolicy::VerifyContent
+        )
     );
 }
 
 #[test]
 fn test_detect_reader_does_not_consume_reader_position() {
-    let detector = RepositoryMimeDetector::new().expect("default repository should load");
+    let detector =
+        RepositoryMimeDetector::new().expect("default repository should load");
     let mut reader = Cursor::new(b"%PDF-1.7\n".to_vec());
 
     let detected = detector
-        .detect_reader(&mut reader, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
+        .detect_reader(
+            &mut reader,
+            Some("document.pdf"),
+            MimeDetectionPolicy::VerifyContent,
+        )
         .expect("reader detection should succeed");
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
@@ -119,9 +140,12 @@ fn test_detect_reader_does_not_consume_reader_position() {
 
 #[test]
 fn test_detect_file_reads_file_and_uses_file_name() {
-    let detector = RepositoryMimeDetector::new().expect("default repository should load");
-    let mut file = NamedTempFile::with_suffix(".pdf").expect("temp file should be created");
-    std::io::Write::write_all(&mut file, b"%PDF-1.7\n").expect("temp file should be writable");
+    let detector =
+        RepositoryMimeDetector::new().expect("default repository should load");
+    let mut file = NamedTempFile::with_suffix(".pdf")
+        .expect("temp file should be created");
+    std::io::Write::write_all(&mut file, b"%PDF-1.7\n")
+        .expect("temp file should be writable");
 
     let detected = detector
         .detect_file(file.path(), MimeDetectionPolicy::VerifyContent)
@@ -133,8 +157,10 @@ fn test_detect_file_reads_file_and_uses_file_name() {
 #[test]
 fn test_accessors_empty_repository_and_reader_errors() {
     let repository = MimeRepository::empty();
-    let config = MimeConfig::from_config(&qubit_config::Config::new()).expect("builtin config should parse");
-    let mut detector = RepositoryMimeDetector::with_repository_and_config(&repository, config);
+    let config = MimeConfig::from_config(&qubit_config::Config::new())
+        .expect("builtin config should parse");
+    let mut detector =
+        RepositoryMimeDetector::with_repository_and_config(&repository, config);
 
     assert!(detector.core().media_stream_classifier().is_some());
     detector.core_mut().set_media_stream_classifier(None);
@@ -144,7 +170,11 @@ fn test_accessors_empty_repository_and_reader_errors() {
     assert_eq!(0, detector.guess_from_content(b"unknown").len());
     assert_eq!(
         None,
-        detector.detect_bytes(b"", Some("unknown.bin"), MimeDetectionPolicy::PreferFilename)
+        detector.detect_bytes(
+            b"",
+            Some("unknown.bin"),
+            MimeDetectionPolicy::PreferFilename
+        )
     );
 
     let mut seek_reader = FailingReader::new(FailureMode::Seek);
@@ -158,11 +188,19 @@ fn test_accessors_empty_repository_and_reader_errors() {
     );
     assert!(
         detector
-            .detect_reader(&mut seek_reader, None, MimeDetectionPolicy::VerifyContent)
+            .detect_reader(
+                &mut seek_reader,
+                None,
+                MimeDetectionPolicy::VerifyContent
+            )
             .is_err()
     );
     let detected = detector
-        .detect_reader(&mut read_reader, None, MimeDetectionPolicy::VerifyContent)
+        .detect_reader(
+            &mut read_reader,
+            None,
+            MimeDetectionPolicy::VerifyContent,
+        )
         .expect("empty repositories should not read content bytes");
     assert_eq!(None, detected);
 }

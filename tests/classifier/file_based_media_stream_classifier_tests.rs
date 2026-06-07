@@ -11,7 +11,10 @@ use qubit_mime::{
 struct FileOnlyClassifier;
 
 impl FileBasedMediaStreamClassifier for FileOnlyClassifier {
-    fn classify_by_local_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
+    fn classify_by_local_file(
+        &self,
+        file: &Path,
+    ) -> MimeResult<MediaStreamType> {
         Ok(if file.is_file() {
             MediaStreamType::VideoWithAudio
         } else {

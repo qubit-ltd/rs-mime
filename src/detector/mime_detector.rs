@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Top-level MIME detector interface.
 
 use std::fmt::Debug;
@@ -49,9 +47,15 @@ pub trait MimeDetector: Debug + Send + Sync {
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
-    fn detect(&self, content: &[u8], filename: Option<&str>, policy: MimeDetectionPolicy) -> Option<String>;
+    fn detect(
+        &self,
+        content: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> Option<String>;
 
-    /// Detects a MIME type from a seekable reader without consuming its position.
+    /// Detects a MIME type from a seekable reader without consuming its
+    /// position.
     ///
     /// # Parameters
     /// - `reader`: Reader to inspect. The original stream position is restored.
@@ -62,7 +66,8 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking fails.
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking
+    /// fails.
     fn detect_reader(
         &self,
         reader: &mut dyn ReadSeek,
@@ -80,9 +85,14 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be opened or read, or
-    /// another [`MimeError`](crate::MimeError) when a detector backend fails.
-    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>>;
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be
+    /// opened or read, or another [`MimeError`](crate::MimeError) when a
+    /// detector backend fails.
+    fn detect_file(
+        &self,
+        file: &Path,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>>;
 }
 
 impl MimeDetector for Box<dyn MimeDetector> {
@@ -97,7 +107,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
     }
 
     /// Delegates combined detection to the boxed detector.
-    fn detect(&self, content: &[u8], filename: Option<&str>, policy: MimeDetectionPolicy) -> Option<String> {
+    fn detect(
+        &self,
+        content: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> Option<String> {
         self.as_ref().detect(content, filename, policy)
     }
 
@@ -112,7 +127,11 @@ impl MimeDetector for Box<dyn MimeDetector> {
     }
 
     /// Delegates file detection to the boxed detector.
-    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+    fn detect_file(
+        &self,
+        file: &Path,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
         self.as_ref().detect_file(file, policy)
     }
 }
@@ -129,7 +148,12 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     }
 
     /// Delegates combined detection to the shared detector.
-    fn detect(&self, content: &[u8], filename: Option<&str>, policy: MimeDetectionPolicy) -> Option<String> {
+    fn detect(
+        &self,
+        content: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> Option<String> {
         self.as_ref().detect(content, filename, policy)
     }
 
@@ -144,7 +168,11 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     }
 
     /// Delegates file detection to the shared detector.
-    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+    fn detect_file(
+        &self,
+        file: &Path,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
         self.as_ref().detect_file(file, policy)
     }
 }

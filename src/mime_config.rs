@@ -1,19 +1,16 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Configuration values for MIME detection.
 //!
 //! [`MimeConfig`] is the runtime configuration shared by detector wrappers,
 //! detector providers, and media-stream refinement. It can be loaded from a
 //! [`Config`] object, from process environment variables, or from built-in
 //! defaults.
-//!
 
 use std::collections::{
     HashMap,
@@ -90,7 +87,8 @@ pub struct MimeConfig {
     mime_detector_fallbacks: Vec<String>,
     /// Default media stream classifier selector.
     media_stream_classifier_default: String,
-    /// Maximum bytes staged from reader/content input for media stream classification.
+    /// Maximum bytes staged from reader/content input for media stream
+    /// classification.
     media_stream_max_staging_size: u64,
     /// Whether precise media-stream detection is enabled.
     enable_precise_detection: bool,
@@ -103,10 +101,12 @@ pub struct MimeConfig {
 }
 
 /// Default MIME configuration.
-static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> = LazyLock::new(|| RwLock::new(MimeConfig::load()));
+static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
+    LazyLock::new(|| RwLock::new(MimeConfig::load()));
 
 /// Value read options.
-static VALUE_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(ConfigReadOptions::env_friendly);
+static VALUE_READ_OPTIONS: LazyLock<ConfigReadOptions> =
+    LazyLock::new(ConfigReadOptions::env_friendly);
 
 /// List value read options.
 static LIST_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
@@ -120,21 +120,23 @@ static LIST_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
 });
 
 /// Mapping read options.
-static MAPPING_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
-    ConfigReadOptions::env_friendly().with_collection_options(
-        CollectionReadOptions::default()
-            .with_split_scalar_strings(true)
-            .with_delimiters([';'])
-            .with_trim_items(true)
-            .with_empty_item_policy(EmptyItemPolicy::Skip),
-    )
-});
+static MAPPING_READ_OPTIONS: LazyLock<ConfigReadOptions> =
+    LazyLock::new(|| {
+        ConfigReadOptions::env_friendly().with_collection_options(
+            CollectionReadOptions::default()
+                .with_split_scalar_strings(true)
+                .with_delimiters([';'])
+                .with_trim_items(true)
+                .with_empty_item_policy(EmptyItemPolicy::Skip),
+        )
+    });
 
 /// Built-in precise detection patterns.
 static DEFAULT_PRECISE_DETECTION_PATTERNS: &[&str] = &["webm", "ogg"];
 
 /// Built-in ambiguous MIME mapping entries.
-static DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES: &[&str] = &["webm:video/webm,audio/webm", "ogg:video/ogg,audio/ogg"];
+static DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES: &[&str] =
+    &["webm:video/webm,audio/webm", "ogg:video/ogg,audio/ogg"];
 
 impl MimeConfig {
     /// Loads configuration from environment variables and defaults.
@@ -214,7 +216,10 @@ impl MimeConfig {
             &VALUE_READ_OPTIONS,
         )?;
         let media_stream_max_staging_size = config.get_any_or_with(
-            [CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE, ENV_MEDIA_STREAM_MAX_STAGING_SIZE],
+            [
+                CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
+                ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
+            ],
             DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
             &VALUE_READ_OPTIONS,
         )?;
@@ -249,12 +254,18 @@ impl MimeConfig {
         )?;
         Ok(Self {
             mime_detector_default,
-            mime_detector_fallbacks: normalize_detector_names(mime_detector_fallbacks),
+            mime_detector_fallbacks: normalize_detector_names(
+                mime_detector_fallbacks,
+            ),
             media_stream_classifier_default,
             media_stream_max_staging_size,
             enable_precise_detection,
-            precise_detection_patterns: normalize_patterns(precise_detection_patterns),
-            ambiguous_mime_mapping: build_ambiguous_mime_mapping(ambiguous_mime_mapping),
+            precise_detection_patterns: normalize_patterns(
+                precise_detection_patterns,
+            ),
+            ambiguous_mime_mapping: build_ambiguous_mime_mapping(
+                ambiguous_mime_mapping,
+            ),
             max_buffer_size,
         })
     }
@@ -330,10 +341,12 @@ impl MimeConfig {
         &self.media_stream_classifier_default
     }
 
-    /// Gets the maximum staging size for reader/content media stream classification.
+    /// Gets the maximum staging size for reader/content media stream
+    /// classification.
     ///
     /// # Returns
-    /// Maximum number of bytes copied to a temporary file for one classifier input.
+    /// Maximum number of bytes copied to a temporary file for one classifier
+    /// input.
     pub fn media_stream_max_staging_size(&self) -> u64 {
         self.media_stream_max_staging_size
     }
@@ -378,8 +391,10 @@ impl MimeConfig {
         Self {
             mime_detector_default: DEFAULT_MIME_DETECTOR.to_owned(),
             mime_detector_fallbacks: fallback_defaults(),
-            media_stream_classifier_default: DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
-            media_stream_max_staging_size: DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
+            media_stream_classifier_default: DEFAULT_MEDIA_STREAM_CLASSIFIER
+                .to_owned(),
+            media_stream_max_staging_size:
+                DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
             enable_precise_detection: DEFAULT_ENABLE_PRECISE_DETECTION,
             precise_detection_patterns: normalize_patterns(
                 DEFAULT_PRECISE_DETECTION_PATTERNS
@@ -459,7 +474,9 @@ fn normalize_patterns(patterns: Vec<String>) -> HashSet<String> {
 ///
 /// # Returns
 /// Lowercase extension to MIME pair mapping.
-fn build_ambiguous_mime_mapping(entries: Vec<String>) -> HashMap<String, [String; 2]> {
+fn build_ambiguous_mime_mapping(
+    entries: Vec<String>,
+) -> HashMap<String, [String; 2]> {
     entries
         .into_iter()
         .filter_map(|entry| {
@@ -475,7 +492,10 @@ fn build_ambiguous_mime_mapping(entries: Vec<String>) -> HashMap<String, [String
                 None
             } else {
                 Some((
-                    extension.trim().trim_start_matches('.').to_ascii_lowercase(),
+                    extension
+                        .trim()
+                        .trim_start_matches('.')
+                        .to_ascii_lowercase(),
                     [video_type, audio_type],
                 ))
             }

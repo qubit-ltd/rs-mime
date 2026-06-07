@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Magic matcher value type.
 
 /// Value type used by a MIME magic matcher.
@@ -85,9 +83,11 @@ impl MagicValueType {
     /// Tells whether this type should be matched in little-endian byte order.
     ///
     /// # Returns
-    /// `true` when the stored big-endian bytes must be reversed before matching.
+    /// `true` when the stored big-endian bytes must be reversed before
+    /// matching.
     pub(crate) fn uses_little_endian_order(self) -> bool {
         matches!(self, Self::Little16 | Self::Little32)
-            || (cfg!(target_endian = "little") && matches!(self, Self::Host16 | Self::Host32))
+            || (cfg!(target_endian = "little")
+                && matches!(self, Self::Host16 | Self::Host32))
     }
 }

@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Provider contract for pluggable MIME detector implementations.
 //!
 //! The MIME detector SPI is a domain binding over [`qubit_spi`]. Providers
@@ -25,4 +23,7 @@ use super::MimeDetectorSpec;
 /// MIME-specific while delegating provider behavior to `qubit-spi`.
 pub trait MimeDetectorProvider: ServiceProvider<MimeDetectorSpec> {}
 
-impl<T> MimeDetectorProvider for T where T: ServiceProvider<MimeDetectorSpec> + ?Sized {}
+impl<T> MimeDetectorProvider for T where
+    T: ServiceProvider<MimeDetectorSpec> + ?Sized
+{
+}
