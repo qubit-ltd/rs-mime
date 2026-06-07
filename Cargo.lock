@@ -631,7 +631,7 @@ dependencies = [
 
 [[package]]
 name = "qubit-mime"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "qubit-codec-misc",
  "qubit-command",
