@@ -1,29 +1,19 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Helpers for stream-backed MIME detectors.
 
 use std::fmt::Debug;
-use std::fs::File;
-use std::io::BufReader;
 use std::path::Path;
 
-use qubit_io::{
-    ReadSeek,
-    ReadSeekExt,
-};
+use qubit_io::{ReadSeek, ReadSeekExt};
+use qubit_local_files::{FileReadOptions, LocalFiles};
 
-use crate::{
-    MimeDetectorCore,
-    MimeError,
-    MimeResult,
-};
+use crate::{MimeDetectorCore, MimeError, MimeResult};
 
 /// Core implementation contract for detectors that can inspect content bytes.
 pub trait StreamBasedMimeDetector: Debug + Send + Sync {
@@ -70,7 +60,10 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     ///
     /// # Errors
     /// Returns an error when reading, seeking, or backend inspection fails.
-    fn guess_from_reader_stream(&self, reader: &mut dyn ReadSeek) -> MimeResult<(Vec<String>, Vec<u8>)> {
+    fn guess_from_reader_stream(
+        &self,
+        reader: &mut dyn ReadSeek,
+    ) -> MimeResult<(Vec<String>, Vec<u8>)> {
         let content = read_prefix(reader, self.max_test_bytes(), self.core().max_buffer_size())?;
         let candidates = self.guess_from_content_bytes(&content)?;
         Ok((candidates, content))
@@ -85,9 +78,10 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     /// Candidate MIME type names and the content prefix used for refinement.
     ///
     /// # Errors
-    /// Returns an error when opening, reading, seeking, or backend inspection fails.
+    /// Returns an error when opening, reading, seeking, or backend inspection
+    /// fails.
     fn guess_from_file_stream(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let mut reader = BufReader::new(File::open(file)?);
+        let mut reader = LocalFiles::open_reader(file, FileReadOptions::buffered())?;
         self.guess_from_reader_stream(&mut reader)
     }
 }
@@ -104,9 +98,13 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
 ///
 /// # Errors
 /// Returns [`MimeError::BufferLimitExceeded`](crate::MimeError::BufferLimitExceeded) when
-/// `max_bytes` exceeds `max_buffer_size`. Returns [`MimeError::Io`](crate::MimeError::Io) when
-/// reading or seeking fails.
-pub(crate) fn read_prefix(reader: &mut dyn ReadSeek, max_bytes: usize, max_buffer_size: usize) -> MimeResult<Vec<u8>> {
+/// `max_bytes` exceeds `max_buffer_size`. Returns
+/// [`MimeError::Io`](crate::MimeError::Io) when reading or seeking fails.
+pub(crate) fn read_prefix(
+    reader: &mut dyn ReadSeek,
+    max_bytes: usize,
+    max_buffer_size: usize,
+) -> MimeResult<Vec<u8>> {
     if max_bytes > max_buffer_size {
         return Err(MimeError::BufferLimitExceeded {
             requested: max_bytes,

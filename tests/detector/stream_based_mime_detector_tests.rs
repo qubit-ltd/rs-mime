@@ -1,34 +1,18 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 
-use std::io::{
-    Cursor,
-    Error,
-    Read,
-    Result as IoResult,
-    Seek,
-    SeekFrom,
-};
+use std::io::{Cursor, Error, ErrorKind, Read, Result as IoResult, Seek, SeekFrom};
 
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, tempdir};
 
 use qubit_mime::{
-    CONFIG_MIME_MAX_BUFFER_SIZE,
-    MimeConfig,
-    MimeDetectionPolicy,
-    MimeDetector,
-    MimeDetectorBackend,
-    MimeDetectorCore,
-    MimeError,
-    MimeResult,
-    StreamBasedMimeDetector,
+    CONFIG_MIME_MAX_BUFFER_SIZE, MimeConfig, MimeDetectionPolicy, MimeDetector,
+    MimeDetectorBackend, MimeDetectorCore, MimeError, MimeResult, StreamBasedMimeDetector,
 };
 
 #[derive(Debug)]
@@ -42,7 +26,8 @@ struct ShortReadSeek {
 }
 
 impl ShortReadSeek {
-    /// Creates a seekable reader that returns at most `max_chunk_size` bytes per read.
+    /// Creates a seekable reader that returns at most `max_chunk_size` bytes
+    /// per read.
     fn new(content: &[u8], max_chunk_size: usize) -> Self {
         Self {
             inner: Cursor::new(content.to_vec()),
@@ -104,7 +89,9 @@ impl Seek for ReadErrorAfterPositionChange {
                 self.position = position;
                 Ok(position)
             }
-            SeekFrom::Current(_) | SeekFrom::End(_) => Err(Error::other("unsupported seek operation")),
+            SeekFrom::Current(_) | SeekFrom::End(_) => {
+                Err(Error::other("unsupported seek operation"))
+            }
         }
     }
 }
@@ -147,7 +134,8 @@ impl StreamBasedMimeDetector for PrefixDetector {
     }
 }
 
-/// Verifies a stream-based detector gets reader detection without backend boilerplate.
+/// Verifies a stream-based detector gets reader detection without backend
+/// boilerplate.
 #[test]
 fn test_detect_reader_uses_stream_based_defaults() {
     let detector = PrefixDetector::new();
@@ -187,12 +175,14 @@ fn test_detect_reader_restores_position_after_read_error() {
     assert_eq!(3, reader.position());
 }
 
-/// Verifies a stream-based detector gets local-file detection without backend boilerplate.
+/// Verifies a stream-based detector gets local-file detection without backend
+/// boilerplate.
 #[test]
 fn test_detect_file_uses_stream_based_defaults() {
     let detector = PrefixDetector::new();
     let mut file = NamedTempFile::new().expect("temporary file should be created");
-    std::io::Write::write_all(&mut file, b"hello world").expect("temporary file should be writable");
+    std::io::Write::write_all(&mut file, b"hello world")
+        .expect("temporary file should be writable");
 
     let detected = detector
         .detect_file(file.path(), MimeDetectionPolicy::VerifyContent)
@@ -204,12 +194,31 @@ fn test_detect_file_uses_stream_based_defaults() {
 #[test]
 fn test_stream_based_backend_max_bytes_and_file_open_error_are_covered() {
     let detector = PrefixDetector::new();
-    let missing_path = std::env::temp_dir().join(format!("qubit-mime-missing-{}", std::process::id()));
+    let missing_path =
+        std::env::temp_dir().join(format!("qubit-mime-missing-{}", std::process::id()));
 
     assert_eq!(5, MimeDetectorBackend::max_test_bytes(&detector));
     assert!(
         StreamBasedMimeDetector::guess_from_file_stream(&detector, &missing_path).is_err(),
         "missing file should propagate the open error"
+    );
+}
+
+#[test]
+fn test_guess_from_file_stream_rejects_directory_before_reading() {
+    let detector = PrefixDetector::new();
+    let dir = tempdir().expect("temporary directory should be created");
+
+    let error = StreamBasedMimeDetector::guess_from_file_stream(&detector, dir.path())
+        .expect_err("directory paths should be rejected as files");
+
+    let MimeError::Io(error) = error else {
+        panic!("directory input should be reported as an I/O error");
+    };
+    assert_eq!(ErrorKind::InvalidInput, error.kind());
+    assert!(
+        error.to_string().contains("path is not a file"),
+        "directory error should describe the invalid file path"
     );
 }
 
@@ -220,7 +229,8 @@ fn test_detect_reader_rejects_prefix_buffer_larger_than_configured_limit() {
         .set(CONFIG_MIME_MAX_BUFFER_SIZE, 4_usize)
         .expect("maximum buffer size should be configurable");
     let detector = PrefixDetector::with_core(MimeDetectorCore::new(
-        MimeConfig::from_config(&config).expect("MIME config should parse with a custom maximum buffer size"),
+        MimeConfig::from_config(&config)
+            .expect("MIME config should parse with a custom maximum buffer size"),
     ));
     let mut reader = Cursor::new(b"hello world".to_vec());
 
@@ -230,7 +240,10 @@ fn test_detect_reader_rejects_prefix_buffer_larger_than_configured_limit() {
 
     assert!(matches!(
         error,
-        MimeError::BufferLimitExceeded { requested: 5, limit: 4 }
+        MimeError::BufferLimitExceeded {
+            requested: 5,
+            limit: 4
+        }
     ));
     assert_eq!(0, reader.position());
 }
