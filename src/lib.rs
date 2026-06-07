@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! # Qubit MIME
 //!
 //! MIME type detection based on filename glob rules, content magic rules, and
@@ -15,9 +13,8 @@
 //! The crate ships with two detector providers:
 //!
 //! - `repository`: an embedded detector that uses the bundled MIME repository.
-//! - `file`: a detector that delegates content detection to the system
-//!   `file --mime-type --brief` command and uses the repository for filename
-//!   guesses.
+//! - `file`: a detector that delegates content detection to the system `file
+//!   --mime-type --brief` command and uses the repository for filename guesses.
 //!
 //! Detectors are created through [`MimeDetectorRegistry`]. The configured
 //! default detector is tried first, followed by the configured fallback chain.

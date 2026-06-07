@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! MIME content magic rule.
 
 use crate::MimeMagicMatcher;
@@ -30,7 +28,8 @@ impl MimeMagic {
     ///
     /// # Parameters
     /// - `priority`: Priority in `0..=100`.
-    /// - `matchers`: Root matchers. Any root matcher may satisfy the magic rule.
+    /// - `matchers`: Root matchers. Any root matcher may satisfy the magic
+    ///   rule.
     ///
     /// # Returns
     /// A new [`MimeMagic`].

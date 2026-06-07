@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Provider for the built-in repository-backed MIME detector.
 
 use crate::{
@@ -36,7 +34,12 @@ impl ServiceProvider<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
     }
 
     /// Creates a repository-backed detector.
-    fn create_box(&self, config: &MimeConfig) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
-        Ok(Box::new(RepositoryMimeDetector::from_mime_config(config.clone())))
+    fn create_box(
+        &self,
+        config: &MimeConfig,
+    ) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
+        Ok(Box::new(RepositoryMimeDetector::from_mime_config(
+            config.clone(),
+        )))
     }
 }

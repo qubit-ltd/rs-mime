@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Repository-backed MIME detector.
 
 use std::path::Path;
@@ -22,7 +20,8 @@ use crate::{
     StreamBasedMimeDetector,
 };
 
-const DEFAULT_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
+const DEFAULT_DATABASE: &str =
+    include_str!("../../resources/freedesktop.org-v2.4.xml");
 
 static DEFAULT_REPOSITORY: OnceLock<MimeRepository> = OnceLock::new();
 
@@ -86,7 +85,10 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// A detector borrowing `repository`.
-    pub fn with_repository_and_config(repository: &'a MimeRepository, config: MimeConfig) -> Self {
+    pub fn with_repository_and_config(
+        repository: &'a MimeRepository,
+        config: MimeConfig,
+    ) -> Self {
         Self {
             core: MimeDetectorCore::from_mime_config(config),
             repository,
@@ -148,11 +150,17 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
-    pub fn detect_bytes(&self, bytes: &[u8], filename: Option<&str>, policy: MimeDetectionPolicy) -> Option<String> {
+    pub fn detect_bytes(
+        &self,
+        bytes: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> Option<String> {
         self.detect(bytes, filename, policy)
     }
 
-    /// Detects a MIME type from a seekable reader without consuming its position.
+    /// Detects a MIME type from a seekable reader without consuming its
+    /// position.
     ///
     /// # Parameters
     /// - `reader`: Reader to inspect. The original stream position is restored.
@@ -163,7 +171,8 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking fails.
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking
+    /// fails.
     pub fn detect_reader(
         &self,
         reader: &mut dyn qubit_io::ReadSeek,
@@ -183,8 +192,13 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be opened or read.
-    pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be
+    /// opened or read.
+    pub fn detect_file(
+        &self,
+        file: &Path,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }
 
@@ -223,10 +237,10 @@ impl<'a> RepositoryMimeDetector<'a> {
 ///
 /// # Returns
 /// Shared parsed repository.
-///
 pub(crate) fn default_repository() -> &'static MimeRepository {
     DEFAULT_REPOSITORY.get_or_init(|| {
-        MimeRepository::from_xml(DEFAULT_DATABASE).expect("embedded freedesktop MIME database should parse")
+        MimeRepository::from_xml(DEFAULT_DATABASE)
+            .expect("embedded freedesktop MIME database should parse")
     })
 }
 
@@ -247,7 +261,10 @@ impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
     }
 
     /// Guesses MIME type names from content magic rules.
-    fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+    fn guess_from_content_bytes(
+        &self,
+        content: &[u8],
+    ) -> MimeResult<Vec<String>> {
         Ok(RepositoryMimeDetector::guess_from_content(self, content))
     }
 }

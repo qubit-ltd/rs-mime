@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! File-backed MIME detector helpers.
 
 use std::fmt::Debug;
@@ -80,13 +78,24 @@ where
     }
 
     /// Stages content to a temporary local file before inspection.
-    fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
-        with_temp_file(content, |path| FileBasedMimeDetector::guess_from_local_file(self, path))
+    fn guess_from_content_bytes(
+        &self,
+        content: &[u8],
+    ) -> MimeResult<Vec<String>> {
+        with_temp_file(content, |path| {
+            FileBasedMimeDetector::guess_from_local_file(self, path)
+        })
     }
 
     /// Delegates local-file inspection to the file-based hook.
-    fn guess_from_file_stream(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        Ok((FileBasedMimeDetector::guess_from_local_file(self, file)?, Vec::new()))
+    fn guess_from_file_stream(
+        &self,
+        file: &Path,
+    ) -> MimeResult<(Vec<String>, Vec<u8>)> {
+        Ok((
+            FileBasedMimeDetector::guess_from_local_file(self, file)?,
+            Vec::new(),
+        ))
     }
 }
 
@@ -100,9 +109,14 @@ where
 /// The callback result.
 ///
 /// # Errors
-/// Returns [`MimeError::Io`](crate::MimeError::Io) when the temporary file cannot be written.
-pub(crate) fn with_temp_file<T>(content: &[u8], detect: impl FnOnce(&Path) -> MimeResult<T>) -> MimeResult<T> {
-    let mut file = LocalTempFile::with_name(Some("MimeDetectorTemp-"), Some(".tmp"))?;
+/// Returns [`MimeError::Io`](crate::MimeError::Io) when the temporary file
+/// cannot be written.
+pub(crate) fn with_temp_file<T>(
+    content: &[u8],
+    detect: impl FnOnce(&Path) -> MimeResult<T>,
+) -> MimeResult<T> {
+    let mut file =
+        LocalTempFile::with_name(Some("MimeDetectorTemp-"), Some(".tmp"))?;
     {
         let handle = file.writer(FileWriteOptions::default().buffered())?;
         handle.write_all(content)?;

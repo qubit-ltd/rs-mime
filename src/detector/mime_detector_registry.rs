@@ -1,18 +1,16 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Registry for pluggable MIME detector providers.
 //!
 //! The registry is the selection layer used by MIME detector factories. It maps
-//! stable provider names and aliases to factories, checks provider availability,
-//! and resolves configured fallback chains. Applications can use the
-//! process-wide default registry or keep an explicit registry for provider
+//! stable provider names and aliases to factories, checks provider
+//! availability, and resolves configured fallback chains. Applications can use
+//! the process-wide default registry or keep an explicit registry for provider
 //! isolation.
 // qubit-style: allow coverage-cfg
 
@@ -198,7 +196,9 @@ impl MimeDetectorRegistry {
     where
         P: MimeDetectorProvider + 'static,
     {
-        self.providers.register_shared(provider).map_err(MimeError::from)
+        self.providers
+            .register_shared(provider)
+            .map_err(MimeError::from)
     }
 
     /// Gets canonical provider names in registration order.
@@ -216,7 +216,10 @@ impl MimeDetectorRegistry {
     ///
     /// # Returns
     /// Matching provider, or `None`.
-    pub fn find_provider(&self, name: &str) -> Option<&dyn ServiceProvider<MimeDetectorSpec>> {
+    pub fn find_provider(
+        &self,
+        name: &str,
+    ) -> Option<&dyn ServiceProvider<MimeDetectorSpec>> {
         self.resolve_provider(name).ok()
     }
 
@@ -229,11 +232,16 @@ impl MimeDetectorRegistry {
     /// Matching provider.
     ///
     /// # Errors
-    /// Returns [`MimeError::EmptyDetectorName`] or [`MimeError::InvalidDetectorName`]
-    /// when `name` is invalid, or [`MimeError::UnknownDetector`] when no provider
-    /// matches.
-    pub fn resolve_provider(&self, name: &str) -> MimeResult<&dyn ServiceProvider<MimeDetectorSpec>> {
-        self.providers.resolve_provider(name).map_err(MimeError::from)
+    /// Returns [`MimeError::EmptyDetectorName`] or
+    /// [`MimeError::InvalidDetectorName`] when `name` is invalid, or
+    /// [`MimeError::UnknownDetector`] when no provider matches.
+    pub fn resolve_provider(
+        &self,
+        name: &str,
+    ) -> MimeResult<&dyn ServiceProvider<MimeDetectorSpec>> {
+        self.providers
+            .resolve_provider(name)
+            .map_err(MimeError::from)
     }
 
     /// Creates a boxed detector from a provider name.
@@ -249,8 +257,14 @@ impl MimeDetectorRegistry {
     /// Returns [`MimeError::UnknownDetector`] when no provider matches `name`,
     /// [`MimeError::DetectorUnavailable`] when the provider is unavailable, or
     /// another [`MimeError`] when provider initialization fails.
-    pub fn create_box(&self, name: &str, config: &MimeConfig) -> MimeResult<Box<dyn MimeDetector>> {
-        self.providers.create_box(name, config).map_err(MimeError::from)
+    pub fn create_box(
+        &self,
+        name: &str,
+        config: &MimeConfig,
+    ) -> MimeResult<Box<dyn MimeDetector>> {
+        self.providers
+            .create_box(name, config)
+            .map_err(MimeError::from)
     }
 
     /// Creates a shared detector from a provider name.
@@ -266,8 +280,14 @@ impl MimeDetectorRegistry {
     /// Returns [`MimeError::UnknownDetector`] when no provider matches `name`,
     /// [`MimeError::DetectorUnavailable`] when the provider is unavailable, or
     /// another [`MimeError`] when provider initialization fails.
-    pub fn create_arc(&self, name: &str, config: &MimeConfig) -> MimeResult<Arc<dyn MimeDetector>> {
-        self.providers.create_arc(name, config).map_err(MimeError::from)
+    pub fn create_arc(
+        &self,
+        name: &str,
+        config: &MimeConfig,
+    ) -> MimeResult<Arc<dyn MimeDetector>> {
+        self.providers
+            .create_arc(name, config)
+            .map_err(MimeError::from)
     }
 
     /// Creates a boxed detector from the configured default and fallback chain.
@@ -281,14 +301,18 @@ impl MimeDetectorRegistry {
     /// # Errors
     /// Returns [`MimeError::NoAvailableDetector`] when all configured providers
     /// are unknown, unavailable, or fail during initialization.
-    pub fn create_default_box(&self, config: &MimeConfig) -> MimeResult<Box<dyn MimeDetector>> {
+    pub fn create_default_box(
+        &self,
+        config: &MimeConfig,
+    ) -> MimeResult<Box<dyn MimeDetector>> {
         let selection = provider_selection_from_config(config)?;
         self.providers
             .create_selected_box(&selection, config)
             .map_err(MimeError::from)
     }
 
-    /// Creates a shared detector from the configured default and fallback chain.
+    /// Creates a shared detector from the configured default and fallback
+    /// chain.
     ///
     /// # Parameters
     /// - `config`: MIME configuration.
@@ -299,7 +323,10 @@ impl MimeDetectorRegistry {
     /// # Errors
     /// Returns [`MimeError::NoAvailableDetector`] when all configured providers
     /// are unknown, unavailable, or fail during initialization.
-    pub fn create_default_arc(&self, config: &MimeConfig) -> MimeResult<Arc<dyn MimeDetector>> {
+    pub fn create_default_arc(
+        &self,
+        config: &MimeConfig,
+    ) -> MimeResult<Arc<dyn MimeDetector>> {
         let selection = provider_selection_from_config(config)?;
         self.providers
             .create_selected_arc(&selection, config)
@@ -317,12 +344,18 @@ impl MimeDetectorRegistry {
 ///
 /// # Errors
 /// Returns [`MimeError`] when a configured provider name is invalid.
-fn provider_selection_from_config(config: &MimeConfig) -> MimeResult<ProviderSelection> {
+fn provider_selection_from_config(
+    config: &MimeConfig,
+) -> MimeResult<ProviderSelection> {
     let configured = config.mime_detector_default().trim();
     if configured.is_empty() || configured.eq_ignore_ascii_case("auto") {
         return Ok(ProviderSelection::Auto);
     }
-    ProviderSelection::from_owned_names(configured, config.mime_detector_fallbacks()).map_err(MimeError::from)
+    ProviderSelection::from_owned_names(
+        configured,
+        config.mime_detector_fallbacks(),
+    )
+    .map_err(MimeError::from)
 }
 
 /// Locks the default registry for reading.
@@ -334,7 +367,8 @@ fn provider_selection_from_config(config: &MimeConfig) -> MimeResult<ProviderSel
 /// Returns [`MimeError::DetectorBackend`] when the global registry lock has
 /// been poisoned by another thread.
 #[cfg(not(coverage))]
-fn read_default_registry() -> MimeResult<RwLockReadGuard<'static, MimeDetectorRegistry>> {
+fn read_default_registry()
+-> MimeResult<RwLockReadGuard<'static, MimeDetectorRegistry>> {
     match DEFAULT_MIME_DETECTOR_REGISTRY.read() {
         Ok(registry) => Ok(registry),
         Err(_) => Err(MimeError::DetectorBackend {
@@ -352,7 +386,8 @@ fn read_default_registry() -> MimeResult<RwLockReadGuard<'static, MimeDetectorRe
 /// # Returns
 /// Read guard for the default registry.
 #[cfg(coverage)]
-fn read_default_registry() -> MimeResult<RwLockReadGuard<'static, MimeDetectorRegistry>> {
+fn read_default_registry()
+-> MimeResult<RwLockReadGuard<'static, MimeDetectorRegistry>> {
     Ok(DEFAULT_MIME_DETECTOR_REGISTRY
         .read()
         .unwrap_or_else(PoisonError::into_inner))
@@ -367,7 +402,8 @@ fn read_default_registry() -> MimeResult<RwLockReadGuard<'static, MimeDetectorRe
 /// Returns [`MimeError::DetectorBackend`] when the global registry lock has
 /// been poisoned by another thread.
 #[cfg(not(coverage))]
-fn write_default_registry() -> MimeResult<RwLockWriteGuard<'static, MimeDetectorRegistry>> {
+fn write_default_registry()
+-> MimeResult<RwLockWriteGuard<'static, MimeDetectorRegistry>> {
     match DEFAULT_MIME_DETECTOR_REGISTRY.write() {
         Ok(registry) => Ok(registry),
         Err(_) => Err(MimeError::DetectorBackend {
@@ -385,7 +421,8 @@ fn write_default_registry() -> MimeResult<RwLockWriteGuard<'static, MimeDetector
 /// # Returns
 /// Write guard for the default registry.
 #[cfg(coverage)]
-fn write_default_registry() -> MimeResult<RwLockWriteGuard<'static, MimeDetectorRegistry>> {
+fn write_default_registry()
+-> MimeResult<RwLockWriteGuard<'static, MimeDetectorRegistry>> {
     Ok(DEFAULT_MIME_DETECTOR_REGISTRY
         .write()
         .unwrap_or_else(PoisonError::into_inner))

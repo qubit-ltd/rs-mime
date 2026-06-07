@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Builder for MIME type metadata.
 
 use std::collections::HashMap;
@@ -50,13 +48,15 @@ impl MimeTypeBuilder {
     /// Adds a localized description.
     ///
     /// # Parameters
-    /// - `language`: Language key such as `en`; use an empty string for the default.
+    /// - `language`: Language key such as `en`; use an empty string for the
+    ///   default.
     /// - `description`: Human-readable description.
     ///
     /// # Returns
     /// The updated builder.
     pub fn description(mut self, language: &str, description: &str) -> Self {
-        self.descriptions.insert(language.to_owned(), description.to_owned());
+        self.descriptions
+            .insert(language.to_owned(), description.to_owned());
         self
     }
 

@@ -52,14 +52,21 @@ impl MimeDetectorBackend for Backend {
 fn test_mime_detector_backend_blanket_impl_uses_policy_and_sources() {
     let backend = Backend::new();
 
-    assert_eq!(Some("text/plain".to_owned()), backend.detect_by_filename("note.txt"));
+    assert_eq!(
+        Some("text/plain".to_owned()),
+        backend.detect_by_filename("note.txt")
+    );
     assert_eq!(
         Some("application/pdf".to_owned()),
         backend.detect_by_content(b"%PDF-1.7")
     );
     assert_eq!(
         Some("text/plain".to_owned()),
-        backend.detect(b"%PDF-1.7", Some("note.txt"), MimeDetectionPolicy::PreferFilename),
+        backend.detect(
+            b"%PDF-1.7",
+            Some("note.txt"),
+            MimeDetectionPolicy::PreferFilename
+        ),
     );
     assert_eq!(
         Some("application/pdf".to_owned()),

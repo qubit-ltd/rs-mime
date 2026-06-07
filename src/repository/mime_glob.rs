@@ -1,12 +1,10 @@
-/*******************************************************************************
- *
- *    Copyright (c) 2026 Haixing Hu.
- *
- *    SPDX-License-Identifier: Apache-2.0
- *
- *    Licensed under the Apache License, Version 2.0.
- *
- ******************************************************************************/
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Filename glob rules for MIME detection.
 
 use regex::{
@@ -49,7 +47,11 @@ impl MimeGlob {
     /// # Errors
     /// Returns [`MimeError::InvalidGlobWeight`](crate::MimeError::InvalidGlobWeight) when `weight` is greater than
     /// [`MimeGlob::MAX_WEIGHT`].
-    pub fn new(pattern: &str, weight: u16, case_sensitive: bool) -> MimeResult<Self> {
+    pub fn new(
+        pattern: &str,
+        weight: u16,
+        case_sensitive: bool,
+    ) -> MimeResult<Self> {
         if weight > Self::MAX_WEIGHT {
             return Err(MimeError::InvalidGlobWeight { weight });
         }
@@ -98,7 +100,9 @@ impl MimeGlob {
     /// # Returns
     /// `true` when the glob matches `filename`.
     pub fn matches(&self, filename: &str) -> bool {
-        !filename.is_empty() && !self.pattern.is_empty() && self.matcher.is_match(filename)
+        !filename.is_empty()
+            && !self.pattern.is_empty()
+            && self.matcher.is_match(filename)
     }
 }
 
@@ -135,7 +139,11 @@ fn glob_to_regex(pattern: &str) -> String {
 ///
 /// # Returns
 /// Index of the closing `]` when a class was parsed; otherwise `start`.
-fn append_character_class(chars: &[char], start: usize, regex: &mut String) -> usize {
+fn append_character_class(
+    chars: &[char],
+    start: usize,
+    regex: &mut String,
+) -> usize {
     let mut end = start + 1;
     while end < chars.len() && chars[end] != ']' {
         end += 1;
@@ -168,7 +176,21 @@ fn append_character_class(chars: &[char], start: usize, regex: &mut String) -> u
 fn append_escaped_regex_char(ch: char, regex: &mut String) {
     if matches!(
         ch,
-        '.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}' | '=' | '!' | '<' | '>' | ':' | '-' | '\\'
+        '.' | '+'
+            | '('
+            | ')'
+            | '|'
+            | '^'
+            | '$'
+            | '{'
+            | '}'
+            | '='
+            | '!'
+            | '<'
+            | '>'
+            | ':'
+            | '-'
+            | '\\'
     ) {
         regex.push('\\');
     }

@@ -10,7 +10,9 @@ fn test_detection_source_carries_content_or_path() {
     }
 
     match DetectionSource::Path(Path::new("Cargo.toml")) {
-        DetectionSource::Path(path) => assert_eq!(Path::new("Cargo.toml"), path),
+        DetectionSource::Path(path) => {
+            assert_eq!(Path::new("Cargo.toml"), path)
+        }
         _ => panic!("path source expected"),
     }
 
