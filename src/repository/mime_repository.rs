@@ -10,13 +10,29 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use qubit_codec_misc::{CIntegerLiteralCodec, CStringLiteralCodec, HexCodec, MiscCodecError};
+use qubit_codec_misc::{
+    CIntegerLiteralCodec,
+    CStringLiteralCodec,
+    HexCodec,
+    MiscCodecError,
+};
 use qubit_local_files::LocalFilenames;
-use roxmltree::{Document, NS_XML_URI, Node};
+use roxmltree::{
+    Document,
+    NS_XML_URI,
+    Node,
+};
 
 use crate::{
-    MagicValueType, MimeDetectionPolicy, MimeError, MimeGlob, MimeMagic, MimeMagicMatcher,
-    MimeResult, MimeType, MimeTypeBuilder,
+    MagicValueType,
+    MimeDetectionPolicy,
+    MimeError,
+    MimeGlob,
+    MimeMagic,
+    MimeMagicMatcher,
+    MimeResult,
+    MimeType,
+    MimeTypeBuilder,
 };
 
 /// A repository of MIME types and detection indexes.
@@ -185,7 +201,9 @@ impl MimeRepository {
         policy: MimeDetectionPolicy,
     ) -> Vec<&MimeType> {
         let from_filename = self.detect_by_filename(filename);
-        if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+        if from_filename.len() == 1
+            && policy == MimeDetectionPolicy::PreferFilename
+        {
             return from_filename;
         }
         let from_content = self.detect_by_content(bytes);
@@ -250,7 +268,8 @@ impl MimeRepository {
     /// - `mime_type`: MIME type whose magic rules should be inspected.
     fn index_magics(&mut self, mime_type: &MimeType) {
         for magic in mime_type.magics() {
-            self.max_test_bytes = self.max_test_bytes.max(magic.max_test_bytes());
+            self.max_test_bytes =
+                self.max_test_bytes.max(magic.max_test_bytes());
         }
     }
 }
@@ -281,7 +300,11 @@ impl<'a> GlobDetectionResult<'a> {
     /// - `entries`: Candidate glob entries.
     /// - `filename`: Original-case filename to test against case-sensitive
     ///   globs.
-    fn add_matching_entries(&mut self, entries: &'a [GlobEntry], filename: &str) {
+    fn add_matching_entries(
+        &mut self,
+        entries: &'a [GlobEntry],
+        filename: &str,
+    ) {
         for entry in entries {
             if entry.glob.matches(filename) {
                 self.compare_add(entry);
@@ -335,7 +358,8 @@ fn strip_doctype(xml: &str) -> Cow<'_, str> {
     let Some(end_offset) = end_offset else {
         return Cow::Borrowed(xml);
     };
-    let mut cleaned = String::with_capacity(xml.len().saturating_sub(end_offset));
+    let mut cleaned =
+        String::with_capacity(xml.len().saturating_sub(end_offset));
     cleaned.push_str(&xml[..start]);
     cleaned.push_str(&xml[start + end_offset..]);
     Cow::Owned(cleaned)
@@ -369,7 +393,9 @@ impl<'a> MagicDetectionResult<'a> {
             self.mime_types.clear();
             self.mime_types.push(mime_type);
             self.best_priority = priority;
-        } else if priority == self.best_priority && !self.mime_types.contains(&mime_type) {
+        } else if priority == self.best_priority
+            && !self.mime_types.contains(&mime_type)
+        {
             self.mime_types.push(mime_type);
         }
     }
@@ -393,10 +419,13 @@ fn parse_mime_type(node: Node<'_, '_>) -> MimeResult<MimeType> {
         match child.tag_name().name() {
             "comment" => {
                 let language = comment_language(child);
-                builder = builder.description(language, child.text().unwrap_or(""));
+                builder =
+                    builder.description(language, child.text().unwrap_or(""));
             }
             "alias" => builder = builder.alias(required_attr(child, "type")?),
-            "sub-class-of" => builder = builder.super_type(required_attr(child, "type")?),
+            "sub-class-of" => {
+                builder = builder.super_type(required_attr(child, "type")?)
+            }
             "glob" => builder = builder.glob(parse_glob(child)?),
             "magic" => builder = builder.magic(parse_magic(child)?),
             _ => {}
@@ -475,9 +504,11 @@ fn parse_magic(node: Node<'_, '_>) -> MimeResult<MimeMagic> {
 /// Returns [`MimeError`](crate::MimeError) when matcher attributes are invalid.
 fn parse_matcher(node: Node<'_, '_>) -> MimeResult<MimeMagicMatcher> {
     let type_name = required_attr(node, "type")?;
-    let value_type = MagicValueType::from_name(type_name)
-        .ok_or_else(|| MimeError::invalid_attr("match", "type", type_name, "unknown type"))?;
-    let (offset_begin, offset_end) = parse_offset(required_attr(node, "offset")?)?;
+    let value_type = MagicValueType::from_name(type_name).ok_or_else(|| {
+        MimeError::invalid_attr("match", "type", type_name, "unknown type")
+    })?;
+    let (offset_begin, offset_end) =
+        parse_offset(required_attr(node, "offset")?)?;
     let value = parse_value(value_type, required_attr(node, "value")?)?;
     let mask = match node.attribute("mask") {
         Some(mask) => Some(parse_mask(value_type, mask)?),
@@ -563,7 +594,12 @@ fn optional_u16_attr(
         return Ok(default);
     };
     let parsed = value.parse::<u16>().map_err(|error| {
-        MimeError::invalid_attr(node.tag_name().name(), name, value, error.to_string())
+        MimeError::invalid_attr(
+            node.tag_name().name(),
+            name,
+            value,
+            error.to_string(),
+        )
     })?;
     if parsed < min || parsed > max {
         return Err(MimeError::invalid_attr(
@@ -589,7 +625,11 @@ fn optional_u16_attr(
 /// # Errors
 /// Returns [`MimeError`](crate::MimeError) when the value is not `true` or
 /// `false`.
-fn optional_bool_attr(node: Node<'_, '_>, name: &str, default: bool) -> MimeResult<bool> {
+fn optional_bool_attr(
+    node: Node<'_, '_>,
+    name: &str,
+    default: bool,
+) -> MimeResult<bool> {
     match node.attribute(name) {
         Some("true") => Ok(true),
         Some("false") => Ok(false),
@@ -718,15 +758,19 @@ fn parse_c_string_bytes(value: &str) -> MimeResult<Vec<u8>> {
 ///
 /// # Errors
 /// Returns [`MimeError`](crate::MimeError) when the value is invalid.
-fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
-    let number = CIntegerLiteralCodec::new().decode(value).map_err(|error| {
-        MimeError::invalid_attr(
-            "match",
-            "value",
-            value,
-            format!("invalid C integer literal: {error}"),
-        )
-    })?;
+fn parse_numeric_bytes(
+    value_type: MagicValueType,
+    value: &str,
+) -> MimeResult<Vec<u8>> {
+    let number =
+        CIntegerLiteralCodec::new().decode(value).map_err(|error| {
+            MimeError::invalid_attr(
+                "match",
+                "value",
+                value,
+                format!("invalid C integer literal: {error}"),
+            )
+        })?;
     match value_type
         .numeric_width()
         .expect("numeric parser should only receive numeric magic types")
@@ -752,7 +796,10 @@ fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> MimeResult<Ve
 ///
 /// # Returns
 /// Invalid XML attribute error for an oversized numeric value.
-fn numeric_value_out_of_range(value_type: MagicValueType, value: &str) -> MimeError {
+fn numeric_value_out_of_range(
+    value_type: MagicValueType,
+    value: &str,
+) -> MimeError {
     let width = value_type
         .numeric_width()
         .expect("numeric parser should only receive numeric magic types");
@@ -781,9 +828,12 @@ fn parse_hex_bytes(value: &str) -> MimeResult<Vec<u8>> {
         .with_ignore_prefix_case(true)
         .decode(value)
         .map_err(|error| match error {
-            MiscCodecError::MissingPrefix { .. } => {
-                MimeError::invalid_attr("match", "mask", value, "string mask must start with 0x")
-            }
+            MiscCodecError::MissingPrefix { .. } => MimeError::invalid_attr(
+                "match",
+                "mask",
+                value,
+                "string mask must start with 0x",
+            ),
             other => MimeError::invalid_attr(
                 "match",
                 "mask",
@@ -829,9 +879,9 @@ fn extension_suffixes(filename: &str) -> Vec<&str> {
 fn extension_pattern(pattern: &str) -> Option<&str> {
     let extension = pattern.strip_prefix("*.")?;
     if extension.is_empty()
-        || extension
-            .chars()
-            .any(|ch| matches!(ch, '*' | '?' | '{' | '}' | '!' | '[' | ']' | '^'))
+        || extension.chars().any(|ch| {
+            matches!(ch, '*' | '?' | '{' | '}' | '!' | '[' | ']' | '^')
+        })
     {
         None
     } else {

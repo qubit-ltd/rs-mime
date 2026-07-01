@@ -7,6 +7,7 @@
 // =============================================================================
 //! Shared media stream classifier helpers.
 
+use std::fs::File;
 use std::io::{
     ErrorKind,
     Read,
@@ -17,7 +18,6 @@ use std::path::Path;
 use qubit_io::Streams;
 use qubit_local_files::{
     FileReadOptions,
-    FileWriteOptions,
     LocalFiles,
     LocalTempFile,
 };
@@ -74,11 +74,12 @@ pub(crate) fn with_temp_reader<T>(
         Some("FileBasedMediaStreamClassifier-"),
         Some(".tmp"),
     )?;
+    file.close()
+        .expect("unconfigured temporary file closes infallibly");
     {
-        let handle = file.writer(FileWriteOptions::default().buffered())?;
-        copy_to_temp_file(reader, handle, max_staging_size)?;
+        let mut handle = File::create(file.path())?;
+        copy_to_temp_file(reader, &mut handle, max_staging_size)?;
     }
-    file.close()?;
     classify(file.path())
 }
 

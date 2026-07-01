@@ -21,6 +21,22 @@ pub(crate) struct PathEnvGuard {
 }
 
 impl PathEnvGuard {
+    /// Replaces `PATH` with a single directory and holds a process-wide
+    /// environment lock.
+    pub(crate) fn set(directory: &Path) -> Self {
+        let guard = ENV_LOCK
+            .lock()
+            .expect("environment lock should not be poisoned");
+        let original_path = std::env::var("PATH").ok();
+        unsafe {
+            std::env::set_var("PATH", directory.as_os_str());
+        }
+        Self {
+            _guard: guard,
+            original_path,
+        }
+    }
+
     /// Prepends `directory` to `PATH` and holds a process-wide environment
     /// lock.
     pub(crate) fn prepend(directory: &Path) -> Self {
