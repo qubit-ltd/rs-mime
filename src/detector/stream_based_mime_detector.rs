@@ -10,10 +10,20 @@
 use std::fmt::Debug;
 use std::path::Path;
 
-use qubit_io::{ReadSeek, ReadSeekExt};
-use qubit_local_files::{FileReadOptions, LocalFiles};
+use qubit_io::{
+    ReadSeek,
+    ReadSeekExt,
+};
+use qubit_local_files::{
+    FileReadOptions,
+    LocalFiles,
+};
 
-use crate::{MimeDetectorCore, MimeError, MimeResult};
+use crate::{
+    MimeDetectorCore,
+    MimeError,
+    MimeResult,
+};
 
 /// Core implementation contract for detectors that can inspect content bytes.
 pub trait StreamBasedMimeDetector: Debug + Send + Sync {
@@ -48,7 +58,10 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     ///
     /// # Errors
     /// Returns an error when a backend cannot inspect the supplied content.
-    fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>>;
+    fn guess_from_content_bytes(
+        &self,
+        content: &[u8],
+    ) -> MimeResult<Vec<String>>;
 
     /// Guesses MIME type names from a seekable reader.
     ///
@@ -64,7 +77,11 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
         &self,
         reader: &mut dyn ReadSeek,
     ) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let content = read_prefix(reader, self.max_test_bytes(), self.core().max_buffer_size())?;
+        let content = read_prefix(
+            reader,
+            self.max_test_bytes(),
+            self.core().max_buffer_size(),
+        )?;
         let candidates = self.guess_from_content_bytes(&content)?;
         Ok((candidates, content))
     }
@@ -80,8 +97,12 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     /// # Errors
     /// Returns an error when opening, reading, seeking, or backend inspection
     /// fails.
-    fn guess_from_file_stream(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let mut reader = LocalFiles::open_reader(file, FileReadOptions::buffered())?;
+    fn guess_from_file_stream(
+        &self,
+        file: &Path,
+    ) -> MimeResult<(Vec<String>, Vec<u8>)> {
+        let mut reader =
+            LocalFiles::open_reader(file, FileReadOptions::buffered())?;
         self.guess_from_reader_stream(&mut reader)
     }
 }

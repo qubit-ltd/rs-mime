@@ -90,6 +90,17 @@ fn test_from_mime_config_sets_max_staging_size() {
 }
 
 #[test]
+fn test_max_staging_size_accessors_update_limit() {
+    let mut classifier = FfprobeCommandMediaStreamClassifier::new();
+
+    classifier.set_max_staging_size(2048);
+    assert_eq!(2048, classifier.max_staging_size());
+
+    let classifier = classifier.with_max_staging_size(4096);
+    assert_eq!(4096, classifier.max_staging_size());
+}
+
+#[test]
 #[cfg(unix)]
 fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
     let temp_dir =
@@ -135,6 +146,22 @@ fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
             .classify_file(std::path::Path::new("Cargo.toml"))
             .expect("trait object should delegate to ffprobe classifier")
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_classify_file_propagates_ffprobe_start_error() {
+    let temp_dir =
+        TempDir::new().expect("temporary command directory should be created");
+    let _path_guard = PathEnvGuard::set(temp_dir.path());
+    let classifier = FfprobeCommandMediaStreamClassifier::new()
+        .with_command_runner(CommandRunner::new().disable_logging(true));
+
+    let error = classifier
+        .classify_file(std::path::Path::new("Cargo.toml"))
+        .expect_err("missing ffprobe executable should report command error");
+
+    assert!(error.to_string().contains("ffprobe"));
 }
 
 #[test]
