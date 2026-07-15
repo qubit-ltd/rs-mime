@@ -9,14 +9,17 @@
 
 use std::sync::Arc;
 
-use crate::{
-    FileCommandMimeDetector,
-    MimeConfig,
-    MimeDetector,
+use qubit_spi::{
     ProviderDescriptor,
     ProviderError,
     ProviderId,
     ServiceProvider,
+};
+
+use crate::{
+    FileCommandMimeDetector,
+    MimeConfig,
+    MimeDetector,
 };
 
 use super::MimeDetectorSpec;

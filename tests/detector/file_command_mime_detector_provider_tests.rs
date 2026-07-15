@@ -4,9 +4,9 @@ use qubit_mime::{
     FileCommandMimeDetector,
     FileCommandMimeDetectorProvider,
     MimeConfig,
-    ServiceProvider,
     file_command_mime_detector_descriptor,
 };
+use qubit_spi::{ProviderErrorKind, ServiceProvider};
 #[test]
 fn test_file_command_mime_detector_provider_metadata_and_availability() {
     let provider = FileCommandMimeDetectorProvider;
@@ -35,7 +35,7 @@ fn test_file_command_provider_reports_unavailable_command() {
             .create(&MimeConfig::default())
             .expect_err("provider should reject a missing file command");
 
-        assert_eq!(qubit_mime::ProviderErrorKind::Unavailable, error.kind());
+        assert_eq!(ProviderErrorKind::Unavailable, error.kind());
         return;
     }
 
