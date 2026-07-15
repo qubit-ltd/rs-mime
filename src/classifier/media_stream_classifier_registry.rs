@@ -14,9 +14,8 @@ use qubit_spi::{
     ProviderErrorKind,
     ProviderRegistry,
     ProviderResolver,
-    ProviderSelection,
+    ProviderSelectorErrorKind,
     RegistrationError,
-    RegistrationErrorKind,
     ResolutionError,
     ResolutionErrorKind,
 };
@@ -83,10 +82,8 @@ impl MediaStreamClassifierRegistry {
         selector: &str,
         config: &MimeConfig,
     ) -> MimeResult<Arc<dyn MediaStreamClassifier>> {
-        let selection = ProviderSelection::named(selector)
-            .map_err(classifier_registration_error)?;
         self.resolver
-            .create(&selection, config)
+            .create_named(selector, config)
             .map(|created| created.into_service())
             .map_err(classifier_resolution_error)
     }
@@ -97,16 +94,14 @@ impl MediaStreamClassifierRegistry {
         config: &MimeConfig,
     ) -> MimeResult<Arc<dyn MediaStreamClassifier>> {
         let configured = config.media_stream_classifier_default().trim();
-        let selection = if configured.is_empty()
+        let created = if configured.is_empty()
             || configured.eq_ignore_ascii_case("auto")
         {
-            ProviderSelection::Auto
+            self.resolver.create_auto(config)
         } else {
-            ProviderSelection::named(configured)
-                .map_err(classifier_registration_error)?
+            self.resolver.create_named(configured, config)
         };
-        self.resolver
-            .create(&selection, config)
+        created
             .map(|created| created.into_service())
             .map_err(classifier_resolution_error)
     }
@@ -115,38 +110,30 @@ impl MediaStreamClassifierRegistry {
 pub(super) fn classifier_registration_error(
     error: RegistrationError,
 ) -> MimeError {
-    match error.kind() {
-        RegistrationErrorKind::EmptyIdentifier => {
-            MimeError::EmptyClassifierName
-        }
-        RegistrationErrorKind::InvalidIdentifier => {
-            MimeError::InvalidClassifierName {
-                name: error.identifier().unwrap_or_default().to_owned(),
-                reason: error.to_string(),
-            }
-        }
-        RegistrationErrorKind::DuplicateSelector => {
-            MimeError::DuplicateClassifierName {
-                name: error.identifier().unwrap_or_default().to_owned(),
-            }
-        }
-        _ => MimeError::ClassifierBackend {
-            backend: "registry".into(),
-            reason: error.to_string(),
-        },
+    MimeError::DuplicateClassifierName {
+        name: error.selector().to_owned(),
     }
 }
 
 fn classifier_resolution_error(error: ResolutionError) -> MimeError {
-    if matches!(
-        error.kind(),
-        ResolutionErrorKind::InvalidSelector | ResolutionErrorKind::UnknownProvider
-    ) {
-        return MimeError::UnknownClassifier {
+    if error.kind() == ResolutionErrorKind::InvalidSelector {
+        if error
+            .selector_error()
+            .is_some_and(|source| source.kind() == ProviderSelectorErrorKind::Empty)
+        {
+            return MimeError::EmptyClassifierName;
+        }
+        return MimeError::InvalidClassifierName {
             name: error
                 .selector_input()
                 .unwrap_or("<invalid>")
                 .to_owned(),
+            reason: error.to_string(),
+        };
+    }
+    if error.kind() == ResolutionErrorKind::UnknownProvider {
+        return MimeError::UnknownClassifier {
+            name: error.selector_input().unwrap_or("<unknown>").to_owned(),
         };
     }
     let attempts = error.attempts();
@@ -169,10 +156,6 @@ fn classifier_resolution_error(error: ResolutionError) -> MimeError {
         };
     }
     MimeError::NoAvailableClassifier {
-        reason: attempts
-            .iter()
-            .map(|attempt| attempt.reason())
-            .collect::<Vec<_>>()
-            .join("; "),
+        reason: error.to_string(),
     }
 }
