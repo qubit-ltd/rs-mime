@@ -9,8 +9,6 @@
 
 use thiserror::Error;
 
-use crate::ProviderRegistryError;
-
 /// Error type for MIME repository parsing and I/O backed detection.
 #[derive(Debug, Error)]
 pub enum MimeError {
@@ -193,53 +191,6 @@ pub enum MimeError {
     Config(#[from] qubit_config::ConfigError),
 }
 
-impl From<ProviderRegistryError> for MimeError {
-    /// Converts a generic SPI registry error into a MIME-domain error.
-    fn from(error: ProviderRegistryError) -> Self {
-        match error {
-            ProviderRegistryError::EmptyProviderName => Self::EmptyDetectorName,
-            ProviderRegistryError::InvalidProviderName { name, reason } => {
-                Self::InvalidDetectorName { name, reason }
-            }
-            ProviderRegistryError::DuplicateProviderName { name }
-            | ProviderRegistryError::DuplicateProviderCandidate { name } => {
-                Self::DuplicateDetectorName {
-                    name: name.as_str().to_owned(),
-                }
-            }
-            ProviderRegistryError::UnknownProvider { name } => {
-                Self::UnknownDetector {
-                    name: name.as_str().to_owned(),
-                }
-            }
-            ProviderRegistryError::ProviderUnavailable { name, source } => {
-                Self::DetectorUnavailable {
-                    name: name.as_str().to_owned(),
-                    reason: source.reason().to_owned(),
-                }
-            }
-            ProviderRegistryError::ProviderCreate { name, source } => {
-                Self::DetectorBackend {
-                    backend: name.as_str().to_owned(),
-                    reason: source.reason().to_owned(),
-                }
-            }
-            ProviderRegistryError::NoAvailableProvider { failures } => {
-                Self::NoAvailableDetector {
-                    reason: failures
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join("; "),
-                }
-            }
-            ProviderRegistryError::EmptyRegistry => Self::NoAvailableDetector {
-                reason: "detector registry is empty".to_owned(),
-            },
-        }
-    }
-}
-
 impl MimeError {
     /// Builds an invalid XML attribute error.
     ///
@@ -326,63 +277,6 @@ impl MimeError {
         Self::DetectorBackend {
             backend: backend.into(),
             reason: reason.into(),
-        }
-    }
-
-    /// Converts a generic SPI registry error into a classifier-domain error.
-    ///
-    /// # Parameters
-    /// - `error`: Provider registry error returned by `qubit-spi`.
-    ///
-    /// # Returns
-    /// Classifier-specific MIME error.
-    pub(crate) fn classifier_registry_error(
-        error: ProviderRegistryError,
-    ) -> Self {
-        match error {
-            ProviderRegistryError::EmptyProviderName => {
-                Self::EmptyClassifierName
-            }
-            ProviderRegistryError::InvalidProviderName { name, reason } => {
-                Self::InvalidClassifierName { name, reason }
-            }
-            ProviderRegistryError::DuplicateProviderName { name }
-            | ProviderRegistryError::DuplicateProviderCandidate { name } => {
-                Self::DuplicateClassifierName {
-                    name: name.as_str().to_owned(),
-                }
-            }
-            ProviderRegistryError::UnknownProvider { name } => {
-                Self::UnknownClassifier {
-                    name: name.as_str().to_owned(),
-                }
-            }
-            ProviderRegistryError::ProviderUnavailable { name, source } => {
-                Self::ClassifierUnavailable {
-                    name: name.as_str().to_owned(),
-                    reason: source.reason().to_owned(),
-                }
-            }
-            ProviderRegistryError::ProviderCreate { name, source } => {
-                Self::ClassifierBackend {
-                    backend: name.as_str().to_owned(),
-                    reason: source.reason().to_owned(),
-                }
-            }
-            ProviderRegistryError::NoAvailableProvider { failures } => {
-                Self::NoAvailableClassifier {
-                    reason: failures
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join("; "),
-                }
-            }
-            ProviderRegistryError::EmptyRegistry => {
-                Self::NoAvailableClassifier {
-                    reason: "classifier registry is empty".to_owned(),
-                }
-            }
         }
     }
 }

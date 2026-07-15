@@ -7,6 +7,8 @@
 // =============================================================================
 //! Service specification for pluggable MIME detector providers.
 
+use std::sync::Arc;
+
 use qubit_spi::ServiceSpec;
 
 use crate::{
@@ -23,5 +25,5 @@ pub struct MimeDetectorSpec;
 
 impl ServiceSpec for MimeDetectorSpec {
     type Config = MimeConfig;
-    type Service = dyn MimeDetector;
+    type Output = Arc<dyn MimeDetector>;
 }

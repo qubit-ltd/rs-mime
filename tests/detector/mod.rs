@@ -10,7 +10,6 @@ mod file_based_mime_detector_tests;
 mod file_command_mime_detector_provider_tests;
 mod file_command_mime_detector_tests;
 mod mime_detection_policy_tests;
-mod mime_detector_availability_tests;
 mod mime_detector_backend_tests;
 mod mime_detector_core_tests;
 mod mime_detector_provider_tests;

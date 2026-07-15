@@ -7,21 +7,19 @@
 // =============================================================================
 //! Provider for the built-in `ffprobe` media stream classifier.
 
+use std::sync::Arc;
+
 use crate::{
     FfprobeCommandMediaStreamClassifier,
     MediaStreamClassifier,
     MimeConfig,
-    ProviderAvailability,
-    ProviderCreateError,
     ProviderDescriptor,
-    ProviderRegistryError,
+    ProviderError,
+    ProviderId,
     ServiceProvider,
 };
 
-use super::{
-    MediaStreamClassifierAvailability,
-    MediaStreamClassifierSpec,
-};
+use super::MediaStreamClassifierSpec;
 
 /// Provider for the built-in FFprobe-backed media stream classifier.
 #[derive(Debug, Clone, Copy, Default)]
@@ -30,40 +28,30 @@ pub struct FfprobeCommandMediaStreamClassifierProvider;
 impl ServiceProvider<MediaStreamClassifierSpec>
     for FfprobeCommandMediaStreamClassifierProvider
 {
-    /// Gets FFprobe classifier metadata.
-    fn descriptor(&self) -> Result<ProviderDescriptor, ProviderRegistryError> {
-        let descriptor = ProviderDescriptor::new("ffprobe")
-            .expect("built-in FFprobe classifier provider id should be valid")
-            .with_aliases(&[
-                "ffprobe-command",
-                "ffprobe-command-media-stream-classifier",
-            ])
-            .expect("built-in FFprobe classifier aliases should be valid")
-            .with_priority(10);
-        Ok(descriptor)
-    }
-
-    /// Reports the provider as available.
-    ///
-    /// The classifier itself handles command execution lazily so temporary
-    /// `PATH` changes and best-effort refinement do not make registry creation
-    /// environment-sensitive.
-    fn availability(
-        &self,
-        _config: &MimeConfig,
-    ) -> MediaStreamClassifierAvailability {
-        ProviderAvailability::Available
-    }
-
-    /// Creates an FFprobe-backed classifier.
-    fn create_box(
+    fn create(
         &self,
         config: &MimeConfig,
-    ) -> Result<Box<dyn MediaStreamClassifier>, ProviderCreateError> {
-        Ok(Box::new(
+    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderError> {
+        Ok(Arc::new(
             FfprobeCommandMediaStreamClassifier::from_mime_config(
                 config.clone(),
             ),
         ))
     }
+}
+
+/// Gets the immutable descriptor for the FFprobe classifier provider.
+#[must_use]
+pub fn ffprobe_command_media_stream_classifier_descriptor() -> ProviderDescriptor
+{
+    ProviderDescriptor::new(
+        ProviderId::new("ffprobe")
+            .expect("built-in provider ID should be valid"),
+    )
+    .with_aliases([
+        "ffprobe-command",
+        "ffprobe-command-media-stream-classifier",
+    ])
+    .expect("built-in FFprobe classifier aliases should be valid")
+    .with_priority(10)
 }

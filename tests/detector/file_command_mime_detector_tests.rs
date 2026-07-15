@@ -181,7 +181,6 @@ fn test_file_command_detector_accessors_and_repository_only_policy() {
             create_precise_config(),
         );
 
-    assert!(detector.core().media_stream_classifier().is_some());
     detector.core_mut().set_media_stream_classifier(None);
     assert!(detector.core().media_stream_classifier().is_none());
     assert_eq!(0, detector.repository().all().len());

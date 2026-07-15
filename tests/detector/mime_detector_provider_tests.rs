@@ -1,16 +1,16 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use qubit_io::ReadSeek;
 use qubit_mime::{
     MimeConfig,
     MimeDetectionPolicy,
     MimeDetector,
-    MimeDetectorAvailability,
     MimeDetectorSpec,
     MimeResult,
-    ProviderCreateError,
     ProviderDescriptor,
-    ProviderRegistryError,
+    ProviderError,
+    ProviderId,
     ServiceProvider,
 };
 
@@ -63,35 +63,27 @@ impl MimeDetector for StaticDetector {
 struct StaticProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for StaticProvider {
-    fn descriptor(&self) -> Result<ProviderDescriptor, ProviderRegistryError> {
-        ProviderDescriptor::new("static")
-    }
-
-    fn create_box(
+    fn create(
         &self,
         _config: &MimeConfig,
-    ) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
-        Ok(Box::new(StaticDetector))
+    ) -> Result<Arc<dyn MimeDetector>, ProviderError> {
+        Ok(Arc::new(StaticDetector))
     }
 }
 
 #[test]
 fn test_mime_detector_provider_defaults_and_factory() {
     let provider = StaticProvider;
-    let descriptor = provider
-        .descriptor()
-        .expect("static provider descriptor should be valid");
+    let descriptor = ProviderDescriptor::new(
+        ProviderId::new("static").expect("static provider ID should be valid"),
+    );
     let detector = provider
-        .create_box(&MimeConfig::default())
+        .create(&MimeConfig::default())
         .expect("static provider should create detector");
 
     assert_eq!("static", descriptor.id().as_str());
     assert!(descriptor.aliases().is_empty());
     assert_eq!(0, descriptor.priority());
-    assert_eq!(
-        MimeDetectorAvailability::Available,
-        provider.availability(&MimeConfig::default())
-    );
     assert_eq!(
         Some("application/x-static".to_owned()),
         detector.detect_by_filename("sample.static"),

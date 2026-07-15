@@ -34,8 +34,7 @@
 //! };
 //!
 //! # fn main() -> MimeResult<()> {
-//! let detector =
-//!     MimeDetectorRegistry::default_registry()?.create_default_box(&MimeConfig::default())?;
+//! let detector = MimeDetectorRegistry::builtin().create_default(&MimeConfig::default())?;
 //! assert_eq!(
 //!     Some("application/pdf".to_owned()),
 //!     detector.detect_by_filename("document.pdf"),
@@ -65,7 +64,7 @@
 //! source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
 //!
 //! let config = MimeConfig::from_config(&source)?;
-//! let detector = MimeDetectorRegistry::default_registry()?.create_default_box(&config)?;
+//! let detector = MimeDetectorRegistry::builtin().create_default(&config)?;
 //! assert_eq!(
 //!     Some("image/png".to_owned()),
 //!     detector.detect_by_filename("image.png"),
@@ -79,13 +78,17 @@ pub mod detector;
 pub mod repository;
 
 pub use qubit_spi::{
-    ProviderAvailability,
-    ProviderCreateError,
+    FallbackPolicy,
     ProviderDescriptor,
-    ProviderFailure,
-    ProviderName,
-    ProviderRegistryError,
+    ProviderError,
+    ProviderErrorKind,
+    ProviderId,
+    ProviderRegistry,
+    ProviderRegistryBuilder,
+    ProviderResolver,
     ProviderSelection,
+    RegistrationError,
+    ResolutionError,
     ServiceProvider,
     ServiceSpec,
 };
@@ -101,12 +104,13 @@ pub use classifier::{
     FfprobeCommandMediaStreamClassifierProvider,
     FileBasedMediaStreamClassifier,
     MediaStreamClassifier,
-    MediaStreamClassifierAvailability,
     MediaStreamClassifierBackend,
     MediaStreamClassifierProvider,
     MediaStreamClassifierRegistry,
+    MediaStreamClassifierRegistryBuilder,
     MediaStreamClassifierSpec,
     MediaStreamType,
+    ffprobe_command_media_stream_classifier_descriptor,
 };
 pub use common_mime_types::*;
 pub use constants::*;
@@ -117,15 +121,17 @@ pub use detector::{
     FileCommandMimeDetectorProvider,
     MimeDetectionPolicy,
     MimeDetector,
-    MimeDetectorAvailability,
     MimeDetectorBackend,
     MimeDetectorCore,
     MimeDetectorProvider,
     MimeDetectorRegistry,
+    MimeDetectorRegistryBuilder,
     MimeDetectorSpec,
     RepositoryMimeDetector,
     RepositoryMimeDetectorProvider,
     StreamBasedMimeDetector,
+    file_command_mime_detector_descriptor,
+    repository_mime_detector_descriptor,
 };
 pub use mime_config::MimeConfig;
 pub use mime_error::MimeError;

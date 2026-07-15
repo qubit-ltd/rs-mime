@@ -11,21 +11,24 @@ pub(crate) mod ffprobe_command_media_stream_classifier;
 pub(crate) mod ffprobe_command_media_stream_classifier_provider;
 pub(crate) mod file_based_media_stream_classifier;
 pub(crate) mod media_stream_classifier;
-pub(crate) mod media_stream_classifier_availability;
 pub(crate) mod media_stream_classifier_backend;
 pub(crate) mod media_stream_classifier_helpers;
 pub(crate) mod media_stream_classifier_provider;
 pub(crate) mod media_stream_classifier_registry;
+pub(crate) mod media_stream_classifier_registry_builder;
 pub(crate) mod media_stream_classifier_spec;
 mod media_stream_type;
 
 pub use ffprobe_command_media_stream_classifier::FfprobeCommandMediaStreamClassifier;
-pub use ffprobe_command_media_stream_classifier_provider::FfprobeCommandMediaStreamClassifierProvider;
+pub use ffprobe_command_media_stream_classifier_provider::{
+    FfprobeCommandMediaStreamClassifierProvider,
+    ffprobe_command_media_stream_classifier_descriptor,
+};
 pub use file_based_media_stream_classifier::FileBasedMediaStreamClassifier;
 pub use media_stream_classifier::MediaStreamClassifier;
-pub use media_stream_classifier_availability::MediaStreamClassifierAvailability;
 pub use media_stream_classifier_backend::MediaStreamClassifierBackend;
 pub use media_stream_classifier_provider::MediaStreamClassifierProvider;
 pub use media_stream_classifier_registry::MediaStreamClassifierRegistry;
+pub use media_stream_classifier_registry_builder::MediaStreamClassifierRegistryBuilder;
 pub use media_stream_classifier_spec::MediaStreamClassifierSpec;
 pub use media_stream_type::MediaStreamType;

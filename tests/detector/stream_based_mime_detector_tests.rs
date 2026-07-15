@@ -253,7 +253,7 @@ fn test_guess_from_file_stream_rejects_directory_before_reading() {
 fn test_detect_reader_rejects_prefix_buffer_larger_than_configured_limit() {
     let mut config = qubit_config::Config::new();
     config
-        .set(CONFIG_MIME_MAX_BUFFER_SIZE, 4_usize)
+        .set(CONFIG_MIME_MAX_BUFFER_SIZE, 4_u64)
         .expect("maximum buffer size should be configurable");
     let detector = PrefixDetector::with_core(MimeDetectorCore::new(
         MimeConfig::from_config(&config).expect(

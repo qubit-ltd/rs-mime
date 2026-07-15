@@ -7,7 +7,6 @@
 // =============================================================================
 //! Shared media stream classifier helpers.
 
-use std::fs::File;
 use std::io::{
     ErrorKind,
     Read,
@@ -74,12 +73,8 @@ pub(crate) fn with_temp_reader<T>(
         Some("FileBasedMediaStreamClassifier-"),
         Some(".tmp"),
     )?;
-    file.close()
-        .expect("unconfigured temporary file closes infallibly");
-    {
-        let mut handle = File::create(file.path())?;
-        copy_to_temp_file(reader, &mut handle, max_staging_size)?;
-    }
+    copy_to_temp_file(reader, &mut file, max_staging_size)?;
+    file.close();
     classify(file.path())
 }
 
