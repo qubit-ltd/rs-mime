@@ -12,7 +12,6 @@ use std::sync::Arc;
 
 use crate::{
     MediaStreamClassifier,
-    MediaStreamClassifierRegistry,
     MediaStreamType,
     MimeConfig,
     MimeDetectionPolicy,
@@ -44,23 +43,17 @@ impl MimeDetectorCore {
         }
     }
 
-    /// Creates a detector core from configuration and default classifier.
+    /// Creates a detector core from configuration without implicit classifiers.
     ///
     /// # Parameters
     /// - `config`: MIME detector configuration.
     ///
     /// # Returns
-    /// Shared detector core using the configured default media classifier when
-    /// precise detection is enabled.
+    /// Shared detector core. Applications that need precise media refinement
+    /// inject a classifier explicitly with
+    /// [`Self::set_media_stream_classifier`].
     pub fn from_mime_config(config: MimeConfig) -> Self {
-        let mut detector = Self::new(config.clone());
-        if config.enable_precise_detection() {
-            let classifier = MediaStreamClassifierRegistry::default_registry()
-                .and_then(|registry| registry.create_default_arc(&config))
-                .ok();
-            detector.set_media_stream_classifier(classifier);
-        }
-        detector
+        Self::new(config)
     }
 
     /// Sets the classifier used for precise media MIME refinement.

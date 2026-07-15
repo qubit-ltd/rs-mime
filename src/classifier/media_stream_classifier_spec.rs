@@ -7,6 +7,8 @@
 // =============================================================================
 //! Service specification for pluggable media stream classifier providers.
 
+use std::sync::Arc;
+
 use qubit_spi::ServiceSpec;
 
 use crate::{
@@ -23,5 +25,5 @@ pub struct MediaStreamClassifierSpec;
 
 impl ServiceSpec for MediaStreamClassifierSpec {
     type Config = MimeConfig;
-    type Service = dyn MediaStreamClassifier;
+    type Output = Arc<dyn MediaStreamClassifier>;
 }

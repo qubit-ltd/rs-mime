@@ -7,53 +7,47 @@
 // =============================================================================
 //! Provider for the built-in system `file` command MIME detector.
 
+use std::sync::Arc;
+
 use crate::{
     FileCommandMimeDetector,
     MimeConfig,
     MimeDetector,
-    ProviderAvailability,
-    ProviderCreateError,
     ProviderDescriptor,
-    ProviderRegistryError,
+    ProviderError,
+    ProviderId,
     ServiceProvider,
 };
 
-use super::{
-    MimeDetectorAvailability,
-    MimeDetectorSpec,
-};
+use super::MimeDetectorSpec;
 
 /// Provider for the built-in system `file` command detector.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FileCommandMimeDetectorProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
-    /// Gets file command detector metadata.
-    fn descriptor(&self) -> Result<ProviderDescriptor, ProviderRegistryError> {
-        let descriptor = ProviderDescriptor::new("file")
-            .expect("built-in file detector provider id should be valid")
-            .with_aliases(&["file-command", "file-command-mime-detector"])
-            .expect("built-in file detector aliases should be valid")
-            .with_priority(10);
-        Ok(descriptor)
-    }
-
-    /// Checks whether the `file` command is available.
-    fn availability(&self, _config: &MimeConfig) -> MimeDetectorAvailability {
-        if FileCommandMimeDetector::is_available() {
-            ProviderAvailability::Available
-        } else {
-            ProviderAvailability::unavailable("`file` command is not available")
-        }
-    }
-
-    /// Creates a file-command-backed detector.
-    fn create_box(
+    fn create(
         &self,
         config: &MimeConfig,
-    ) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
-        Ok(Box::new(FileCommandMimeDetector::from_mime_config(
+    ) -> Result<Arc<dyn MimeDetector>, ProviderError> {
+        if !FileCommandMimeDetector::is_available() {
+            return Err(ProviderError::unavailable(
+                "`file` command is not available",
+            ));
+        }
+        Ok(Arc::new(FileCommandMimeDetector::from_mime_config(
             config.clone(),
         )))
     }
+}
+
+/// Gets the immutable descriptor for the `file` command detector provider.
+#[must_use]
+pub fn file_command_mime_detector_descriptor() -> ProviderDescriptor {
+    ProviderDescriptor::new(
+        ProviderId::new("file").expect("built-in provider ID should be valid"),
+    )
+    .with_aliases(["file-command", "file-command-mime-detector"])
+    .expect("built-in file detector aliases should be valid")
+    .with_priority(10)
 }

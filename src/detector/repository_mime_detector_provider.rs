@@ -7,12 +7,14 @@
 // =============================================================================
 //! Provider for the built-in repository-backed MIME detector.
 
+use std::sync::Arc;
+
 use crate::{
     MimeConfig,
     MimeDetector,
-    ProviderCreateError,
     ProviderDescriptor,
-    ProviderRegistryError,
+    ProviderError,
+    ProviderId,
     RepositoryMimeDetector,
     ServiceProvider,
 };
@@ -24,22 +26,23 @@ use super::MimeDetectorSpec;
 pub struct RepositoryMimeDetectorProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
-    /// Gets repository detector metadata.
-    fn descriptor(&self) -> Result<ProviderDescriptor, ProviderRegistryError> {
-        let descriptor = ProviderDescriptor::new("repository")
-            .expect("built-in repository detector provider id should be valid")
-            .with_aliases(&["repository-mime-detector"])
-            .expect("built-in repository detector aliases should be valid");
-        Ok(descriptor)
-    }
-
-    /// Creates a repository-backed detector.
-    fn create_box(
+    fn create(
         &self,
         config: &MimeConfig,
-    ) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
-        Ok(Box::new(RepositoryMimeDetector::from_mime_config(
+    ) -> Result<Arc<dyn MimeDetector>, ProviderError> {
+        Ok(Arc::new(RepositoryMimeDetector::from_mime_config(
             config.clone(),
         )))
     }
+}
+
+/// Gets the immutable descriptor for the repository detector provider.
+#[must_use]
+pub fn repository_mime_detector_descriptor() -> ProviderDescriptor {
+    ProviderDescriptor::new(
+        ProviderId::new("repository")
+            .expect("built-in provider ID should be valid"),
+    )
+    .with_aliases(["repository-mime-detector"])
+    .expect("built-in repository detector aliases should be valid")
 }

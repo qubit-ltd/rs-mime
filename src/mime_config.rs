@@ -30,6 +30,8 @@ use qubit_config::{
     },
 };
 
+#[cfg(target_pointer_width = "32")]
+use crate::MimeError;
 use crate::{
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
@@ -247,11 +249,22 @@ impl MimeConfig {
             DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES,
             &MAPPING_READ_OPTIONS,
         )?;
-        let max_buffer_size = config.get_any_or_with(
+        let max_buffer_size: u64 = config.get_any_or_with(
             [CONFIG_MIME_MAX_BUFFER_SIZE, ENV_MIME_MAX_BUFFER_SIZE],
-            DEFAULT_MIME_MAX_BUFFER_SIZE,
+            DEFAULT_MIME_MAX_BUFFER_SIZE as u64,
             &VALUE_READ_OPTIONS,
         )?;
+        #[cfg(target_pointer_width = "32")]
+        let max_buffer_size =
+            usize::try_from(max_buffer_size).map_err(|_| {
+                MimeError::InvalidClassifierInput {
+                    reason: format!(
+                        "MIME maximum buffer size {max_buffer_size} exceeds this platform's usize range"
+                    ),
+                }
+            })?;
+        #[cfg(target_pointer_width = "64")]
+        let max_buffer_size = max_buffer_size as usize;
         Ok(Self {
             mime_detector_default,
             mime_detector_fallbacks: normalize_detector_names(

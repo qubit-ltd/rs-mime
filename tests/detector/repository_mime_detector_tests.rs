@@ -162,7 +162,6 @@ fn test_accessors_empty_repository_and_reader_errors() {
     let mut detector =
         RepositoryMimeDetector::with_repository_and_config(&repository, config);
 
-    assert!(detector.core().media_stream_classifier().is_some());
     detector.core_mut().set_media_stream_classifier(None);
     assert!(detector.core().media_stream_classifier().is_none());
     assert_eq!(0, detector.repository().all().len());

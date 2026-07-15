@@ -206,30 +206,28 @@ fn test_mime_detector_backend_prefer_filename_skips_reader_and_file_content() {
 
 #[test]
 fn test_default_mime_detector_returns_usable_detector() {
-    let registry =
-        MimeDetectorRegistry::default_registry().expect("default registry");
+    let registry = MimeDetectorRegistry::builtin();
     let detector = registry
-        .create_default_box(&MimeConfig::default())
+        .create_default(&MimeConfig::default())
         .expect("default detector");
     assert!(detector.detect_by_filename("document.pdf").is_some());
 }
 
 #[test]
 fn test_mime_detector_registry_creates_boxed_and_shared_named_detectors() {
-    let registry =
-        MimeDetectorRegistry::default_registry().expect("default registry");
+    let registry = MimeDetectorRegistry::builtin();
     let config = MimeConfig::default();
     let boxed = registry
-        .create_box("repository", &config)
+        .create("repository", &config)
         .expect("repository boxed detector");
     let shared = registry
-        .create_arc("repository", &config)
+        .create("repository", &config)
         .expect("repository shared detector");
     let boxed_file = registry
-        .create_box("file", &config)
+        .create("file", &config)
         .expect("file boxed detector");
     let shared_file = registry
-        .create_arc("file", &config)
+        .create("file", &config)
         .expect("file shared detector");
 
     assert_eq!(
@@ -248,8 +246,7 @@ fn test_mime_detector_registry_creates_boxed_and_shared_named_detectors() {
         Some("image/png".to_owned()),
         shared_file.detect_by_filename("image.png")
     );
-    assert!(registry.create_box("unknown", &config).is_err());
-    assert!(registry.create_arc("unknown", &config).is_err());
+    assert!(registry.create("unknown", &config).is_err());
 }
 
 #[test]
@@ -257,13 +254,13 @@ fn test_mime_detector_registry_creates_from_explicit_registry() {
     let registry = MimeDetectorRegistry::builtin();
     let config = create_detector_config("repository");
     let boxed = registry
-        .create_box("repository", &config)
+        .create("repository", &config)
         .expect("boxed registry selector should create detector");
     let shared = registry
-        .create_arc("repository", &config)
+        .create("repository", &config)
         .expect("shared registry selector should create detector");
     let shared_default = registry
-        .create_default_arc(&config)
+        .create_default(&config)
         .expect("shared registry default should create detector");
 
     assert_eq!(
@@ -287,7 +284,7 @@ fn test_boxed_mime_detector_trait_object_delegates_all_entry_points() {
 
     assert_eq!(
         Some("application/x-static-name".to_owned()),
-        detector.as_ref().detect_by_filename("file.bin")
+        detector.detect_by_filename("file.bin")
     );
     assert_eq!(
         Some("application/x-static-content".to_owned()),
@@ -368,27 +365,26 @@ fn test_shared_mime_detector_trait_object_delegates_all_entry_points() {
 
 #[test]
 fn test_mime_detector_registry_builds_from_config_defaults() {
-    let registry =
-        MimeDetectorRegistry::default_registry().expect("default registry");
+    let registry = MimeDetectorRegistry::builtin();
     let config = MimeConfig::default();
     let file_config = create_detector_config("file");
     let unknown_config = create_detector_config("unknown");
     let fallback_config =
         create_detector_config_with_fallbacks("unknown", &["repository"]);
     let boxed = registry
-        .create_default_box(&config)
+        .create_default(&config)
         .expect("default boxed detector");
     let shared = registry
-        .create_default_arc(&config)
+        .create_default(&config)
         .expect("default shared detector");
     let boxed_file = registry
-        .create_default_box(&file_config)
+        .create_default(&file_config)
         .expect("file boxed detector");
     let shared_file = registry
-        .create_default_arc(&file_config)
+        .create_default(&file_config)
         .expect("file shared detector");
     let fallback = registry
-        .create_default_box(&fallback_config)
+        .create_default(&fallback_config)
         .expect("repository fallback detector");
     let repository_default = RepositoryMimeDetector::default();
     let file_default = FileCommandMimeDetector::default();
@@ -400,7 +396,7 @@ fn test_mime_detector_registry_builds_from_config_defaults() {
     assert!(boxed_file.detect_by_filename("document.pdf").is_some());
     assert!(shared_file.detect_by_filename("document.pdf").is_some());
     assert!(fallback.detect_by_filename("document.pdf").is_some());
-    assert!(registry.create_default_box(&unknown_config).is_err());
+    assert!(registry.create_default(&unknown_config).is_err());
     assert!(
         repository_default
             .detect_by_filename("document.pdf")
@@ -416,13 +412,10 @@ fn test_mime_detector_registry_builds_from_config_defaults() {
 
 #[test]
 fn test_configured_fallback_uses_repository_after_unknown_detector() {
-    let registry =
-        MimeDetectorRegistry::default_registry().expect("default registry");
+    let registry = MimeDetectorRegistry::builtin();
     let config =
         create_detector_config_with_fallbacks("unknown", &["repository"]);
-    let detector = registry
-        .create_default_box(&config)
-        .expect("fallback detector");
+    let detector = registry.create_default(&config).expect("fallback detector");
 
     assert_eq!(
         Some("application/pdf".to_owned()),

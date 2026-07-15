@@ -8,7 +8,7 @@
 //! File-backed MIME detector helpers.
 
 use std::fmt::Debug;
-use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use qubit_local_files::LocalTempFile;
@@ -114,8 +114,7 @@ pub(crate) fn with_temp_file<T>(
 ) -> MimeResult<T> {
     let mut file =
         LocalTempFile::with_name(Some("MimeDetectorTemp-"), Some(".tmp"))?;
-    file.close()
-        .expect("unconfigured temporary file closes infallibly");
-    fs::write(file.path(), content)?;
+    file.write_all(content)?;
+    file.close();
     detect(file.path())
 }

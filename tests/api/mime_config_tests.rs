@@ -65,7 +65,7 @@ fn test_from_config_reads_logical_config_keys() {
         )
         .expect("ambiguous mapping should be configurable");
     config
-        .set(CONFIG_MIME_MAX_BUFFER_SIZE, 4096_usize)
+        .set(CONFIG_MIME_MAX_BUFFER_SIZE, 4096_u64)
         .expect("maximum buffer size should be configurable");
     config
         .set(CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE, 8_388_608_u64)
@@ -373,10 +373,9 @@ fn test_registries_use_mime_config_defaults() {
         DEFAULT_AMBIGUOUS_MIME_MAPPING,
     ));
 
-    let detector_registry =
-        MimeDetectorRegistry::default_registry().expect("default registry");
+    let detector_registry = MimeDetectorRegistry::builtin();
     let detector = detector_registry
-        .create_default_box(&MimeConfig::default())
+        .create_default(&MimeConfig::default())
         .expect("default detector");
 
     assert_eq!(

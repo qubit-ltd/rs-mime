@@ -6,588 +6,278 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use std::sync::{
-    Arc,
-    atomic::{
-        AtomicUsize,
-        Ordering,
-    },
-};
+use std::path::Path;
+use std::sync::Arc;
 
-use tempfile::TempDir;
-
+use qubit_config::Config;
+use qubit_io::ReadSeek;
 use qubit_mime::{
-    FileCommandMimeDetectorProvider,
+    CONFIG_MIME_DETECTOR_DEFAULT,
+    CONFIG_MIME_DETECTOR_FALLBACKS,
     MimeConfig,
     MimeDetectionPolicy,
     MimeDetector,
-    MimeDetectorAvailability,
     MimeDetectorRegistry,
     MimeDetectorSpec,
     MimeError,
     MimeResult,
-    ProviderCreateError,
     ProviderDescriptor,
-    ProviderRegistryError,
+    ProviderError,
+    ProviderId,
     ServiceProvider,
 };
 
 #[derive(Debug)]
-struct NamedDetector {
-    mime_type: &'static str,
-}
+struct StaticDetector;
 
-impl MimeDetector for NamedDetector {
-    fn detect_by_filename(&self, _filename: &str) -> Option<String> {
-        Some(self.mime_type.to_owned())
+impl MimeDetector for StaticDetector {
+    fn detect_by_filename(&self, filename: &str) -> Option<String> {
+        filename
+            .ends_with(".static")
+            .then(|| "application/x-static".to_owned())
     }
 
     fn detect_by_content(&self, _content: &[u8]) -> Option<String> {
-        Some(self.mime_type.to_owned())
+        None
     }
 
     fn detect(
         &self,
         _content: &[u8],
-        _filename: Option<&str>,
+        filename: Option<&str>,
         _policy: MimeDetectionPolicy,
     ) -> Option<String> {
-        Some(self.mime_type.to_owned())
+        filename.and_then(|name| self.detect_by_filename(name))
     }
 
     fn detect_reader(
         &self,
-        _reader: &mut dyn qubit_io::ReadSeek,
-        _filename: Option<&str>,
-        _policy: MimeDetectionPolicy,
+        _reader: &mut dyn ReadSeek,
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        Ok(Some(self.mime_type.to_owned()))
+        Ok(self.detect(&[], filename, policy))
     }
 
     fn detect_file(
         &self,
-        _file: &std::path::Path,
-        _policy: MimeDetectionPolicy,
+        file: &Path,
+        policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        Ok(Some(self.mime_type.to_owned()))
+        Ok(self.detect(
+            &[],
+            file.file_name().and_then(|name| name.to_str()),
+            policy,
+        ))
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ProviderBehavior {
+    Success,
+    Unsupported,
+    Unavailable,
+    InitializationFailed,
 }
 
 #[derive(Debug)]
-struct TestProvider {
-    id: &'static str,
-    aliases: &'static [&'static str],
-    mime_type: &'static str,
-    priority: i32,
-    unavailable: bool,
-    created: AtomicUsize,
-}
-
-impl TestProvider {
-    /// Creates a provider used by registry tests.
-    fn new(
-        id: &'static str,
-        aliases: &'static [&'static str],
-        mime_type: &'static str,
-    ) -> Self {
-        Self {
-            id,
-            aliases,
-            mime_type,
-            priority: 0,
-            unavailable: false,
-            created: AtomicUsize::new(0),
-        }
-    }
-
-    /// Sets the provider priority.
-    fn with_priority(mut self, priority: i32) -> Self {
-        self.priority = priority;
-        self
-    }
-
-    /// Marks the provider as unavailable.
-    fn unavailable(mut self) -> Self {
-        self.unavailable = true;
-        self
-    }
-}
+struct TestProvider(ProviderBehavior);
 
 impl ServiceProvider<MimeDetectorSpec> for TestProvider {
-    fn descriptor(&self) -> Result<ProviderDescriptor, ProviderRegistryError> {
-        Ok(ProviderDescriptor::new(self.id)?
-            .with_aliases(self.aliases)?
-            .with_priority(self.priority))
-    }
-
-    fn availability(&self, _config: &MimeConfig) -> MimeDetectorAvailability {
-        if self.unavailable {
-            MimeDetectorAvailability::unavailable("disabled for test")
-        } else {
-            MimeDetectorAvailability::Available
+    fn create(
+        &self,
+        _config: &MimeConfig,
+    ) -> Result<Arc<dyn MimeDetector>, ProviderError> {
+        match self.0 {
+            ProviderBehavior::Success => Ok(Arc::new(StaticDetector)),
+            ProviderBehavior::Unsupported => {
+                Err(ProviderError::unsupported("unsupported input"))
+            }
+            ProviderBehavior::Unavailable => {
+                Err(ProviderError::unavailable("missing executable"))
+            }
+            ProviderBehavior::InitializationFailed => {
+                Err(ProviderError::initialization_failed("startup failed"))
+            }
         }
     }
-
-    fn create_box(
-        &self,
-        _config: &MimeConfig,
-    ) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
-        self.created.fetch_add(1, Ordering::SeqCst);
-        Ok(Box::new(NamedDetector {
-            mime_type: self.mime_type,
-        }))
-    }
 }
 
-#[derive(Debug)]
-struct DefaultMethodProvider;
-
-impl ServiceProvider<MimeDetectorSpec> for DefaultMethodProvider {
-    fn descriptor(&self) -> Result<ProviderDescriptor, ProviderRegistryError> {
-        ProviderDescriptor::new("default-method")
-    }
-
-    fn create_box(
-        &self,
-        _config: &MimeConfig,
-    ) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
-        Ok(Box::new(NamedDetector {
-            mime_type: "application/x-default-method",
-        }))
-    }
+fn descriptor(id: &str, priority: i32) -> ProviderDescriptor {
+    ProviderDescriptor::new(
+        ProviderId::new(id).expect("test provider ID should be valid"),
+    )
+    .with_priority(priority)
 }
 
-#[derive(Debug)]
-struct FailingProvider;
-
-impl ServiceProvider<MimeDetectorSpec> for FailingProvider {
-    fn descriptor(&self) -> Result<ProviderDescriptor, ProviderRegistryError> {
-        ProviderDescriptor::new("failing")
-    }
-
-    fn create_box(
-        &self,
-        _config: &MimeConfig,
-    ) -> Result<Box<dyn MimeDetector>, ProviderCreateError> {
-        Err(ProviderCreateError::failed("forced failure"))
-    }
+fn detector_config(primary: &str, fallbacks: &[&str]) -> MimeConfig {
+    let mut source = Config::new();
+    source
+        .set(CONFIG_MIME_DETECTOR_DEFAULT, primary)
+        .expect("primary detector should be configurable");
+    source
+        .set(CONFIG_MIME_DETECTOR_FALLBACKS, fallbacks.join(","))
+        .expect("detector fallbacks should be configurable");
+    MimeConfig::from_config(&source).expect("detector config should parse")
 }
 
 #[test]
-fn test_registry_creates_detector_by_id_and_alias_case_insensitively() {
-    let mut registry = MimeDetectorRegistry::new();
-    registry
-        .register(TestProvider::new(
-            "custom",
-            &["custom-detector", "custom-mime-detector"],
-            "application/x-custom",
-        ))
-        .expect("custom provider should register");
-
-    let config = MimeConfig::default();
-    let by_id = registry
-        .create_box("custom", &config)
-        .expect("provider id should resolve");
-    let by_alias = registry
-        .create_box("CUSTOM-MIME-DETECTOR", &config)
-        .expect("provider alias should resolve");
-
-    assert_eq!(
-        Some("application/x-custom".to_owned()),
-        by_id.detect_by_filename("file.bin")
-    );
-    assert_eq!(
-        Some("application/x-custom".to_owned()),
-        by_alias.detect_by_content(b"data")
-    );
-}
-
-#[test]
-fn test_registry_rejects_duplicate_provider_names_and_aliases() {
-    let mut registry = MimeDetectorRegistry::new();
-    registry
-        .register(TestProvider::new(
-            "custom",
-            &["custom-detector"],
-            "application/x-custom",
-        ))
-        .expect("first provider should register");
-
-    let error = registry
-        .register(TestProvider::new(
-            "other",
-            &["CUSTOM-DETECTOR"],
-            "application/x-other",
-        ))
-        .expect_err("duplicate alias should be rejected");
-
-    assert!(matches!(
-        error,
-        MimeError::DuplicateDetectorName { ref name } if name == "custom-detector"
-    ));
-}
-
-#[test]
-fn test_registry_registers_multiple_shared_providers() {
-    let mut registry = MimeDetectorRegistry::new();
-    registry
-        .register_shared(Arc::new(TestProvider::new(
-            "shared",
-            &["shared-detector"],
-            "application/x-shared",
-        )))
-        .expect("shared provider should register");
-    registry
-        .register_shared(Arc::new(TestProvider::new(
-            "arc",
-            &["arc-detector"],
-            "application/x-arc",
-        )))
-        .expect("second shared provider should register");
-
-    let config = MimeConfig::default();
-    assert_eq!(
-        Some("application/x-shared".to_owned()),
-        registry
-            .create_box("shared-detector", &config)
-            .expect("shared provider should create detector")
-            .detect_by_filename("file.bin")
-    );
-    assert_eq!(
-        Some("application/x-arc".to_owned()),
-        registry
-            .create_arc("arc-detector", &config)
-            .expect("arc provider should create detector")
-            .detect_by_content(b"data")
-    );
-}
-
-#[test]
-fn test_registry_reports_invalid_direct_selectors_and_provider_failures() {
-    let mut registry = MimeDetectorRegistry::new();
-    registry
-        .register(
-            TestProvider::new("disabled", &[], "application/x-disabled")
-                .unavailable(),
-        )
-        .expect("disabled provider should register");
-    registry
-        .register(FailingProvider)
-        .expect("failing provider should register");
-    let config = MimeConfig::default();
-
-    assert!(matches!(
-        registry
-            .create_box("", &config)
-            .expect_err("empty selector should be rejected"),
-        MimeError::EmptyDetectorName
-    ));
-    assert!(matches!(
-        registry
-            .create_box("bad name", &config)
-            .expect_err("invalid selector should be rejected"),
-        MimeError::InvalidDetectorName { ref name, .. } if name == "bad name"
-    ));
-    assert!(matches!(
-        registry
-            .create_box("disabled", &config)
-            .expect_err("unavailable provider should not create detector"),
-        MimeError::DetectorUnavailable { ref name, ref reason }
-            if name == "disabled" && reason == "disabled for test"
-    ));
-    assert!(matches!(
-        registry
-            .create_box("failing", &config)
-            .expect_err("failing provider should not create detector"),
-        MimeError::DetectorBackend { ref backend, ref reason }
-            if backend == "failing" && reason == "forced failure"
-    ));
-}
-
-#[test]
-fn test_registry_auto_selects_highest_priority_available_provider() {
-    let mut registry = MimeDetectorRegistry::new();
-    registry
-        .register(
-            TestProvider::new("low", &[], "application/x-low").with_priority(1),
-        )
-        .expect("low provider should register");
-    registry
-        .register(
-            TestProvider::new("high", &[], "application/x-high")
-                .with_priority(10),
-        )
-        .expect("high provider should register");
-
-    let config = create_detector_config("auto", &[]);
-    let detector = registry
-        .create_default_box(&config)
-        .expect("auto should create highest priority provider");
-
-    assert_eq!(
-        Some("application/x-high".to_owned()),
-        detector.detect_by_filename("file.bin")
-    );
-}
-
-#[test]
-fn test_registry_auto_tie_breaks_by_provider_id() {
-    let mut registry = MimeDetectorRegistry::new();
-    registry
-        .register(
-            TestProvider::new("z-provider", &[], "application/x-z")
-                .with_priority(10),
-        )
-        .expect("z provider should register");
-    registry
-        .register(
-            TestProvider::new("a-provider", &[], "application/x-a")
-                .with_priority(10),
-        )
-        .expect("a provider should register");
-
-    let config = create_detector_config("auto", &[]);
-    let detector = registry
-        .create_default_box(&config)
-        .expect("auto should create lexicographically first tied provider");
-
-    assert_eq!(
-        Some("application/x-a".to_owned()),
-        detector.detect_by_filename("file.bin")
-    );
-}
-
-#[test]
-fn test_empty_registry_reports_no_available_detector() {
-    let registry = MimeDetectorRegistry::new();
-    let error = registry
-        .create_default_box(&create_detector_config("auto", &[]))
-        .expect_err("empty registry should not create detector");
-
-    assert!(matches!(
-        error,
-        MimeError::NoAvailableDetector { ref reason } if reason == "detector registry is empty"
-    ));
-}
-
-#[test]
-fn test_registry_uses_fallback_chain_when_primary_is_unavailable() {
-    let mut registry = MimeDetectorRegistry::new();
-    registry
-        .register(
-            TestProvider::new("primary", &[], "application/x-primary")
-                .unavailable(),
-        )
-        .expect("primary provider should register");
-    registry
-        .register(TestProvider::new("fallback", &[], "application/x-fallback"))
-        .expect("fallback provider should register");
-
-    let config = create_detector_config("primary", &["fallback"]);
-    let detector = registry
-        .create_default_box(&config)
-        .expect("fallback provider should be used");
-
-    assert_eq!(
-        Some("application/x-fallback".to_owned()),
-        detector.detect_by_filename("file.bin")
-    );
-}
-
-#[test]
-fn test_provider_default_methods_return_available_zero_priority_without_aliases()
- {
-    let provider = DefaultMethodProvider;
-    let availability = provider.availability(&MimeConfig::default());
-    let descriptor = provider
-        .descriptor()
-        .expect("default-method descriptor should be valid");
-
-    assert_eq!("default-method", descriptor.id().as_str());
-    assert!(descriptor.aliases().is_empty());
-    assert_eq!(0, descriptor.priority());
-    assert!(availability.is_available());
-    assert_eq!(
-        Some("application/x-default-method".to_owned()),
-        provider
-            .create_box(&MimeConfig::default())
-            .expect("default provider should create detector")
-            .detect_by_filename("file.bin")
-    );
-}
-
-#[test]
-fn test_builtin_registry_exposes_repository_and_file_command_providers() {
+fn test_builtin_registry_lists_and_resolves_repository_provider() {
     let registry = MimeDetectorRegistry::builtin();
-    let names = registry.provider_names();
-
-    assert!(names.contains(&"repository"));
-    assert!(names.contains(&"file"));
-    assert!(registry.find_provider("repository-mime-detector").is_some());
-    assert!(
-        registry
-            .find_provider("file-command-mime-detector")
-            .is_some()
-    );
-
     let detector = registry
-        .create_box("repository", &MimeConfig::default())
-        .expect("repository provider should create detector");
+        .create("repository-mime-detector", &MimeConfig::default())
+        .expect("repository alias should resolve");
 
+    assert_eq!(vec!["repository", "file"], registry.provider_ids());
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detector.detect_by_filename("document.pdf")
-    );
-
-    let file_provider = registry
-        .find_provider("file")
-        .expect("file provider should be registered");
-    assert_eq!(
-        10,
-        file_provider
-            .descriptor()
-            .expect("file provider descriptor should be valid")
-            .priority()
+        detector.detect_by_filename("document.pdf"),
     );
 }
 
 #[test]
-fn test_resolve_provider_matches_find_provider_for_builtin_names() {
-    let registry = MimeDetectorRegistry::builtin();
-    for name in [
-        "repository",
-        "repository-mime-detector",
-        "file",
-        "file-command-mime-detector",
-    ] {
-        let via_resolve =
-            registry.resolve_provider(name).unwrap_or_else(|_| {
-                panic!("resolve_provider should succeed for '{name}'")
-            });
-        let via_find = registry.find_provider(name).unwrap_or_else(|| {
-            panic!("find_provider should succeed for '{name}'")
-        });
-        assert!(
-            std::ptr::eq(via_resolve, via_find),
-            "find_provider should delegate to resolve_provider for '{name}'"
-        );
-    }
-}
-
-#[test]
-fn test_resolve_provider_reports_empty_invalid_and_unknown_names() {
-    let registry = MimeDetectorRegistry::builtin();
-
-    assert!(matches!(
-        registry
-            .resolve_provider("")
-            .expect_err("empty name should be rejected"),
-        MimeError::EmptyDetectorName
-    ));
-    assert!(matches!(
-        registry
-            .resolve_provider("bad name")
-            .expect_err("invalid name should be rejected"),
-        MimeError::InvalidDetectorName { ref name, .. } if name == "bad name"
-    ));
-    assert!(matches!(
-        registry
-            .resolve_provider("missing-detector-provider")
-            .expect_err("unknown name should be rejected"),
-        MimeError::UnknownDetector { ref name } if name == "missing-detector-provider"
-    ));
-}
-
-#[test]
-fn test_default_registry_starts_with_builtin_providers() {
-    let registry = MimeDetectorRegistry::default_registry()
-        .expect("default registry snapshot should be available");
-    let names = registry.provider_names();
-
-    assert!(names.contains(&"repository"));
-    assert!(names.contains(&"file"));
-}
-
-#[test]
-fn test_register_default_provider_makes_default_registry_see_provider() {
-    MimeDetectorRegistry::register_default(TestProvider::new(
-        "global-test",
-        &["global-test-detector"],
-        "application/x-global-test",
-    ))
-    .expect("global test provider should register");
-
-    let registry = MimeDetectorRegistry::default_registry()
-        .expect("default registry snapshot should be available");
-    let by_name = registry
-        .create_box("global-test-detector", &MimeConfig::default())
-        .expect("default registry should create provider by name");
-    let config = create_detector_config("global-test", &[]);
-    let by_config = registry
-        .create_default_box(&config)
-        .expect("default registry should use configured default");
-
-    assert_eq!(
-        Some("application/x-global-test".to_owned()),
-        by_name.detect_by_filename("file.bin")
-    );
-    assert_eq!(
-        Some("application/x-global-test".to_owned()),
-        by_config.detect_by_content(b"data")
-    );
-}
-
-#[test]
-fn test_file_command_provider_reports_unavailable_without_path() {
-    const CHILD_ENV: &str = "QUBIT_MIME_CHECK_FILE_PROVIDER_UNAVAILABLE";
-    const TEST_NAME: &str = "detector::mime_detector_registry_tests::test_file_command_provider_reports_unavailable_without_path";
-
-    if std::env::var_os(CHILD_ENV).is_some() {
-        let provider = FileCommandMimeDetectorProvider;
-        let availability = provider.availability(&MimeConfig::default());
-
-        assert!(!availability.is_available());
-        assert!(matches!(
-            availability,
-            MimeDetectorAvailability::Unavailable { ref reason }
-                if reason == "`file` command is not available"
-        ));
-        return;
-    }
-
-    let temp_dir =
-        TempDir::new().expect("empty PATH directory should be created");
-    let output = std::process::Command::new(
-        std::env::current_exe()
-            .expect("current test binary path should be available"),
-    )
-    .arg(TEST_NAME)
-    .arg("--exact")
-    .arg("--nocapture")
-    .arg("--test-threads=1")
-    .env(CHILD_ENV, "1")
-    .env("PATH", temp_dir.path())
-    .output()
-    .expect("child test process should run");
-
-    assert!(
-        output.status.success(),
-        "child test failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn create_detector_config(default: &str, fallbacks: &[&str]) -> MimeConfig {
-    let mut config = qubit_config::Config::new();
-    config
-        .set(qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT, default)
-        .expect("detector default should be configurable");
-    config
-        .set(
-            qubit_mime::CONFIG_MIME_DETECTOR_FALLBACKS,
-            fallbacks.join(","),
+fn test_builder_registers_owned_and_shared_providers_atomically() {
+    let mut builder = MimeDetectorRegistry::builder();
+    builder
+        .register(
+            descriptor("owned", 20),
+            TestProvider(ProviderBehavior::Success),
         )
-        .expect("detector fallbacks should be configurable");
-    MimeConfig::from_config(&config).expect("detector config should parse")
+        .expect("owned provider should register");
+    builder
+        .register_shared(
+            descriptor("shared", 10),
+            Arc::new(TestProvider(ProviderBehavior::Success)),
+        )
+        .expect("shared provider should register");
+
+    let duplicate = builder
+        .register(
+            descriptor("shared", 0),
+            TestProvider(ProviderBehavior::Success),
+        )
+        .expect_err("duplicate selector should be rejected");
+    assert!(matches!(
+        duplicate,
+        MimeError::DuplicateDetectorName { ref name } if name == "shared"
+    ));
+
+    let registry = builder.build();
+    assert_eq!(vec!["owned", "shared"], registry.provider_ids());
+}
+
+#[test]
+fn test_create_maps_invalid_and_unknown_detector_selectors() {
+    let registry = MimeDetectorRegistry::builder().build();
+    let config = MimeConfig::default();
+
+    assert!(matches!(
+        registry.create("", &config),
+        Err(MimeError::EmptyDetectorName)
+    ));
+    assert!(matches!(
+        registry.create("bad selector", &config),
+        Err(MimeError::InvalidDetectorName { .. })
+    ));
+    assert!(matches!(
+        registry.create("missing", &config),
+        Err(MimeError::UnknownDetector { ref name }) if name == "missing"
+    ));
+}
+
+#[test]
+fn test_create_maps_single_provider_failures() {
+    let mut builder = MimeDetectorRegistry::builder();
+    builder
+        .register(
+            descriptor("unsupported", 0),
+            TestProvider(ProviderBehavior::Unsupported),
+        )
+        .expect("unsupported provider should register");
+    builder
+        .register(
+            descriptor("unavailable", 0),
+            TestProvider(ProviderBehavior::Unavailable),
+        )
+        .expect("unavailable provider should register");
+    builder
+        .register(
+            descriptor("failed", 0),
+            TestProvider(ProviderBehavior::InitializationFailed),
+        )
+        .expect("failing provider should register");
+    let registry = builder.build();
+    let config = MimeConfig::default();
+
+    for selector in ["unsupported", "unavailable"] {
+        assert!(matches!(
+            registry.create(selector, &config),
+            Err(MimeError::DetectorUnavailable { ref name, .. })
+                if name == selector
+        ));
+    }
+    assert!(matches!(
+        registry.create("failed", &config),
+        Err(MimeError::DetectorBackend { ref backend, .. })
+            if backend == "failed"
+    ));
+}
+
+#[test]
+fn test_create_default_supports_auto_named_and_exhausted_chains() {
+    let mut builder = MimeDetectorRegistry::builder();
+    builder
+        .register(
+            descriptor("unavailable", 20),
+            TestProvider(ProviderBehavior::Unavailable),
+        )
+        .expect("unavailable provider should register");
+    builder
+        .register(
+            descriptor("success", 10),
+            TestProvider(ProviderBehavior::Success),
+        )
+        .expect("successful provider should register");
+    let registry = builder.build();
+
+    let automatic = registry
+        .create_default(&detector_config("AUTO", &[]))
+        .expect("automatic resolution should reach the successful provider");
+    let named = registry
+        .create_default(&detector_config("success", &[]))
+        .expect("configured resolution should use the named provider");
+    assert_eq!(
+        Some("application/x-static".to_owned()),
+        automatic.detect_by_filename("sample.static")
+    );
+    assert_eq!(
+        Some("application/x-static".to_owned()),
+        named.detect_by_filename("sample.static")
+    );
+    assert!(matches!(
+        registry.create_default(&detector_config("bad selector", &[])),
+        Err(MimeError::InvalidDetectorName { .. })
+    ));
+
+    let mut exhausted = MimeDetectorRegistry::builder();
+    exhausted
+        .register(
+            descriptor("first", 20),
+            TestProvider(ProviderBehavior::Unavailable),
+        )
+        .expect("first provider should register");
+    exhausted
+        .register(
+            descriptor("second", 10),
+            TestProvider(ProviderBehavior::Unsupported),
+        )
+        .expect("second provider should register");
+    assert!(matches!(
+        exhausted
+            .build()
+            .create_default(&detector_config("first", &["second"])),
+        Err(MimeError::NoAvailableDetector { ref reason })
+            if reason.contains("missing executable")
+                && reason.contains("unsupported input")
+    ));
 }
