@@ -11,7 +11,8 @@
 //! implement [`ServiceProvider<MimeDetectorSpec>`](qubit_spi::ServiceProvider),
 //! which creates detector instances. Provider identity, aliases, and priority
 //! are supplied separately through a [`qubit_spi::ProviderDescriptor`] when an
-//! application assembles a [`MimeDetectorRegistry`](crate::MimeDetectorRegistry).
+//! application assembles a
+//! [`MimeDetectorRegistry`](crate::MimeDetectorRegistry).
 
 use qubit_spi::ServiceProvider;
 

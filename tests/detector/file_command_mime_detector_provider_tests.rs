@@ -6,7 +6,10 @@ use qubit_mime::{
     MimeConfig,
     file_command_mime_detector_descriptor,
 };
-use qubit_spi::{ProviderErrorKind, ServiceProvider};
+use qubit_spi::{
+    ProviderErrorKind,
+    ServiceProvider,
+};
 #[test]
 fn test_file_command_mime_detector_provider_metadata_and_availability() {
     let provider = FileCommandMimeDetectorProvider;

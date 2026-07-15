@@ -46,7 +46,8 @@ impl MimeDetectorRegistry {
     /// Creates a registry from providers assembled during application startup.
     #[must_use]
     pub fn new(providers: ProviderRegistry<MimeDetectorSpec>) -> Self {
-        let resolver = ProviderResolver::new(providers, FallbackPolicy::OnAbsence);
+        let resolver =
+            ProviderResolver::new(providers, FallbackPolicy::OnAbsence);
         Self { resolver }
     }
 
@@ -103,12 +104,15 @@ impl MimeDetectorRegistry {
         config: &MimeConfig,
     ) -> MimeResult<Arc<dyn MimeDetector>> {
         let primary = config.mime_detector_default().trim();
-        let created = if primary.is_empty() || primary.eq_ignore_ascii_case("auto") {
+        let created = if primary.is_empty()
+            || primary.eq_ignore_ascii_case("auto")
+        {
             self.resolver.create_auto(config)
         } else {
             self.resolver.create_chain(
-                std::iter::once(primary)
-                    .chain(config.mime_detector_fallbacks().iter().map(String::as_str)),
+                std::iter::once(primary).chain(
+                    config.mime_detector_fallbacks().iter().map(String::as_str),
+                ),
                 config,
             )
         };
@@ -128,17 +132,13 @@ pub(crate) fn detector_registration_error(
 
 pub(crate) fn detector_resolution_error(error: ResolutionError) -> MimeError {
     if error.kind() == ResolutionErrorKind::InvalidSelector {
-        if error
-            .selector_error()
-            .is_some_and(|source| source.kind() == ProviderSelectorErrorKind::Empty)
-        {
+        if error.selector_error().is_some_and(|source| {
+            source.kind() == ProviderSelectorErrorKind::Empty
+        }) {
             return MimeError::EmptyDetectorName;
         }
         return MimeError::InvalidDetectorName {
-            name: error
-                .selector_input()
-                .unwrap_or("<invalid>")
-                .to_owned(),
+            name: error.selector_input().unwrap_or("<invalid>").to_owned(),
             reason: error.to_string(),
         };
     }

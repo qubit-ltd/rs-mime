@@ -43,7 +43,8 @@ impl MediaStreamClassifierRegistry {
     /// Creates a registry from providers assembled during application startup.
     #[must_use]
     pub fn new(providers: ProviderRegistry<MediaStreamClassifierSpec>) -> Self {
-        let resolver = ProviderResolver::new(providers, FallbackPolicy::OnAbsence);
+        let resolver =
+            ProviderResolver::new(providers, FallbackPolicy::OnAbsence);
         Self { resolver }
     }
 
@@ -117,17 +118,13 @@ pub(super) fn classifier_registration_error(
 
 fn classifier_resolution_error(error: ResolutionError) -> MimeError {
     if error.kind() == ResolutionErrorKind::InvalidSelector {
-        if error
-            .selector_error()
-            .is_some_and(|source| source.kind() == ProviderSelectorErrorKind::Empty)
-        {
+        if error.selector_error().is_some_and(|source| {
+            source.kind() == ProviderSelectorErrorKind::Empty
+        }) {
             return MimeError::EmptyClassifierName;
         }
         return MimeError::InvalidClassifierName {
-            name: error
-                .selector_input()
-                .unwrap_or("<invalid>")
-                .to_owned(),
+            name: error.selector_input().unwrap_or("<invalid>").to_owned(),
             reason: error.to_string(),
         };
     }
