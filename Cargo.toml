@@ -40,7 +40,7 @@ qubit-codec-misc = { path = "../rs-codec-misc", version = "0.2" }
 qubit-command = "0.4"
 qubit-config = { path = "../rs-config", version = "0.14" }
 qubit-local-files = { path = "../rs-local-files", version = "0.3" }
-qubit-spi = { path = "../rs-spi", version = "0.4" }
+qubit-spi = { path = "../rs-spi", version = "0.5" }
 
 [dev-dependencies]
 tempfile = "3.27"
