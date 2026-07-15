@@ -14,13 +14,28 @@ use std::sync::{
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-/// Guard that prepends one directory to `PATH` for the current process.
+/// Serializes process-wide `PATH` access and restores its original value.
 pub(crate) struct PathEnvGuard {
     _guard: MutexGuard<'static, ()>,
     original_path: Option<String>,
 }
 
 impl PathEnvGuard {
+    /// Holds the process-wide environment lock without changing `PATH`.
+    ///
+    /// # Returns
+    ///
+    /// A guard that prevents concurrent tests from replacing `PATH`.
+    pub(crate) fn preserve() -> Self {
+        let guard = ENV_LOCK
+            .lock()
+            .expect("environment lock should not be poisoned");
+        Self {
+            _guard: guard,
+            original_path: std::env::var("PATH").ok(),
+        }
+    }
+
     /// Replaces `PATH` with a single directory and holds a process-wide
     /// environment lock.
     pub(crate) fn set(directory: &Path) -> Self {
