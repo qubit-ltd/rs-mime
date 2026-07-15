@@ -191,6 +191,18 @@ fn test_create_maps_invalid_and_unknown_detector_selectors() {
     ));
 }
 
+/// Verifies that one configured unknown detector is reported as an unknown
+/// selector when no fallback detector is configured.
+#[test]
+fn test_create_default_maps_single_unknown_detector() {
+    let registry = MimeDetectorRegistry::builder().build();
+
+    assert!(matches!(
+        registry.create_default(&detector_config("missing", &[])),
+        Err(MimeError::UnknownDetector { ref name }) if name == "missing"
+    ));
+}
+
 #[test]
 fn test_create_maps_single_provider_failures() {
     let mut builder = MimeDetectorRegistry::builder();
