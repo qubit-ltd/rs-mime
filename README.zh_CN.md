@@ -127,9 +127,8 @@ fn main() -> Result<(), MimeError> {
 
 ### 使用 Rust 风格的 `MimeDetector` trait
 
-`MimeDetectorRegistry` 根据 `MimeConfig` 创建 boxed 或 shared
-`MimeDetector` trait object。只需要 MIME 名称的代码可以依赖 trait，而不是依赖
-具体检测器类型。
+`MimeDetectorRegistry` 根据 `MimeConfig` 创建共享的 `MimeDetector` trait object。
+只需要 MIME 名称的代码可以依赖 trait，而不是依赖具体检测器类型。
 
 ```rust
 use qubit_mime::{
@@ -145,8 +144,8 @@ fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) ->
 }
 
 fn main() -> Result<(), MimeError> {
-    let detector =
-        MimeDetectorRegistry::default_registry()?.create_default_box(&MimeConfig::default())?;
+    let registry = MimeDetectorRegistry::builtin();
+    let detector = registry.create_default(&MimeConfig::default())?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -197,8 +196,8 @@ fn main() -> Result<(), MimeError> {
     config.set(CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE, DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE)?;
 
     MimeConfig::reload_default(&config)?;
-    let detector =
-        MimeDetectorRegistry::default_registry()?.create_default_box(&MimeConfig::default())?;
+    let registry = MimeDetectorRegistry::builtin();
+    let detector = registry.create_default(&MimeConfig::default())?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -212,26 +211,18 @@ fn main() -> Result<(), MimeError> {
 
 ### 使用 registry 和 fallback 选择检测器
 
-`MimeDetectorRegistry::create_default_box()` 和
-`MimeDetectorRegistry::create_default_arc()` 先尝试配置的默认 detector；如果该
-provider 未知、不可用或初始化失败，则按配置的 fallback 链继续尝试。把默认
-selector 设置为 `auto` 时，会从 registry 中按 provider 优先级选择当前可用的实现。
+`MimeDetectorRegistry::create_default()` 先尝试配置的默认 detector，再按顺序尝试
+fallback 链。未知 selector，以及报告不支持或不可用的 provider，允许继续回退；
+无效配置和初始化失败会停止回退。默认 selector 为 `auto` 时，按 provider 优先级
+降序、canonical Provider ID 升序选择。
 
-默认 registry 初始包含 `MimeDetectorRegistry::builtin()` 返回的内置 provider。
-扩展 crate 可以在应用启动阶段调用
-`MimeDetectorRegistry::register_default(provider)`，把自己的 provider 加入这个
-进程级默认 registry。注册成功后，后续任何地方调用
-`MimeDetectorRegistry::default_registry()` 获取到的 registry 快照，都会通过同一个
-进程级默认 registry 看到该 provider。
+`MimeDetectorRegistry::builtin()` 返回包含内置 provider 的 registry。需要自定义
+provider 集合时，应用在启动阶段使用 `MimeDetectorRegistry::builder()`，逐一注册
+descriptor 和 provider，最后调用 `build()`。本 crate 不提供进程级 Provider registry
+或全局 Provider 注册。
 
-`MimeDetectorRegistry::default_registry()` 返回当前进程级 registry 的快照克隆。
-修改这个快照不会更新全局 registry。需要让 provider 对默认构造器全局可见时，
-使用 `register_default()`；需要隔离环境、测试自定义 provider，或限制可选 provider
-集合时，使用显式的 `MimeDetectorRegistry::builtin()` 或 `MimeDetectorRegistry::new()`。
-
-全局注册只在当前进程内生效，通常应在根据配置创建 detector 之前执行一次。provider
-id 或 alias 重复时会返回 `MimeError::DuplicateDetectorName`；全局 registry 锁中毒时
-会返回 `MimeError::DetectorBackend`。
+SPI 类型属于 `qubit-spi`，`qubit-mime` 不会重新导出。Provider 实现和应用装配代码
+应直接从 `qubit_spi` 导入 `ServiceProvider`、`ProviderDescriptor` 等基础设施。
 
 内置 detector selector：
 
@@ -258,7 +249,8 @@ fn main() -> Result<(), MimeError> {
     source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
 
     let config = MimeConfig::from_config(&source)?;
-    let detector = MimeDetectorRegistry::default_registry()?.create_default_box(&config)?;
+    let registry = MimeDetectorRegistry::builtin();
+    let detector = registry.create_default(&config)?;
 
     assert_eq!(
         Some("image/png".to_owned()),
@@ -268,7 +260,7 @@ fn main() -> Result<(), MimeError> {
 }
 ```
 
-需要自定义 provider 时，使用显式 registry：
+需要显式 Provider 集合时，使用启动期 builder：
 
 ```rust
 use qubit_mime::{
@@ -276,11 +268,18 @@ use qubit_mime::{
     MimeDetector,
     MimeDetectorRegistry,
     MimeError,
+    RepositoryMimeDetectorProvider,
+    repository_mime_detector_descriptor,
 };
 
 fn main() -> Result<(), MimeError> {
-    let registry = MimeDetectorRegistry::builtin();
-    let detector = registry.create_box("repository-mime-detector", &MimeConfig::default())?;
+    let mut builder = MimeDetectorRegistry::builder();
+    builder.register(
+        repository_mime_detector_descriptor(),
+        RepositoryMimeDetectorProvider,
+    )?;
+    let registry = builder.build();
+    let detector = registry.create("repository-mime-detector", &MimeConfig::default())?;
 
     assert_eq!(
         Some("text/plain".to_owned()),
@@ -639,14 +638,13 @@ fn main() -> Result<(), MimeError> {
 
 | 方法 | 描述 |
 |-----|------|
-| `MimeDetectorRegistry::builtin()` | 创建只包含内置 detector provider 的隔离 registry |
-| `MimeDetectorRegistry::default_registry()` | 获取进程级默认 detector registry 的快照 |
-| `MimeDetectorRegistry::register_default(provider)` | 将外部 detector provider 注册到全局默认 registry |
-| `MimeDetectorRegistry::register(provider)` | 将外部 detector provider 注册到显式 registry |
-| `MimeDetectorRegistry::create_box(name, config)` | 按 provider id 或 alias 创建 boxed 检测器 |
-| `MimeDetectorRegistry::create_arc(name, config)` | 按 provider id 或 alias 创建共享检测器 |
-| `MimeDetectorRegistry::create_default_box(config)` | 将配置的默认值、`auto` 和 fallback 链解析为 boxed 检测器 |
-| `MimeDetectorRegistry::create_default_arc(config)` | 将配置的默认值、`auto` 和 fallback 链解析为共享检测器 |
+| `MimeDetectorRegistry::builder()` | 创建启动期 Provider builder |
+| `MimeDetectorRegistry::builtin()` | 创建包含内置 detector provider 的 registry |
+| `MimeDetectorRegistryBuilder::register(descriptor, provider)` | 注册带外部身份元数据的具体 Provider |
+| `MimeDetectorRegistryBuilder::register_shared(descriptor, provider)` | 注册已经共享的 Provider |
+| `MimeDetectorRegistry::create(name, config)` | 按 Provider ID 或 alias 创建共享 detector |
+| `MimeDetectorRegistry::create_default(config)` | 解析配置的默认值、`auto` 和 fallback 链 |
+| `MimeDetectorRegistry::provider_ids()` | 按注册顺序列出 canonical Provider ID |
 | `MimeDetectorProvider` | 可插拔 detector 实现的工厂 trait |
 | `detect_by_filename(filename)` | 根据文件名检测一个 MIME 名称 |
 | `detect_by_content(bytes)` | 根据内容字节检测一个 MIME 名称 |
@@ -685,14 +683,13 @@ fn main() -> Result<(), MimeError> {
 
 | 方法 | 描述 |
 |-----|------|
-| `MediaStreamClassifierRegistry::builtin()` | 创建只包含内置 classifier provider 的隔离 registry |
-| `MediaStreamClassifierRegistry::default_registry()` | 获取进程级默认 classifier registry 的快照 |
-| `MediaStreamClassifierRegistry::register_default(provider)` | 将外部 classifier provider 注册到全局默认 registry |
-| `MediaStreamClassifierRegistry::register(provider)` | 将外部 classifier provider 注册到显式 registry |
-| `MediaStreamClassifierRegistry::create_box(name, config)` | 按 provider id 或 alias 创建 boxed classifier |
-| `MediaStreamClassifierRegistry::create_arc(name, config)` | 按 provider id 或 alias 创建共享 classifier |
-| `MediaStreamClassifierRegistry::create_default_box(config)` | 将配置的默认值或 `auto` 解析为 boxed classifier |
-| `MediaStreamClassifierRegistry::create_default_arc(config)` | 将配置的默认值或 `auto` 解析为共享 classifier |
+| `MediaStreamClassifierRegistry::builder()` | 创建启动期 Provider builder |
+| `MediaStreamClassifierRegistry::builtin()` | 创建包含内置 classifier provider 的 registry |
+| `MediaStreamClassifierRegistryBuilder::register(descriptor, provider)` | 注册具体 classifier Provider |
+| `MediaStreamClassifierRegistryBuilder::register_shared(descriptor, provider)` | 注册已经共享的 classifier Provider |
+| `MediaStreamClassifierRegistry::create(name, config)` | 按 Provider ID 或 alias 创建共享 classifier |
+| `MediaStreamClassifierRegistry::create_default(config)` | 解析配置 selector 或 `auto` |
+| `MediaStreamClassifierRegistry::provider_ids()` | 按注册顺序列出 canonical Provider ID |
 | `MediaStreamClassifierProvider` | 可插拔 classifier 实现的工厂 trait |
 | `classify_file(file)` | 分类本地媒体文件 |
 | `classify_reader(reader)` | 从 reader 分类媒体内容 |

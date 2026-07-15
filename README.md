@@ -134,9 +134,9 @@ fn main() -> Result<(), MimeError> {
 
 ### Use the Rust-style `MimeDetector` trait
 
-`MimeDetectorRegistry` creates boxed or shared `MimeDetector` trait objects
-from `MimeConfig`. Code that only needs MIME names can depend on the trait
-instead of a concrete detector.
+`MimeDetectorRegistry` creates shared `MimeDetector` trait objects from
+`MimeConfig`. Code that only needs MIME names can depend on the trait instead
+of a concrete detector.
 
 ```rust
 use qubit_mime::{
@@ -152,8 +152,8 @@ fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) ->
 }
 
 fn main() -> Result<(), MimeError> {
-    let detector =
-        MimeDetectorRegistry::default_registry()?.create_default_box(&MimeConfig::default())?;
+    let registry = MimeDetectorRegistry::builtin();
+    let detector = registry.create_default(&MimeConfig::default())?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -204,8 +204,8 @@ fn main() -> Result<(), MimeError> {
     config.set(CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE, DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE)?;
 
     MimeConfig::reload_default(&config)?;
-    let detector =
-        MimeDetectorRegistry::default_registry()?.create_default_box(&MimeConfig::default())?;
+    let registry = MimeDetectorRegistry::builtin();
+    let detector = registry.create_default(&MimeConfig::default())?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -219,31 +219,22 @@ fn main() -> Result<(), MimeError> {
 
 ### Select detectors with registry and fallbacks
 
-`MimeDetectorRegistry::create_default_box()` and
-`MimeDetectorRegistry::create_default_arc()` use the configured default
-detector first. If that provider is unknown, unavailable, or fails to
-initialize, the configured fallback chain is tried in order. Set the default
-selector to `auto` to choose the highest-priority available provider from the
-registry.
+`MimeDetectorRegistry::create_default()` uses the configured default detector
+first and then the configured fallback chain. Unknown selectors and providers
+that report unsupported or unavailable status allow the chain to continue;
+invalid configuration and initialization failures stop it. Set the default
+selector to `auto` to choose by descending provider priority and then canonical
+provider ID.
 
-The default registry starts with the built-in providers returned by
-`MimeDetectorRegistry::builtin()`. Extension crates can make their providers
-available to all default registry snapshots by calling
-`MimeDetectorRegistry::register_default(provider)` during application startup.
-After registration succeeds, later `MimeDetectorRegistry::default_registry()`
-snapshots see the provider through the same process-wide registry.
+`MimeDetectorRegistry::builtin()` returns a registry containing the built-in
+providers. Custom applications use `MimeDetectorRegistry::builder()`, register
+each descriptor and provider during startup, and then call `build()`. There is
+no process-wide provider registry or global provider registration.
 
-`MimeDetectorRegistry::default_registry()` returns a snapshot clone of the
-current process-wide registry. Mutating that snapshot does not update the global
-registry. Use `register_default()` when a provider should become globally
-visible, and use an explicit `MimeDetectorRegistry::builtin()` or
-`MimeDetectorRegistry::new()` when a caller needs isolation, tests a custom
-provider, or wants to restrict which providers can be selected.
-
-Global registration is process-local and should normally happen once, before
-creating detectors from configuration. Duplicate provider ids or aliases are
-reported as `MimeError::DuplicateDetectorName`; poisoned global registry locks
-are reported as `MimeError::DetectorBackend`.
+SPI types remain owned by `qubit-spi` and are not re-exported by `qubit-mime`.
+Provider implementations and application assembly code should import
+`ServiceProvider`, `ProviderDescriptor`, and related infrastructure directly
+from `qubit_spi`.
 
 Built-in detector selectors:
 
@@ -270,7 +261,8 @@ fn main() -> Result<(), MimeError> {
     source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
 
     let config = MimeConfig::from_config(&source)?;
-    let detector = MimeDetectorRegistry::default_registry()?.create_default_box(&config)?;
+    let registry = MimeDetectorRegistry::builtin();
+    let detector = registry.create_default(&config)?;
 
     assert_eq!(
         Some("image/png".to_owned()),
@@ -280,7 +272,7 @@ fn main() -> Result<(), MimeError> {
 }
 ```
 
-Use an explicit registry when you need custom providers:
+Use the startup-only builder when you need an explicit provider set:
 
 ```rust
 use qubit_mime::{
@@ -288,11 +280,18 @@ use qubit_mime::{
     MimeDetector,
     MimeDetectorRegistry,
     MimeError,
+    RepositoryMimeDetectorProvider,
+    repository_mime_detector_descriptor,
 };
 
 fn main() -> Result<(), MimeError> {
-    let registry = MimeDetectorRegistry::builtin();
-    let detector = registry.create_box("repository-mime-detector", &MimeConfig::default())?;
+    let mut builder = MimeDetectorRegistry::builder();
+    builder.register(
+        repository_mime_detector_descriptor(),
+        RepositoryMimeDetectorProvider,
+    )?;
+    let registry = builder.build();
+    let detector = registry.create("repository-mime-detector", &MimeConfig::default())?;
 
     assert_eq!(
         Some("text/plain".to_owned()),
@@ -654,14 +653,13 @@ fn main() -> Result<(), MimeError> {
 
 | Method | Description |
 |--------|-------------|
-| `MimeDetectorRegistry::builtin()` | Create an isolated registry with only built-in detector providers |
-| `MimeDetectorRegistry::default_registry()` | Snapshot the process-wide default detector registry |
-| `MimeDetectorRegistry::register_default(provider)` | Register an external detector provider globally |
-| `MimeDetectorRegistry::register(provider)` | Register an external detector provider in an explicit registry |
-| `MimeDetectorRegistry::create_box(name, config)` | Create a boxed detector by provider id or alias |
-| `MimeDetectorRegistry::create_arc(name, config)` | Create a shared detector by provider id or alias |
-| `MimeDetectorRegistry::create_default_box(config)` | Resolve the configured default, `auto`, and fallback chain into a boxed detector |
-| `MimeDetectorRegistry::create_default_arc(config)` | Resolve the configured default, `auto`, and fallback chain into a shared detector |
+| `MimeDetectorRegistry::builder()` | Create a startup-only provider builder |
+| `MimeDetectorRegistry::builtin()` | Create a registry with the built-in detector providers |
+| `MimeDetectorRegistryBuilder::register(descriptor, provider)` | Register an owned provider with external identity metadata |
+| `MimeDetectorRegistryBuilder::register_shared(descriptor, provider)` | Register an already shared provider |
+| `MimeDetectorRegistry::create(name, config)` | Create a shared detector by provider ID or alias |
+| `MimeDetectorRegistry::create_default(config)` | Resolve the configured default, `auto`, and fallback chain |
+| `MimeDetectorRegistry::provider_ids()` | List canonical provider IDs in registration order |
 | `MimeDetectorProvider` | Factory trait for pluggable detector implementations |
 | `detect_by_filename(filename)` | Detect one MIME name from filename |
 | `detect_by_content(bytes)` | Detect one MIME name from content bytes |
@@ -700,14 +698,13 @@ fn main() -> Result<(), MimeError> {
 
 | Method | Description |
 |--------|-------------|
-| `MediaStreamClassifierRegistry::builtin()` | Create an isolated registry with built-in classifier providers |
-| `MediaStreamClassifierRegistry::default_registry()` | Snapshot the process-wide default classifier registry |
-| `MediaStreamClassifierRegistry::register_default(provider)` | Register an external classifier provider globally |
-| `MediaStreamClassifierRegistry::register(provider)` | Register an external classifier provider in an explicit registry |
-| `MediaStreamClassifierRegistry::create_box(name, config)` | Create a boxed classifier by provider id or alias |
-| `MediaStreamClassifierRegistry::create_arc(name, config)` | Create a shared classifier by provider id or alias |
-| `MediaStreamClassifierRegistry::create_default_box(config)` | Resolve the configured default or `auto` into a boxed classifier |
-| `MediaStreamClassifierRegistry::create_default_arc(config)` | Resolve the configured default or `auto` into a shared classifier |
+| `MediaStreamClassifierRegistry::builder()` | Create a startup-only provider builder |
+| `MediaStreamClassifierRegistry::builtin()` | Create a registry with the built-in classifier provider |
+| `MediaStreamClassifierRegistryBuilder::register(descriptor, provider)` | Register an owned classifier provider |
+| `MediaStreamClassifierRegistryBuilder::register_shared(descriptor, provider)` | Register an already shared classifier provider |
+| `MediaStreamClassifierRegistry::create(name, config)` | Create a shared classifier by provider ID or alias |
+| `MediaStreamClassifierRegistry::create_default(config)` | Resolve the configured selector or `auto` |
+| `MediaStreamClassifierRegistry::provider_ids()` | List canonical provider IDs in registration order |
 | `MediaStreamClassifierProvider` | Factory trait for pluggable classifier implementations |
 | `classify_file(file)` | Classify a local media file |
 | `classify_reader(reader)` | Classify media content from a reader |
