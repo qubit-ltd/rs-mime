@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use qubit_spi::{
+    AttemptFailureKind,
     FallbackPolicy,
     ProviderErrorKind,
     ProviderRegistry,
@@ -148,6 +149,14 @@ pub(crate) fn detector_resolution_error(error: ResolutionError) -> MimeError {
     }
     let attempts = error.attempts();
     if let [attempt] = attempts {
+        if attempt.kind() == AttemptFailureKind::UnknownProvider {
+            return MimeError::UnknownDetector {
+                name: attempt
+                    .requested_selector()
+                    .map_or("<unknown>", |selector| selector.as_str())
+                    .to_owned(),
+            };
+        }
         let name = attempt
             .provider_id()
             .map_or("<unknown>", |id| id.as_str())
