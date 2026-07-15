@@ -9,14 +9,17 @@
 
 use std::sync::Arc;
 
-use crate::{
-    FfprobeCommandMediaStreamClassifier,
-    MediaStreamClassifier,
-    MimeConfig,
+use qubit_spi::{
     ProviderDescriptor,
     ProviderError,
     ProviderId,
     ServiceProvider,
+};
+
+use crate::{
+    FfprobeCommandMediaStreamClassifier,
+    MediaStreamClassifier,
+    MimeConfig,
 };
 
 use super::MediaStreamClassifierSpec;

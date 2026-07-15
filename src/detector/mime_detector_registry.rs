@@ -39,7 +39,6 @@ use super::{
 
 /// Immutable registry of MIME detector providers.
 pub struct MimeDetectorRegistry {
-    providers: ProviderRegistry<MimeDetectorSpec>,
     resolver: ProviderResolver<MimeDetectorSpec>,
 }
 
@@ -47,12 +46,8 @@ impl MimeDetectorRegistry {
     /// Creates a registry from providers assembled during application startup.
     #[must_use]
     pub fn new(providers: ProviderRegistry<MimeDetectorSpec>) -> Self {
-        let resolver =
-            ProviderResolver::new(providers.clone(), FallbackPolicy::OnAbsence);
-        Self {
-            providers,
-            resolver,
-        }
+        let resolver = ProviderResolver::new(providers, FallbackPolicy::OnAbsence);
+        Self { resolver }
     }
 
     /// Creates a startup-only builder for MIME detector providers.
@@ -83,7 +78,8 @@ impl MimeDetectorRegistry {
     /// Lists canonical provider IDs in registration order.
     #[must_use]
     pub fn provider_ids(&self) -> Vec<&str> {
-        self.providers
+        self.resolver
+            .registry()
             .provider_ids()
             .map(|id| id.as_str())
             .collect()
@@ -152,11 +148,14 @@ pub(crate) fn detector_registration_error(
 }
 
 pub(crate) fn detector_resolution_error(error: ResolutionError) -> MimeError {
-    if error.kind() == ResolutionErrorKind::UnknownProvider {
+    if matches!(
+        error.kind(),
+        ResolutionErrorKind::InvalidSelector | ResolutionErrorKind::UnknownProvider
+    ) {
         return MimeError::UnknownDetector {
             name: error
-                .requested_selector()
-                .map_or("<invalid>", |selector| selector.as_str())
+                .selector_input()
+                .unwrap_or("<invalid>")
                 .to_owned(),
         };
     }

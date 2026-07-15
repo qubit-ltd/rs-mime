@@ -21,6 +21,8 @@ use qubit_mime::{
     MimeDetectorSpec,
     MimeError,
     MimeResult,
+};
+use qubit_spi::{
     ProviderDescriptor,
     ProviderError,
     ProviderId,

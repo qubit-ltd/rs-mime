@@ -1,9 +1,9 @@
 use qubit_mime::{
     MimeConfig,
     RepositoryMimeDetectorProvider,
-    ServiceProvider,
     repository_mime_detector_descriptor,
 };
+use qubit_spi::ServiceProvider;
 
 #[test]
 fn test_repository_mime_detector_provider_creates_filename_detector() {

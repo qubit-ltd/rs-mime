@@ -77,22 +77,6 @@ pub mod classifier;
 pub mod detector;
 pub mod repository;
 
-pub use qubit_spi::{
-    FallbackPolicy,
-    ProviderDescriptor,
-    ProviderError,
-    ProviderErrorKind,
-    ProviderId,
-    ProviderRegistry,
-    ProviderRegistryBuilder,
-    ProviderResolver,
-    ProviderSelection,
-    RegistrationError,
-    ResolutionError,
-    ServiceProvider,
-    ServiceSpec,
-};
-
 mod common_mime_types;
 mod constants;
 mod mime_config;

@@ -8,6 +8,8 @@ use qubit_mime::{
     MimeDetector,
     MimeDetectorSpec,
     MimeResult,
+};
+use qubit_spi::{
     ProviderDescriptor,
     ProviderError,
     ProviderId,

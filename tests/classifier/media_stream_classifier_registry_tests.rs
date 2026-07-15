@@ -20,6 +20,8 @@ use qubit_mime::{
     MimeConfig,
     MimeError,
     MimeResult,
+};
+use qubit_spi::{
     ProviderDescriptor,
     ProviderError,
     ProviderId,

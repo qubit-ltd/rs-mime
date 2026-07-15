@@ -9,8 +9,9 @@
 //!
 //! The MIME detector SPI is a domain binding over [`qubit_spi`]. Providers
 //! implement [`ServiceProvider<MimeDetectorSpec>`](qubit_spi::ServiceProvider),
-//! which supplies descriptor metadata, availability, priority, and detector
-//! factories for [`MimeDetectorRegistry`](crate::MimeDetectorRegistry).
+//! which creates detector instances. Provider identity, aliases, and priority
+//! are supplied separately through a [`qubit_spi::ProviderDescriptor`] when an
+//! application assembles a [`MimeDetectorRegistry`](crate::MimeDetectorRegistry).
 
 use qubit_spi::ServiceProvider;
 
