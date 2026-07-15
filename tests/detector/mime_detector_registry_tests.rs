@@ -185,6 +185,10 @@ fn test_create_maps_invalid_and_unknown_detector_selectors() {
         registry.create("missing", &config),
         Err(MimeError::UnknownDetector { ref name }) if name == "missing"
     ));
+    assert!(matches!(
+        registry.create_default(&detector_config("auto", &[])),
+        Err(MimeError::NoAvailableDetector { ref reason }) if !reason.is_empty()
+    ));
 }
 
 #[test]

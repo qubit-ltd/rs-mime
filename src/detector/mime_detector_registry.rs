@@ -14,9 +14,8 @@ use qubit_spi::{
     ProviderErrorKind,
     ProviderRegistry,
     ProviderResolver,
-    ProviderSelection,
+    ProviderSelectorErrorKind,
     RegistrationError,
-    RegistrationErrorKind,
     ResolutionError,
     ResolutionErrorKind,
 };
@@ -91,10 +90,8 @@ impl MimeDetectorRegistry {
         selector: &str,
         config: &MimeConfig,
     ) -> MimeResult<Arc<dyn MimeDetector>> {
-        let selection = ProviderSelection::named(selector)
-            .map_err(detector_registration_error)?;
         self.resolver
-            .create(&selection, config)
+            .create_named(selector, config)
             .map(|created| created.into_service())
             .map_err(detector_resolution_error)
     }
@@ -104,59 +101,49 @@ impl MimeDetectorRegistry {
         &self,
         config: &MimeConfig,
     ) -> MimeResult<Arc<dyn MimeDetector>> {
-        let selection = detector_selection(config)?;
-        self.resolver
-            .create(&selection, config)
+        let primary = config.mime_detector_default().trim();
+        let created = if primary.is_empty() || primary.eq_ignore_ascii_case("auto") {
+            self.resolver.create_auto(config)
+        } else {
+            self.resolver.create_chain(
+                std::iter::once(primary)
+                    .chain(config.mime_detector_fallbacks().iter().map(String::as_str)),
+                config,
+            )
+        };
+        created
             .map(|created| created.into_service())
             .map_err(detector_resolution_error)
     }
 }
 
-fn detector_selection(config: &MimeConfig) -> MimeResult<ProviderSelection> {
-    let primary = config.mime_detector_default().trim();
-    if primary.is_empty() || primary.eq_ignore_ascii_case("auto") {
-        return Ok(ProviderSelection::Auto);
-    }
-    ProviderSelection::chain(
-        std::iter::once(primary)
-            .chain(config.mime_detector_fallbacks().iter().map(String::as_str)),
-    )
-    .map_err(detector_registration_error)
-}
-
 pub(crate) fn detector_registration_error(
     error: RegistrationError,
 ) -> MimeError {
-    match error.kind() {
-        RegistrationErrorKind::EmptyIdentifier => MimeError::EmptyDetectorName,
-        RegistrationErrorKind::InvalidIdentifier => {
-            MimeError::InvalidDetectorName {
-                name: error.identifier().unwrap_or_default().to_owned(),
-                reason: error.to_string(),
-            }
-        }
-        RegistrationErrorKind::DuplicateSelector => {
-            MimeError::DuplicateDetectorName {
-                name: error.identifier().unwrap_or_default().to_owned(),
-            }
-        }
-        _ => MimeError::DetectorBackend {
-            backend: "registry".into(),
-            reason: error.to_string(),
-        },
+    MimeError::DuplicateDetectorName {
+        name: error.selector().to_owned(),
     }
 }
 
 pub(crate) fn detector_resolution_error(error: ResolutionError) -> MimeError {
-    if matches!(
-        error.kind(),
-        ResolutionErrorKind::InvalidSelector | ResolutionErrorKind::UnknownProvider
-    ) {
-        return MimeError::UnknownDetector {
+    if error.kind() == ResolutionErrorKind::InvalidSelector {
+        if error
+            .selector_error()
+            .is_some_and(|source| source.kind() == ProviderSelectorErrorKind::Empty)
+        {
+            return MimeError::EmptyDetectorName;
+        }
+        return MimeError::InvalidDetectorName {
             name: error
                 .selector_input()
                 .unwrap_or("<invalid>")
                 .to_owned(),
+            reason: error.to_string(),
+        };
+    }
+    if error.kind() == ResolutionErrorKind::UnknownProvider {
+        return MimeError::UnknownDetector {
+            name: error.selector_input().unwrap_or("<unknown>").to_owned(),
         };
     }
     let attempts = error.attempts();
@@ -179,10 +166,6 @@ pub(crate) fn detector_resolution_error(error: ResolutionError) -> MimeError {
         };
     }
     MimeError::NoAvailableDetector {
-        reason: attempts
-            .iter()
-            .map(|attempt| attempt.reason())
-            .collect::<Vec<_>>()
-            .join("; "),
+        reason: error.to_string(),
     }
 }
