@@ -21,6 +21,9 @@ use qubit_mime::{
 };
 use tempfile::NamedTempFile;
 
+#[cfg(unix)]
+use crate::support::PathEnvGuard;
+
 #[derive(Debug)]
 struct StaticDetector;
 
@@ -215,6 +218,9 @@ fn test_default_mime_detector_returns_usable_detector() {
 
 #[test]
 fn test_mime_detector_registry_creates_boxed_and_shared_named_detectors() {
+    #[cfg(unix)]
+    let _path_guard = PathEnvGuard::preserve();
+
     let registry = MimeDetectorRegistry::builtin();
     let config = MimeConfig::default();
     let boxed = registry
