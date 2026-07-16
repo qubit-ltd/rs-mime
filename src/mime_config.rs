@@ -506,12 +506,15 @@ fn create_classifier_selection(
 /// A detector-specific configuration error.
 fn detector_selection_error(error: ProviderSelectionError) -> MimeError {
     let reason = error.to_string();
-    match error.selector_input() {
-        Some(name) => MimeError::InvalidDetectorName {
-            name: name.to_owned(),
-            reason,
-        },
-        None => MimeError::EmptyDetectorName,
+    match error {
+        ProviderSelectionError::InvalidSelector { selector_input, .. } => {
+            MimeError::InvalidDetectorName {
+                name: selector_input.into(),
+                reason,
+            }
+        }
+        ProviderSelectionError::EmptyChain => MimeError::EmptyDetectorName,
+        _ => MimeError::NoAvailableDetector { reason },
     }
 }
 
@@ -526,12 +529,15 @@ fn detector_selection_error(error: ProviderSelectionError) -> MimeError {
 /// A classifier-specific configuration error.
 fn classifier_selection_error(error: ProviderSelectionError) -> MimeError {
     let reason = error.to_string();
-    match error.selector_input() {
-        Some(name) => MimeError::InvalidClassifierName {
-            name: name.to_owned(),
-            reason,
-        },
-        None => MimeError::EmptyClassifierName,
+    match error {
+        ProviderSelectionError::InvalidSelector { selector_input, .. } => {
+            MimeError::InvalidClassifierName {
+                name: selector_input.into(),
+                reason,
+            }
+        }
+        ProviderSelectionError::EmptyChain => MimeError::EmptyClassifierName,
+        _ => MimeError::NoAvailableClassifier { reason },
     }
 }
 

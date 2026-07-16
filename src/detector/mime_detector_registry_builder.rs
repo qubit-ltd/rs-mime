@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use qubit_spi::error::RegistrationError;
 use qubit_spi::{
     ProviderDescriptor,
     ProviderRegistryBuilder,
@@ -16,8 +17,8 @@ use qubit_spi::{
 };
 
 use crate::{
+    MimeError,
     MimeResult,
-    detector::mime_detector_registry::detector_registration_error,
 };
 
 use super::{
@@ -29,6 +30,19 @@ use super::{
 #[derive(Default)]
 pub struct MimeDetectorRegistryBuilder {
     providers: ProviderRegistryBuilder<MimeDetectorSpec>,
+}
+
+/// Maps an SPI registration conflict into the detector error model.
+fn detector_registration_error(error: RegistrationError) -> MimeError {
+    let reason = error.to_string();
+    match error {
+        RegistrationError::DuplicateSelector { selector, .. } => {
+            MimeError::DuplicateDetectorName {
+                name: selector.into(),
+            }
+        }
+        _ => MimeError::NoAvailableDetector { reason },
+    }
 }
 
 impl MimeDetectorRegistryBuilder {
