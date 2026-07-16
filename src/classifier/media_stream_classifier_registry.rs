@@ -14,13 +14,11 @@ use qubit_spi::error::{
     ProviderErrorKind,
     RegistrationError,
     ResolutionError,
-    ResolutionErrorKind,
 };
 use qubit_spi::{
     FallbackPolicy,
     ProviderRegistry,
     ProviderResolver,
-    ResolutionTermination,
 };
 
 use crate::{
@@ -114,51 +112,29 @@ pub(super) fn classifier_registration_error(
 
 fn classifier_resolution_error(error: ResolutionError) -> MimeError {
     let message = error.to_string();
-    match error.kind() {
-        ResolutionErrorKind::InvalidSelector => {
-            if error
-                .selector_error()
-                .is_some_and(|source| source.is_empty())
-            {
+    match &error {
+        ResolutionError::InvalidSelector { input, source, .. } => {
+            if source.is_empty() {
                 MimeError::EmptyClassifierName
             } else {
-                let name = error
-                    .invalid_selector_input()
-                    .expect("invalid-selector errors retain their input");
                 MimeError::InvalidClassifierName {
-                    name: name.to_owned(),
+                    name: input.to_string(),
                     reason: message,
                 }
             }
         }
-        ResolutionErrorKind::UnknownProvider => {
-            let selector = error
-                .unknown_selector()
-                .expect("unknown-provider errors retain their selector");
+        ResolutionError::UnknownProvider { selector } => {
             MimeError::UnknownClassifier {
                 name: selector.as_str().to_owned(),
             }
         }
-        ResolutionErrorKind::EmptySelection
-        | ResolutionErrorKind::EmptyRegistry => {
+        ResolutionError::EmptySelection | ResolutionError::EmptyRegistry => {
             MimeError::NoAvailableClassifier { reason: message }
         }
-        ResolutionErrorKind::NoProviderSucceeded => {
-            let precise_attempt = match error.termination() {
-                Some(ResolutionTermination::StoppedByPolicy) => {
-                    error.terminal_attempt()
-                }
-                Some(ResolutionTermination::Exhausted)
-                    if error.attempts().len() == 1 =>
-                {
-                    error.terminal_attempt()
-                }
-                _ => None,
-            };
-            precise_attempt
-                .map(classifier_attempt_error)
-                .unwrap_or(MimeError::NoAvailableClassifier { reason: message })
-        }
+        ResolutionError::NoProviderSucceeded { .. } => error
+            .decisive_attempt()
+            .map(classifier_attempt_error)
+            .unwrap_or(MimeError::NoAvailableClassifier { reason: message }),
         _ => MimeError::NoAvailableClassifier { reason: message },
     }
 }
@@ -173,22 +149,23 @@ fn classifier_resolution_error(error: ResolutionError) -> MimeError {
 ///
 /// A precise domain error when the attempt exposes provider context.
 fn classifier_attempt_error(attempt: &AttemptFailure) -> MimeError {
-    let error = attempt
-        .provider_error()
-        .expect("classifier attempts reaching precise mapping retain an error");
-    let provider_id = attempt.provider_id().expect(
-        "classifier attempts reaching precise mapping retain a provider ID",
-    );
-    match error.kind() {
-        ProviderErrorKind::Unsupported | ProviderErrorKind::Unavailable => {
-            MimeError::ClassifierUnavailable {
-                name: provider_id.as_str().to_owned(),
-                reason: error.reason().to_owned(),
+    match attempt {
+        AttemptFailure::ProviderError {
+            provider_id, error, ..
+        } => match error.kind() {
+            ProviderErrorKind::Unsupported | ProviderErrorKind::Unavailable => {
+                MimeError::ClassifierUnavailable {
+                    name: provider_id.as_str().to_owned(),
+                    reason: error.reason().to_owned(),
+                }
             }
-        }
-        _ => MimeError::ClassifierBackend {
-            backend: provider_id.as_str().to_owned(),
-            reason: error.reason().to_owned(),
+            _ => MimeError::ClassifierBackend {
+                backend: provider_id.as_str().to_owned(),
+                reason: error.reason().to_owned(),
+            },
+        },
+        _ => MimeError::NoAvailableClassifier {
+            reason: attempt.to_string(),
         },
     }
 }
