@@ -29,8 +29,9 @@ use qubit_config::{
         EmptyItemPolicy,
     },
 };
+use qubit_spi::ProviderSelection;
+use qubit_spi::error::ProviderSelectionError;
 
-#[cfg(target_pointer_width = "32")]
 use crate::MimeError;
 use crate::{
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
@@ -79,16 +80,14 @@ use crate::{
 ///
 /// Detector fallback selection is performed by
 /// [`MimeDetectorRegistry`](crate::MimeDetectorRegistry), not by this config
-/// object. The config only stores the default selector and ordered fallback
-/// names.
+/// object. Selector text is validated while configuration is loaded and stored
+/// as reusable [`ProviderSelection`] values.
 #[derive(Debug, Clone)]
 pub struct MimeConfig {
-    /// Default MIME detector selector.
-    mime_detector_default: String,
-    /// Fallback MIME detector selectors.
-    mime_detector_fallbacks: Vec<String>,
-    /// Default media stream classifier selector.
-    media_stream_classifier_default: String,
+    /// Validated MIME detector selection.
+    mime_detector_selection: ProviderSelection,
+    /// Validated media stream classifier selection.
+    media_stream_classifier_selection: ProviderSelection,
     /// Maximum bytes staged from reader/content input for media stream
     /// classification.
     media_stream_max_staging_size: u64,
@@ -179,10 +178,13 @@ impl MimeConfig {
     /// source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
     ///
     /// let config = MimeConfig::from_config(&source)?;
-    /// assert_eq!("file", config.mime_detector_default());
     /// assert_eq!(
-    ///     ["repository".to_owned()].as_slice(),
-    ///     config.mime_detector_fallbacks(),
+    ///     "file",
+    ///     config.mime_detector_selection().selectors()[0].as_str(),
+    /// );
+    /// assert_eq!(
+    ///     "repository",
+    ///     config.mime_detector_selection().selectors()[1].as_str(),
     /// );
     /// # Ok(())
     /// # }
@@ -197,7 +199,9 @@ impl MimeConfig {
     ///
     /// # Errors
     /// Returns [`MimeError::Config`](crate::MimeError::Config) when a present
-    /// configuration value cannot be converted to the expected type.
+    /// configuration value cannot be converted to the expected type. Returns
+    /// a detector- or classifier-name error when a configured provider
+    /// selector is invalid.
     pub fn from_config(config: &Config) -> MimeResult<Self> {
         let mime_detector_default = config.get_any_or_with(
             [CONFIG_MIME_DETECTOR_DEFAULT, ENV_MIME_DETECTOR_DEFAULT],
@@ -265,12 +269,15 @@ impl MimeConfig {
             })?;
         #[cfg(target_pointer_width = "64")]
         let max_buffer_size = max_buffer_size as usize;
+        let mime_detector_selection = create_detector_selection(
+            &mime_detector_default,
+            normalize_detector_names(mime_detector_fallbacks),
+        )?;
+        let media_stream_classifier_selection =
+            create_classifier_selection(&media_stream_classifier_default)?;
         Ok(Self {
-            mime_detector_default,
-            mime_detector_fallbacks: normalize_detector_names(
-                mime_detector_fallbacks,
-            ),
-            media_stream_classifier_default,
+            mime_detector_selection,
+            media_stream_classifier_selection,
             media_stream_max_staging_size,
             enable_precise_detection,
             precise_detection_patterns: normalize_patterns(
@@ -290,7 +297,9 @@ impl MimeConfig {
     ///
     /// # Errors
     /// Returns [`MimeError::Config`](crate::MimeError::Config) when the
-    /// environment cannot be represented by [`Config`].
+    /// environment cannot be represented by [`Config`]. Returns a detector-
+    /// or classifier-name error when a configured provider selector is
+    /// invalid.
     pub fn from_env() -> MimeResult<Self> {
         let config = Config::from_env()?;
         Self::from_config(&config)
@@ -314,7 +323,9 @@ impl MimeConfig {
     ///
     /// # Errors
     /// Returns [`MimeError::Config`](crate::MimeError::Config) when a present
-    /// configuration value cannot be converted to the expected type.
+    /// configuration value cannot be converted to the expected type. Returns
+    /// a detector- or classifier-name error when a configured provider
+    /// selector is invalid.
     pub fn reload_default(config: &Config) -> MimeResult<()> {
         Self::set_default(Self::from_config(config)?);
         Ok(())
@@ -324,34 +335,34 @@ impl MimeConfig {
     ///
     /// # Errors
     /// Returns [`MimeError::Config`](crate::MimeError::Config) when the
-    /// environment cannot be represented by [`Config`].
+    /// environment cannot be represented by [`Config`]. Returns a detector-
+    /// or classifier-name error when a configured provider selector is
+    /// invalid.
     pub fn reload_default_from_env() -> MimeResult<()> {
         Self::set_default(Self::from_env()?);
         Ok(())
     }
 
-    /// Gets the configured default MIME detector selector.
+    /// Returns the validated MIME detector selection.
     ///
     /// # Returns
-    /// Backend selector used by default detector wrappers.
-    pub fn mime_detector_default(&self) -> &str {
-        &self.mime_detector_default
+    /// Automatic, named, or chained selection used by detector registries.
+    #[inline(always)]
+    #[must_use]
+    pub const fn mime_detector_selection(&self) -> &ProviderSelection {
+        &self.mime_detector_selection
     }
 
-    /// Gets fallback MIME detector selectors.
+    /// Returns the validated media stream classifier selection.
     ///
     /// # Returns
-    /// Ordered fallback backend selectors.
-    pub fn mime_detector_fallbacks(&self) -> &[String] {
-        &self.mime_detector_fallbacks
-    }
-
-    /// Gets the configured default media stream classifier selector.
-    ///
-    /// # Returns
-    /// Backend selector used by default classifier wrappers.
-    pub fn media_stream_classifier_default(&self) -> &str {
-        &self.media_stream_classifier_default
+    /// Automatic or named selection used by classifier registries.
+    #[inline(always)]
+    #[must_use]
+    pub const fn media_stream_classifier_selection(
+        &self,
+    ) -> &ProviderSelection {
+        &self.media_stream_classifier_selection
     }
 
     /// Gets the maximum staging size for reader/content media stream
@@ -402,10 +413,17 @@ impl MimeConfig {
     /// Configuration populated entirely from crate constants.
     fn builtin_default() -> Self {
         Self {
-            mime_detector_default: DEFAULT_MIME_DETECTOR.to_owned(),
-            mime_detector_fallbacks: fallback_defaults(),
-            media_stream_classifier_default: DEFAULT_MEDIA_STREAM_CLASSIFIER
-                .to_owned(),
+            mime_detector_selection: create_detector_selection(
+                DEFAULT_MIME_DETECTOR,
+                fallback_defaults(),
+            )
+            .expect("built-in MIME detector selection should be valid"),
+            media_stream_classifier_selection: create_classifier_selection(
+                DEFAULT_MEDIA_STREAM_CLASSIFIER,
+            )
+            .expect(
+                "built-in media stream classifier selection should be valid",
+            ),
             media_stream_max_staging_size:
                 DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
             enable_precise_detection: DEFAULT_ENABLE_PRECISE_DETECTION,
@@ -423,6 +441,97 @@ impl MimeConfig {
             ),
             max_buffer_size: DEFAULT_MIME_MAX_BUFFER_SIZE,
         }
+    }
+}
+
+/// Builds the validated MIME detector selection from configured text.
+///
+/// # Arguments
+///
+/// * `primary` - Configured primary selector or `auto` sentinel.
+/// * `fallbacks` - Normalized fallback selectors in configured order.
+///
+/// # Returns
+///
+/// The validated automatic or chained detector selection.
+///
+/// # Errors
+///
+/// Returns a detector-name error when any configured selector is invalid.
+fn create_detector_selection(
+    primary: &str,
+    fallbacks: Vec<String>,
+) -> MimeResult<ProviderSelection> {
+    let primary = primary.trim();
+    if primary.is_empty() || primary.eq_ignore_ascii_case("auto") {
+        return Ok(ProviderSelection::auto());
+    }
+    ProviderSelection::chain(
+        std::iter::once(primary).chain(fallbacks.iter().map(String::as_str)),
+    )
+    .map_err(detector_selection_error)
+}
+
+/// Builds the validated media stream classifier selection.
+///
+/// # Arguments
+///
+/// * `configured` - Configured selector or `auto` sentinel.
+///
+/// # Returns
+///
+/// The validated automatic or named classifier selection.
+///
+/// # Errors
+///
+/// Returns a classifier-name error when the configured selector is invalid.
+fn create_classifier_selection(
+    configured: &str,
+) -> MimeResult<ProviderSelection> {
+    let configured = configured.trim();
+    if configured.is_empty() || configured.eq_ignore_ascii_case("auto") {
+        return Ok(ProviderSelection::auto());
+    }
+    ProviderSelection::named(configured).map_err(classifier_selection_error)
+}
+
+/// Maps detector selection validation into the MIME error model.
+///
+/// # Arguments
+///
+/// * `error` - Invalid selector or empty-chain error.
+///
+/// # Returns
+///
+/// A detector-specific configuration error.
+fn detector_selection_error(error: ProviderSelectionError) -> MimeError {
+    let reason = error.to_string();
+    match error.selector_input() {
+        Some(name) => MimeError::InvalidDetectorName {
+            name: name.to_owned(),
+            reason,
+        },
+        None => MimeError::EmptyDetectorName,
+    }
+}
+
+/// Maps classifier selection validation into the MIME error model.
+///
+/// # Arguments
+///
+/// * `error` - Invalid selector error.
+///
+/// # Returns
+///
+/// A classifier-specific configuration error.
+fn classifier_selection_error(error: ProviderSelectionError) -> MimeError {
+    let reason = error.to_string();
+    match error.selector_input() {
+        Some(name) => MimeError::InvalidClassifierName {
+            name: name.to_owned(),
+            reason,
+        },
+        None => MimeError::EmptyClassifierName,
     }
 }
 
