@@ -18,6 +18,7 @@ use qubit_mime::{
     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
+    CONFIG_MIME_DETECTOR_FALLBACKS,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
     CONFIG_MIME_MAX_BUFFER_SIZE,
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
@@ -40,8 +41,74 @@ use qubit_mime::{
     MimeDetectorRegistry,
     MimeError,
 };
+use qubit_spi::{
+    ProviderSelection,
+    ProviderSelectionKind,
+    ProviderSelector,
+};
 
 static MIME_CONFIG_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Verifies provider selections are validated and retained during loading.
+#[test]
+fn test_mime_config_retains_validated_provider_selections() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_MIME_DETECTOR_DEFAULT, "file")
+        .expect("detector default should be configurable");
+    config
+        .set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")
+        .expect("detector fallbacks should be configurable");
+    config
+        .set(CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, "auto")
+        .expect("classifier default should be configurable");
+
+    let mime_config = MimeConfig::from_config(&config)
+        .expect("valid selections should parse");
+
+    assert_eq!(
+        ProviderSelectionKind::Chain,
+        mime_config.mime_detector_selection().kind(),
+    );
+    assert_eq!(
+        ["file", "repository"],
+        mime_config
+            .mime_detector_selection()
+            .selectors()
+            .iter()
+            .map(ProviderSelector::as_str)
+            .collect::<Vec<_>>()
+            .as_slice(),
+    );
+    assert_eq!(
+        ProviderSelectionKind::Auto,
+        mime_config.media_stream_classifier_selection().kind(),
+    );
+}
+
+/// Verifies malformed provider selections fail while configuration is loaded.
+#[test]
+fn test_mime_config_rejects_invalid_provider_selections() {
+    let mut detector = Config::new();
+    detector
+        .set(CONFIG_MIME_DETECTOR_DEFAULT, "bad selector")
+        .expect("invalid detector default should be storable");
+    assert!(matches!(
+        MimeConfig::from_config(&detector),
+        Err(MimeError::InvalidDetectorName { ref name, .. })
+            if name == "bad selector"
+    ));
+
+    let mut classifier = Config::new();
+    classifier
+        .set(CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, "bad selector")
+        .expect("invalid classifier default should be storable");
+    assert!(matches!(
+        MimeConfig::from_config(&classifier),
+        Err(MimeError::InvalidClassifierName { ref name, .. })
+            if name == "bad selector"
+    ));
+}
 
 #[test]
 fn test_from_config_reads_logical_config_keys() {
@@ -74,8 +141,14 @@ fn test_from_config_reads_logical_config_keys() {
     let mime_config =
         MimeConfig::from_config(&config).expect("config should parse");
 
-    assert_eq!("repository", mime_config.mime_detector_default());
-    assert_eq!("ffprobe", mime_config.media_stream_classifier_default());
+    assert_eq!(
+        "repository",
+        selection_primary(mime_config.mime_detector_selection()),
+    );
+    assert_eq!(
+        "ffprobe",
+        selection_primary(mime_config.media_stream_classifier_selection()),
+    );
     assert!(!mime_config.enable_precise_detection());
     assert!(mime_config.precise_detection_patterns().contains("mkv"));
     assert_eq!(
@@ -123,8 +196,14 @@ fn test_from_config_reads_env_aliases_with_env_friendly_options() {
     let mime_config =
         MimeConfig::from_config(&config).expect("env aliases should parse");
 
-    assert_eq!("repository", mime_config.mime_detector_default());
-    assert_eq!("ffprobe", mime_config.media_stream_classifier_default());
+    assert_eq!(
+        "repository",
+        selection_primary(mime_config.mime_detector_selection()),
+    );
+    assert_eq!(
+        "ffprobe",
+        selection_primary(mime_config.media_stream_classifier_selection()),
+    );
     assert!(mime_config.enable_precise_detection());
     assert!(mime_config.precise_detection_patterns().contains("mkv"));
     assert!(mime_config.precise_detection_patterns().contains("webm"));
@@ -200,8 +279,14 @@ fn test_from_config_skips_blank_patterns_and_malformed_mapping_entries() {
     let mime_config =
         MimeConfig::from_config(&config).expect("config should parse");
 
-    assert_eq!("repository", mime_config.mime_detector_default());
-    assert_eq!("ffprobe", mime_config.media_stream_classifier_default());
+    assert_eq!(
+        "repository",
+        selection_primary(mime_config.mime_detector_selection()),
+    );
+    assert_eq!(
+        "ffprobe",
+        selection_primary(mime_config.media_stream_classifier_selection()),
+    );
     assert!(!mime_config.enable_precise_detection());
     assert!(mime_config.precise_detection_patterns().contains("webm"));
     assert!(mime_config.precise_detection_patterns().contains("ogg"));
@@ -223,10 +308,13 @@ fn test_load_falls_back_to_builtin_default_when_env_is_invalid() {
         std::env::remove_var(ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION);
     }
 
-    assert_eq!(DEFAULT_MIME_DETECTOR, loaded.mime_detector_default());
+    assert_eq!(
+        DEFAULT_MIME_DETECTOR,
+        selection_primary(loaded.mime_detector_selection()),
+    );
     assert_eq!(
         DEFAULT_MEDIA_STREAM_CLASSIFIER,
-        loaded.media_stream_classifier_default()
+        selection_primary(loaded.media_stream_classifier_selection())
     );
     assert_eq!(
         DEFAULT_ENABLE_PRECISE_DETECTION,
@@ -257,8 +345,14 @@ fn test_load_uses_environment_when_valid() {
     }
     let loaded = MimeConfig::load();
 
-    assert_eq!("repository", loaded.mime_detector_default());
-    assert_eq!("ffprobe", loaded.media_stream_classifier_default());
+    assert_eq!(
+        "repository",
+        selection_primary(loaded.mime_detector_selection()),
+    );
+    assert_eq!(
+        "ffprobe",
+        selection_primary(loaded.media_stream_classifier_selection()),
+    );
     assert_eq!(33_554_432, loaded.media_stream_max_staging_size());
     assert!(!loaded.enable_precise_detection());
 }
@@ -380,11 +474,13 @@ fn test_registries_use_mime_config_defaults() {
 
     assert_eq!(
         DEFAULT_MIME_DETECTOR,
-        MimeConfig::default().mime_detector_default()
+        selection_primary(MimeConfig::default().mime_detector_selection())
     );
     assert_eq!(
         DEFAULT_MEDIA_STREAM_CLASSIFIER,
-        MimeConfig::default().media_stream_classifier_default()
+        selection_primary(
+            MimeConfig::default().media_stream_classifier_selection(),
+        )
     );
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -396,6 +492,27 @@ fn mime_config_test_lock() -> MutexGuard<'static, ()> {
     MIME_CONFIG_TEST_LOCK
         .lock()
         .expect("MIME config test lock should not be poisoned")
+}
+
+/// Returns the first explicit selector retained by a validated selection.
+///
+/// # Arguments
+///
+/// * `selection` - Named or chained selection under test.
+///
+/// # Returns
+///
+/// The named selector or first chain candidate.
+///
+/// # Panics
+///
+/// Panics when `selection` is automatic or contains no explicit selector.
+fn selection_primary(selection: &ProviderSelection) -> &str {
+    selection
+        .selector()
+        .or_else(|| selection.selectors().first())
+        .expect("test selection should contain an explicit provider")
+        .as_str()
 }
 
 fn create_test_config(
