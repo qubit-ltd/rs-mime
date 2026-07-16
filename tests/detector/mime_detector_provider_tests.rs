@@ -9,9 +9,9 @@ use qubit_mime::{
     MimeDetectorSpec,
     MimeResult,
 };
+use qubit_spi::error::ProviderError;
 use qubit_spi::{
     ProviderDescriptor,
-    ProviderError,
     ProviderId,
     ServiceProvider,
 };

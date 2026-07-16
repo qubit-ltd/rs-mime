@@ -9,16 +9,17 @@
 
 use std::sync::Arc;
 
-use qubit_spi::{
-    AttemptFailureKind,
-    FallbackPolicy,
+use qubit_spi::error::{
+    AttemptFailure,
     ProviderErrorKind,
-    ProviderRegistry,
-    ProviderResolver,
     ProviderSelectorErrorKind,
     RegistrationError,
     ResolutionError,
-    ResolutionErrorKind,
+};
+use qubit_spi::{
+    FallbackPolicy,
+    ProviderRegistry,
+    ProviderResolver,
 };
 
 use crate::{
@@ -131,50 +132,52 @@ pub(crate) fn detector_registration_error(
 }
 
 pub(crate) fn detector_resolution_error(error: ResolutionError) -> MimeError {
-    if error.kind() == ResolutionErrorKind::InvalidSelector {
-        if error.selector_error().is_some_and(|source| {
-            source.kind() == ProviderSelectorErrorKind::Empty
-        }) {
-            return MimeError::EmptyDetectorName;
+    let message = error.to_string();
+    match error {
+        ResolutionError::InvalidSelector { input, source, .. } => {
+            if source.kind() == ProviderSelectorErrorKind::Empty {
+                MimeError::EmptyDetectorName
+            } else {
+                MimeError::InvalidDetectorName {
+                    name: input.into(),
+                    reason: message,
+                }
+            }
         }
-        return MimeError::InvalidDetectorName {
-            name: error.selector_input().unwrap_or("<invalid>").to_owned(),
-            reason: error.to_string(),
-        };
-    }
-    if error.kind() == ResolutionErrorKind::UnknownProvider {
-        return MimeError::UnknownDetector {
-            name: error.selector_input().unwrap_or("<unknown>").to_owned(),
-        };
-    }
-    let attempts = error.attempts();
-    if let [attempt] = attempts {
-        if attempt.kind() == AttemptFailureKind::UnknownProvider {
-            return MimeError::UnknownDetector {
-                name: attempt
-                    .requested_selector()
-                    .map_or("<unknown>", |selector| selector.as_str())
-                    .to_owned(),
-            };
+        ResolutionError::UnknownProvider { selector } => {
+            MimeError::UnknownDetector {
+                name: selector.as_str().to_owned(),
+            }
         }
-        let name = attempt
-            .provider_id()
-            .map_or("<unknown>", |id| id.as_str())
-            .to_owned();
-        return match attempt.provider_error_kind() {
-            Some(
-                ProviderErrorKind::Unsupported | ProviderErrorKind::Unavailable,
-            ) => MimeError::DetectorUnavailable {
-                name,
-                reason: attempt.reason().to_owned(),
-            },
-            _ => MimeError::DetectorBackend {
-                backend: name,
-                reason: attempt.reason().to_owned(),
-            },
-        };
-    }
-    MimeError::NoAvailableDetector {
-        reason: error.to_string(),
+        ResolutionError::EmptySelection | ResolutionError::EmptyRegistry => {
+            MimeError::NoAvailableDetector { reason: message }
+        }
+        ResolutionError::NoProviderSucceeded { attempts } => {
+            match attempts.as_ref() {
+                [AttemptFailure::UnknownProvider { requested_selector }] => {
+                    MimeError::UnknownDetector {
+                        name: requested_selector.as_str().to_owned(),
+                    }
+                }
+                [
+                    AttemptFailure::ProviderError {
+                        provider_id, error, ..
+                    },
+                ] => match error.kind() {
+                    ProviderErrorKind::Unsupported
+                    | ProviderErrorKind::Unavailable => {
+                        MimeError::DetectorUnavailable {
+                            name: provider_id.as_str().to_owned(),
+                            reason: error.reason().to_owned(),
+                        }
+                    }
+                    _ => MimeError::DetectorBackend {
+                        backend: provider_id.as_str().to_owned(),
+                        reason: error.reason().to_owned(),
+                    },
+                },
+                _ => MimeError::NoAvailableDetector { reason: message },
+            }
+        }
     }
 }

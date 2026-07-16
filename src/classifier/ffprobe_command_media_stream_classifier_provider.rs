@@ -9,9 +9,9 @@
 
 use std::sync::Arc;
 
+use qubit_spi::error::ProviderError;
 use qubit_spi::{
     ProviderDescriptor,
-    ProviderError,
     ProviderId,
     ServiceProvider,
 };
