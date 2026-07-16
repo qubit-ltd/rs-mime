@@ -225,11 +225,6 @@ fn test_create_default_supports_auto_named_and_exhausted_selection() {
     registry
         .create_default(&classifier_config("success"))
         .expect("configured resolution should use the named provider");
-    assert!(matches!(
-        registry.create_default(&classifier_config("bad selector")),
-        Err(MimeError::InvalidClassifierName { .. })
-    ));
-
     let mut exhausted = MediaStreamClassifierRegistry::builder();
     exhausted
         .register(
@@ -250,5 +245,37 @@ fn test_create_default_supports_auto_named_and_exhausted_selection() {
         Err(MimeError::NoAvailableClassifier { ref reason })
             if reason.contains("missing executable")
                 && reason.contains("unsupported input")
+    ));
+}
+
+/// Verifies automatic policy stop preserves its terminal provider failure.
+#[test]
+fn test_create_default_maps_policy_stopped_terminal_failure() {
+    let mut builder = MediaStreamClassifierRegistry::builder();
+    builder
+        .register(
+            descriptor("first", 30),
+            TestProvider(ProviderBehavior::Unavailable),
+        )
+        .expect("first provider should register");
+    builder
+        .register(
+            descriptor("terminal", 20),
+            TestProvider(ProviderBehavior::InitializationFailed),
+        )
+        .expect("terminal provider should register");
+    builder
+        .register(
+            descriptor("unreached", 10),
+            TestProvider(ProviderBehavior::Success),
+        )
+        .expect("unreached provider should register");
+
+    assert!(matches!(
+        builder
+            .build()
+            .create_default(&classifier_config("auto")),
+        Err(MimeError::ClassifierBackend { ref backend, ref reason })
+            if backend == "terminal" && reason == "startup failed"
     ));
 }

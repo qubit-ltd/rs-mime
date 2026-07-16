@@ -12,14 +12,15 @@ use std::sync::Arc;
 use qubit_spi::error::{
     AttemptFailure,
     ProviderErrorKind,
-    ProviderSelectorError,
     RegistrationError,
     ResolutionError,
+    ResolutionErrorKind,
 };
 use qubit_spi::{
     FallbackPolicy,
     ProviderRegistry,
     ProviderResolver,
+    ResolutionTermination,
 };
 
 use crate::{
@@ -96,15 +97,8 @@ impl MediaStreamClassifierRegistry {
         &self,
         config: &MimeConfig,
     ) -> MimeResult<Arc<dyn MediaStreamClassifier>> {
-        let configured = config.media_stream_classifier_default().trim();
-        let created = if configured.is_empty()
-            || configured.eq_ignore_ascii_case("auto")
-        {
-            self.resolver.create_auto(config)
-        } else {
-            self.resolver.create_named(configured, config)
-        };
-        created
+        self.resolver
+            .create(config.media_stream_classifier_selection(), config)
             .map(|created| created.into_service())
             .map_err(classifier_resolution_error)
     }
@@ -113,54 +107,88 @@ impl MediaStreamClassifierRegistry {
 pub(super) fn classifier_registration_error(
     error: RegistrationError,
 ) -> MimeError {
-    let RegistrationError::DuplicateSelector { selector, .. } = error;
     MimeError::DuplicateClassifierName {
-        name: selector.into(),
+        name: error.selector().to_owned(),
     }
 }
 
 fn classifier_resolution_error(error: ResolutionError) -> MimeError {
     let message = error.to_string();
-    match error {
-        ResolutionError::InvalidSelector { input, source, .. } => {
-            if matches!(source, ProviderSelectorError::Empty { .. }) {
+    match error.kind() {
+        ResolutionErrorKind::InvalidSelector => {
+            if error
+                .selector_error()
+                .is_some_and(|source| source.is_empty())
+            {
                 MimeError::EmptyClassifierName
             } else {
+                let name = error
+                    .invalid_selector_input()
+                    .expect("invalid-selector errors retain their input");
                 MimeError::InvalidClassifierName {
-                    name: input.into(),
+                    name: name.to_owned(),
                     reason: message,
                 }
             }
         }
-        ResolutionError::UnknownProvider { selector } => {
+        ResolutionErrorKind::UnknownProvider => {
+            let selector = error
+                .unknown_selector()
+                .expect("unknown-provider errors retain their selector");
             MimeError::UnknownClassifier {
                 name: selector.as_str().to_owned(),
             }
         }
-        ResolutionError::EmptySelection | ResolutionError::EmptyRegistry => {
+        ResolutionErrorKind::EmptySelection
+        | ResolutionErrorKind::EmptyRegistry => {
             MimeError::NoAvailableClassifier { reason: message }
         }
-        ResolutionError::NoProviderSucceeded { attempts } => {
-            match attempts.as_ref() {
-                [
-                    AttemptFailure::ProviderError {
-                        provider_id, error, ..
-                    },
-                ] => match error.kind() {
-                    ProviderErrorKind::Unsupported
-                    | ProviderErrorKind::Unavailable => {
-                        MimeError::ClassifierUnavailable {
-                            name: provider_id.as_str().to_owned(),
-                            reason: error.reason().to_owned(),
-                        }
-                    }
-                    _ => MimeError::ClassifierBackend {
-                        backend: provider_id.as_str().to_owned(),
-                        reason: error.reason().to_owned(),
-                    },
-                },
-                _ => MimeError::NoAvailableClassifier { reason: message },
+        ResolutionErrorKind::NoProviderSucceeded => {
+            let precise_attempt = match error.termination() {
+                Some(ResolutionTermination::StoppedByPolicy) => {
+                    error.terminal_attempt()
+                }
+                Some(ResolutionTermination::Exhausted)
+                    if error.attempts().len() == 1 =>
+                {
+                    error.terminal_attempt()
+                }
+                _ => None,
+            };
+            precise_attempt
+                .map(classifier_attempt_error)
+                .unwrap_or(MimeError::NoAvailableClassifier { reason: message })
+        }
+        _ => MimeError::NoAvailableClassifier { reason: message },
+    }
+}
+
+/// Maps one failed SPI attempt into a precise classifier-domain error.
+///
+/// # Arguments
+///
+/// * `attempt` - Failed lookup or provider creation attempt.
+///
+/// # Returns
+///
+/// A precise domain error when the attempt exposes provider context.
+fn classifier_attempt_error(attempt: &AttemptFailure) -> MimeError {
+    let error = attempt
+        .provider_error()
+        .expect("classifier attempts reaching precise mapping retain an error");
+    let provider_id = attempt.provider_id().expect(
+        "classifier attempts reaching precise mapping retain a provider ID",
+    );
+    match error.kind() {
+        ProviderErrorKind::Unsupported | ProviderErrorKind::Unavailable => {
+            MimeError::ClassifierUnavailable {
+                name: provider_id.as_str().to_owned(),
+                reason: error.reason().to_owned(),
             }
         }
+        _ => MimeError::ClassifierBackend {
+            backend: provider_id.as_str().to_owned(),
+            reason: error.reason().to_owned(),
+        },
     }
 }

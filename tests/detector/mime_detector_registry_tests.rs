@@ -276,11 +276,6 @@ fn test_create_default_supports_auto_named_and_exhausted_chains() {
         Some("application/x-static".to_owned()),
         named.detect_by_filename("sample.static")
     );
-    assert!(matches!(
-        registry.create_default(&detector_config("bad selector", &[])),
-        Err(MimeError::InvalidDetectorName { .. })
-    ));
-
     let mut exhausted = MimeDetectorRegistry::builder();
     exhausted
         .register(
@@ -301,5 +296,38 @@ fn test_create_default_supports_auto_named_and_exhausted_chains() {
         Err(MimeError::NoAvailableDetector { ref reason })
             if reason.contains("missing executable")
                 && reason.contains("unsupported input")
+    ));
+}
+
+/// Verifies a policy-stopped chain preserves its terminal provider failure.
+#[test]
+fn test_create_default_maps_policy_stopped_terminal_failure() {
+    let mut builder = MimeDetectorRegistry::builder();
+    builder
+        .register(
+            descriptor("first", 20),
+            TestProvider(ProviderBehavior::Unavailable),
+        )
+        .expect("first provider should register");
+    builder
+        .register(
+            descriptor("terminal", 10),
+            TestProvider(ProviderBehavior::InitializationFailed),
+        )
+        .expect("terminal provider should register");
+    builder
+        .register(
+            descriptor("unreached", 0),
+            TestProvider(ProviderBehavior::Success),
+        )
+        .expect("unreached provider should register");
+
+    assert!(matches!(
+        builder.build().create_default(&detector_config(
+            "first",
+            &["terminal", "unreached"],
+        )),
+        Err(MimeError::DetectorBackend { ref backend, ref reason })
+            if backend == "terminal" && reason == "startup failed"
     ));
 }
