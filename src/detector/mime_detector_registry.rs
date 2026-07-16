@@ -113,17 +113,17 @@ impl MimeDetectorRegistry {
 pub(crate) fn detector_resolution_error(error: ResolutionError) -> MimeError {
     let message = error.to_string();
     match &error {
-        ResolutionError::InvalidSelector { input, source, .. } => {
+        ResolutionError::InvalidSelector { source, .. } => {
             if matches!(source, ProviderSelectorError::Empty { .. }) {
                 MimeError::EmptyDetectorName
             } else {
                 MimeError::InvalidDetectorName {
-                    name: input.to_string(),
+                    name: source.input().to_owned(),
                     reason: message,
                 }
             }
         }
-        ResolutionError::UnknownProvider { selector } => {
+        ResolutionError::UnknownProvider { selector, .. } => {
             MimeError::UnknownDetector {
                 name: selector.as_str().to_owned(),
             }
@@ -150,11 +150,11 @@ pub(crate) fn detector_resolution_error(error: ResolutionError) -> MimeError {
 /// A precise domain error when the attempt exposes its required context.
 fn detector_attempt_error(attempt: &AttemptFailure) -> MimeError {
     match attempt {
-        AttemptFailure::UnknownProvider { requested_selector } => {
-            MimeError::UnknownDetector {
-                name: requested_selector.as_str().to_owned(),
-            }
-        }
+        AttemptFailure::UnknownProvider {
+            requested_selector, ..
+        } => MimeError::UnknownDetector {
+            name: requested_selector.as_str().to_owned(),
+        },
         AttemptFailure::ProviderError {
             provider_id, error, ..
         } => match error.kind() {

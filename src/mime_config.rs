@@ -507,9 +507,9 @@ fn create_classifier_selection(
 fn detector_selection_error(error: ProviderSelectionError) -> MimeError {
     let reason = error.to_string();
     match error {
-        ProviderSelectionError::InvalidSelector { selector_input, .. } => {
+        ProviderSelectionError::InvalidSelector { source, .. } => {
             MimeError::InvalidDetectorName {
-                name: selector_input.into(),
+                name: source.input().to_owned(),
                 reason,
             }
         }
@@ -530,9 +530,9 @@ fn detector_selection_error(error: ProviderSelectionError) -> MimeError {
 fn classifier_selection_error(error: ProviderSelectionError) -> MimeError {
     let reason = error.to_string();
     match error {
-        ProviderSelectionError::InvalidSelector { selector_input, .. } => {
+        ProviderSelectionError::InvalidSelector { source, .. } => {
             MimeError::InvalidClassifierName {
-                name: selector_input.into(),
+                name: source.input().to_owned(),
                 reason,
             }
         }
