@@ -9,24 +9,40 @@
 
 use std::sync::Arc;
 
+use qubit_spi::error::RegistrationError;
 use qubit_spi::{
     ProviderDescriptor,
     ProviderRegistryBuilder,
     ServiceProvider,
 };
 
-use crate::MimeResult;
+use crate::{
+    MimeError,
+    MimeResult,
+};
 
 use super::{
     MediaStreamClassifierRegistry,
     MediaStreamClassifierSpec,
-    media_stream_classifier_registry::classifier_registration_error,
 };
 
 /// Startup-only builder for an immutable media stream classifier registry.
 #[derive(Default)]
 pub struct MediaStreamClassifierRegistryBuilder {
     providers: ProviderRegistryBuilder<MediaStreamClassifierSpec>,
+}
+
+/// Maps an SPI registration conflict into the classifier error model.
+fn classifier_registration_error(error: RegistrationError) -> MimeError {
+    let reason = error.to_string();
+    match error {
+        RegistrationError::DuplicateSelector { selector, .. } => {
+            MimeError::DuplicateClassifierName {
+                name: selector.into(),
+            }
+        }
+        _ => MimeError::NoAvailableClassifier { reason },
+    }
 }
 
 impl MediaStreamClassifierRegistryBuilder {

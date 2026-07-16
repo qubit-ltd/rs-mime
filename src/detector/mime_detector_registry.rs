@@ -12,7 +12,7 @@ use std::sync::Arc;
 use qubit_spi::error::{
     AttemptFailure,
     ProviderErrorKind,
-    RegistrationError,
+    ProviderSelectorError,
     ResolutionError,
 };
 use qubit_spi::{
@@ -110,19 +110,11 @@ impl MimeDetectorRegistry {
     }
 }
 
-pub(crate) fn detector_registration_error(
-    error: RegistrationError,
-) -> MimeError {
-    MimeError::DuplicateDetectorName {
-        name: error.selector().to_owned(),
-    }
-}
-
 pub(crate) fn detector_resolution_error(error: ResolutionError) -> MimeError {
     let message = error.to_string();
     match &error {
         ResolutionError::InvalidSelector { input, source, .. } => {
-            if source.is_empty() {
+            if matches!(source, ProviderSelectorError::Empty { .. }) {
                 MimeError::EmptyDetectorName
             } else {
                 MimeError::InvalidDetectorName {
