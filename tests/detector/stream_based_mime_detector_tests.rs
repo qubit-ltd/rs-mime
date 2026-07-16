@@ -244,8 +244,8 @@ fn test_guess_from_file_stream_rejects_directory_before_reading() {
     };
     assert_eq!(ErrorKind::InvalidInput, error.kind());
     assert!(
-        error.to_string().contains("path is not a file"),
-        "directory error should describe the invalid file path"
+        error.to_string().contains("path is not a regular file"),
+        "directory error should describe the invalid file path: {error}"
     );
 }
 
