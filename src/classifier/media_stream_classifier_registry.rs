@@ -105,17 +105,17 @@ impl MediaStreamClassifierRegistry {
 fn classifier_resolution_error(error: ResolutionError) -> MimeError {
     let message = error.to_string();
     match &error {
-        ResolutionError::InvalidSelector { input, source, .. } => {
+        ResolutionError::InvalidSelector { source, .. } => {
             if matches!(source, ProviderSelectorError::Empty { .. }) {
                 MimeError::EmptyClassifierName
             } else {
                 MimeError::InvalidClassifierName {
-                    name: input.to_string(),
+                    name: source.input().to_owned(),
                     reason: message,
                 }
             }
         }
-        ResolutionError::UnknownProvider { selector } => {
+        ResolutionError::UnknownProvider { selector, .. } => {
             MimeError::UnknownClassifier {
                 name: selector.as_str().to_owned(),
             }
