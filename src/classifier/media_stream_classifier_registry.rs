@@ -12,7 +12,7 @@ use std::sync::Arc;
 use qubit_spi::error::{
     AttemptFailure,
     ProviderErrorKind,
-    ProviderSelectorErrorKind,
+    ProviderSelectorError,
     RegistrationError,
     ResolutionError,
 };
@@ -113,8 +113,9 @@ impl MediaStreamClassifierRegistry {
 pub(super) fn classifier_registration_error(
     error: RegistrationError,
 ) -> MimeError {
+    let RegistrationError::DuplicateSelector { selector, .. } = error;
     MimeError::DuplicateClassifierName {
-        name: error.selector().to_owned(),
+        name: selector.into(),
     }
 }
 
@@ -122,7 +123,7 @@ fn classifier_resolution_error(error: ResolutionError) -> MimeError {
     let message = error.to_string();
     match error {
         ResolutionError::InvalidSelector { input, source, .. } => {
-            if source.kind() == ProviderSelectorErrorKind::Empty {
+            if matches!(source, ProviderSelectorError::Empty { .. }) {
                 MimeError::EmptyClassifierName
             } else {
                 MimeError::InvalidClassifierName {
