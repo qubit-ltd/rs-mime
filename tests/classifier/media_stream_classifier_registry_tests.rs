@@ -21,9 +21,9 @@ use qubit_mime::{
     MimeError,
     MimeResult,
 };
+use qubit_spi::error::ProviderError;
 use qubit_spi::{
     ProviderDescriptor,
-    ProviderError,
     ProviderId,
     ServiceProvider,
 };
@@ -142,7 +142,8 @@ fn test_create_maps_invalid_and_unknown_classifier_selectors() {
     ));
     assert!(matches!(
         registry.create("bad selector", &config),
-        Err(MimeError::InvalidClassifierName { .. })
+        Err(MimeError::InvalidClassifierName { ref name, ref reason })
+            if name == "bad selector" && reason.contains("bad selector")
     ));
     assert!(matches!(
         registry.create("missing", &config),
@@ -178,17 +179,20 @@ fn test_create_maps_single_provider_failures() {
     let registry = builder.build();
     let config = MimeConfig::default();
 
-    for selector in ["unsupported", "unavailable"] {
+    for (selector, expected_reason) in [
+        ("unsupported", "unsupported input"),
+        ("unavailable", "missing executable"),
+    ] {
         assert!(matches!(
             registry.create(selector, &config),
-            Err(MimeError::ClassifierUnavailable { ref name, .. })
-                if name == selector
+            Err(MimeError::ClassifierUnavailable { ref name, ref reason })
+                if name == selector && reason == expected_reason
         ));
     }
     assert!(matches!(
         registry.create("failed", &config),
-        Err(MimeError::ClassifierBackend { ref backend, .. })
-            if backend == "failed"
+        Err(MimeError::ClassifierBackend { ref backend, ref reason })
+            if backend == "failed" && reason == "startup failed"
     ));
 }
 
