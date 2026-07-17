@@ -1,14 +1,24 @@
+// =============================================================================
+//    Copyright (c) 2025 - 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
+
 use qubit_mime::{
     MimeConfig,
     RepositoryMimeDetectorProvider,
-    repository_mime_detector_descriptor,
 };
-use qubit_spi::ServiceProvider;
+use qubit_spi::{
+    ProviderDefinition,
+    ServiceProvider,
+};
 
 #[test]
 fn test_repository_mime_detector_provider_creates_filename_detector() {
     let provider = RepositoryMimeDetectorProvider;
-    let descriptor = repository_mime_detector_descriptor();
+    let descriptor = provider.descriptor();
     let detector = provider
         .create(&MimeConfig::default())
         .expect("repository provider should create detector");

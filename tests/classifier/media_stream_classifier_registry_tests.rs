@@ -6,276 +6,256 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use std::io::Read;
-use std::path::Path;
 use std::sync::Arc;
 
-use qubit_config::Config;
 use qubit_mime::{
-    CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
-    MediaStreamClassifier,
     MediaStreamClassifierRegistry,
     MediaStreamClassifierSpec,
-    MediaStreamType,
     MimeConfig,
-    MimeError,
-    MimeResult,
 };
-use qubit_spi::error::ProviderError;
+use qubit_spi::error::{
+    ProviderCreationError,
+    ProviderErrorKind,
+    ProviderSelectionError,
+};
 use qubit_spi::{
-    ProviderDescriptor,
-    ProviderId,
+    FallbackPolicy,
+    ProviderCreationTermination,
+    ProviderDefinition,
+    ProviderSelection,
     ServiceProvider,
 };
 
-#[derive(Debug)]
-struct StaticClassifier;
-
-impl MediaStreamClassifier for StaticClassifier {
-    fn classify_file(&self, _file: &Path) -> MimeResult<MediaStreamType> {
-        Ok(MediaStreamType::None)
-    }
-
-    fn classify_reader(
-        &self,
-        _reader: &mut dyn Read,
-    ) -> MimeResult<MediaStreamType> {
-        Ok(MediaStreamType::None)
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-enum ProviderBehavior {
-    Success,
-    Unsupported,
-    Unavailable,
-    InitializationFailed,
-}
-
-#[derive(Debug)]
-struct TestProvider(ProviderBehavior);
-
-impl ServiceProvider<MediaStreamClassifierSpec> for TestProvider {
-    fn create(
-        &self,
-        _config: &MimeConfig,
-    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderError> {
-        match self.0 {
-            ProviderBehavior::Success => Ok(Arc::new(StaticClassifier)),
-            ProviderBehavior::Unsupported => {
-                Err(ProviderError::unsupported("unsupported input"))
-            }
-            ProviderBehavior::Unavailable => {
-                Err(ProviderError::unavailable("missing executable"))
-            }
-            ProviderBehavior::InitializationFailed => {
-                Err(ProviderError::initialization_failed("startup failed"))
-            }
-        }
-    }
-}
-
-fn descriptor(id: &str, priority: i32) -> ProviderDescriptor {
-    ProviderDescriptor::new(
-        ProviderId::new(id).expect("test provider ID should be valid"),
-    )
-    .with_priority(priority)
-}
-
-fn classifier_config(selector: &str) -> MimeConfig {
-    let mut source = Config::new();
-    source
-        .set(CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, selector)
-        .expect("classifier selector should be configurable");
-    MimeConfig::from_config(&source).expect("classifier config should parse")
-}
+use crate::support::{
+    TestMediaStreamClassifierProvider,
+    TestProviderBehavior,
+};
 
 #[test]
 fn test_builtin_registry_lists_and_resolves_ffprobe_provider() {
     let registry = MediaStreamClassifierRegistry::builtin();
+    let expected_default = ProviderSelection::named("ffprobe")
+        .expect("FFprobe provider ID should be valid");
+    let selection = ProviderSelection::named("ffprobe-command")
+        .expect("FFprobe alias should be valid");
 
-    assert_eq!(vec!["ffprobe"], registry.provider_ids());
     registry
-        .create("ffprobe-command", &MimeConfig::default())
+        .resolve(&selection)
+        .expect("FFprobe alias should resolve")
+        .create_default()
         .expect("FFprobe alias should resolve");
+    registry
+        .resolve_default()
+        .expect("built-in classifier default should resolve")
+        .create(&MimeConfig::default())
+        .expect("explicit MIME config should create FFprobe classifier");
+    assert_eq!(
+        vec!["ffprobe"],
+        registry
+            .provider_ids()
+            .iter()
+            .map(|id| id.as_str())
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(expected_default, registry.default_selection());
+}
+
+#[test]
+fn test_global_classifier_registry_exposes_builtin_defaults() {
+    let registry = MediaStreamClassifierRegistry::global();
+
+    assert!(
+        registry
+            .provider_ids()
+            .iter()
+            .any(|id| id.as_str() == "ffprobe"),
+    );
+    assert_eq!(
+        ProviderSelection::named("ffprobe")
+            .expect("FFprobe provider ID should be valid"),
+        registry.default_selection(),
+    );
 }
 
 #[test]
 fn test_builder_registers_owned_and_shared_providers_atomically() {
     let mut builder = MediaStreamClassifierRegistry::builder();
     builder
-        .register(
-            descriptor("owned", 20),
-            TestProvider(ProviderBehavior::Success),
-        )
+        .register(TestMediaStreamClassifierProvider::new(
+            "owned",
+            20,
+            TestProviderBehavior::Success("unused"),
+        ))
         .expect("owned provider should register");
+    let shared: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>> =
+        Arc::new(TestMediaStreamClassifierProvider::new(
+            "shared",
+            10,
+            TestProviderBehavior::Success("unused"),
+        ));
     builder
-        .register_shared(
-            descriptor("shared", 10),
-            Arc::new(TestProvider(ProviderBehavior::Success)),
-        )
+        .register_shared(shared)
         .expect("shared provider should register");
 
     let duplicate = builder
-        .register(
-            descriptor("shared", 0),
-            TestProvider(ProviderBehavior::Success),
-        )
+        .register(TestMediaStreamClassifierProvider::new(
+            "shared",
+            0,
+            TestProviderBehavior::Success("unused"),
+        ))
         .expect_err("duplicate selector should be rejected");
-    assert!(matches!(
-        duplicate,
-        MimeError::DuplicateClassifierName { ref name } if name == "shared"
-    ));
+    assert!(duplicate.to_string().contains("shared"));
 
     let registry = builder.build();
-    assert_eq!(vec!["owned", "shared"], registry.provider_ids());
-}
-
-#[test]
-fn test_create_maps_invalid_and_unknown_classifier_selectors() {
-    let registry = MediaStreamClassifierRegistry::builder().build();
-    let config = MimeConfig::default();
-
-    assert!(matches!(
-        registry.create("", &config),
-        Err(MimeError::EmptyClassifierName)
-    ));
-    assert!(matches!(
-        registry.create("bad selector", &config),
-        Err(MimeError::InvalidClassifierName { ref name, ref reason })
-            if name == "bad selector" && reason.contains("bad selector")
-    ));
-    assert!(matches!(
-        registry.create("missing", &config),
-        Err(MimeError::UnknownClassifier { ref name }) if name == "missing"
-    ));
-    assert!(matches!(
-        registry.create_default(&classifier_config("auto")),
-        Err(MimeError::NoAvailableClassifier { ref reason }) if !reason.is_empty()
-    ));
-}
-
-#[test]
-fn test_create_maps_single_provider_failures() {
-    let mut builder = MediaStreamClassifierRegistry::builder();
-    builder
-        .register(
-            descriptor("unsupported", 0),
-            TestProvider(ProviderBehavior::Unsupported),
-        )
-        .expect("unsupported provider should register");
-    builder
-        .register(
-            descriptor("unavailable", 0),
-            TestProvider(ProviderBehavior::Unavailable),
-        )
-        .expect("unavailable provider should register");
-    builder
-        .register(
-            descriptor("failed", 0),
-            TestProvider(ProviderBehavior::InitializationFailed),
-        )
-        .expect("failing provider should register");
-    let registry = builder.build();
-    let config = MimeConfig::default();
-
-    for (selector, expected_reason) in [
-        ("unsupported", "unsupported input"),
-        ("unavailable", "missing executable"),
-    ] {
-        assert!(matches!(
-            registry.create(selector, &config),
-            Err(MimeError::ClassifierUnavailable { ref name, ref reason })
-                if name == selector && reason == expected_reason
+    let runtime_shared: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>> =
+        Arc::new(TestMediaStreamClassifierProvider::new(
+            "runtime-shared",
+            0,
+            TestProviderBehavior::Success("unused"),
         ));
-    }
+    registry
+        .register_shared(runtime_shared)
+        .expect("runtime shared provider should register");
+
+    assert_eq!(3, registry.provider_ids().len());
+}
+
+#[test]
+fn test_resolve_reports_classifier_selection_errors_before_creation() {
+    let registry = MediaStreamClassifierRegistry::builder().build();
+    let missing = ProviderSelection::named("missing")
+        .expect("missing selector should still be syntactically valid");
+
     assert!(matches!(
-        registry.create("failed", &config),
-        Err(MimeError::ClassifierBackend { ref backend, ref reason })
-            if backend == "failed" && reason == "startup failed"
+        registry.resolve(&missing),
+        Err(ProviderSelectionError::UnknownProvider { selector, .. })
+            if selector.as_str() == "missing"
+    ));
+    assert!(matches!(
+        registry.resolve(&ProviderSelection::auto()),
+        Err(ProviderSelectionError::EmptyRegistry)
     ));
 }
 
 #[test]
-fn test_create_default_supports_auto_named_and_exhausted_selection() {
+fn test_resolve_and_create_keep_classifier_errors_separate() {
+    let registry = MediaStreamClassifierRegistry::builder().build();
+    registry
+        .register(TestMediaStreamClassifierProvider::new(
+            "failed",
+            0,
+            TestProviderBehavior::InitializationFailed,
+        ))
+        .expect("failing provider should register");
+    let selection = ProviderSelection::named("failed")
+        .expect("test selector should be valid");
+    let provider = registry
+        .resolve(&selection)
+        .expect("selection should succeed before creation");
+    let error = provider
+        .create_default()
+        .expect_err("selected classifier should fail during creation");
+
+    assert!(matches!(
+        error,
+        ProviderCreationError::NoProviderSucceeded { .. }
+    ));
+    let attempt = error
+        .decisive_attempt()
+        .expect("one failed classifier should be decisive");
+    assert_eq!("failed", attempt.provider_id().as_str());
+    assert_eq!(
+        ProviderErrorKind::InitializationFailed,
+        attempt.error().kind()
+    );
+}
+
+#[test]
+fn test_classifier_default_selection_is_independent_from_mime_config() {
     let mut builder = MediaStreamClassifierRegistry::builder();
     builder
-        .register(
-            descriptor("unavailable", 30),
-            TestProvider(ProviderBehavior::Unavailable),
-        )
-        .expect("unavailable provider should register");
-    builder
-        .register(
-            descriptor("unsupported", 20),
-            TestProvider(ProviderBehavior::Unsupported),
-        )
-        .expect("unsupported provider should register");
-    builder
-        .register(
-            descriptor("success", 10),
-            TestProvider(ProviderBehavior::Success),
-        )
+        .register(TestMediaStreamClassifierProvider::new(
+            "configured",
+            10,
+            TestProviderBehavior::Success("unused"),
+        ))
         .expect("successful provider should register");
     let registry = builder.build();
+    registry.set_default_selection(
+        ProviderSelection::named("configured")
+            .expect("configured selector should be valid"),
+    );
+    let provider = registry
+        .resolve_default()
+        .expect("default selection should resolve without MIME config");
 
-    registry
-        .create_default(&classifier_config("AUTO"))
-        .expect("automatic resolution should reach the successful provider");
-    registry
-        .create_default(&classifier_config("success"))
-        .expect("configured resolution should use the named provider");
-    let mut exhausted = MediaStreamClassifierRegistry::builder();
-    exhausted
-        .register(
-            descriptor("first", 20),
-            TestProvider(ProviderBehavior::Unavailable),
-        )
-        .expect("first provider should register");
-    exhausted
-        .register(
-            descriptor("second", 10),
-            TestProvider(ProviderBehavior::Unsupported),
-        )
-        .expect("second provider should register");
-    assert!(matches!(
-        exhausted
-            .build()
-            .create_default(&classifier_config("auto")),
-        Err(MimeError::NoAvailableClassifier { ref reason })
-            if reason.contains("missing executable")
-                && reason.contains("unsupported input")
-    ));
+    provider
+        .create(&MimeConfig::default())
+        .expect("explicit MIME config should create the classifier");
+    provider
+        .create_default()
+        .expect("default MIME config should create the classifier");
 }
 
-/// Verifies automatic policy stop preserves its terminal provider failure.
 #[test]
-fn test_create_default_maps_policy_stopped_terminal_failure() {
+fn test_classifier_resolving_provider_applies_fallback_policy() {
     let mut builder = MediaStreamClassifierRegistry::builder();
     builder
-        .register(
-            descriptor("first", 30),
-            TestProvider(ProviderBehavior::Unavailable),
-        )
-        .expect("first provider should register");
+        .register(TestMediaStreamClassifierProvider::new(
+            "unsupported",
+            30,
+            TestProviderBehavior::Unsupported,
+        ))
+        .expect("unsupported provider should register");
     builder
-        .register(
-            descriptor("terminal", 20),
-            TestProvider(ProviderBehavior::InitializationFailed),
-        )
+        .register(TestMediaStreamClassifierProvider::new(
+            "success",
+            10,
+            TestProviderBehavior::Success("unused"),
+        ))
+        .expect("successful provider should register");
+    let selection = ProviderSelection::chain(["unsupported", "success"])
+        .expect("test chain should be valid")
+        .with_fallback_policy(FallbackPolicy::OnAbsence);
+
+    builder
+        .build()
+        .resolve(&selection)
+        .expect("both classifiers should resolve")
+        .create_default()
+        .expect("absence fallback should reach the successful classifier");
+}
+
+#[test]
+fn test_classifier_creation_reports_policy_stop() {
+    let mut builder = MediaStreamClassifierRegistry::builder();
+    builder
+        .register(TestMediaStreamClassifierProvider::new(
+            "terminal",
+            20,
+            TestProviderBehavior::InitializationFailed,
+        ))
         .expect("terminal provider should register");
     builder
-        .register(
-            descriptor("unreached", 10),
-            TestProvider(ProviderBehavior::Success),
-        )
+        .register(TestMediaStreamClassifierProvider::new(
+            "unreached",
+            10,
+            TestProviderBehavior::Success("unused"),
+        ))
         .expect("unreached provider should register");
+    let selection = ProviderSelection::chain(["terminal", "unreached"])
+        .expect("test chain should be valid")
+        .with_fallback_policy(FallbackPolicy::OnAbsence);
+    let error = builder
+        .build()
+        .resolve(&selection)
+        .expect("both classifiers should resolve")
+        .create_default()
+        .expect_err("initialization failure should stop absence fallback");
 
-    assert!(matches!(
-        builder
-            .build()
-            .create_default(&classifier_config("auto")),
-        Err(MimeError::ClassifierBackend { ref backend, ref reason })
-            if backend == "terminal" && reason == "startup failed"
-    ));
+    assert_eq!(
+        Some(ProviderCreationTermination::StoppedByPolicy),
+        error.termination(),
+    );
+    assert_eq!(1, error.attempts().len());
 }

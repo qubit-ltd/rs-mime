@@ -14,98 +14,21 @@ use qubit_mime::{
     MimeDetectionPolicy,
     MimeDetector,
     MimeDetectorBackend,
-    MimeDetectorCore,
     MimeDetectorRegistry,
     MimeError,
-    MimeResult,
     RepositoryMimeDetector,
+};
+use qubit_spi::{
+    ProviderSelection,
+    ServiceProvider,
 };
 
 #[cfg(unix)]
 use crate::support::PathEnvGuard;
-
-#[derive(Debug)]
-struct StaticDetector;
-
-impl MimeDetector for StaticDetector {
-    fn detect_by_filename(&self, _filename: &str) -> Option<String> {
-        Some("application/x-static-name".to_owned())
-    }
-
-    fn detect_by_content(&self, _content: &[u8]) -> Option<String> {
-        Some("application/x-static-content".to_owned())
-    }
-
-    fn detect(
-        &self,
-        _content: &[u8],
-        _filename: Option<&str>,
-        _policy: MimeDetectionPolicy,
-    ) -> Option<String> {
-        Some("application/x-static-detect".to_owned())
-    }
-
-    fn detect_reader(
-        &self,
-        _reader: &mut dyn qubit_io::ReadSeek,
-        _filename: Option<&str>,
-        _policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>> {
-        Ok(Some("application/x-static-reader".to_owned()))
-    }
-
-    fn detect_file(
-        &self,
-        _file: &std::path::Path,
-        _policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>> {
-        Ok(Some("application/x-static-file".to_owned()))
-    }
-}
-
-#[derive(Debug)]
-struct DirectBackendDetector {
-    core: MimeDetectorCore,
-}
-
-impl DirectBackendDetector {
-    /// Creates a detector that exercises the backend default methods directly.
-    fn new() -> Self {
-        Self {
-            core: MimeDetectorCore::default(),
-        }
-    }
-}
-
-impl MimeDetectorBackend for DirectBackendDetector {
-    /// Gets the shared detector core.
-    fn core(&self) -> &MimeDetectorCore {
-        &self.core
-    }
-
-    /// Gets the content prefix length used by backend defaults.
-    fn max_test_bytes(&self) -> usize {
-        5
-    }
-
-    /// Recognizes plain text filenames.
-    fn guess_from_filename(&self, filename: &str) -> Vec<String> {
-        if filename.ends_with(".txt") {
-            vec!["text/plain".to_owned()]
-        } else {
-            Vec::new()
-        }
-    }
-
-    /// Recognizes the content prefix read by backend defaults.
-    fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
-        if content == b"hello" {
-            Ok(vec!["text/plain".to_owned()])
-        } else {
-            Ok(Vec::new())
-        }
-    }
-}
+use crate::support::{
+    DirectBackendDetector,
+    StaticEntryPointMimeDetector,
+};
 
 #[test]
 fn test_mime_detector_trait_supports_repository_detector() {
@@ -211,7 +134,9 @@ fn test_mime_detector_backend_prefer_filename_skips_reader_and_file_content() {
 fn test_default_mime_detector_returns_usable_detector() {
     let registry = MimeDetectorRegistry::builtin();
     let detector = registry
-        .create_default(&MimeConfig::default())
+        .resolve_default()
+        .expect("default provider selection")
+        .create_default()
         .expect("default detector");
     assert!(detector.detect_by_filename("document.pdf").is_some());
 }
@@ -223,18 +148,10 @@ fn test_mime_detector_registry_creates_boxed_and_shared_named_detectors() {
 
     let registry = MimeDetectorRegistry::builtin();
     let config = MimeConfig::default();
-    let boxed = registry
-        .create("repository", &config)
-        .expect("repository boxed detector");
-    let shared = registry
-        .create("repository", &config)
-        .expect("repository shared detector");
-    let boxed_file = registry
-        .create("file", &config)
-        .expect("file boxed detector");
-    let shared_file = registry
-        .create("file", &config)
-        .expect("file shared detector");
+    let boxed = create_named_detector(&registry, "repository", &config);
+    let shared = create_named_detector(&registry, "repository", &config);
+    let boxed_file = create_named_detector(&registry, "file", &config);
+    let shared_file = create_named_detector(&registry, "file", &config);
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -252,21 +169,21 @@ fn test_mime_detector_registry_creates_boxed_and_shared_named_detectors() {
         Some("image/png".to_owned()),
         shared_file.detect_by_filename("image.png")
     );
-    assert!(registry.create("unknown", &config).is_err());
+    let unknown = ProviderSelection::named("unknown")
+        .expect("unknown selector should still be syntactically valid");
+    assert!(registry.resolve(&unknown).is_err());
 }
 
 #[test]
 fn test_mime_detector_registry_creates_from_explicit_registry() {
     let registry = MimeDetectorRegistry::builtin();
     let config = create_detector_config("repository");
-    let boxed = registry
-        .create("repository", &config)
-        .expect("boxed registry selector should create detector");
-    let shared = registry
-        .create("repository", &config)
-        .expect("shared registry selector should create detector");
+    let boxed = create_named_detector(&registry, "repository", &config);
+    let shared = create_named_detector(&registry, "repository", &config);
     let shared_default = registry
-        .create_default(&config)
+        .resolve(config.mime_detector_selection())
+        .expect("configured registry selection should resolve")
+        .create(&config)
         .expect("shared registry default should create detector");
 
     assert_eq!(
@@ -285,7 +202,8 @@ fn test_mime_detector_registry_creates_from_explicit_registry() {
 
 #[test]
 fn test_boxed_mime_detector_trait_object_delegates_all_entry_points() {
-    let detector: Box<dyn MimeDetector> = Box::new(StaticDetector);
+    let detector: Box<dyn MimeDetector> =
+        Box::new(StaticEntryPointMimeDetector);
     let mut reader = std::io::Cursor::new(b"data".to_vec());
 
     assert_eq!(
@@ -328,7 +246,7 @@ fn test_boxed_mime_detector_trait_object_delegates_all_entry_points() {
 #[test]
 fn test_shared_mime_detector_trait_object_delegates_all_entry_points() {
     let detector: std::sync::Arc<dyn MimeDetector> =
-        std::sync::Arc::new(StaticDetector);
+        std::sync::Arc::new(StaticEntryPointMimeDetector);
     let cloned = detector.clone();
     let mut reader = std::io::Cursor::new(b"data".to_vec());
 
@@ -377,21 +295,11 @@ fn test_mime_detector_registry_builds_from_config_defaults() {
     let unknown_config = create_detector_config("unknown");
     let fallback_config =
         create_detector_config_with_fallbacks("unknown", &["repository"]);
-    let boxed = registry
-        .create_default(&config)
-        .expect("default boxed detector");
-    let shared = registry
-        .create_default(&config)
-        .expect("default shared detector");
-    let boxed_file = registry
-        .create_default(&file_config)
-        .expect("file boxed detector");
-    let shared_file = registry
-        .create_default(&file_config)
-        .expect("file shared detector");
-    let fallback = registry
-        .create_default(&fallback_config)
-        .expect("repository fallback detector");
+    let boxed = create_configured_detector(&registry, &config);
+    let shared = create_configured_detector(&registry, &config);
+    let boxed_file = create_configured_detector(&registry, &file_config);
+    let shared_file = create_configured_detector(&registry, &file_config);
+    let fallback = create_configured_detector(&registry, &fallback_config);
     let repository_default = RepositoryMimeDetector::default();
     let file_default = FileCommandMimeDetector::default();
     let file_from_config =
@@ -402,7 +310,11 @@ fn test_mime_detector_registry_builds_from_config_defaults() {
     assert!(boxed_file.detect_by_filename("document.pdf").is_some());
     assert!(shared_file.detect_by_filename("document.pdf").is_some());
     assert!(fallback.detect_by_filename("document.pdf").is_some());
-    assert!(registry.create_default(&unknown_config).is_err());
+    assert!(
+        registry
+            .resolve(unknown_config.mime_detector_selection())
+            .is_err()
+    );
     assert!(
         repository_default
             .detect_by_filename("document.pdf")
@@ -421,7 +333,7 @@ fn test_configured_fallback_uses_repository_after_unknown_detector() {
     let registry = MimeDetectorRegistry::builtin();
     let config =
         create_detector_config_with_fallbacks("unknown", &["repository"]);
-    let detector = registry.create_default(&config).expect("fallback detector");
+    let detector = create_configured_detector(&registry, &config);
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -462,4 +374,50 @@ fn create_detector_config_with_fallbacks(
         .set(CONFIG_MIME_DETECTOR_FALLBACKS, fallbacks.join(","))
         .expect("detector fallbacks should be configurable");
     MimeConfig::from_config(&config).expect("detector config should parse")
+}
+
+/// Resolves a named provider and creates its detector with explicit config.
+///
+/// # Parameters
+///
+/// * `registry` - Registry containing the named provider.
+/// * `selector` - Canonical ID or alias to resolve.
+/// * `config` - MIME configuration supplied only during service creation.
+///
+/// # Returns
+///
+/// The detector created by the selected provider.
+fn create_named_detector(
+    registry: &MimeDetectorRegistry,
+    selector: &str,
+    config: &MimeConfig,
+) -> std::sync::Arc<dyn MimeDetector> {
+    let selection = ProviderSelection::named(selector)
+        .expect("test provider selector should be valid");
+    registry
+        .resolve(&selection)
+        .expect("named detector provider should resolve")
+        .create(config)
+        .expect("named detector provider should create its service")
+}
+
+/// Resolves the optional selection carried by a MIME configuration object.
+///
+/// # Parameters
+///
+/// * `registry` - Registry containing configured candidates.
+/// * `config` - Independent source of both a selection and service settings.
+///
+/// # Returns
+///
+/// The detector created after the explicit two-stage operation.
+fn create_configured_detector(
+    registry: &MimeDetectorRegistry,
+    config: &MimeConfig,
+) -> std::sync::Arc<dyn MimeDetector> {
+    registry
+        .resolve(config.mime_detector_selection())
+        .expect("configured detector selection should resolve")
+        .create(config)
+        .expect("configured detector provider should create its service")
 }

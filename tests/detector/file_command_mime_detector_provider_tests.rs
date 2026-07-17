@@ -1,17 +1,30 @@
+// =============================================================================
+//    Copyright (c) 2025 - 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
+
 use std::process::Command;
 
 use qubit_mime::{
     FileCommandMimeDetector,
     FileCommandMimeDetectorProvider,
     MimeConfig,
-    file_command_mime_detector_descriptor,
 };
-use qubit_spi::ServiceProvider;
-use qubit_spi::error::ProviderErrorKind;
+use qubit_spi::error::{
+    ProviderCreationError,
+    ProviderErrorKind,
+};
+use qubit_spi::{
+    ProviderDefinition,
+    ServiceProvider,
+};
 #[test]
 fn test_file_command_mime_detector_provider_metadata_and_availability() {
     let provider = FileCommandMimeDetectorProvider;
-    let descriptor = file_command_mime_detector_descriptor();
+    let descriptor = provider.descriptor();
     let creation = provider.create(&MimeConfig::default());
 
     assert_eq!("file", descriptor.id().as_str());
@@ -36,7 +49,11 @@ fn test_file_command_provider_reports_unavailable_command() {
             .create(&MimeConfig::default())
             .expect_err("provider should reject a missing file command");
 
-        assert_eq!(ProviderErrorKind::Unavailable, error.kind());
+        assert!(matches!(
+            error,
+            ProviderCreationError::Provider(ref source)
+                if source.kind() == ProviderErrorKind::Unavailable
+        ));
         return;
     }
 

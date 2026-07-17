@@ -45,6 +45,7 @@ use qubit_spi::{
     ProviderSelection,
     ProviderSelectionKind,
     ProviderSelector,
+    ServiceProvider,
 };
 
 static MIME_CONFIG_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -469,7 +470,9 @@ fn test_registries_use_mime_config_defaults() {
 
     let detector_registry = MimeDetectorRegistry::builtin();
     let detector = detector_registry
-        .create_default(&MimeConfig::default())
+        .resolve_default()
+        .expect("default detector selection")
+        .create_default()
         .expect("default detector");
 
     assert_eq!(
