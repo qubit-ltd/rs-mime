@@ -16,25 +16,26 @@
 //! - `file`: a detector that delegates content detection to the system `file
 //!   --mime-type --brief` command and uses the repository for filename guesses.
 //!
-//! Detectors are created through [`MimeDetectorRegistry`]. The configured
-//! default detector is tried first, followed by the configured fallback chain.
-//! The special selector `auto` chooses the highest-priority available provider
-//! from the registry.
+//! Applications may register self-described detector providers in the
+//! process-wide [`MimeDetectorRegistry`] during startup. Downstream libraries
+//! resolve either an explicit [`qubit_spi::ProviderSelection`] or the Registry
+//! default without knowing the concrete implementation. Provider selection is
+//! separate from detector creation with explicit or default [`MimeConfig`].
 //!
 //! # Examples
 //!
-//! Create a detector from the default configuration:
+//! Resolve the process default, then create a detector with default config:
 //!
 //! ```rust
 //! use qubit_mime::{
-//!     MimeConfig,
 //!     MimeDetector,
 //!     MimeDetectorRegistry,
-//!     MimeResult,
 //! };
+//! use qubit_spi::ServiceProvider;
 //!
-//! # fn main() -> MimeResult<()> {
-//! let detector = MimeDetectorRegistry::builtin().create_default(&MimeConfig::default())?;
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let provider = MimeDetectorRegistry::global().resolve_default()?;
+//! let detector = provider.create_default()?;
 //! assert_eq!(
 //!     Some("application/pdf".to_owned()),
 //!     detector.detect_by_filename("document.pdf"),
@@ -55,16 +56,18 @@
 //!     MimeConfig,
 //!     MimeDetector,
 //!     MimeDetectorRegistry,
-//!     MimeResult,
 //! };
+//! use qubit_spi::ServiceProvider;
 //!
-//! # fn main() -> MimeResult<()> {
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut source = Config::new();
 //! source.set(CONFIG_MIME_DETECTOR_DEFAULT, "file")?;
 //! source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
 //!
 //! let config = MimeConfig::from_config(&source)?;
-//! let detector = MimeDetectorRegistry::builtin().create_default(&config)?;
+//! let registry = MimeDetectorRegistry::builtin();
+//! let provider = registry.resolve(config.mime_detector_selection())?;
+//! let detector = provider.create(&config)?;
 //! assert_eq!(
 //!     Some("image/png".to_owned()),
 //!     detector.detect_by_filename("image.png"),
@@ -94,7 +97,6 @@ pub use classifier::{
     MediaStreamClassifierRegistryBuilder,
     MediaStreamClassifierSpec,
     MediaStreamType,
-    ffprobe_command_media_stream_classifier_descriptor,
 };
 pub use common_mime_types::*;
 pub use constants::*;
@@ -114,8 +116,6 @@ pub use detector::{
     RepositoryMimeDetector,
     RepositoryMimeDetectorProvider,
     StreamBasedMimeDetector,
-    file_command_mime_detector_descriptor,
-    repository_mime_detector_descriptor,
 };
 pub use mime_config::MimeConfig;
 pub use mime_error::MimeError;

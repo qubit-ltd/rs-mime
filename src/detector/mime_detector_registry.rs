@@ -5,172 +5,233 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Immutable registry for pluggable MIME detector providers.
+//! Runtime Registry and process-wide facade for MIME detector providers.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    LazyLock,
+};
 
 use qubit_spi::error::{
-    AttemptFailure,
-    ProviderErrorKind,
-    ProviderSelectorError,
-    ResolutionError,
+    ProviderSelectionError,
+    RegistrationError,
 };
 use qubit_spi::{
-    FallbackPolicy,
+    ProviderDefinition,
+    ProviderId,
     ProviderRegistry,
-    ProviderResolver,
-};
-
-use crate::{
-    MimeConfig,
-    MimeDetector,
-    MimeError,
-    MimeResult,
+    ProviderSelection,
+    ResolvingServiceProvider,
 };
 
 use super::{
     FileCommandMimeDetectorProvider,
+    MimeDetectorProvider,
     MimeDetectorRegistryBuilder,
     MimeDetectorSpec,
     RepositoryMimeDetectorProvider,
-    file_command_mime_detector_descriptor,
-    repository_mime_detector_descriptor,
 };
 
-/// Immutable registry of MIME detector providers.
+/// Process-wide MIME detector Registry initialized with built-in providers.
+static GLOBAL_MIME_DETECTOR_REGISTRY: LazyLock<MimeDetectorRegistry> =
+    LazyLock::new(MimeDetectorRegistry::builtin);
+
+/// Shared runtime Registry for MIME detector provider definitions.
+///
+/// Clones observe the same underlying provider catalog and default selection.
+/// Use [`Self::global`] when App startup registrations must be visible to
+/// independently developed downstream libraries.
+#[derive(Clone, Debug)]
 pub struct MimeDetectorRegistry {
-    resolver: ProviderResolver<MimeDetectorSpec>,
+    /// Typed provider Registry owning synchronized runtime state.
+    providers: ProviderRegistry<MimeDetectorSpec>,
 }
 
 impl MimeDetectorRegistry {
-    /// Creates a registry from providers assembled during application startup.
+    /// Wraps an existing typed provider Registry.
+    ///
+    /// # Parameters
+    ///
+    /// * `providers` - Runtime provider Registry to expose through the MIME
+    ///   domain API.
+    ///
+    /// # Returns
+    ///
+    /// A MIME detector Registry sharing the supplied state.
+    #[inline]
     #[must_use]
     pub fn new(providers: ProviderRegistry<MimeDetectorSpec>) -> Self {
-        let resolver =
-            ProviderResolver::new(providers, FallbackPolicy::OnAbsence);
-        Self { resolver }
+        Self { providers }
     }
 
-    /// Creates a startup-only builder for MIME detector providers.
+    /// Creates an optional assembly builder for an isolated Registry.
+    ///
+    /// # Returns
+    ///
+    /// An empty MIME detector Registry builder.
+    #[inline(always)]
     #[must_use]
     pub fn builder() -> MimeDetectorRegistryBuilder {
         MimeDetectorRegistryBuilder::new()
     }
 
-    /// Creates a registry containing the repository and `file` providers.
+    /// Creates an isolated Registry containing the built-in providers.
+    ///
+    /// Its stable default selection is the repository-backed provider. This
+    /// method does not return the process-wide Registry; use [`Self::global`]
+    /// when registrations must cross library boundaries.
+    ///
+    /// # Returns
+    ///
+    /// A runtime-mutable Registry containing `repository` and `file`.
     #[must_use]
     pub fn builtin() -> Self {
-        let mut builder = Self::builder();
-        builder
-            .register(
-                repository_mime_detector_descriptor(),
-                RepositoryMimeDetectorProvider,
-            )
+        let providers = ProviderRegistry::default();
+        providers
+            .register(RepositoryMimeDetectorProvider)
             .expect("built-in repository MIME provider should register");
-        builder
-            .register(
-                file_command_mime_detector_descriptor(),
-                FileCommandMimeDetectorProvider,
-            )
+        providers
+            .register(FileCommandMimeDetectorProvider)
             .expect("built-in file MIME provider should register");
-        builder.build()
+        providers.set_default_selection(
+            ProviderSelection::named("repository")
+                .expect("built-in repository selection should be valid"),
+        );
+        Self::new(providers)
+    }
+
+    /// Returns the process-wide MIME detector Registry.
+    ///
+    /// The first access registers built-in providers and selects `repository`
+    /// as the stable default. App startup may register additional providers and
+    /// replace that default before downstream libraries resolve services.
+    ///
+    /// # Returns
+    ///
+    /// The single Registry shared for the lifetime of this process.
+    #[inline]
+    #[must_use]
+    pub fn global() -> &'static Self {
+        &GLOBAL_MIME_DETECTOR_REGISTRY
+    }
+
+    /// Registers an owned self-described detector provider.
+    ///
+    /// # Parameters
+    ///
+    /// * `provider` - Provider definition moved into shared Registry storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError`] when the provider ID or an alias is
+    /// already owned. The Registry remains unchanged on error.
+    #[inline(always)]
+    pub fn register<P>(&self, provider: P) -> Result<(), RegistrationError>
+    where
+        P: MimeDetectorProvider,
+    {
+        self.providers.register(provider)
+    }
+
+    /// Registers an already shared self-described detector provider.
+    ///
+    /// # Parameters
+    ///
+    /// * `provider` - Type-erased shared provider definition retained by the
+    ///   Registry. Concrete owned providers normally use [`Self::register`]
+    ///   through the domain-specific [`MimeDetectorProvider`] contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError`] when the provider ID or an alias is
+    /// already owned. The Registry remains unchanged on error.
+    #[inline]
+    pub fn register_shared(
+        &self,
+        provider: Arc<dyn ProviderDefinition<MimeDetectorSpec>>,
+    ) -> Result<(), RegistrationError> {
+        self.providers.register_shared(provider)
+    }
+
+    /// Returns the selection used by future default resolutions.
+    ///
+    /// # Returns
+    ///
+    /// An owned snapshot independent from any [`crate::MimeConfig`].
+    #[inline(always)]
+    #[must_use]
+    pub fn default_selection(&self) -> ProviderSelection {
+        self.providers.default_selection()
+    }
+
+    /// Replaces the selection used by future default resolutions.
+    ///
+    /// # Parameters
+    ///
+    /// * `selection` - Validated selection and creation fallback policy.
+    #[inline(always)]
+    pub fn set_default_selection(&self, selection: ProviderSelection) {
+        self.providers.set_default_selection(selection);
+    }
+
+    /// Resolves one explicit selection into a composing service provider.
+    ///
+    /// This stage does not create a detector and does not require
+    /// [`crate::MimeConfig`].
+    ///
+    /// # Parameters
+    ///
+    /// * `selection` - Provider target and creation fallback policy.
+    ///
+    /// # Returns
+    ///
+    /// A point-in-time candidate snapshot implementing `ServiceProvider`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderSelectionError`] when the selection matches no
+    /// registered provider.
+    #[inline(always)]
+    pub fn resolve(
+        &self,
+        selection: &ProviderSelection,
+    ) -> Result<
+        ResolvingServiceProvider<MimeDetectorSpec>,
+        ProviderSelectionError,
+    > {
+        self.providers.resolve(selection)
+    }
+
+    /// Resolves the Registry's current default selection.
+    ///
+    /// This stage does not create a detector or inspect service configuration.
+    ///
+    /// # Returns
+    ///
+    /// A point-in-time candidate snapshot implementing `ServiceProvider`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderSelectionError`] when the stored default matches no
+    /// registered provider.
+    #[inline(always)]
+    pub fn resolve_default(
+        &self,
+    ) -> Result<
+        ResolvingServiceProvider<MimeDetectorSpec>,
+        ProviderSelectionError,
+    > {
+        self.providers.resolve_default()
     }
 
     /// Lists canonical provider IDs in registration order.
+    ///
+    /// # Returns
+    ///
+    /// An owned provider-ID snapshot unaffected by later registrations.
+    #[inline]
     #[must_use]
-    pub fn provider_ids(&self) -> Vec<&str> {
-        self.resolver
-            .registry()
-            .provider_ids()
-            .map(|id| id.as_str())
-            .collect()
-    }
-
-    /// Creates a detector through one explicit provider ID or alias.
-    pub fn create(
-        &self,
-        selector: &str,
-        config: &MimeConfig,
-    ) -> MimeResult<Arc<dyn MimeDetector>> {
-        self.resolver
-            .create_named(selector, config)
-            .map(|created| created.into_service())
-            .map_err(detector_resolution_error)
-    }
-
-    /// Creates a detector using configured automatic or fallback selection.
-    pub fn create_default(
-        &self,
-        config: &MimeConfig,
-    ) -> MimeResult<Arc<dyn MimeDetector>> {
-        self.resolver
-            .create(config.mime_detector_selection(), config)
-            .map(|created| created.into_service())
-            .map_err(detector_resolution_error)
-    }
-}
-
-pub(crate) fn detector_resolution_error(error: ResolutionError) -> MimeError {
-    let message = error.to_string();
-    match &error {
-        ResolutionError::InvalidSelector { source, .. } => {
-            if matches!(source, ProviderSelectorError::Empty { .. }) {
-                MimeError::EmptyDetectorName
-            } else {
-                MimeError::InvalidDetectorName {
-                    name: source.input().to_owned(),
-                    reason: message,
-                }
-            }
-        }
-        ResolutionError::UnknownProvider { selector, .. } => {
-            MimeError::UnknownDetector {
-                name: selector.as_str().to_owned(),
-            }
-        }
-        ResolutionError::EmptySelection | ResolutionError::EmptyRegistry => {
-            MimeError::NoAvailableDetector { reason: message }
-        }
-        ResolutionError::NoProviderSucceeded { .. } => error
-            .decisive_attempt()
-            .map(detector_attempt_error)
-            .unwrap_or(MimeError::NoAvailableDetector { reason: message }),
-        _ => MimeError::NoAvailableDetector { reason: message },
-    }
-}
-
-/// Maps one failed SPI attempt into a precise detector-domain error.
-///
-/// # Arguments
-///
-/// * `attempt` - Failed lookup or provider creation attempt.
-///
-/// # Returns
-///
-/// A precise domain error when the attempt exposes its required context.
-fn detector_attempt_error(attempt: &AttemptFailure) -> MimeError {
-    match attempt {
-        AttemptFailure::UnknownProvider {
-            requested_selector, ..
-        } => MimeError::UnknownDetector {
-            name: requested_selector.as_str().to_owned(),
-        },
-        AttemptFailure::ProviderError {
-            provider_id, error, ..
-        } => match error.kind() {
-            ProviderErrorKind::Unsupported | ProviderErrorKind::Unavailable => {
-                MimeError::DetectorUnavailable {
-                    name: provider_id.as_str().to_owned(),
-                    reason: error.reason().to_owned(),
-                }
-            }
-            _ => MimeError::DetectorBackend {
-                backend: provider_id.as_str().to_owned(),
-                reason: error.reason().to_owned(),
-            },
-        },
-        _ => MimeError::NoAvailableDetector {
-            reason: attempt.to_string(),
-        },
+    pub fn provider_ids(&self) -> Vec<ProviderId> {
+        self.providers.provider_ids()
     }
 }

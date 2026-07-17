@@ -26,10 +26,7 @@ pub(crate) mod stream_based_mime_detector;
 pub use detection_source::DetectionSource;
 pub use file_based_mime_detector::FileBasedMimeDetector;
 pub use file_command_mime_detector::FileCommandMimeDetector;
-pub use file_command_mime_detector_provider::{
-    FileCommandMimeDetectorProvider,
-    file_command_mime_detector_descriptor,
-};
+pub use file_command_mime_detector_provider::FileCommandMimeDetectorProvider;
 pub use mime_detection_policy::MimeDetectionPolicy;
 pub use mime_detector::MimeDetector;
 pub use mime_detector_backend::MimeDetectorBackend;
@@ -39,8 +36,5 @@ pub use mime_detector_registry::MimeDetectorRegistry;
 pub use mime_detector_registry_builder::MimeDetectorRegistryBuilder;
 pub use mime_detector_spec::MimeDetectorSpec;
 pub use repository_mime_detector::RepositoryMimeDetector;
-pub use repository_mime_detector_provider::{
-    RepositoryMimeDetectorProvider,
-    repository_mime_detector_descriptor,
-};
+pub use repository_mime_detector_provider::RepositoryMimeDetectorProvider;
 pub use stream_based_mime_detector::StreamBasedMimeDetector;

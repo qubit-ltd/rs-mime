@@ -5,79 +5,78 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Startup builder for MIME detector providers.
+//! Optional assembly builder for MIME detector providers.
 
 use std::sync::Arc;
 
 use qubit_spi::error::RegistrationError;
 use qubit_spi::{
-    ProviderDescriptor,
+    ProviderDefinition,
     ProviderRegistryBuilder,
-    ServiceProvider,
-};
-
-use crate::{
-    MimeError,
-    MimeResult,
 };
 
 use super::{
+    MimeDetectorProvider,
     MimeDetectorRegistry,
     MimeDetectorSpec,
 };
 
-/// Startup-only builder for an immutable MIME detector registry.
+/// Optional builder for an initially assembled runtime MIME Registry.
 #[derive(Default)]
 pub struct MimeDetectorRegistryBuilder {
+    /// Typed provider builder receiving self-described definitions.
     providers: ProviderRegistryBuilder<MimeDetectorSpec>,
-}
-
-/// Maps an SPI registration conflict into the detector error model.
-fn detector_registration_error(error: RegistrationError) -> MimeError {
-    let reason = error.to_string();
-    match error {
-        RegistrationError::DuplicateSelector { selector, .. } => {
-            MimeError::DuplicateDetectorName {
-                name: selector.into(),
-            }
-        }
-        _ => MimeError::NoAvailableDetector { reason },
-    }
 }
 
 impl MimeDetectorRegistryBuilder {
     /// Creates an empty MIME detector provider builder.
+    #[inline]
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Registers provider metadata and its factory.
-    pub fn register<P>(
-        &mut self,
-        descriptor: ProviderDescriptor,
-        provider: P,
-    ) -> MimeResult<()>
+    /// Registers one owned self-described detector provider.
+    ///
+    /// # Parameters
+    ///
+    /// * `provider` - Provider definition moved into Registry storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError`] when its ID or an alias is already owned.
+    #[inline(always)]
+    pub fn register<P>(&mut self, provider: P) -> Result<(), RegistrationError>
     where
-        P: ServiceProvider<MimeDetectorSpec>,
+        P: MimeDetectorProvider,
     {
-        self.providers
-            .register(descriptor, provider)
-            .map_err(detector_registration_error)
+        self.providers.register(provider)
     }
 
-    /// Registers an already shared provider factory.
+    /// Registers one already shared self-described detector provider.
+    ///
+    /// # Parameters
+    ///
+    /// * `provider` - Type-erased shared provider definition retained by the
+    ///   Registry. Concrete owned providers normally use [`Self::register`]
+    ///   through the domain-specific [`MimeDetectorProvider`] contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError`] when its ID or an alias is already owned.
+    #[inline(always)]
     pub fn register_shared(
         &mut self,
-        descriptor: ProviderDescriptor,
-        provider: Arc<dyn ServiceProvider<MimeDetectorSpec>>,
-    ) -> MimeResult<()> {
-        self.providers
-            .register_shared(descriptor, provider)
-            .map_err(detector_registration_error)
+        provider: Arc<dyn ProviderDefinition<MimeDetectorSpec>>,
+    ) -> Result<(), RegistrationError> {
+        self.providers.register_shared(provider)
     }
 
-    /// Builds the runtime immutable registry.
+    /// Builds the runtime-mutable MIME detector Registry.
+    ///
+    /// # Returns
+    ///
+    /// A Registry that remains open to future registrations.
     #[must_use]
     pub fn build(self) -> MimeDetectorRegistry {
         MimeDetectorRegistry::new(self.providers.build())

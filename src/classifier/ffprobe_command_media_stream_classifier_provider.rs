@@ -9,8 +9,9 @@
 
 use std::sync::Arc;
 
-use qubit_spi::error::ProviderError;
+use qubit_spi::error::ProviderCreationError;
 use qubit_spi::{
+    ProviderDefinition,
     ProviderDescriptor,
     ProviderId,
     ServiceProvider,
@@ -31,10 +32,11 @@ pub struct FfprobeCommandMediaStreamClassifierProvider;
 impl ServiceProvider<MediaStreamClassifierSpec>
     for FfprobeCommandMediaStreamClassifierProvider
 {
+    #[inline]
     fn create(
         &self,
         config: &MimeConfig,
-    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderError> {
+    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderCreationError> {
         Ok(Arc::new(
             FfprobeCommandMediaStreamClassifier::from_mime_config(
                 config.clone(),
@@ -43,18 +45,24 @@ impl ServiceProvider<MediaStreamClassifierSpec>
     }
 }
 
-/// Gets the immutable descriptor for the FFprobe classifier provider.
-#[must_use]
-pub fn ffprobe_command_media_stream_classifier_descriptor() -> ProviderDescriptor
+impl ProviderDefinition<MediaStreamClassifierSpec>
+    for FfprobeCommandMediaStreamClassifierProvider
 {
-    ProviderDescriptor::new(
-        ProviderId::new("ffprobe")
-            .expect("built-in provider ID should be valid"),
-    )
-    .with_aliases([
-        "ffprobe-command",
-        "ffprobe-command-media-stream-classifier",
-    ])
-    .expect("built-in FFprobe classifier aliases should be valid")
-    .with_priority(10)
+    /// Returns the stable FFprobe provider identity and priority.
+    ///
+    /// # Returns
+    ///
+    /// The `ffprobe` descriptor and its accepted aliases.
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(
+            ProviderId::new("ffprobe")
+                .expect("built-in provider ID should be valid"),
+        )
+        .with_aliases([
+            "ffprobe-command",
+            "ffprobe-command-media-stream-classifier",
+        ])
+        .expect("built-in FFprobe classifier aliases should be valid")
+        .with_priority(10)
+    }
 }

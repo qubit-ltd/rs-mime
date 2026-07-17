@@ -7,21 +7,21 @@
 // =============================================================================
 //! Provider contract for pluggable media stream classifiers.
 
-use qubit_spi::ServiceProvider;
+use qubit_spi::ProviderDefinition;
 
 use super::MediaStreamClassifierSpec;
 
 /// Marker trait for media stream classifier providers.
 ///
-/// Implement [`ServiceProvider<MediaStreamClassifierSpec>`] for the concrete
-/// provider type. This marker keeps public registry bounds MIME-specific while
-/// delegating provider behavior to `qubit-spi`.
+/// Implement [`ProviderDefinition<MediaStreamClassifierSpec>`] for the
+/// concrete provider type. This marker ensures every registrable classifier
+/// supplies both creation behavior and registration metadata.
 pub trait MediaStreamClassifierProvider:
-    ServiceProvider<MediaStreamClassifierSpec>
+    ProviderDefinition<MediaStreamClassifierSpec>
 {
 }
 
 impl<T> MediaStreamClassifierProvider for T where
-    T: ServiceProvider<MediaStreamClassifierSpec> + ?Sized
+    T: ProviderDefinition<MediaStreamClassifierSpec> + ?Sized
 {
 }

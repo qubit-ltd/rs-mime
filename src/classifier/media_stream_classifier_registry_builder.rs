@@ -5,79 +5,79 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Startup builder for media stream classifier providers.
+//! Optional assembly builder for media stream classifier providers.
 
 use std::sync::Arc;
 
 use qubit_spi::error::RegistrationError;
 use qubit_spi::{
-    ProviderDescriptor,
+    ProviderDefinition,
     ProviderRegistryBuilder,
-    ServiceProvider,
-};
-
-use crate::{
-    MimeError,
-    MimeResult,
 };
 
 use super::{
+    MediaStreamClassifierProvider,
     MediaStreamClassifierRegistry,
     MediaStreamClassifierSpec,
 };
 
-/// Startup-only builder for an immutable media stream classifier registry.
+/// Optional builder for an initially assembled runtime classifier Registry.
 #[derive(Default)]
 pub struct MediaStreamClassifierRegistryBuilder {
+    /// Typed provider builder receiving self-described definitions.
     providers: ProviderRegistryBuilder<MediaStreamClassifierSpec>,
-}
-
-/// Maps an SPI registration conflict into the classifier error model.
-fn classifier_registration_error(error: RegistrationError) -> MimeError {
-    let reason = error.to_string();
-    match error {
-        RegistrationError::DuplicateSelector { selector, .. } => {
-            MimeError::DuplicateClassifierName {
-                name: selector.into(),
-            }
-        }
-        _ => MimeError::NoAvailableClassifier { reason },
-    }
 }
 
 impl MediaStreamClassifierRegistryBuilder {
     /// Creates an empty classifier provider builder.
+    #[inline]
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Registers provider metadata and its factory.
-    pub fn register<P>(
-        &mut self,
-        descriptor: ProviderDescriptor,
-        provider: P,
-    ) -> MimeResult<()>
+    /// Registers one owned self-described classifier provider.
+    ///
+    /// # Parameters
+    ///
+    /// * `provider` - Provider definition moved into Registry storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError`] when its ID or an alias is already owned.
+    #[inline(always)]
+    pub fn register<P>(&mut self, provider: P) -> Result<(), RegistrationError>
     where
-        P: ServiceProvider<MediaStreamClassifierSpec>,
+        P: MediaStreamClassifierProvider,
     {
-        self.providers
-            .register(descriptor, provider)
-            .map_err(classifier_registration_error)
+        self.providers.register(provider)
     }
 
-    /// Registers an already shared provider factory.
+    /// Registers one already shared self-described classifier provider.
+    ///
+    /// # Parameters
+    ///
+    /// * `provider` - Type-erased shared provider definition retained by the
+    ///   Registry. Concrete owned providers normally use [`Self::register`]
+    ///   through the domain-specific [`MediaStreamClassifierProvider`]
+    ///   contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError`] when its ID or an alias is already owned.
+    #[inline]
     pub fn register_shared(
         &mut self,
-        descriptor: ProviderDescriptor,
-        provider: Arc<dyn ServiceProvider<MediaStreamClassifierSpec>>,
-    ) -> MimeResult<()> {
-        self.providers
-            .register_shared(descriptor, provider)
-            .map_err(classifier_registration_error)
+        provider: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>>,
+    ) -> Result<(), RegistrationError> {
+        self.providers.register_shared(provider)
     }
 
-    /// Builds the runtime immutable registry.
+    /// Builds the runtime-mutable classifier Registry.
+    ///
+    /// # Returns
+    ///
+    /// A Registry that remains open to future registrations.
     #[must_use]
     pub fn build(self) -> MediaStreamClassifierRegistry {
         MediaStreamClassifierRegistry::new(self.providers.build())
