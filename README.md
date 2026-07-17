@@ -134,26 +134,26 @@ fn main() -> Result<(), MimeError> {
 
 ### Use the Rust-style `MimeDetector` trait
 
-`MimeDetectorRegistry` creates shared `MimeDetector` trait objects from
-`MimeConfig`. Code that only needs MIME names can depend on the trait instead
-of a concrete detector.
+`MimeDetectorRegistry` first resolves a provider and that provider then creates
+a shared `MimeDetector` trait object. Provider selection and `MimeConfig` are
+independent, so code with neither can use both Registry and configuration
+defaults.
 
 ```rust
 use qubit_mime::{
-    MimeConfig,
     MimeDetectionPolicy,
     MimeDetector,
     MimeDetectorRegistry,
-    MimeError,
 };
+use qubit_spi::ServiceProvider;
 
 fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) -> Option<String> {
     detector.detect(content, Some(filename), MimeDetectionPolicy::VerifyContent)
 }
 
-fn main() -> Result<(), MimeError> {
-    let registry = MimeDetectorRegistry::builtin();
-    let detector = registry.create_default(&MimeConfig::default())?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let provider = MimeDetectorRegistry::global().resolve_default()?;
+    let detector = provider.create_default()?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -188,10 +188,10 @@ use qubit_mime::{
     MimeConfig,
     MimeDetector,
     MimeDetectorRegistry,
-    MimeError,
 };
+use qubit_spi::ServiceProvider;
 
-fn main() -> Result<(), MimeError> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let original = MimeConfig::default();
     let mut config = Config::new();
     config.set(CONFIG_MIME_DETECTOR_DEFAULT, "repository")?;
@@ -205,7 +205,9 @@ fn main() -> Result<(), MimeError> {
 
     MimeConfig::reload_default(&config)?;
     let registry = MimeDetectorRegistry::builtin();
-    let detector = registry.create_default(&MimeConfig::default())?;
+    let mime_config = MimeConfig::default();
+    let provider = registry.resolve(mime_config.mime_detector_selection())?;
+    let detector = provider.create(&mime_config)?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -219,22 +221,28 @@ fn main() -> Result<(), MimeError> {
 
 ### Select detectors with registry and fallbacks
 
-`MimeDetectorRegistry::create_default()` uses the configured default detector
-first and then the configured fallback chain. Unknown selectors and providers
-that report unsupported or unavailable status allow the chain to continue;
-invalid configuration and initialization failures stop it. Set the default
-selector to `auto` to choose by descending provider priority and then canonical
-provider ID.
+`MimeDetectorRegistry::global()` is the process-wide domain Registry. An App
+can register self-described third-party providers during startup and replace
+the Registry's default `ProviderSelection`. Any downstream library that later
+calls `global().resolve_default()` observes that same App-configured state
+without knowing the selected implementation.
 
-`MimeDetectorRegistry::builtin()` returns a registry containing the built-in
-providers. Custom applications use `MimeDetectorRegistry::builder()`, register
-each descriptor and provider during startup, and then call `build()`. There is
-no process-wide provider registry or global provider registration.
+Selection and creation are intentionally separate. `resolve(selection)` and
+`resolve_default()` return `ResolvingServiceProvider<MimeDetectorSpec>` and
+report only `ProviderSelectionError`. The returned provider then supports both
+`create(&MimeConfig)` and `create_default()`, whose failures are represented by
+`ProviderCreationError`. `MimeConfig::mime_detector_selection()` remains one
+optional source of an explicit selection; the Registry does not require it.
+
+`ProviderSelection` owns the fallback policy. Unknown entries in a chain are
+skipped; providers reporting unsupported or unavailable status fall through
+under the default `OnAbsence` policy. `auto` orders candidates by descending
+priority and then canonical provider ID. `MimeDetectorRegistry::builtin()` is
+an isolated Registry useful for tests and scoped applications.
 
 SPI types remain owned by `qubit-spi` and are not re-exported by `qubit-mime`.
-Provider implementations and application assembly code should import
-`ServiceProvider`, `ProviderDescriptor`, and related infrastructure directly
-from `qubit_spi`.
+Third-party providers implement both `ServiceProvider<MimeDetectorSpec>` and
+`ProviderDefinition<MimeDetectorSpec>` and return their descriptor themselves.
 
 Built-in detector selectors:
 
@@ -252,17 +260,18 @@ use qubit_mime::{
     MimeConfig,
     MimeDetector,
     MimeDetectorRegistry,
-    MimeError,
 };
+use qubit_spi::ServiceProvider;
 
-fn main() -> Result<(), MimeError> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut source = Config::new();
     source.set(CONFIG_MIME_DETECTOR_DEFAULT, "file")?;
     source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
 
     let config = MimeConfig::from_config(&source)?;
     let registry = MimeDetectorRegistry::builtin();
-    let detector = registry.create_default(&config)?;
+    let provider = registry.resolve(config.mime_detector_selection())?;
+    let detector = provider.create(&config)?;
 
     assert_eq!(
         Some("image/png".to_owned()),
@@ -272,26 +281,85 @@ fn main() -> Result<(), MimeError> {
 }
 ```
 
-Use the startup-only builder when you need an explicit provider set:
+The complete App-startup/library-X scenario looks like this. The App owns
+registration and default selection; library X owns only service use:
 
 ```rust
+use std::sync::Arc;
+
 use qubit_mime::{
     MimeConfig,
     MimeDetector,
     MimeDetectorRegistry,
-    MimeError,
-    RepositoryMimeDetectorProvider,
-    repository_mime_detector_descriptor,
+    MimeDetectorSpec,
+    RepositoryMimeDetector,
+};
+use qubit_spi::error::ProviderCreationError;
+use qubit_spi::{
+    ProviderDefinition,
+    ProviderDescriptor,
+    ProviderId,
+    ProviderSelection,
+    ServiceProvider,
 };
 
-fn main() -> Result<(), MimeError> {
+struct AppMimeDetectorProvider;
+
+impl ServiceProvider<MimeDetectorSpec> for AppMimeDetectorProvider {
+    fn create(
+        &self,
+        config: &MimeConfig,
+    ) -> Result<Arc<dyn MimeDetector>, ProviderCreationError> {
+        Ok(Arc::new(RepositoryMimeDetector::from_mime_config(
+            config.clone(),
+        )))
+    }
+}
+
+impl ProviderDefinition<MimeDetectorSpec> for AppMimeDetectorProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(
+            ProviderId::new("app-detector").expect("static ID is valid"),
+        )
+    }
+}
+
+// This function represents code inside independently published library X.
+fn library_x_detector() -> Result<Arc<dyn MimeDetector>, Box<dyn std::error::Error>> {
+    let provider = MimeDetectorRegistry::global().resolve_default()?;
+    Ok(provider.create_default()?)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let registry = MimeDetectorRegistry::global();
+    registry.register(AppMimeDetectorProvider)?;
+    registry.set_default_selection(ProviderSelection::named("app-detector")?);
+
+    let detector = library_x_detector()?;
+    assert_eq!(
+        Some("text/plain".to_owned()),
+        detector.detect_by_filename("notes.txt"),
+    );
+    Ok(())
+}
+```
+
+For an isolated provider set, the optional builder has the same one-argument
+registration contract:
+
+```rust
+use qubit_mime::{
+    MimeDetectorRegistry,
+    RepositoryMimeDetectorProvider,
+};
+use qubit_spi::{ProviderSelection, ServiceProvider};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = MimeDetectorRegistry::builder();
-    builder.register(
-        repository_mime_detector_descriptor(),
-        RepositoryMimeDetectorProvider,
-    )?;
+    builder.register(RepositoryMimeDetectorProvider)?;
     let registry = builder.build();
-    let detector = registry.create("repository-mime-detector", &MimeConfig::default())?;
+    let selection = ProviderSelection::named("repository-mime-detector")?;
+    let detector = registry.resolve(&selection)?.create_default()?;
 
     assert_eq!(
         Some("text/plain".to_owned()),
@@ -301,15 +369,13 @@ fn main() -> Result<(), MimeError> {
 }
 ```
 
-Registry selection uses these error categories:
+Registry selection and service creation use separate SPI error types:
 
-| Error | Meaning |
-|-------|---------|
-| `DuplicateDetectorName` | A provider id or alias conflicts with an existing provider |
-| `UnknownDetector` | No registered provider matches the requested selector |
-| `DetectorUnavailable` | The provider exists but its backend is not available in this process environment |
-| `NoAvailableDetector` | Every default or fallback candidate failed |
-| `DetectorBackend` | A provider backend failed while initializing or detecting |
+| Error | Stage | Meaning |
+|-------|-------|---------|
+| `RegistrationError` | Registration | A provider ID or alias conflicts with an existing provider |
+| `ProviderSelectionError` | Resolution | The explicit/default selection yields no provider candidates |
+| `ProviderCreationError` | Creation | Selected candidates fail or fallback policy stops traversal |
 
 ### Configuration keys
 
@@ -653,12 +719,14 @@ fn main() -> Result<(), MimeError> {
 
 | Method | Description |
 |--------|-------------|
-| `MimeDetectorRegistry::builder()` | Create a startup-only provider builder |
-| `MimeDetectorRegistry::builtin()` | Create a registry with the built-in detector providers |
-| `MimeDetectorRegistryBuilder::register(descriptor, provider)` | Register an owned provider with external identity metadata |
-| `MimeDetectorRegistryBuilder::register_shared(descriptor, provider)` | Register an already shared provider |
-| `MimeDetectorRegistry::create(name, config)` | Create a shared detector by provider ID or alias |
-| `MimeDetectorRegistry::create_default(config)` | Resolve the configured default, `auto`, and fallback chain |
+| `MimeDetectorRegistry::global()` | Borrow the process-wide Registry shared by App and libraries |
+| `MimeDetectorRegistry::builtin()` | Create an isolated Registry with built-in detector providers |
+| `MimeDetectorRegistry::register(provider)` | Register an owned self-described provider at runtime |
+| `MimeDetectorRegistry::register_shared(provider)` | Register an already shared self-described provider |
+| `MimeDetectorRegistry::resolve(selection)` | Resolve an explicit selection without creating a detector |
+| `MimeDetectorRegistry::resolve_default()` | Resolve the Registry default without requiring MIME config |
+| `ResolvingServiceProvider::create(config)` | Create a detector with explicit service config |
+| `ResolvingServiceProvider::create_default()` | Create a detector with default service config |
 | `MimeDetectorRegistry::provider_ids()` | List canonical provider IDs in registration order |
 | `MimeDetectorProvider` | Factory trait for pluggable detector implementations |
 | `detect_by_filename(filename)` | Detect one MIME name from filename |
@@ -698,12 +766,12 @@ fn main() -> Result<(), MimeError> {
 
 | Method | Description |
 |--------|-------------|
-| `MediaStreamClassifierRegistry::builder()` | Create a startup-only provider builder |
-| `MediaStreamClassifierRegistry::builtin()` | Create a registry with the built-in classifier provider |
-| `MediaStreamClassifierRegistryBuilder::register(descriptor, provider)` | Register an owned classifier provider |
-| `MediaStreamClassifierRegistryBuilder::register_shared(descriptor, provider)` | Register an already shared classifier provider |
-| `MediaStreamClassifierRegistry::create(name, config)` | Create a shared classifier by provider ID or alias |
-| `MediaStreamClassifierRegistry::create_default(config)` | Resolve the configured selector or `auto` |
+| `MediaStreamClassifierRegistry::global()` | Borrow the process-wide classifier Registry |
+| `MediaStreamClassifierRegistry::builtin()` | Create an isolated Registry with the built-in classifier provider |
+| `MediaStreamClassifierRegistry::register(provider)` | Register an owned self-described classifier provider |
+| `MediaStreamClassifierRegistry::register_shared(provider)` | Register an already shared self-described classifier provider |
+| `MediaStreamClassifierRegistry::resolve(selection)` | Resolve an explicit classifier selection |
+| `MediaStreamClassifierRegistry::resolve_default()` | Resolve the Registry default independently from MIME config |
 | `MediaStreamClassifierRegistry::provider_ids()` | List canonical provider IDs in registration order |
 | `MediaStreamClassifierProvider` | Factory trait for pluggable classifier implementations |
 | `classify_file(file)` | Classify a local media file |
@@ -818,70 +886,37 @@ Otherwise, content magic is evaluated and merged with filename candidates.
 | Return style | Java objects and collections | Rust `Option`, slices, and vectors |
 | Errors | Java exceptions | Concrete `MimeError` |
 
-## Testing & Code Coverage
-
-This project keeps tests under `tests/` and validates repository parsing,
-filename matching, content magic matching, reader/path detection, and coverage
-thresholds.
-
-### Running Tests
+## Testing
 
 ```bash
-# Run all tests
-cargo test
+# Core API with the default empty feature set
+cargo test --no-default-features
 
-# Generate a coverage report
-./coverage.sh
+# Core API plus regex validation
+cargo test --all-features
 
-# Generate a text format coverage report
-./coverage.sh text
-
-# Run CI checks (format, clippy, tests, docs, coverage, audit)
+# Project CI checks
 ./ci-check.sh
+
+# Check code coverage
+./coverage.sh
 ```
-
-## Dependencies
-
-Runtime dependencies are intentionally small:
-
-- `qubit-command` runs external `file` commands with timeout and output capture.
-- `qubit-config` loads MIME defaults from configuration objects and environment.
-- `regex` compiles and runs filename glob matchers.
-- `roxmltree` parses shared MIME-info XML.
-- `thiserror` provides the concrete `MimeError` implementation.
 
 ## License
 
-Copyright (c) 2026. Haixing Hu, Qubit Co. Ltd. All rights reserved.
+Copyright (c) 2025 - 2026. Haixing Hu. All rights reserved.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-<http://www.apache.org/licenses/LICENSE-2.0>
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
-See [LICENSE](LICENSE) for the full license text.
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the
+full license text.
 
 ## Contributing
 
-Contributions are welcome. Please keep changes aligned with the existing Rust
-project structure and run `./ci-check.sh` before opening a pull request.
+Contributions are welcome. Please follow the Rust API guidelines, keep public
+API documentation and tests current, and run `./align-ci.sh` to format code and
+`./ci-check.sh` to satisfy CI requirements before submitting a pull request.
 
 ## Author
 
 **Haixing Hu** - *Qubit Co. Ltd.*
-
-## Related Projects
-
-More Rust libraries from Qubit are published under the
-[qubit-ltd](https://github.com/qubit-ltd) GitHub organization.
-
----
 
 Repository: [https://github.com/qubit-ltd/rs-mime](https://github.com/qubit-ltd/rs-mime)
