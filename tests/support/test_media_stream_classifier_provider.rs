@@ -69,7 +69,7 @@ impl TestMediaStreamClassifierProvider {
 impl ServiceProvider<MediaStreamClassifierSpec>
     for TestMediaStreamClassifierProvider
 {
-    fn create(
+    fn create_configured(
         &self,
         _config: &MimeConfig,
     ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderCreationError> {

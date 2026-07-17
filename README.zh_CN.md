@@ -144,8 +144,8 @@ fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) ->
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let provider = MimeDetectorRegistry::global().resolve_default()?;
-    let detector = provider.create_default()?;
+    let provider = MimeDetectorRegistry::global().resolve()?;
+    let detector = provider.create()?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -198,8 +198,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     MimeConfig::reload_default(&config)?;
     let registry = MimeDetectorRegistry::builtin();
     let mime_config = MimeConfig::default();
-    let provider = registry.resolve(mime_config.mime_detector_selection())?;
-    let detector = provider.create(&mime_config)?;
+    let provider = registry.resolve_selected(mime_config.mime_detector_selection())?;
+    let detector = provider.create_configured(&mime_config)?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -215,12 +215,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 `MimeDetectorRegistry::global()` 是进程级领域 Registry。App 可在启动时注册自描述
 第三方 Provider，并替换 Registry 默认 `ProviderSelection`。此后任意下游库调用
-`global().resolve_default()` 都会观察到同一份 App 配置，而无需知道具体实现。
+`global().resolve()` 都会观察到同一份 App 配置，而无需知道具体实现。
 
-选择与创建刻意分成两步。`resolve(selection)` 和 `resolve_default()` 返回
+选择与创建刻意分成两步。`resolve_selected(selection)` 和 `resolve()` 返回
 `ResolvingServiceProvider<MimeDetectorSpec>`，只会产生
 `ProviderSelectionError`。随后既可调用 `create(&MimeConfig)`，也可调用
-`create_default()`；创建失败由 `ProviderCreationError` 表达。
+`create()`；创建失败由 `ProviderCreationError` 表达。
 `MimeConfig::mime_detector_selection()` 仍可作为显式 selection 的一种可选来源，
 但 Registry 不依赖该字段。
 
@@ -258,8 +258,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = MimeConfig::from_config(&source)?;
     let registry = MimeDetectorRegistry::builtin();
-    let provider = registry.resolve(config.mime_detector_selection())?;
-    let detector = provider.create(&config)?;
+    let provider = registry.resolve_selected(config.mime_detector_selection())?;
+    let detector = provider.create_configured(&config)?;
 
     assert_eq!(
         Some("image/png".to_owned()),
@@ -294,7 +294,7 @@ use qubit_spi::{
 struct AppMimeDetectorProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for AppMimeDetectorProvider {
-    fn create(
+    fn create_configured(
         &self,
         config: &MimeConfig,
     ) -> Result<Arc<dyn MimeDetector>, ProviderCreationError> {
@@ -314,8 +314,8 @@ impl ProviderDefinition<MimeDetectorSpec> for AppMimeDetectorProvider {
 
 // 此函数模拟独立发布的库 X 中的代码。
 fn library_x_detector() -> Result<Arc<dyn MimeDetector>, Box<dyn std::error::Error>> {
-    let provider = MimeDetectorRegistry::global().resolve_default()?;
-    Ok(provider.create_default()?)
+    let provider = MimeDetectorRegistry::global().resolve()?;
+    Ok(provider.create()?)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -332,7 +332,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-若需要隔离 Provider 集合，可选 builder 也采用同一个单参数注册契约：
+若需要隔离 Provider 集合，可直接创建 registry 并在其上注册 provider：
 
 ```rust
 use qubit_mime::{
@@ -342,11 +342,10 @@ use qubit_mime::{
 use qubit_spi::{ProviderSelection, ServiceProvider};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut builder = MimeDetectorRegistry::builder();
-    builder.register(RepositoryMimeDetectorProvider)?;
-    let registry = builder.build();
+    let registry = MimeDetectorRegistry::default();
+    registry.register(RepositoryMimeDetectorProvider)?;
     let selection = ProviderSelection::named("repository-mime-detector")?;
-    let detector = registry.resolve(&selection)?.create_default()?;
+    let detector = registry.resolve_selected(&selection)?.create()?;
 
     assert_eq!(
         Some("text/plain".to_owned()),
@@ -707,10 +706,10 @@ fn main() -> Result<(), MimeError> {
 | `MimeDetectorRegistry::builtin()` | 创建包含内置 detector Provider 的隔离 Registry |
 | `MimeDetectorRegistry::register(provider)` | 在运行时注册自描述 Provider |
 | `MimeDetectorRegistry::register_shared(provider)` | 注册已经共享的自描述 Provider |
-| `MimeDetectorRegistry::resolve(selection)` | 解析显式 selection，但不创建 detector |
-| `MimeDetectorRegistry::resolve_default()` | 不依赖 MIME config 解析 Registry 默认值 |
+| `MimeDetectorRegistry::resolve_selected(selection)` | 解析显式 selection，但不创建 detector |
+| `MimeDetectorRegistry::resolve()` | 不依赖 MIME config 解析 Registry 默认值 |
 | `ResolvingServiceProvider::create(config)` | 使用显式服务配置创建 detector |
-| `ResolvingServiceProvider::create_default()` | 使用默认服务配置创建 detector |
+| `ResolvingServiceProvider::create()` | 使用默认服务配置创建 detector |
 | `MimeDetectorRegistry::provider_ids()` | 按注册顺序列出 canonical Provider ID |
 | `MimeDetectorProvider` | 可插拔 detector 实现的工厂 trait |
 | `detect_by_filename(filename)` | 根据文件名检测一个 MIME 名称 |
@@ -754,8 +753,8 @@ fn main() -> Result<(), MimeError> {
 | `MediaStreamClassifierRegistry::builtin()` | 创建包含内置 classifier Provider 的隔离 Registry |
 | `MediaStreamClassifierRegistry::register(provider)` | 注册自描述 classifier Provider |
 | `MediaStreamClassifierRegistry::register_shared(provider)` | 注册已经共享的自描述 classifier Provider |
-| `MediaStreamClassifierRegistry::resolve(selection)` | 解析显式 classifier selection |
-| `MediaStreamClassifierRegistry::resolve_default()` | 独立于 MIME config 解析 Registry 默认值 |
+| `MediaStreamClassifierRegistry::resolve_selected(selection)` | 解析显式 classifier selection |
+| `MediaStreamClassifierRegistry::resolve()` | 独立于 MIME config 解析 Registry 默认值 |
 | `MediaStreamClassifierRegistry::provider_ids()` | 按注册顺序列出 canonical Provider ID |
 | `MediaStreamClassifierProvider` | 可插拔 classifier 实现的工厂 trait |
 | `classify_file(file)` | 分类本地媒体文件 |

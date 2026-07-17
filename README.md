@@ -152,8 +152,8 @@ fn detect_upload(detector: &dyn MimeDetector, filename: &str, content: &[u8]) ->
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let provider = MimeDetectorRegistry::global().resolve_default()?;
-    let detector = provider.create_default()?;
+    let provider = MimeDetectorRegistry::global().resolve()?;
+    let detector = provider.create()?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -206,8 +206,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     MimeConfig::reload_default(&config)?;
     let registry = MimeDetectorRegistry::builtin();
     let mime_config = MimeConfig::default();
-    let provider = registry.resolve(mime_config.mime_detector_selection())?;
-    let detector = provider.create(&mime_config)?;
+    let provider = registry.resolve_selected(mime_config.mime_detector_selection())?;
+    let detector = provider.create_configured(&mime_config)?;
 
     assert_eq!(
         Some("application/pdf".to_owned()),
@@ -224,13 +224,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `MimeDetectorRegistry::global()` is the process-wide domain Registry. An App
 can register self-described third-party providers during startup and replace
 the Registry's default `ProviderSelection`. Any downstream library that later
-calls `global().resolve_default()` observes that same App-configured state
+calls `global().resolve()` observes that same App-configured state
 without knowing the selected implementation.
 
-Selection and creation are intentionally separate. `resolve(selection)` and
-`resolve_default()` return `ResolvingServiceProvider<MimeDetectorSpec>` and
+Selection and creation are intentionally separate. `resolve_selected(selection)` and
+`resolve()` return `ResolvingServiceProvider<MimeDetectorSpec>` and
 report only `ProviderSelectionError`. The returned provider then supports both
-`create(&MimeConfig)` and `create_default()`, whose failures are represented by
+`create(&MimeConfig)` and `create()`, whose failures are represented by
 `ProviderCreationError`. `MimeConfig::mime_detector_selection()` remains one
 optional source of an explicit selection; the Registry does not require it.
 
@@ -270,8 +270,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = MimeConfig::from_config(&source)?;
     let registry = MimeDetectorRegistry::builtin();
-    let provider = registry.resolve(config.mime_detector_selection())?;
-    let detector = provider.create(&config)?;
+    let provider = registry.resolve_selected(config.mime_detector_selection())?;
+    let detector = provider.create_configured(&config)?;
 
     assert_eq!(
         Some("image/png".to_owned()),
@@ -306,7 +306,7 @@ use qubit_spi::{
 struct AppMimeDetectorProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for AppMimeDetectorProvider {
-    fn create(
+    fn create_configured(
         &self,
         config: &MimeConfig,
     ) -> Result<Arc<dyn MimeDetector>, ProviderCreationError> {
@@ -326,8 +326,8 @@ impl ProviderDefinition<MimeDetectorSpec> for AppMimeDetectorProvider {
 
 // This function represents code inside independently published library X.
 fn library_x_detector() -> Result<Arc<dyn MimeDetector>, Box<dyn std::error::Error>> {
-    let provider = MimeDetectorRegistry::global().resolve_default()?;
-    Ok(provider.create_default()?)
+    let provider = MimeDetectorRegistry::global().resolve()?;
+    Ok(provider.create()?)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -344,8 +344,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-For an isolated provider set, the optional builder has the same one-argument
-registration contract:
+For an isolated provider set, create a registry directly and register providers
+on it:
 
 ```rust
 use qubit_mime::{
@@ -355,11 +355,10 @@ use qubit_mime::{
 use qubit_spi::{ProviderSelection, ServiceProvider};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut builder = MimeDetectorRegistry::builder();
-    builder.register(RepositoryMimeDetectorProvider)?;
-    let registry = builder.build();
+    let registry = MimeDetectorRegistry::default();
+    registry.register(RepositoryMimeDetectorProvider)?;
     let selection = ProviderSelection::named("repository-mime-detector")?;
-    let detector = registry.resolve(&selection)?.create_default()?;
+    let detector = registry.resolve_selected(&selection)?.create()?;
 
     assert_eq!(
         Some("text/plain".to_owned()),
@@ -723,10 +722,10 @@ fn main() -> Result<(), MimeError> {
 | `MimeDetectorRegistry::builtin()` | Create an isolated Registry with built-in detector providers |
 | `MimeDetectorRegistry::register(provider)` | Register an owned self-described provider at runtime |
 | `MimeDetectorRegistry::register_shared(provider)` | Register an already shared self-described provider |
-| `MimeDetectorRegistry::resolve(selection)` | Resolve an explicit selection without creating a detector |
-| `MimeDetectorRegistry::resolve_default()` | Resolve the Registry default without requiring MIME config |
+| `MimeDetectorRegistry::resolve_selected(selection)` | Resolve an explicit selection without creating a detector |
+| `MimeDetectorRegistry::resolve()` | Resolve the Registry default without requiring MIME config |
 | `ResolvingServiceProvider::create(config)` | Create a detector with explicit service config |
-| `ResolvingServiceProvider::create_default()` | Create a detector with default service config |
+| `ResolvingServiceProvider::create()` | Create a detector with default service config |
 | `MimeDetectorRegistry::provider_ids()` | List canonical provider IDs in registration order |
 | `MimeDetectorProvider` | Factory trait for pluggable detector implementations |
 | `detect_by_filename(filename)` | Detect one MIME name from filename |
@@ -770,8 +769,8 @@ fn main() -> Result<(), MimeError> {
 | `MediaStreamClassifierRegistry::builtin()` | Create an isolated Registry with the built-in classifier provider |
 | `MediaStreamClassifierRegistry::register(provider)` | Register an owned self-described classifier provider |
 | `MediaStreamClassifierRegistry::register_shared(provider)` | Register an already shared self-described classifier provider |
-| `MediaStreamClassifierRegistry::resolve(selection)` | Resolve an explicit classifier selection |
-| `MediaStreamClassifierRegistry::resolve_default()` | Resolve the Registry default independently from MIME config |
+| `MediaStreamClassifierRegistry::resolve_selected(selection)` | Resolve an explicit classifier selection |
+| `MediaStreamClassifierRegistry::resolve()` | Resolve the Registry default independently from MIME config |
 | `MediaStreamClassifierRegistry::provider_ids()` | List canonical provider IDs in registration order |
 | `MediaStreamClassifierProvider` | Factory trait for pluggable classifier implementations |
 | `classify_file(file)` | Classify a local media file |

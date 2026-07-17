@@ -27,7 +27,6 @@ use qubit_spi::{
 use super::{
     FfprobeCommandMediaStreamClassifierProvider,
     MediaStreamClassifierProvider,
-    MediaStreamClassifierRegistryBuilder,
     MediaStreamClassifierSpec,
 };
 
@@ -48,33 +47,6 @@ pub struct MediaStreamClassifierRegistry {
 }
 
 impl MediaStreamClassifierRegistry {
-    /// Wraps an existing typed provider Registry.
-    ///
-    /// # Parameters
-    ///
-    /// * `providers` - Runtime provider Registry exposed through the classifier
-    ///   domain API.
-    ///
-    /// # Returns
-    ///
-    /// A classifier Registry sharing the supplied state.
-    #[inline]
-    #[must_use]
-    pub fn new(providers: ProviderRegistry<MediaStreamClassifierSpec>) -> Self {
-        Self { providers }
-    }
-
-    /// Creates an optional assembly builder for an isolated Registry.
-    ///
-    /// # Returns
-    ///
-    /// An empty classifier Registry builder.
-    #[inline(always)]
-    #[must_use]
-    pub fn builder() -> MediaStreamClassifierRegistryBuilder {
-        MediaStreamClassifierRegistryBuilder::new()
-    }
-
     /// Creates an isolated Registry containing the FFprobe provider.
     ///
     /// Its stable default selection is `ffprobe`. This does not return the
@@ -85,15 +57,15 @@ impl MediaStreamClassifierRegistry {
     /// A runtime-mutable Registry containing the FFprobe provider.
     #[must_use]
     pub fn builtin() -> Self {
-        let providers = ProviderRegistry::default();
-        providers
+        let registry = Self::default();
+        registry
             .register(FfprobeCommandMediaStreamClassifierProvider)
             .expect("built-in FFprobe classifier provider should register");
-        providers.set_default_selection(
+        registry.set_default_selection(
             ProviderSelection::named("ffprobe")
                 .expect("built-in FFprobe selection should be valid"),
         );
-        Self::new(providers)
+        registry
     }
 
     /// Returns the process-wide media stream classifier Registry.
@@ -182,14 +154,14 @@ impl MediaStreamClassifierRegistry {
     ///
     /// Returns [`ProviderSelectionError`] when no candidate matches.
     #[inline(always)]
-    pub fn resolve(
+    pub fn resolve_selected(
         &self,
         selection: &ProviderSelection,
     ) -> Result<
         ResolvingServiceProvider<MediaStreamClassifierSpec>,
         ProviderSelectionError,
     > {
-        self.providers.resolve(selection)
+        self.providers.resolve_selected(selection)
     }
 
     /// Resolves the Registry's current default selection.
@@ -205,13 +177,13 @@ impl MediaStreamClassifierRegistry {
     /// Returns [`ProviderSelectionError`] when the stored default matches no
     /// registered provider.
     #[inline(always)]
-    pub fn resolve_default(
+    pub fn resolve(
         &self,
     ) -> Result<
         ResolvingServiceProvider<MediaStreamClassifierSpec>,
         ProviderSelectionError,
     > {
-        self.providers.resolve_default()
+        self.providers.resolve()
     }
 
     /// Lists canonical provider IDs in registration order.
@@ -223,5 +195,19 @@ impl MediaStreamClassifierRegistry {
     #[must_use]
     pub fn provider_ids(&self) -> Vec<ProviderId> {
         self.providers.provider_ids()
+    }
+}
+
+impl Default for MediaStreamClassifierRegistry {
+    /// Creates an empty runtime media stream classifier Registry.
+    ///
+    /// # Returns
+    ///
+    /// A Registry with automatic selection and no providers.
+    #[inline]
+    fn default() -> Self {
+        Self {
+            providers: ProviderRegistry::default(),
+        }
     }
 }

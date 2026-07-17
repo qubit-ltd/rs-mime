@@ -33,7 +33,7 @@ use super::MimeDetectorSpec;
 pub struct FileCommandMimeDetectorProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
-    fn create(
+    fn create_configured(
         &self,
         config: &MimeConfig,
     ) -> Result<Arc<dyn MimeDetector>, ProviderCreationError> {

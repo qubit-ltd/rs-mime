@@ -41,9 +41,9 @@ fn test_builtin_registry_lists_and_resolves_repository_provider() {
     let selection = ProviderSelection::named("repository-mime-detector")
         .expect("repository alias should be valid");
     let detector = registry
-        .resolve(&selection)
+        .resolve_selected(&selection)
         .expect("repository alias should resolve")
-        .create_default()
+        .create()
         .expect("repository alias should resolve");
 
     assert_eq!(
@@ -79,9 +79,9 @@ fn test_global_registry_exposes_builtin_defaults_in_this_process() {
 }
 
 #[test]
-fn test_builder_registers_owned_and_shared_providers_atomically() {
-    let mut builder = MimeDetectorRegistry::builder();
-    builder
+fn test_registry_registers_owned_and_shared_providers_atomically() {
+    let registry = MimeDetectorRegistry::default();
+    registry
         .register(TestMimeDetectorProvider::new(
             "owned",
             20,
@@ -94,11 +94,11 @@ fn test_builder_registers_owned_and_shared_providers_atomically() {
             10,
             TestProviderBehavior::Success("application/x-shared"),
         ));
-    builder
+    registry
         .register_shared(shared)
         .expect("shared provider should register");
 
-    let duplicate = builder
+    let duplicate = registry
         .register(TestMimeDetectorProvider::new(
             "shared",
             0,
@@ -107,7 +107,6 @@ fn test_builder_registers_owned_and_shared_providers_atomically() {
         .expect_err("duplicate selector should be rejected");
     assert!(duplicate.to_string().contains("shared"));
 
-    let registry = builder.build();
     let runtime_shared: Arc<dyn ProviderDefinition<MimeDetectorSpec>> =
         Arc::new(TestMimeDetectorProvider::new(
             "runtime-shared",
@@ -123,24 +122,24 @@ fn test_builder_registers_owned_and_shared_providers_atomically() {
 
 #[test]
 fn test_resolve_reports_selection_errors_before_creation() {
-    let registry = MimeDetectorRegistry::builder().build();
+    let registry = MimeDetectorRegistry::default();
     let missing = ProviderSelection::named("missing")
         .expect("missing selector should still be syntactically valid");
 
     assert!(matches!(
-        registry.resolve(&missing),
+        registry.resolve_selected(&missing),
         Err(ProviderSelectionError::UnknownProvider { selector, .. })
             if selector.as_str() == "missing"
     ));
     assert!(matches!(
-        registry.resolve(&ProviderSelection::auto()),
+        registry.resolve_selected(&ProviderSelection::auto()),
         Err(ProviderSelectionError::EmptyRegistry)
     ));
 }
 
 #[test]
 fn test_resolve_and_create_keep_selection_and_creation_errors_separate() {
-    let registry = MimeDetectorRegistry::builder().build();
+    let registry = MimeDetectorRegistry::default();
     registry
         .register(TestMimeDetectorProvider::new(
             "failed",
@@ -151,10 +150,10 @@ fn test_resolve_and_create_keep_selection_and_creation_errors_separate() {
     let selection = ProviderSelection::named("failed")
         .expect("test selector should be valid");
     let provider = registry
-        .resolve(&selection)
+        .resolve_selected(&selection)
         .expect("provider selection should succeed before creation");
     let error = provider
-        .create_default()
+        .create()
         .expect_err("selected provider should fail during creation");
 
     assert!(matches!(
@@ -173,29 +172,28 @@ fn test_resolve_and_create_keep_selection_and_creation_errors_separate() {
 
 #[test]
 fn test_default_selection_is_independent_from_service_configuration() {
-    let mut builder = MimeDetectorRegistry::builder();
-    builder
+    let registry = MimeDetectorRegistry::default();
+    registry
         .register(TestMimeDetectorProvider::new(
             "configured",
             0,
             TestProviderBehavior::Success("application/x-configured"),
         ))
         .expect("configured provider should register");
-    let registry = builder.build();
     registry.set_default_selection(
         ProviderSelection::named("configured")
             .expect("configured selector should be valid"),
     );
 
     let provider = registry
-        .resolve_default()
+        .resolve()
         .expect("registry default should resolve without MIME config");
     let config = MimeConfig::default();
     let explicit = provider
-        .create(&config)
+        .create_configured(&config)
         .expect("explicit MIME config should create a detector");
     let defaulted = provider
-        .create_default()
+        .create()
         .expect("default MIME config should create a detector");
 
     assert_eq!(
@@ -210,29 +208,28 @@ fn test_default_selection_is_independent_from_service_configuration() {
 
 #[test]
 fn test_resolving_provider_applies_selection_fallback_policy() {
-    let mut builder = MimeDetectorRegistry::builder();
-    builder
+    let registry = MimeDetectorRegistry::default();
+    registry
         .register(TestMimeDetectorProvider::new(
             "unavailable",
             20,
             TestProviderBehavior::Unavailable,
         ))
         .expect("unavailable provider should register");
-    builder
+    registry
         .register(TestMimeDetectorProvider::new(
             "success",
             10,
             TestProviderBehavior::Success("application/x-static"),
         ))
         .expect("successful provider should register");
-    let registry = builder.build();
     let selection = ProviderSelection::chain(["unavailable", "success"])
         .expect("test chain should be valid")
         .with_fallback_policy(FallbackPolicy::OnAbsence);
     let detector = registry
-        .resolve(&selection)
+        .resolve_selected(&selection)
         .expect("both candidates should resolve")
-        .create_default()
+        .create()
         .expect("absence fallback should reach the successful provider");
 
     assert_eq!(
@@ -243,15 +240,15 @@ fn test_resolving_provider_applies_selection_fallback_policy() {
 
 #[test]
 fn test_resolving_provider_reports_policy_stop_with_actual_attempts() {
-    let mut builder = MimeDetectorRegistry::builder();
-    builder
+    let registry = MimeDetectorRegistry::default();
+    registry
         .register(TestMimeDetectorProvider::new(
             "terminal",
             10,
             TestProviderBehavior::InitializationFailed,
         ))
         .expect("terminal provider should register");
-    builder
+    registry
         .register(TestMimeDetectorProvider::new(
             "unreached",
             0,
@@ -261,11 +258,10 @@ fn test_resolving_provider_reports_policy_stop_with_actual_attempts() {
     let selection = ProviderSelection::chain(["terminal", "unreached"])
         .expect("test chain should be valid")
         .with_fallback_policy(FallbackPolicy::OnAbsence);
-    let error = builder
-        .build()
-        .resolve(&selection)
+    let error = registry
+        .resolve_selected(&selection)
         .expect("both providers should resolve")
-        .create_default()
+        .create()
         .expect_err("initialization failure should stop absence fallback");
 
     assert_eq!(
@@ -282,11 +278,11 @@ fn test_resolving_provider_reports_policy_stop_with_actual_attempts() {
 /// # Returns
 ///
 /// The detector created through the process-wide Registry defaults.
-fn library_x_create_default_detector() -> Arc<dyn MimeDetector> {
+fn library_x_create_detector() -> Arc<dyn MimeDetector> {
     MimeDetectorRegistry::global()
-        .resolve_default()
+        .resolve()
         .expect("App-configured global provider should resolve")
-        .create_default()
+        .create()
         .expect("App-configured global provider should create a detector")
 }
 
@@ -308,12 +304,12 @@ fn test_global_registry_shares_app_provider_with_library_x() {
             .expect("App provider selector should be valid");
 
         let explicit = registry
-            .resolve(&selection)
+            .resolve_selected(&selection)
             .expect("explicit App selection should resolve")
-            .create(&MimeConfig::default())
+            .create_configured(&MimeConfig::default())
             .expect("explicit MIME config should create the App detector");
         registry.set_default_selection(selection);
-        let defaulted = library_x_create_default_detector();
+        let defaulted = library_x_create_detector();
 
         assert_eq!(
             Some("application/x-app-global".to_owned()),

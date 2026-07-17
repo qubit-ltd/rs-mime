@@ -25,7 +25,7 @@ use qubit_spi::{
 fn test_file_command_mime_detector_provider_metadata_and_availability() {
     let provider = FileCommandMimeDetectorProvider;
     let descriptor = provider.descriptor();
-    let creation = provider.create(&MimeConfig::default());
+    let creation = provider.create_configured(&MimeConfig::default());
 
     assert_eq!("file", descriptor.id().as_str());
     assert_eq!(
@@ -46,7 +46,7 @@ fn test_file_command_provider_reports_unavailable_command() {
     const CHILD_MARKER: &str = "QUBIT_MIME_TEST_MISSING_FILE_COMMAND";
     if std::env::var_os(CHILD_MARKER).is_some() {
         let error = FileCommandMimeDetectorProvider
-            .create(&MimeConfig::default())
+            .create_configured(&MimeConfig::default())
             .expect_err("provider should reject a missing file command");
 
         assert!(matches!(

@@ -15,7 +15,6 @@ pub(crate) mod media_stream_classifier_backend;
 pub(crate) mod media_stream_classifier_helpers;
 pub(crate) mod media_stream_classifier_provider;
 pub(crate) mod media_stream_classifier_registry;
-pub(crate) mod media_stream_classifier_registry_builder;
 pub(crate) mod media_stream_classifier_spec;
 mod media_stream_type;
 
@@ -26,6 +25,5 @@ pub use media_stream_classifier::MediaStreamClassifier;
 pub use media_stream_classifier_backend::MediaStreamClassifierBackend;
 pub use media_stream_classifier_provider::MediaStreamClassifierProvider;
 pub use media_stream_classifier_registry::MediaStreamClassifierRegistry;
-pub use media_stream_classifier_registry_builder::MediaStreamClassifierRegistryBuilder;
 pub use media_stream_classifier_spec::MediaStreamClassifierSpec;
 pub use media_stream_type::MediaStreamType;

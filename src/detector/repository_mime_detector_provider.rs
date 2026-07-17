@@ -31,7 +31,7 @@ pub struct RepositoryMimeDetectorProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
     #[inline]
-    fn create(
+    fn create_configured(
         &self,
         config: &MimeConfig,
     ) -> Result<Arc<dyn MimeDetector>, ProviderCreationError> {
