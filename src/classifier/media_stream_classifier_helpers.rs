@@ -69,10 +69,8 @@ pub(crate) fn with_temp_reader<T>(
     max_staging_size: u64,
     classify: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
-    let mut file = LocalTempFile::with_name(
-        Some("FileBasedMediaStreamClassifier-"),
-        Some(".tmp"),
-    )?;
+    let mut file =
+        LocalTempFile::with_affixes("FileBasedMediaStreamClassifier-", ".tmp")?;
     copy_to_temp_file(reader, &mut file, max_staging_size)?;
     file.close();
     classify(file.path())

@@ -112,8 +112,7 @@ pub(crate) fn with_temp_file<T>(
     content: &[u8],
     detect: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
-    let mut file =
-        LocalTempFile::with_name(Some("MimeDetectorTemp-"), Some(".tmp"))?;
+    let mut file = LocalTempFile::with_affixes("MimeDetectorTemp-", ".tmp")?;
     file.write_all(content)?;
     file.close();
     detect(file.path())

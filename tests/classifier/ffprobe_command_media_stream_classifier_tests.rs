@@ -11,6 +11,8 @@ use std::time::Duration;
 use qubit_command::CommandRunner;
 use qubit_config::Config;
 #[cfg(unix)]
+use qubit_local_files::LocalTempDir;
+#[cfg(unix)]
 use qubit_mime::MediaStreamClassifier;
 use qubit_mime::{
     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
@@ -18,8 +20,6 @@ use qubit_mime::{
     MediaStreamType,
     MimeConfig,
 };
-#[cfg(unix)]
-use tempfile::TempDir;
 
 #[cfg(unix)]
 use crate::support::PathEnvGuard;
@@ -103,8 +103,8 @@ fn test_max_staging_size_accessors_update_limit() {
 #[test]
 #[cfg(unix)]
 fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
-    let temp_dir =
-        TempDir::new().expect("temporary command directory should be created");
+    let temp_dir = LocalTempDir::new()
+        .expect("temporary command directory should be created");
     let script_path = temp_dir
         .path()
         .join(FfprobeCommandMediaStreamClassifier::COMMAND);
@@ -151,8 +151,8 @@ fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
 #[test]
 #[cfg(unix)]
 fn test_classify_file_propagates_ffprobe_start_error() {
-    let temp_dir =
-        TempDir::new().expect("temporary command directory should be created");
+    let temp_dir = LocalTempDir::new()
+        .expect("temporary command directory should be created");
     let _path_guard = PathEnvGuard::set(temp_dir.path());
     let classifier = FfprobeCommandMediaStreamClassifier::new()
         .with_command_runner(CommandRunner::new().disable_logging(true));
@@ -167,8 +167,8 @@ fn test_classify_file_propagates_ffprobe_start_error() {
 #[test]
 #[cfg(unix)]
 fn test_classify_file_maps_unexpected_ffprobe_exit_to_none() {
-    let temp_dir =
-        TempDir::new().expect("temporary command directory should be created");
+    let temp_dir = LocalTempDir::new()
+        .expect("temporary command directory should be created");
     let script_path = temp_dir
         .path()
         .join(FfprobeCommandMediaStreamClassifier::COMMAND);
