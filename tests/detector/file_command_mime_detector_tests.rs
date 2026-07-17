@@ -10,6 +10,8 @@ use std::time::Duration;
 
 use qubit_command::CommandRunner;
 #[cfg(unix)]
+use qubit_local_files::LocalTempDir;
+#[cfg(unix)]
 use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::{
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
@@ -21,8 +23,6 @@ use qubit_mime::{
     MimeDetector,
     MimeRepository,
 };
-#[cfg(unix)]
-use tempfile::TempDir;
 
 #[cfg(unix)]
 use crate::support::PathEnvGuard;
@@ -89,8 +89,8 @@ fn test_detect_file_by_content_uses_runner_timeout() {
 #[test]
 #[cfg(unix)]
 fn test_detect_file_by_content_reads_file_command_stdout() {
-    let temp_dir =
-        TempDir::new().expect("temporary command directory should be created");
+    let temp_dir = LocalTempDir::new()
+        .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
     std::fs::write(&script_path, "#!/bin/sh\nprintf 'text/plain\\n'\n")
         .expect("fake file command should be written");
@@ -144,8 +144,8 @@ fn test_detect_file_by_content_reads_file_command_stdout() {
 #[test]
 #[cfg(unix)]
 fn test_detect_file_by_content_returns_none_for_empty_stdout() {
-    let temp_dir =
-        TempDir::new().expect("temporary command directory should be created");
+    let temp_dir = LocalTempDir::new()
+        .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
     std::fs::write(&script_path, "#!/bin/sh\nexit 0\n")
         .expect("fake file command should be written");

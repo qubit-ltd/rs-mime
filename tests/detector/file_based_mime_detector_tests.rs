@@ -16,8 +16,8 @@ use std::sync::Mutex;
 use qubit_local_files::{
     LocalFiles,
     LocalTempDir,
+    LocalTempFile,
 };
-use tempfile::NamedTempFile;
 
 use qubit_mime::{
     FileBasedMimeDetector,
@@ -208,9 +208,8 @@ fn test_detect_reader_reports_temporary_file_creation_error() {
         return;
     }
 
-    let temp_dir =
-        LocalTempDir::with_prefix(Some("qubit-mime-detector-error-"))
-            .expect("temporary parent directory should be created");
+    let temp_dir = LocalTempDir::with_prefix("qubit-mime-detector-error-")
+        .expect("temporary parent directory should be created");
     let invalid_temp_dir = temp_dir.path().join("not-a-directory");
     LocalFiles::atomic_write(&invalid_temp_dir, b"not a directory")
         .expect("invalid temporary directory placeholder should be created");
@@ -256,9 +255,8 @@ fn test_detect_reader_creates_missing_temporary_directory() {
         return;
     }
 
-    let temp_dir =
-        LocalTempDir::with_prefix(Some("qubit-mime-detector-missing-"))
-            .expect("temporary parent directory should be created");
+    let temp_dir = LocalTempDir::with_prefix("qubit-mime-detector-missing-")
+        .expect("temporary parent directory should be created");
     let missing_temp_dir = temp_dir.path().join("missing").join("nested");
     let output = std::process::Command::new(
         std::env::current_exe()
@@ -289,7 +287,7 @@ fn test_detect_reader_creates_missing_temporary_directory() {
 #[test]
 fn test_detect_file_delegates_to_local_file_hook() {
     let temp_file =
-        NamedTempFile::new().expect("temporary file should be created");
+        LocalTempFile::new().expect("temporary file should be created");
     let detector = PathRecordingDetector::new();
 
     let detected = detector
@@ -304,7 +302,7 @@ fn test_detect_file_delegates_to_local_file_hook() {
 fn test_detect_reader_propagates_file_based_callback_error() {
     let detector = FailingDetector::new();
     let temp_file =
-        NamedTempFile::new().expect("temporary file should be created");
+        LocalTempFile::new().expect("temporary file should be created");
     let mut reader = std::io::Cursor::new(b"plain text".to_vec());
 
     let error = detector

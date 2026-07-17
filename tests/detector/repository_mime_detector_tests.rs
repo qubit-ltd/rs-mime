@@ -16,13 +16,13 @@ use std::io::{
     SeekFrom,
 };
 
+use qubit_local_files::LocalTempFile;
 use qubit_mime::{
     MimeConfig,
     MimeDetectionPolicy,
     MimeRepository,
     RepositoryMimeDetector,
 };
-use tempfile::NamedTempFile;
 
 #[derive(Debug, Clone, Copy)]
 enum FailureMode {
@@ -142,7 +142,7 @@ fn test_detect_reader_does_not_consume_reader_position() {
 fn test_detect_file_reads_file_and_uses_file_name() {
     let detector =
         RepositoryMimeDetector::new().expect("default repository should load");
-    let mut file = NamedTempFile::with_suffix(".pdf")
+    let mut file = LocalTempFile::with_suffix(".pdf")
         .expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"%PDF-1.7\n")
         .expect("temp file should be writable");
