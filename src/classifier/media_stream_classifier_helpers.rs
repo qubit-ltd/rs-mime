@@ -44,7 +44,7 @@ pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
             path.display()
         )));
     }
-    LocalFiles::open_reader(path, FileReadOptions::buffered())?;
+    drop(LocalFiles::open_reader(path, FileReadOptions::buffered())?);
     Ok(())
 }
 
