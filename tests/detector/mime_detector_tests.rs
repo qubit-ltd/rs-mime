@@ -134,9 +134,9 @@ fn test_mime_detector_backend_prefer_filename_skips_reader_and_file_content() {
 fn test_default_mime_detector_returns_usable_detector() {
     let registry = MimeDetectorRegistry::builtin();
     let detector = registry
-        .resolve_default()
+        .resolve()
         .expect("default provider selection")
-        .create_default()
+        .create()
         .expect("default detector");
     assert!(detector.detect_by_filename("document.pdf").is_some());
 }
@@ -171,7 +171,7 @@ fn test_mime_detector_registry_creates_boxed_and_shared_named_detectors() {
     );
     let unknown = ProviderSelection::named("unknown")
         .expect("unknown selector should still be syntactically valid");
-    assert!(registry.resolve(&unknown).is_err());
+    assert!(registry.resolve_selected(&unknown).is_err());
 }
 
 #[test]
@@ -181,9 +181,9 @@ fn test_mime_detector_registry_creates_from_explicit_registry() {
     let boxed = create_named_detector(&registry, "repository", &config);
     let shared = create_named_detector(&registry, "repository", &config);
     let shared_default = registry
-        .resolve(config.mime_detector_selection())
+        .resolve_selected(config.mime_detector_selection())
         .expect("configured registry selection should resolve")
-        .create(&config)
+        .create_configured(&config)
         .expect("shared registry default should create detector");
 
     assert_eq!(
@@ -312,7 +312,7 @@ fn test_mime_detector_registry_builds_from_config_defaults() {
     assert!(fallback.detect_by_filename("document.pdf").is_some());
     assert!(
         registry
-            .resolve(unknown_config.mime_detector_selection())
+            .resolve_selected(unknown_config.mime_detector_selection())
             .is_err()
     );
     assert!(
@@ -395,9 +395,9 @@ fn create_named_detector(
     let selection = ProviderSelection::named(selector)
         .expect("test provider selector should be valid");
     registry
-        .resolve(&selection)
+        .resolve_selected(&selection)
         .expect("named detector provider should resolve")
-        .create(config)
+        .create_configured(config)
         .expect("named detector provider should create its service")
 }
 
@@ -416,8 +416,8 @@ fn create_configured_detector(
     config: &MimeConfig,
 ) -> std::sync::Arc<dyn MimeDetector> {
     registry
-        .resolve(config.mime_detector_selection())
+        .resolve_selected(config.mime_detector_selection())
         .expect("configured detector selection should resolve")
-        .create(config)
+        .create_configured(config)
         .expect("configured detector provider should create its service")
 }

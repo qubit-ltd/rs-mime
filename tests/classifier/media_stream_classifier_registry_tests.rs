@@ -40,14 +40,14 @@ fn test_builtin_registry_lists_and_resolves_ffprobe_provider() {
         .expect("FFprobe alias should be valid");
 
     registry
-        .resolve(&selection)
+        .resolve_selected(&selection)
         .expect("FFprobe alias should resolve")
-        .create_default()
+        .create()
         .expect("FFprobe alias should resolve");
     registry
-        .resolve_default()
+        .resolve()
         .expect("built-in classifier default should resolve")
-        .create(&MimeConfig::default())
+        .create_configured(&MimeConfig::default())
         .expect("explicit MIME config should create FFprobe classifier");
     assert_eq!(
         vec!["ffprobe"],
@@ -78,9 +78,9 @@ fn test_global_classifier_registry_exposes_builtin_defaults() {
 }
 
 #[test]
-fn test_builder_registers_owned_and_shared_providers_atomically() {
-    let mut builder = MediaStreamClassifierRegistry::builder();
-    builder
+fn test_registry_registers_owned_and_shared_providers_atomically() {
+    let registry = MediaStreamClassifierRegistry::default();
+    registry
         .register(TestMediaStreamClassifierProvider::new(
             "owned",
             20,
@@ -93,11 +93,11 @@ fn test_builder_registers_owned_and_shared_providers_atomically() {
             10,
             TestProviderBehavior::Success("unused"),
         ));
-    builder
+    registry
         .register_shared(shared)
         .expect("shared provider should register");
 
-    let duplicate = builder
+    let duplicate = registry
         .register(TestMediaStreamClassifierProvider::new(
             "shared",
             0,
@@ -106,7 +106,6 @@ fn test_builder_registers_owned_and_shared_providers_atomically() {
         .expect_err("duplicate selector should be rejected");
     assert!(duplicate.to_string().contains("shared"));
 
-    let registry = builder.build();
     let runtime_shared: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>> =
         Arc::new(TestMediaStreamClassifierProvider::new(
             "runtime-shared",
@@ -122,24 +121,24 @@ fn test_builder_registers_owned_and_shared_providers_atomically() {
 
 #[test]
 fn test_resolve_reports_classifier_selection_errors_before_creation() {
-    let registry = MediaStreamClassifierRegistry::builder().build();
+    let registry = MediaStreamClassifierRegistry::default();
     let missing = ProviderSelection::named("missing")
         .expect("missing selector should still be syntactically valid");
 
     assert!(matches!(
-        registry.resolve(&missing),
+        registry.resolve_selected(&missing),
         Err(ProviderSelectionError::UnknownProvider { selector, .. })
             if selector.as_str() == "missing"
     ));
     assert!(matches!(
-        registry.resolve(&ProviderSelection::auto()),
+        registry.resolve_selected(&ProviderSelection::auto()),
         Err(ProviderSelectionError::EmptyRegistry)
     ));
 }
 
 #[test]
 fn test_resolve_and_create_keep_classifier_errors_separate() {
-    let registry = MediaStreamClassifierRegistry::builder().build();
+    let registry = MediaStreamClassifierRegistry::default();
     registry
         .register(TestMediaStreamClassifierProvider::new(
             "failed",
@@ -150,10 +149,10 @@ fn test_resolve_and_create_keep_classifier_errors_separate() {
     let selection = ProviderSelection::named("failed")
         .expect("test selector should be valid");
     let provider = registry
-        .resolve(&selection)
+        .resolve_selected(&selection)
         .expect("selection should succeed before creation");
     let error = provider
-        .create_default()
+        .create()
         .expect_err("selected classifier should fail during creation");
 
     assert!(matches!(
@@ -172,42 +171,41 @@ fn test_resolve_and_create_keep_classifier_errors_separate() {
 
 #[test]
 fn test_classifier_default_selection_is_independent_from_mime_config() {
-    let mut builder = MediaStreamClassifierRegistry::builder();
-    builder
+    let registry = MediaStreamClassifierRegistry::default();
+    registry
         .register(TestMediaStreamClassifierProvider::new(
             "configured",
             10,
             TestProviderBehavior::Success("unused"),
         ))
         .expect("successful provider should register");
-    let registry = builder.build();
     registry.set_default_selection(
         ProviderSelection::named("configured")
             .expect("configured selector should be valid"),
     );
     let provider = registry
-        .resolve_default()
+        .resolve()
         .expect("default selection should resolve without MIME config");
 
     provider
-        .create(&MimeConfig::default())
+        .create_configured(&MimeConfig::default())
         .expect("explicit MIME config should create the classifier");
     provider
-        .create_default()
+        .create()
         .expect("default MIME config should create the classifier");
 }
 
 #[test]
 fn test_classifier_resolving_provider_applies_fallback_policy() {
-    let mut builder = MediaStreamClassifierRegistry::builder();
-    builder
+    let registry = MediaStreamClassifierRegistry::default();
+    registry
         .register(TestMediaStreamClassifierProvider::new(
             "unsupported",
             30,
             TestProviderBehavior::Unsupported,
         ))
         .expect("unsupported provider should register");
-    builder
+    registry
         .register(TestMediaStreamClassifierProvider::new(
             "success",
             10,
@@ -218,25 +216,24 @@ fn test_classifier_resolving_provider_applies_fallback_policy() {
         .expect("test chain should be valid")
         .with_fallback_policy(FallbackPolicy::OnAbsence);
 
-    builder
-        .build()
-        .resolve(&selection)
+    registry
+        .resolve_selected(&selection)
         .expect("both classifiers should resolve")
-        .create_default()
+        .create()
         .expect("absence fallback should reach the successful classifier");
 }
 
 #[test]
 fn test_classifier_creation_reports_policy_stop() {
-    let mut builder = MediaStreamClassifierRegistry::builder();
-    builder
+    let registry = MediaStreamClassifierRegistry::default();
+    registry
         .register(TestMediaStreamClassifierProvider::new(
             "terminal",
             20,
             TestProviderBehavior::InitializationFailed,
         ))
         .expect("terminal provider should register");
-    builder
+    registry
         .register(TestMediaStreamClassifierProvider::new(
             "unreached",
             10,
@@ -246,11 +243,10 @@ fn test_classifier_creation_reports_policy_stop() {
     let selection = ProviderSelection::chain(["terminal", "unreached"])
         .expect("test chain should be valid")
         .with_fallback_policy(FallbackPolicy::OnAbsence);
-    let error = builder
-        .build()
-        .resolve(&selection)
+    let error = registry
+        .resolve_selected(&selection)
         .expect("both classifiers should resolve")
-        .create_default()
+        .create()
         .expect_err("initialization failure should stop absence fallback");
 
     assert_eq!(

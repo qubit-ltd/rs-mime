@@ -27,7 +27,7 @@ fn test_mime_detector_provider_defaults_and_factory() {
     .with_aliases(&["static-alias"]);
     let descriptor = provider.descriptor();
     let detector = provider
-        .create(&MimeConfig::default())
+        .create_configured(&MimeConfig::default())
         .expect("static provider should create detector");
 
     assert_eq!("static", descriptor.id().as_str());

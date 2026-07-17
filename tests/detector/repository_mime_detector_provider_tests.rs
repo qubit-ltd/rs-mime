@@ -20,7 +20,7 @@ fn test_repository_mime_detector_provider_creates_filename_detector() {
     let provider = RepositoryMimeDetectorProvider;
     let descriptor = provider.descriptor();
     let detector = provider
-        .create(&MimeConfig::default())
+        .create_configured(&MimeConfig::default())
         .expect("repository provider should create detector");
 
     assert_eq!("repository", descriptor.id().as_str());

@@ -88,7 +88,7 @@ impl TestMimeDetectorProvider {
 }
 
 impl ServiceProvider<MimeDetectorSpec> for TestMimeDetectorProvider {
-    fn create(
+    fn create_configured(
         &self,
         _config: &MimeConfig,
     ) -> Result<Arc<dyn MimeDetector>, ProviderCreationError> {

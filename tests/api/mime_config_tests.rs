@@ -43,7 +43,6 @@ use qubit_mime::{
 };
 use qubit_spi::{
     ProviderSelection,
-    ProviderSelectionKind,
     ProviderSelector,
     ServiceProvider,
 };
@@ -68,10 +67,6 @@ fn test_mime_config_retains_validated_provider_selections() {
         .expect("valid selections should parse");
 
     assert_eq!(
-        ProviderSelectionKind::Chain,
-        mime_config.mime_detector_selection().kind(),
-    );
-    assert_eq!(
         ["file", "repository"],
         mime_config
             .mime_detector_selection()
@@ -81,9 +76,11 @@ fn test_mime_config_retains_validated_provider_selections() {
             .collect::<Vec<_>>()
             .as_slice(),
     );
-    assert_eq!(
-        ProviderSelectionKind::Auto,
-        mime_config.media_stream_classifier_selection().kind(),
+    assert!(
+        mime_config
+            .media_stream_classifier_selection()
+            .selectors()
+            .is_empty(),
     );
 }
 
@@ -470,9 +467,9 @@ fn test_registries_use_mime_config_defaults() {
 
     let detector_registry = MimeDetectorRegistry::builtin();
     let detector = detector_registry
-        .resolve_default()
+        .resolve()
         .expect("default detector selection")
-        .create_default()
+        .create()
         .expect("default detector");
 
     assert_eq!(
@@ -512,8 +509,8 @@ fn mime_config_test_lock() -> MutexGuard<'static, ()> {
 /// Panics when `selection` is automatic or contains no explicit selector.
 fn selection_primary(selection: &ProviderSelection) -> &str {
     selection
-        .selector()
-        .or_else(|| selection.selectors().first())
+        .selectors()
+        .first()
         .expect("test selection should contain an explicit provider")
         .as_str()
 }

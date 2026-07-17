@@ -34,8 +34,8 @@
 //! use qubit_spi::ServiceProvider;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let provider = MimeDetectorRegistry::global().resolve_default()?;
-//! let detector = provider.create_default()?;
+//! let provider = MimeDetectorRegistry::global().resolve()?;
+//! let detector = provider.create()?;
 //! assert_eq!(
 //!     Some("application/pdf".to_owned()),
 //!     detector.detect_by_filename("document.pdf"),
@@ -66,8 +66,8 @@
 //!
 //! let config = MimeConfig::from_config(&source)?;
 //! let registry = MimeDetectorRegistry::builtin();
-//! let provider = registry.resolve(config.mime_detector_selection())?;
-//! let detector = provider.create(&config)?;
+//! let provider = registry.resolve_selected(config.mime_detector_selection())?;
+//! let detector = provider.create_configured(&config)?;
 //! assert_eq!(
 //!     Some("image/png".to_owned()),
 //!     detector.detect_by_filename("image.png"),
@@ -94,7 +94,6 @@ pub use classifier::{
     MediaStreamClassifierBackend,
     MediaStreamClassifierProvider,
     MediaStreamClassifierRegistry,
-    MediaStreamClassifierRegistryBuilder,
     MediaStreamClassifierSpec,
     MediaStreamType,
 };
@@ -111,7 +110,6 @@ pub use detector::{
     MimeDetectorCore,
     MimeDetectorProvider,
     MimeDetectorRegistry,
-    MimeDetectorRegistryBuilder,
     MimeDetectorSpec,
     RepositoryMimeDetector,
     RepositoryMimeDetectorProvider,

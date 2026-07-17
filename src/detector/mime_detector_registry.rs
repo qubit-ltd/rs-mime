@@ -27,7 +27,6 @@ use qubit_spi::{
 use super::{
     FileCommandMimeDetectorProvider,
     MimeDetectorProvider,
-    MimeDetectorRegistryBuilder,
     MimeDetectorSpec,
     RepositoryMimeDetectorProvider,
 };
@@ -48,33 +47,6 @@ pub struct MimeDetectorRegistry {
 }
 
 impl MimeDetectorRegistry {
-    /// Wraps an existing typed provider Registry.
-    ///
-    /// # Parameters
-    ///
-    /// * `providers` - Runtime provider Registry to expose through the MIME
-    ///   domain API.
-    ///
-    /// # Returns
-    ///
-    /// A MIME detector Registry sharing the supplied state.
-    #[inline]
-    #[must_use]
-    pub fn new(providers: ProviderRegistry<MimeDetectorSpec>) -> Self {
-        Self { providers }
-    }
-
-    /// Creates an optional assembly builder for an isolated Registry.
-    ///
-    /// # Returns
-    ///
-    /// An empty MIME detector Registry builder.
-    #[inline(always)]
-    #[must_use]
-    pub fn builder() -> MimeDetectorRegistryBuilder {
-        MimeDetectorRegistryBuilder::new()
-    }
-
     /// Creates an isolated Registry containing the built-in providers.
     ///
     /// Its stable default selection is the repository-backed provider. This
@@ -86,18 +58,18 @@ impl MimeDetectorRegistry {
     /// A runtime-mutable Registry containing `repository` and `file`.
     #[must_use]
     pub fn builtin() -> Self {
-        let providers = ProviderRegistry::default();
-        providers
+        let registry = Self::default();
+        registry
             .register(RepositoryMimeDetectorProvider)
             .expect("built-in repository MIME provider should register");
-        providers
+        registry
             .register(FileCommandMimeDetectorProvider)
             .expect("built-in file MIME provider should register");
-        providers.set_default_selection(
+        registry.set_default_selection(
             ProviderSelection::named("repository")
                 .expect("built-in repository selection should be valid"),
         );
-        Self::new(providers)
+        registry
     }
 
     /// Returns the process-wide MIME detector Registry.
@@ -192,14 +164,14 @@ impl MimeDetectorRegistry {
     /// Returns [`ProviderSelectionError`] when the selection matches no
     /// registered provider.
     #[inline(always)]
-    pub fn resolve(
+    pub fn resolve_selected(
         &self,
         selection: &ProviderSelection,
     ) -> Result<
         ResolvingServiceProvider<MimeDetectorSpec>,
         ProviderSelectionError,
     > {
-        self.providers.resolve(selection)
+        self.providers.resolve_selected(selection)
     }
 
     /// Resolves the Registry's current default selection.
@@ -215,13 +187,13 @@ impl MimeDetectorRegistry {
     /// Returns [`ProviderSelectionError`] when the stored default matches no
     /// registered provider.
     #[inline(always)]
-    pub fn resolve_default(
+    pub fn resolve(
         &self,
     ) -> Result<
         ResolvingServiceProvider<MimeDetectorSpec>,
         ProviderSelectionError,
     > {
-        self.providers.resolve_default()
+        self.providers.resolve()
     }
 
     /// Lists canonical provider IDs in registration order.
@@ -233,5 +205,19 @@ impl MimeDetectorRegistry {
     #[must_use]
     pub fn provider_ids(&self) -> Vec<ProviderId> {
         self.providers.provider_ids()
+    }
+}
+
+impl Default for MimeDetectorRegistry {
+    /// Creates an empty runtime MIME detector Registry.
+    ///
+    /// # Returns
+    ///
+    /// A Registry with automatic selection and no providers.
+    #[inline]
+    fn default() -> Self {
+        Self {
+            providers: ProviderRegistry::default(),
+        }
     }
 }

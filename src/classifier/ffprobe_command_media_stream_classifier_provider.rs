@@ -33,7 +33,7 @@ impl ServiceProvider<MediaStreamClassifierSpec>
     for FfprobeCommandMediaStreamClassifierProvider
 {
     #[inline]
-    fn create(
+    fn create_configured(
         &self,
         config: &MimeConfig,
     ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderCreationError> {
