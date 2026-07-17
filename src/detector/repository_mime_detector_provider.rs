@@ -9,8 +9,9 @@
 
 use std::sync::Arc;
 
-use qubit_spi::error::ProviderError;
+use qubit_spi::error::ProviderCreationError;
 use qubit_spi::{
+    ProviderDefinition,
     ProviderDescriptor,
     ProviderId,
     ServiceProvider,
@@ -29,23 +30,29 @@ use super::MimeDetectorSpec;
 pub struct RepositoryMimeDetectorProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
+    #[inline]
     fn create(
         &self,
         config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderError> {
+    ) -> Result<Arc<dyn MimeDetector>, ProviderCreationError> {
         Ok(Arc::new(RepositoryMimeDetector::from_mime_config(
             config.clone(),
         )))
     }
 }
 
-/// Gets the immutable descriptor for the repository detector provider.
-#[must_use]
-pub fn repository_mime_detector_descriptor() -> ProviderDescriptor {
-    ProviderDescriptor::new(
-        ProviderId::new("repository")
-            .expect("built-in provider ID should be valid"),
-    )
-    .with_aliases(["repository-mime-detector"])
-    .expect("built-in repository detector aliases should be valid")
+impl ProviderDefinition<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
+    /// Returns the stable repository provider identity.
+    ///
+    /// # Returns
+    ///
+    /// The `repository` provider descriptor and its accepted alias.
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(
+            ProviderId::new("repository")
+                .expect("built-in provider ID should be valid"),
+        )
+        .with_aliases(["repository-mime-detector"])
+        .expect("built-in repository detector aliases should be valid")
+    }
 }

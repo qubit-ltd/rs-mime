@@ -9,8 +9,12 @@
 
 use std::sync::Arc;
 
-use qubit_spi::error::ProviderError;
+use qubit_spi::error::{
+    ProviderCreationError,
+    ProviderError,
+};
 use qubit_spi::{
+    ProviderDefinition,
     ProviderDescriptor,
     ProviderId,
     ServiceProvider,
@@ -32,11 +36,12 @@ impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
     fn create(
         &self,
         config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderError> {
+    ) -> Result<Arc<dyn MimeDetector>, ProviderCreationError> {
         if !FileCommandMimeDetector::is_available() {
             return Err(ProviderError::unavailable(
                 "`file` command is not available",
-            ));
+            )
+            .into());
         }
         Ok(Arc::new(FileCommandMimeDetector::from_mime_config(
             config.clone(),
@@ -44,13 +49,19 @@ impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
     }
 }
 
-/// Gets the immutable descriptor for the `file` command detector provider.
-#[must_use]
-pub fn file_command_mime_detector_descriptor() -> ProviderDescriptor {
-    ProviderDescriptor::new(
-        ProviderId::new("file").expect("built-in provider ID should be valid"),
-    )
-    .with_aliases(["file-command", "file-command-mime-detector"])
-    .expect("built-in file detector aliases should be valid")
-    .with_priority(10)
+impl ProviderDefinition<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
+    /// Returns the stable identity and automatic-selection priority.
+    ///
+    /// # Returns
+    ///
+    /// The `file` provider descriptor and its accepted aliases.
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(
+            ProviderId::new("file")
+                .expect("built-in provider ID should be valid"),
+        )
+        .with_aliases(["file-command", "file-command-mime-detector"])
+        .expect("built-in file detector aliases should be valid")
+        .with_priority(10)
+    }
 }

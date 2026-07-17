@@ -20,10 +20,7 @@ pub(crate) mod media_stream_classifier_spec;
 mod media_stream_type;
 
 pub use ffprobe_command_media_stream_classifier::FfprobeCommandMediaStreamClassifier;
-pub use ffprobe_command_media_stream_classifier_provider::{
-    FfprobeCommandMediaStreamClassifierProvider,
-    ffprobe_command_media_stream_classifier_descriptor,
-};
+pub use ffprobe_command_media_stream_classifier_provider::FfprobeCommandMediaStreamClassifierProvider;
 pub use file_based_media_stream_classifier::FileBasedMediaStreamClassifier;
 pub use media_stream_classifier::MediaStreamClassifier;
 pub use media_stream_classifier_backend::MediaStreamClassifierBackend;

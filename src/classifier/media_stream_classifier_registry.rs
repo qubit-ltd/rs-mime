@@ -5,159 +5,223 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Immutable registry for media stream classifier providers.
+//! Runtime Registry and global facade for media stream classifier providers.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    LazyLock,
+};
 
 use qubit_spi::error::{
-    AttemptFailure,
-    ProviderErrorKind,
-    ProviderSelectorError,
-    ResolutionError,
+    ProviderSelectionError,
+    RegistrationError,
 };
 use qubit_spi::{
-    FallbackPolicy,
+    ProviderDefinition,
+    ProviderId,
     ProviderRegistry,
-    ProviderResolver,
-};
-
-use crate::{
-    MediaStreamClassifier,
-    MimeConfig,
-    MimeError,
-    MimeResult,
+    ProviderSelection,
+    ResolvingServiceProvider,
 };
 
 use super::{
     FfprobeCommandMediaStreamClassifierProvider,
+    MediaStreamClassifierProvider,
     MediaStreamClassifierRegistryBuilder,
     MediaStreamClassifierSpec,
-    ffprobe_command_media_stream_classifier_descriptor,
 };
 
-/// Immutable registry of media stream classifier providers.
+/// Process-wide classifier Registry initialized with the built-in provider.
+static GLOBAL_MEDIA_STREAM_CLASSIFIER_REGISTRY: LazyLock<
+    MediaStreamClassifierRegistry,
+> = LazyLock::new(MediaStreamClassifierRegistry::builtin);
+
+/// Shared runtime Registry for media stream classifier definitions.
+///
+/// Clones observe the same synchronized provider catalog and default
+/// selection. Use [`Self::global`] for App startup registrations intended for
+/// independently developed downstream libraries.
+#[derive(Clone, Debug)]
 pub struct MediaStreamClassifierRegistry {
-    resolver: ProviderResolver<MediaStreamClassifierSpec>,
+    /// Typed provider Registry owning synchronized runtime state.
+    providers: ProviderRegistry<MediaStreamClassifierSpec>,
 }
 
 impl MediaStreamClassifierRegistry {
-    /// Creates a registry from providers assembled during application startup.
+    /// Wraps an existing typed provider Registry.
+    ///
+    /// # Parameters
+    ///
+    /// * `providers` - Runtime provider Registry exposed through the classifier
+    ///   domain API.
+    ///
+    /// # Returns
+    ///
+    /// A classifier Registry sharing the supplied state.
+    #[inline]
     #[must_use]
     pub fn new(providers: ProviderRegistry<MediaStreamClassifierSpec>) -> Self {
-        let resolver =
-            ProviderResolver::new(providers, FallbackPolicy::OnAbsence);
-        Self { resolver }
+        Self { providers }
     }
 
-    /// Creates a startup-only builder for classifier providers.
+    /// Creates an optional assembly builder for an isolated Registry.
+    ///
+    /// # Returns
+    ///
+    /// An empty classifier Registry builder.
+    #[inline(always)]
     #[must_use]
     pub fn builder() -> MediaStreamClassifierRegistryBuilder {
         MediaStreamClassifierRegistryBuilder::new()
     }
 
-    /// Creates a registry containing the FFprobe provider.
+    /// Creates an isolated Registry containing the FFprobe provider.
+    ///
+    /// Its stable default selection is `ffprobe`. This does not return the
+    /// process-wide Registry; use [`Self::global`] for cross-library state.
+    ///
+    /// # Returns
+    ///
+    /// A runtime-mutable Registry containing the FFprobe provider.
     #[must_use]
     pub fn builtin() -> Self {
-        let mut builder = Self::builder();
-        builder
-            .register(
-                ffprobe_command_media_stream_classifier_descriptor(),
-                FfprobeCommandMediaStreamClassifierProvider,
-            )
+        let providers = ProviderRegistry::default();
+        providers
+            .register(FfprobeCommandMediaStreamClassifierProvider)
             .expect("built-in FFprobe classifier provider should register");
-        builder.build()
+        providers.set_default_selection(
+            ProviderSelection::named("ffprobe")
+                .expect("built-in FFprobe selection should be valid"),
+        );
+        Self::new(providers)
+    }
+
+    /// Returns the process-wide media stream classifier Registry.
+    ///
+    /// # Returns
+    ///
+    /// The single Registry shared for the lifetime of this process.
+    #[inline]
+    #[must_use]
+    pub fn global() -> &'static Self {
+        &GLOBAL_MEDIA_STREAM_CLASSIFIER_REGISTRY
+    }
+
+    /// Registers an owned self-described classifier provider.
+    ///
+    /// # Parameters
+    ///
+    /// * `provider` - Provider definition moved into Registry storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError`] when its ID or an alias is already owned.
+    #[inline(always)]
+    pub fn register<P>(&self, provider: P) -> Result<(), RegistrationError>
+    where
+        P: MediaStreamClassifierProvider,
+    {
+        self.providers.register(provider)
+    }
+
+    /// Registers an already shared self-described classifier provider.
+    ///
+    /// # Parameters
+    ///
+    /// * `provider` - Type-erased shared provider definition retained by the
+    ///   Registry. Concrete owned providers normally use [`Self::register`]
+    ///   through the domain-specific [`MediaStreamClassifierProvider`]
+    ///   contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistrationError`] when its ID or an alias is already owned.
+    #[inline]
+    pub fn register_shared(
+        &self,
+        provider: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>>,
+    ) -> Result<(), RegistrationError> {
+        self.providers.register_shared(provider)
+    }
+
+    /// Returns the selection used by future default resolutions.
+    ///
+    /// # Returns
+    ///
+    /// An owned snapshot independent from [`crate::MimeConfig`].
+    #[inline(always)]
+    #[must_use]
+    pub fn default_selection(&self) -> ProviderSelection {
+        self.providers.default_selection()
+    }
+
+    /// Replaces the selection used by future default resolutions.
+    ///
+    /// # Parameters
+    ///
+    /// * `selection` - Validated selection and creation fallback policy.
+    #[inline(always)]
+    pub fn set_default_selection(&self, selection: ProviderSelection) {
+        self.providers.set_default_selection(selection);
+    }
+
+    /// Resolves an explicit selection into a composing service provider.
+    ///
+    /// This stage does not create a classifier and does not inspect
+    /// [`crate::MimeConfig`].
+    ///
+    /// # Parameters
+    ///
+    /// * `selection` - Provider target and creation fallback policy.
+    ///
+    /// # Returns
+    ///
+    /// A point-in-time classifier candidate snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderSelectionError`] when no candidate matches.
+    #[inline(always)]
+    pub fn resolve(
+        &self,
+        selection: &ProviderSelection,
+    ) -> Result<
+        ResolvingServiceProvider<MediaStreamClassifierSpec>,
+        ProviderSelectionError,
+    > {
+        self.providers.resolve(selection)
+    }
+
+    /// Resolves the Registry's current default selection.
+    ///
+    /// This stage does not create a classifier or inspect service config.
+    ///
+    /// # Returns
+    ///
+    /// A point-in-time classifier candidate snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderSelectionError`] when the stored default matches no
+    /// registered provider.
+    #[inline(always)]
+    pub fn resolve_default(
+        &self,
+    ) -> Result<
+        ResolvingServiceProvider<MediaStreamClassifierSpec>,
+        ProviderSelectionError,
+    > {
+        self.providers.resolve_default()
     }
 
     /// Lists canonical provider IDs in registration order.
+    ///
+    /// # Returns
+    ///
+    /// An owned provider-ID snapshot unaffected by later registrations.
+    #[inline]
     #[must_use]
-    pub fn provider_ids(&self) -> Vec<&str> {
-        self.resolver
-            .registry()
-            .provider_ids()
-            .map(|id| id.as_str())
-            .collect()
-    }
-
-    /// Creates a classifier through one explicit provider ID or alias.
-    pub fn create(
-        &self,
-        selector: &str,
-        config: &MimeConfig,
-    ) -> MimeResult<Arc<dyn MediaStreamClassifier>> {
-        self.resolver
-            .create_named(selector, config)
-            .map(|created| created.into_service())
-            .map_err(classifier_resolution_error)
-    }
-
-    /// Creates a classifier using the configured selector or automatic order.
-    pub fn create_default(
-        &self,
-        config: &MimeConfig,
-    ) -> MimeResult<Arc<dyn MediaStreamClassifier>> {
-        self.resolver
-            .create(config.media_stream_classifier_selection(), config)
-            .map(|created| created.into_service())
-            .map_err(classifier_resolution_error)
-    }
-}
-
-fn classifier_resolution_error(error: ResolutionError) -> MimeError {
-    let message = error.to_string();
-    match &error {
-        ResolutionError::InvalidSelector { source, .. } => {
-            if matches!(source, ProviderSelectorError::Empty { .. }) {
-                MimeError::EmptyClassifierName
-            } else {
-                MimeError::InvalidClassifierName {
-                    name: source.input().to_owned(),
-                    reason: message,
-                }
-            }
-        }
-        ResolutionError::UnknownProvider { selector, .. } => {
-            MimeError::UnknownClassifier {
-                name: selector.as_str().to_owned(),
-            }
-        }
-        ResolutionError::EmptySelection | ResolutionError::EmptyRegistry => {
-            MimeError::NoAvailableClassifier { reason: message }
-        }
-        ResolutionError::NoProviderSucceeded { .. } => error
-            .decisive_attempt()
-            .map(classifier_attempt_error)
-            .unwrap_or(MimeError::NoAvailableClassifier { reason: message }),
-        _ => MimeError::NoAvailableClassifier { reason: message },
-    }
-}
-
-/// Maps one failed SPI attempt into a precise classifier-domain error.
-///
-/// # Arguments
-///
-/// * `attempt` - Failed lookup or provider creation attempt.
-///
-/// # Returns
-///
-/// A precise domain error when the attempt exposes provider context.
-fn classifier_attempt_error(attempt: &AttemptFailure) -> MimeError {
-    match attempt {
-        AttemptFailure::ProviderError {
-            provider_id, error, ..
-        } => match error.kind() {
-            ProviderErrorKind::Unsupported | ProviderErrorKind::Unavailable => {
-                MimeError::ClassifierUnavailable {
-                    name: provider_id.as_str().to_owned(),
-                    reason: error.reason().to_owned(),
-                }
-            }
-            _ => MimeError::ClassifierBackend {
-                backend: provider_id.as_str().to_owned(),
-                reason: error.reason().to_owned(),
-            },
-        },
-        _ => MimeError::NoAvailableClassifier {
-            reason: attempt.to_string(),
-        },
+    pub fn provider_ids(&self) -> Vec<ProviderId> {
+        self.providers.provider_ids()
     }
 }
