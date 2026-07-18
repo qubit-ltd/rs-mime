@@ -13,7 +13,7 @@ use std::sync::{
 };
 
 use qubit_spi::error::{
-    ProviderSelectionError,
+    ProviderResolutionError,
     RegistrationError,
 };
 use qubit_spi::{
@@ -161,7 +161,7 @@ impl MimeDetectorRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`ProviderSelectionError`] when the selection matches no
+    /// Returns [`ProviderResolutionError`] when the selection matches no
     /// registered provider.
     #[inline(always)]
     pub fn resolve_selected(
@@ -169,7 +169,7 @@ impl MimeDetectorRegistry {
         selection: &ProviderSelection,
     ) -> Result<
         ResolvingServiceProvider<MimeDetectorSpec>,
-        ProviderSelectionError,
+        ProviderResolutionError,
     > {
         self.providers.resolve_selected(selection)
     }
@@ -184,14 +184,14 @@ impl MimeDetectorRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`ProviderSelectionError`] when the stored default matches no
+    /// Returns [`ProviderResolutionError`] when the stored default matches no
     /// registered provider.
     #[inline(always)]
     pub fn resolve(
         &self,
     ) -> Result<
         ResolvingServiceProvider<MimeDetectorSpec>,
-        ProviderSelectionError,
+        ProviderResolutionError,
     > {
         self.providers.resolve()
     }

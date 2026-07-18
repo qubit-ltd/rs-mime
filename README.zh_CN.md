@@ -219,8 +219,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 选择与创建刻意分成两步。`resolve_selected(selection)` 和 `resolve()` 返回
 `ResolvingServiceProvider<MimeDetectorSpec>`，只会产生
-`ProviderSelectionError`。随后既可调用 `create(&MimeConfig)`，也可调用
-`create()`；创建失败由 `ProviderCreationError` 表达。
+`ProviderResolutionError`。随后既可调用 `create_configured(&MimeConfig)`，也可
+调用 `create()`；创建失败由 `ProviderCreationError` 表达。
 `MimeConfig::mime_detector_selection()` 仍可作为显式 selection 的一种可选来源，
 但 Registry 不依赖该字段。
 
@@ -360,7 +360,7 @@ Registry 选择和服务创建使用不同的 SPI 错误类型：
 | 错误 | 阶段 | 含义 |
 |------|------|------|
 | `RegistrationError` | 注册 | Provider ID 或 alias 与已有 Provider 冲突 |
-| `ProviderSelectionError` | 解析 | 显式或默认 selection 没有得到候选 Provider |
+| `ProviderResolutionError` | 解析 | 显式或默认 selection 没有得到候选 Provider |
 | `ProviderCreationError` | 创建 | 已选候选创建失败，或 fallback policy 停止遍历 |
 
 ### 配置键
