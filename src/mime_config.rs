@@ -23,11 +23,11 @@ use std::sync::{
 
 use qubit_config::{
     Config,
-    options::{
-        CollectionReadOptions,
-        ConfigReadOptions,
-        EmptyItemPolicy,
-    },
+    options::ConfigReadOptions,
+};
+use qubit_datatype::{
+    CollectionConversionOptions,
+    EmptyItemPolicy,
 };
 use qubit_spi::ProviderSelection;
 use qubit_spi::error::ProviderSelectionBuildError;
@@ -112,7 +112,7 @@ static VALUE_READ_OPTIONS: LazyLock<ConfigReadOptions> =
 /// List value read options.
 static LIST_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
     ConfigReadOptions::env_friendly().with_collection_options(
-        CollectionReadOptions::default()
+        CollectionConversionOptions::default()
             .with_split_scalar_strings(true)
             .with_delimiters([',', ';'])
             .with_trim_items(true)
@@ -124,7 +124,7 @@ static LIST_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
 static MAPPING_READ_OPTIONS: LazyLock<ConfigReadOptions> =
     LazyLock::new(|| {
         ConfigReadOptions::env_friendly().with_collection_options(
-            CollectionReadOptions::default()
+            CollectionConversionOptions::default()
                 .with_split_scalar_strings(true)
                 .with_delimiters([';'])
                 .with_trim_items(true)
@@ -260,12 +260,10 @@ impl MimeConfig {
         )?;
         #[cfg(target_pointer_width = "32")]
         let max_buffer_size =
-            usize::try_from(max_buffer_size).map_err(|_| {
-                MimeError::InvalidClassifierInput {
-                    reason: format!(
-                        "MIME maximum buffer size {max_buffer_size} exceeds this platform's usize range"
-                    ),
-                }
+            usize::try_from(max_buffer_size).map_err(|_| MimeError::InvalidClassifierInput {
+                reason: format!(
+                    "MIME maximum buffer size {max_buffer_size} exceeds this platform's usize range"
+                ),
             })?;
         #[cfg(target_pointer_width = "64")]
         let max_buffer_size = max_buffer_size as usize;

@@ -329,6 +329,7 @@ dependencies = [
  "qubit-codec-misc",
  "qubit-command",
  "qubit-config",
+ "qubit-datatype",
  "qubit-io 0.7.0",
  "qubit-local-files",
  "qubit-spi",
