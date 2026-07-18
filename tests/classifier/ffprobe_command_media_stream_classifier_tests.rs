@@ -8,7 +8,10 @@
 
 use std::time::Duration;
 
-use qubit_command::CommandRunner;
+use qubit_command::{
+    CommandRunner,
+    DEFAULT_COMMAND_TIMEOUT,
+};
 use qubit_config::Config;
 #[cfg(unix)]
 use qubit_local_files::LocalTempDir;
@@ -74,6 +77,10 @@ fn test_default_uses_disabled_logging_runner() {
     let classifier = FfprobeCommandMediaStreamClassifier::default();
 
     assert!(classifier.command_runner().is_logging_disabled());
+    assert_eq!(
+        classifier.command_runner().configured_timeout(),
+        Some(DEFAULT_COMMAND_TIMEOUT),
+    );
 }
 
 #[test]
@@ -157,11 +164,23 @@ fn test_classify_file_propagates_ffprobe_start_error() {
     let classifier = FfprobeCommandMediaStreamClassifier::new()
         .with_command_runner(CommandRunner::new().disable_logging(true));
 
+    let private_path =
+        temp_dir.path().join("private-customer-source-video.mp4");
+    std::fs::write(&private_path, b"media")
+        .expect("private media fixture should be written");
     let error = classifier
-        .classify_file(std::path::Path::new("Cargo.toml"))
+        .classify_file(&private_path)
         .expect_err("missing ffprobe executable should report command error");
 
     assert!(error.to_string().contains("ffprobe"));
+    assert!(
+        !error
+            .to_string()
+            .contains(private_path.to_string_lossy().as_ref())
+    );
+    assert!(
+        !format!("{error:?}").contains(private_path.to_string_lossy().as_ref())
+    );
 }
 
 #[test]

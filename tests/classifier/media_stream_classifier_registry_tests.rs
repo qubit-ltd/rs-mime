@@ -6,8 +6,13 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use std::sync::Arc;
+use std::{
+    process::Command,
+    sync::Arc,
+};
 
+#[cfg(unix)]
+use qubit_local_files::LocalTempDir;
 use qubit_mime::{
     MediaStreamClassifierRegistry,
     MediaStreamClassifierSpec,
@@ -23,13 +28,81 @@ use qubit_spi::{
     ProviderCreationTermination,
     ProviderDefinition,
     ProviderSelection,
-    ServiceProvider,
 };
 
+#[cfg(unix)]
+use crate::support::PathEnvGuard;
 use crate::support::{
     TestMediaStreamClassifierProvider,
     TestProviderBehavior,
 };
+
+const FFPROBE_MISSING_CHILD: &str = "QUBIT_MIME_FFPROBE_MISSING_CHILD";
+
+/// Verifies a missing FFprobe executable is classified as unavailable.
+#[test]
+fn test_ffprobe_provider_reports_unavailable_when_command_is_missing() {
+    if std::env::var_os(FFPROBE_MISSING_CHILD).is_some() {
+        let registry = MediaStreamClassifierRegistry::builtin();
+        let selection = ProviderSelection::named("ffprobe")
+            .expect("FFprobe provider ID should be valid");
+        let error = registry
+            .resolve_selected(&selection)
+            .expect("FFprobe provider should resolve")
+            .create()
+            .expect_err("missing FFprobe should fail during creation");
+        let attempt = error
+            .decisive_attempt()
+            .expect("FFprobe creation failure should be decisive");
+
+        assert_eq!(ProviderErrorKind::Unavailable, attempt.error().kind());
+        return;
+    }
+
+    let test_binary = std::env::current_exe()
+        .expect("the integration-test executable should have a path");
+    let status = Command::new(test_binary)
+        .arg("--exact")
+        .arg(concat!(
+            "classifier::media_stream_classifier_registry_tests::",
+            "test_ffprobe_provider_reports_unavailable_when_command_is_missing",
+        ))
+        .arg("--nocapture")
+        .env(FFPROBE_MISSING_CHILD, "1")
+        .env("PATH", "")
+        .status()
+        .expect("isolated missing-FFprobe test process should start");
+
+    assert!(status.success(), "isolated missing-FFprobe test failed");
+}
+
+/// Verifies the FFprobe provider creates a classifier when FFprobe is present.
+#[test]
+#[cfg(unix)]
+fn test_ffprobe_provider_creates_classifier_when_command_is_available() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp_dir = LocalTempDir::new()
+        .expect("temporary command directory should be created");
+    let script_path = temp_dir.path().join("ffprobe");
+    std::fs::write(&script_path, "#!/bin/sh\nexit 0\n")
+        .expect("fake FFprobe should be written");
+    let mut permissions = std::fs::metadata(&script_path)
+        .expect("fake FFprobe metadata should be readable")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&script_path, permissions)
+        .expect("fake FFprobe should be executable");
+    let _path_guard = PathEnvGuard::set(temp_dir.path());
+
+    let selection = ProviderSelection::named("ffprobe")
+        .expect("FFprobe provider ID should be valid");
+    MediaStreamClassifierRegistry::builtin()
+        .resolve_selected(&selection)
+        .expect("FFprobe provider should resolve")
+        .create()
+        .expect("available FFprobe should create a classifier");
+}
 
 #[test]
 fn test_builtin_registry_lists_and_resolves_ffprobe_provider() {
@@ -39,16 +112,26 @@ fn test_builtin_registry_lists_and_resolves_ffprobe_provider() {
     let selection = ProviderSelection::named("ffprobe-command")
         .expect("FFprobe alias should be valid");
 
-    registry
+    let alias_creation = registry
         .resolve_selected(&selection)
         .expect("FFprobe alias should resolve")
-        .create()
-        .expect("FFprobe alias should resolve");
-    registry
+        .create();
+    let default_creation = registry
         .resolve()
         .expect("built-in classifier default should resolve")
-        .create_configured(&MimeConfig::default())
-        .expect("explicit MIME config should create FFprobe classifier");
+        .create_configured(&MimeConfig::default());
+    for creation in [alias_creation, default_creation] {
+        if let Err(error) = creation {
+            assert_eq!(
+                ProviderErrorKind::Unavailable,
+                error
+                    .decisive_attempt()
+                    .expect("missing FFprobe should be decisive")
+                    .error()
+                    .kind(),
+            );
+        }
+    }
     assert_eq!(
         vec!["ffprobe"],
         registry

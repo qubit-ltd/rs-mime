@@ -15,6 +15,7 @@
 use qubit_command::{
     Command,
     CommandRunner,
+    DEFAULT_COMMAND_TIMEOUT,
 };
 use qubit_io::ReadSeek;
 use std::path::Path;
@@ -256,7 +257,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// `true` when the command can be executed.
     pub fn is_available() -> bool {
-        CommandRunner::new()
+        Self::default_command_runner()
             .disable_logging(true)
             .run(Self::command_for_path(Path::new(".")))
             .is_ok()
@@ -304,7 +305,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// Runner used by the default detector.
     fn default_command_runner() -> CommandRunner {
-        CommandRunner::new()
+        CommandRunner::new().timeout(DEFAULT_COMMAND_TIMEOUT)
     }
 
     /// Builds the structured `file` command for one path.
@@ -318,7 +319,7 @@ impl<'a> FileCommandMimeDetector<'a> {
         Command::new(Self::COMMAND)
             .arg(Self::MIME_TYPE_ARG)
             .arg(Self::BRIEF_ARG)
-            .arg_os(path)
+            .sensitive_arg_os(path)
     }
 }
 
