@@ -9,10 +9,11 @@
 
 use std::path::Path;
 
-use qubit_command::CommandRunner;
 use qubit_command::{
     Command,
     CommandError,
+    CommandRunner,
+    DEFAULT_COMMAND_TIMEOUT,
 };
 
 use crate::{
@@ -211,7 +212,9 @@ impl FfprobeCommandMediaStreamClassifier {
     /// # Returns
     /// Runner used by the default classifier.
     fn default_command_runner() -> CommandRunner {
-        CommandRunner::new().disable_logging(true)
+        CommandRunner::new()
+            .timeout(DEFAULT_COMMAND_TIMEOUT)
+            .disable_logging(true)
     }
 
     /// Builds the structured `ffprobe` command for one path.
@@ -229,7 +232,7 @@ impl FfprobeCommandMediaStreamClassifier {
             .arg("stream=codec_type")
             .arg("-of")
             .arg("csv=p=0")
-            .arg_os(path)
+            .sensitive_arg_os(path)
     }
 }
 

@@ -8,7 +8,10 @@
 
 use std::time::Duration;
 
-use qubit_command::CommandRunner;
+use qubit_command::{
+    CommandRunner,
+    DEFAULT_COMMAND_TIMEOUT,
+};
 #[cfg(unix)]
 use qubit_local_files::LocalTempDir;
 #[cfg(unix)]
@@ -40,6 +43,16 @@ fn test_detect_by_filename_uses_repository_candidates() {
 #[test]
 fn test_is_available_can_be_called_without_panicking() {
     let _ = FileCommandMimeDetector::is_available();
+}
+
+#[test]
+fn test_default_file_command_runner_has_explicit_timeout() {
+    let detector = FileCommandMimeDetector::new();
+
+    assert_eq!(
+        detector.command_runner().configured_timeout(),
+        Some(DEFAULT_COMMAND_TIMEOUT),
+    );
 }
 
 #[test]
@@ -169,6 +182,27 @@ fn test_detect_file_by_content_returns_none_for_empty_stdout() {
             .detect_file_by_content(std::path::Path::new("Cargo.toml"))
             .expect("empty file command output should be accepted")
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_file_command_error_redacts_input_path() {
+    let temp_dir = LocalTempDir::new()
+        .expect("temporary command directory should be created");
+    let _path_guard = PathEnvGuard::set(temp_dir.path());
+    let repository = MimeRepository::empty();
+    let detector = FileCommandMimeDetector::with_repository(&repository);
+    let private_path =
+        std::path::Path::new("/private/customer/source-document.bin");
+
+    let error = detector
+        .detect_file_by_content(private_path)
+        .expect_err("missing file executable should report command error");
+    let display = error.to_string();
+    let debug = format!("{error:?}");
+
+    assert!(!display.contains(private_path.to_string_lossy().as_ref()));
+    assert!(!debug.contains(private_path.to_string_lossy().as_ref()));
 }
 
 #[test]
