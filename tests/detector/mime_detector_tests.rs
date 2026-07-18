@@ -18,10 +18,7 @@ use qubit_mime::{
     MimeError,
     RepositoryMimeDetector,
 };
-use qubit_spi::{
-    ProviderSelection,
-    ServiceProvider,
-};
+use qubit_spi::ProviderSelection;
 
 #[cfg(unix)]
 use crate::support::PathEnvGuard;

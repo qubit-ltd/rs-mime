@@ -44,7 +44,6 @@ use qubit_mime::{
 use qubit_spi::{
     ProviderSelection,
     ProviderSelector,
-    ServiceProvider,
 };
 
 static MIME_CONFIG_TEST_LOCK: Mutex<()> = Mutex::new(());
