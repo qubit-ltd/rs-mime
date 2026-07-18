@@ -31,7 +31,6 @@
 //!     MimeDetector,
 //!     MimeDetectorRegistry,
 //! };
-//! use qubit_spi::ServiceProvider;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let provider = MimeDetectorRegistry::global().resolve()?;
@@ -57,7 +56,6 @@
 //!     MimeDetector,
 //!     MimeDetectorRegistry,
 //! };
-//! use qubit_spi::ServiceProvider;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut source = Config::new();
