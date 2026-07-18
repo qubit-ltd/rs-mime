@@ -88,7 +88,7 @@ impl MediaStreamClassifierRegistry {
     /// # Errors
     ///
     /// Returns [`RegistrationError`] when its ID or an alias is already owned.
-    #[inline(always)]
+    #[inline]
     pub fn register<P>(&self, provider: P) -> Result<(), RegistrationError>
     where
         P: MediaStreamClassifierProvider,
@@ -121,7 +121,7 @@ impl MediaStreamClassifierRegistry {
     /// # Returns
     ///
     /// An owned snapshot independent from [`crate::MimeConfig`].
-    #[inline(always)]
+    #[inline]
     #[must_use]
     pub fn default_selection(&self) -> ProviderSelection {
         self.providers.default_selection()
@@ -132,7 +132,7 @@ impl MediaStreamClassifierRegistry {
     /// # Parameters
     ///
     /// * `selection` - Validated selection and creation fallback policy.
-    #[inline(always)]
+    #[inline]
     pub fn set_default_selection(&self, selection: ProviderSelection) {
         self.providers.set_default_selection(selection);
     }
@@ -153,7 +153,7 @@ impl MediaStreamClassifierRegistry {
     /// # Errors
     ///
     /// Returns [`ProviderResolutionError`] when no candidate matches.
-    #[inline(always)]
+    #[inline]
     pub fn resolve_selected(
         &self,
         selection: &ProviderSelection,
@@ -176,7 +176,7 @@ impl MediaStreamClassifierRegistry {
     ///
     /// Returns [`ProviderResolutionError`] when the stored default matches no
     /// registered provider.
-    #[inline(always)]
+    #[inline]
     pub fn resolve(
         &self,
     ) -> Result<

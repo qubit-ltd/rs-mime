@@ -97,7 +97,7 @@ impl MimeDetectorRegistry {
     ///
     /// Returns [`RegistrationError`] when the provider ID or an alias is
     /// already owned. The Registry remains unchanged on error.
-    #[inline(always)]
+    #[inline]
     pub fn register<P>(&self, provider: P) -> Result<(), RegistrationError>
     where
         P: MimeDetectorProvider,
@@ -130,7 +130,7 @@ impl MimeDetectorRegistry {
     /// # Returns
     ///
     /// An owned snapshot independent from any [`crate::MimeConfig`].
-    #[inline(always)]
+    #[inline]
     #[must_use]
     pub fn default_selection(&self) -> ProviderSelection {
         self.providers.default_selection()
@@ -141,7 +141,7 @@ impl MimeDetectorRegistry {
     /// # Parameters
     ///
     /// * `selection` - Validated selection and creation fallback policy.
-    #[inline(always)]
+    #[inline]
     pub fn set_default_selection(&self, selection: ProviderSelection) {
         self.providers.set_default_selection(selection);
     }
@@ -163,7 +163,7 @@ impl MimeDetectorRegistry {
     ///
     /// Returns [`ProviderResolutionError`] when the selection matches no
     /// registered provider.
-    #[inline(always)]
+    #[inline]
     pub fn resolve_selected(
         &self,
         selection: &ProviderSelection,
@@ -186,7 +186,7 @@ impl MimeDetectorRegistry {
     ///
     /// Returns [`ProviderResolutionError`] when the stored default matches no
     /// registered provider.
-    #[inline(always)]
+    #[inline]
     pub fn resolve(
         &self,
     ) -> Result<

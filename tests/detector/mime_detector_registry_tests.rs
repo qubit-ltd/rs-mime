@@ -25,7 +25,6 @@ use qubit_spi::{
     ProviderCreationTermination,
     ProviderDefinition,
     ProviderSelection,
-    ServiceProvider,
 };
 
 use crate::support::{
