@@ -30,7 +30,7 @@ use qubit_config::{
     },
 };
 use qubit_spi::ProviderSelection;
-use qubit_spi::error::ProviderSelectionError;
+use qubit_spi::error::ProviderSelectionBuildError;
 
 use crate::MimeError;
 use crate::{
@@ -504,16 +504,16 @@ fn create_classifier_selection(
 /// # Returns
 ///
 /// A detector-specific configuration error.
-fn detector_selection_error(error: ProviderSelectionError) -> MimeError {
+fn detector_selection_error(error: ProviderSelectionBuildError) -> MimeError {
     let reason = error.to_string();
     match error {
-        ProviderSelectionError::InvalidSelector { source, .. } => {
+        ProviderSelectionBuildError::InvalidSelector { source, .. } => {
             MimeError::InvalidDetectorName {
                 name: source.input().to_owned(),
                 reason,
             }
         }
-        ProviderSelectionError::EmptyChain => MimeError::EmptyDetectorName,
+        ProviderSelectionBuildError::EmptyChain => MimeError::EmptyDetectorName,
         _ => MimeError::NoAvailableDetector { reason },
     }
 }
@@ -527,16 +527,18 @@ fn detector_selection_error(error: ProviderSelectionError) -> MimeError {
 /// # Returns
 ///
 /// A classifier-specific configuration error.
-fn classifier_selection_error(error: ProviderSelectionError) -> MimeError {
+fn classifier_selection_error(error: ProviderSelectionBuildError) -> MimeError {
     let reason = error.to_string();
     match error {
-        ProviderSelectionError::InvalidSelector { source, .. } => {
+        ProviderSelectionBuildError::InvalidSelector { source, .. } => {
             MimeError::InvalidClassifierName {
                 name: source.input().to_owned(),
                 reason,
             }
         }
-        ProviderSelectionError::EmptyChain => MimeError::EmptyClassifierName,
+        ProviderSelectionBuildError::EmptyChain => {
+            MimeError::EmptyClassifierName
+        }
         _ => MimeError::NoAvailableClassifier { reason },
     }
 }

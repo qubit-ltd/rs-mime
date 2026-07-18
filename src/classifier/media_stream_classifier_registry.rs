@@ -13,7 +13,7 @@ use std::sync::{
 };
 
 use qubit_spi::error::{
-    ProviderSelectionError,
+    ProviderResolutionError,
     RegistrationError,
 };
 use qubit_spi::{
@@ -152,14 +152,14 @@ impl MediaStreamClassifierRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`ProviderSelectionError`] when no candidate matches.
+    /// Returns [`ProviderResolutionError`] when no candidate matches.
     #[inline(always)]
     pub fn resolve_selected(
         &self,
         selection: &ProviderSelection,
     ) -> Result<
         ResolvingServiceProvider<MediaStreamClassifierSpec>,
-        ProviderSelectionError,
+        ProviderResolutionError,
     > {
         self.providers.resolve_selected(selection)
     }
@@ -174,14 +174,14 @@ impl MediaStreamClassifierRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`ProviderSelectionError`] when the stored default matches no
+    /// Returns [`ProviderResolutionError`] when the stored default matches no
     /// registered provider.
     #[inline(always)]
     pub fn resolve(
         &self,
     ) -> Result<
         ResolvingServiceProvider<MediaStreamClassifierSpec>,
-        ProviderSelectionError,
+        ProviderResolutionError,
     > {
         self.providers.resolve()
     }

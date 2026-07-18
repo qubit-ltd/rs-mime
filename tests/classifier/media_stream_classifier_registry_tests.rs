@@ -16,7 +16,7 @@ use qubit_mime::{
 use qubit_spi::error::{
     ProviderCreationError,
     ProviderErrorKind,
-    ProviderSelectionError,
+    ProviderResolutionError,
 };
 use qubit_spi::{
     FallbackPolicy,
@@ -127,12 +127,12 @@ fn test_resolve_reports_classifier_selection_errors_before_creation() {
 
     assert!(matches!(
         registry.resolve_selected(&missing),
-        Err(ProviderSelectionError::UnknownProvider { selector, .. })
+        Err(ProviderResolutionError::UnknownProvider { selector, .. })
             if selector.as_str() == "missing"
     ));
     assert!(matches!(
         registry.resolve_selected(&ProviderSelection::auto()),
-        Err(ProviderSelectionError::EmptyRegistry)
+        Err(ProviderResolutionError::EmptyRegistry)
     ));
 }
 

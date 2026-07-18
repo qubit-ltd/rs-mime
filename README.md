@@ -229,10 +229,11 @@ without knowing the selected implementation.
 
 Selection and creation are intentionally separate. `resolve_selected(selection)` and
 `resolve()` return `ResolvingServiceProvider<MimeDetectorSpec>` and
-report only `ProviderSelectionError`. The returned provider then supports both
-`create(&MimeConfig)` and `create()`, whose failures are represented by
-`ProviderCreationError`. `MimeConfig::mime_detector_selection()` remains one
-optional source of an explicit selection; the Registry does not require it.
+report only `ProviderResolutionError`. The returned provider then supports
+both `create_configured(&MimeConfig)` and `create()`, whose failures are
+represented by `ProviderCreationError`.
+`MimeConfig::mime_detector_selection()` remains one optional source of an
+explicit selection; the Registry does not require it.
 
 `ProviderSelection` owns the fallback policy. Unknown entries in a chain are
 skipped; providers reporting unsupported or unavailable status fall through
@@ -373,7 +374,7 @@ Registry selection and service creation use separate SPI error types:
 | Error | Stage | Meaning |
 |-------|-------|---------|
 | `RegistrationError` | Registration | A provider ID or alias conflicts with an existing provider |
-| `ProviderSelectionError` | Resolution | The explicit/default selection yields no provider candidates |
+| `ProviderResolutionError` | Resolution | The explicit/default selection yields no provider candidates |
 | `ProviderCreationError` | Creation | Selected candidates fail or fallback policy stops traversal |
 
 ### Configuration keys
