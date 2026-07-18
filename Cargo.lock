@@ -252,18 +252,18 @@ dependencies = [
 
 [[package]]
 name = "qubit-codec"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "qubit-codec-misc"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64",
  "qubit-codec",
- "qubit-io 0.13.0",
+ "qubit-io",
  "thiserror",
 ]
 
@@ -305,13 +305,7 @@ dependencies = [
 
 [[package]]
 name = "qubit-io"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5696903b2de0e23b41036e5019d7899b7cd7988151e26cabdab8905ac5885dab"
-
-[[package]]
-name = "qubit-io"
-version = "0.13.0"
+version = "0.14.0"
 
 [[package]]
 name = "qubit-local-files"
@@ -325,13 +319,13 @@ dependencies = [
 
 [[package]]
 name = "qubit-mime"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "qubit-codec-misc",
  "qubit-command",
  "qubit-config",
  "qubit-datatype",
- "qubit-io 0.7.0",
+ "qubit-io",
  "qubit-local-files",
  "qubit-spi",
  "regex",

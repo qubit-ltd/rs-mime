@@ -1,6 +1,6 @@
 [package]
 name = "qubit-mime"
-version = "0.9.1"
+version = "0.10.0"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Haixing Hu <starfish.hu@gmail.com>"]
@@ -35,8 +35,8 @@ regex = "1.12"
 roxmltree = "0.21"
 thiserror = "2.0"
 
-qubit-io = "0.7"
-qubit-codec-misc = { path = "../rs-codec-misc", version = "0.2" }
+qubit-io = { path = "../rs-io", version = "0.14" }
+qubit-codec-misc = { path = "../rs-codec-misc", version = "0.3" }
 qubit-command = { version = "0.5", path = "../rs-command" }
 qubit-config = { path = "../rs-config", version = "0.14" }
 qubit-datatype = { path = "../rs-datatype", version = "0.7", features = ["converter"] }
