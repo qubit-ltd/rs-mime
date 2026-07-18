@@ -13,7 +13,6 @@ use qubit_command::{
     Command,
     CommandError,
     CommandRunner,
-    DEFAULT_COMMAND_TIMEOUT,
 };
 
 use crate::{
@@ -212,9 +211,7 @@ impl FfprobeCommandMediaStreamClassifier {
     /// # Returns
     /// Runner used by the default classifier.
     fn default_command_runner() -> CommandRunner {
-        CommandRunner::new()
-            .timeout(DEFAULT_COMMAND_TIMEOUT)
-            .disable_logging(true)
+        CommandRunner::new().disable_logging(true)
     }
 
     /// Builds the structured `ffprobe` command for one path.

@@ -46,7 +46,7 @@ fn test_is_available_can_be_called_without_panicking() {
 }
 
 #[test]
-fn test_default_file_command_runner_has_explicit_timeout() {
+fn test_default_file_command_runner_uses_default_timeout() {
     let detector = FileCommandMimeDetector::new();
 
     assert_eq!(
