@@ -270,10 +270,12 @@ fn test_from_xml_accepts_doctype_and_reports_structural_errors() {
             .contains("root element")
     );
     assert!(
-        MimeRepository::from_xml("<mime-info><mime-type><comment>x</comment></mime-type></mime-info>",)
-            .expect_err("missing type should fail")
-            .to_string()
-            .contains("attribute")
+        MimeRepository::from_xml(
+            "<mime-info><mime-type><comment>x</comment></mime-type></mime-info>",
+        )
+        .expect_err("missing type should fail")
+        .to_string()
+        .contains("attribute")
     );
     assert!(
         MimeRepository::from_xml("<!DOCTYPE mime-info [ <mime-info>")

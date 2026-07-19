@@ -8,7 +8,7 @@
 
 use qubit_mime::MimeConfig;
 use qubit_spi::{
-    ProviderDefinition,
+    ProviderMetadata,
     ServiceProvider,
 };
 

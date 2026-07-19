@@ -9,7 +9,10 @@
 
 use std::sync::Arc;
 
-use qubit_spi::ServiceSpec;
+use qubit_spi::{
+    ServiceSpec,
+    SyncServiceSpec,
+};
 
 use crate::{
     MediaStreamClassifier,
@@ -25,5 +28,8 @@ pub struct MediaStreamClassifierSpec;
 
 impl ServiceSpec for MediaStreamClassifierSpec {
     type Config = MimeConfig;
+}
+
+impl SyncServiceSpec for MediaStreamClassifierSpec {
     type Output = Arc<dyn MediaStreamClassifier>;
 }

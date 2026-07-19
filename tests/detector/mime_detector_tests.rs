@@ -19,6 +19,7 @@ use qubit_mime::{
     RepositoryMimeDetector,
 };
 use qubit_spi::ProviderSelection;
+use qubit_spi::error::ProviderResolutionError;
 
 #[cfg(unix)]
 use crate::support::PathEnvGuard;
@@ -290,13 +291,10 @@ fn test_mime_detector_registry_builds_from_config_defaults() {
     let config = MimeConfig::default();
     let file_config = create_detector_config("file");
     let unknown_config = create_detector_config("unknown");
-    let fallback_config =
-        create_detector_config_with_fallbacks("unknown", &["repository"]);
     let boxed = create_configured_detector(&registry, &config);
     let shared = create_configured_detector(&registry, &config);
     let boxed_file = create_configured_detector(&registry, &file_config);
     let shared_file = create_configured_detector(&registry, &file_config);
-    let fallback = create_configured_detector(&registry, &fallback_config);
     let repository_default = RepositoryMimeDetector::default();
     let file_default = FileCommandMimeDetector::default();
     let file_from_config =
@@ -306,7 +304,6 @@ fn test_mime_detector_registry_builds_from_config_defaults() {
     assert!(shared.detect_by_filename("document.pdf").is_some());
     assert!(boxed_file.detect_by_filename("document.pdf").is_some());
     assert!(shared_file.detect_by_filename("document.pdf").is_some());
-    assert!(fallback.detect_by_filename("document.pdf").is_some());
     assert!(
         registry
             .resolve_selected(unknown_config.mime_detector_selection())
@@ -326,16 +323,19 @@ fn test_mime_detector_registry_builds_from_config_defaults() {
 }
 
 #[test]
-fn test_configured_fallback_uses_repository_after_unknown_detector() {
+fn test_configured_fallback_rejects_unknown_detector() {
     let registry = MimeDetectorRegistry::builtin();
     let config =
         create_detector_config_with_fallbacks("unknown", &["repository"]);
-    let detector = create_configured_detector(&registry, &config);
+    let error = registry
+        .resolve_selected(config.mime_detector_selection())
+        .expect_err("strict configured chain should reject unknown providers");
 
-    assert_eq!(
-        Some("application/pdf".to_owned()),
-        detector.detect_by_filename("document.pdf")
-    );
+    assert!(matches!(
+        error,
+        ProviderResolutionError::UnknownProviders { selectors, .. }
+            if selectors.iter().any(|selector| selector.as_str() == "unknown")
+    ));
 }
 
 #[test]

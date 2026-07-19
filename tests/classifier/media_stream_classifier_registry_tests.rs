@@ -19,7 +19,6 @@ use qubit_mime::{
     MimeConfig,
 };
 use qubit_spi::error::{
-    ProviderCreationError,
     ProviderErrorKind,
     ProviderResolutionError,
 };
@@ -51,9 +50,7 @@ fn test_ffprobe_provider_reports_unavailable_when_command_is_missing() {
             .expect("FFprobe provider should resolve")
             .create()
             .expect_err("missing FFprobe should fail during creation");
-        let attempt = error
-            .decisive_attempt()
-            .expect("FFprobe creation failure should be decisive");
+        let attempt = error.decisive_attempt();
 
         assert_eq!(ProviderErrorKind::Unavailable, attempt.error().kind());
         return;
@@ -124,11 +121,7 @@ fn test_builtin_registry_lists_and_resolves_ffprobe_provider() {
         if let Err(error) = creation {
             assert_eq!(
                 ProviderErrorKind::Unavailable,
-                error
-                    .decisive_attempt()
-                    .expect("missing FFprobe should be decisive")
-                    .error()
-                    .kind(),
+                error.decisive_attempt().error().kind(),
             );
         }
     }
@@ -210,8 +203,8 @@ fn test_resolve_reports_classifier_selection_errors_before_creation() {
 
     assert!(matches!(
         registry.resolve_selected(&missing),
-        Err(ProviderResolutionError::UnknownProvider { selector, .. })
-            if selector.as_str() == "missing"
+        Err(ProviderResolutionError::UnknownProviders { selectors, .. })
+            if selectors.len() == 1 && selectors[0].as_str() == "missing"
     ));
     assert!(matches!(
         registry.resolve_selected(&ProviderSelection::auto()),
@@ -238,13 +231,7 @@ fn test_resolve_and_create_keep_classifier_errors_separate() {
         .create()
         .expect_err("selected classifier should fail during creation");
 
-    assert!(matches!(
-        error,
-        ProviderCreationError::NoProviderSucceeded { .. }
-    ));
-    let attempt = error
-        .decisive_attempt()
-        .expect("one failed classifier should be decisive");
+    let attempt = error.decisive_attempt();
     assert_eq!("failed", attempt.provider_id().as_str());
     assert_eq!(
         ProviderErrorKind::InitializationFailed,
@@ -333,7 +320,7 @@ fn test_classifier_creation_reports_policy_stop() {
         .expect_err("initialization failure should stop absence fallback");
 
     assert_eq!(
-        Some(ProviderCreationTermination::StoppedByPolicy),
+        ProviderCreationTermination::StoppedByPolicy,
         error.termination(),
     );
     assert_eq!(1, error.attempts().len());

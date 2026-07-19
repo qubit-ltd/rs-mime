@@ -16,7 +16,6 @@ use qubit_mime::{
     MimeDetectorSpec,
 };
 use qubit_spi::error::{
-    ProviderCreationError,
     ProviderErrorKind,
     ProviderResolutionError,
 };
@@ -127,8 +126,8 @@ fn test_resolve_reports_selection_errors_before_creation() {
 
     assert!(matches!(
         registry.resolve_selected(&missing),
-        Err(ProviderResolutionError::UnknownProvider { selector, .. })
-            if selector.as_str() == "missing"
+        Err(ProviderResolutionError::UnknownProviders { selectors, .. })
+            if selectors.len() == 1 && selectors[0].as_str() == "missing"
     ));
     assert!(matches!(
         registry.resolve_selected(&ProviderSelection::auto()),
@@ -155,13 +154,7 @@ fn test_resolve_and_create_keep_selection_and_creation_errors_separate() {
         .create()
         .expect_err("selected provider should fail during creation");
 
-    assert!(matches!(
-        error,
-        ProviderCreationError::NoProviderSucceeded { .. }
-    ));
-    let attempt = error
-        .decisive_attempt()
-        .expect("one failed provider should be decisive");
+    let attempt = error.decisive_attempt();
     assert_eq!("failed", attempt.provider_id().as_str());
     assert_eq!(
         ProviderErrorKind::InitializationFailed,
@@ -264,7 +257,7 @@ fn test_resolving_provider_reports_policy_stop_with_actual_attempts() {
         .expect_err("initialization failure should stop absence fallback");
 
     assert_eq!(
-        Some(ProviderCreationTermination::StoppedByPolicy),
+        ProviderCreationTermination::StoppedByPolicy,
         error.termination(),
     );
     assert_eq!(1, error.attempts().len());

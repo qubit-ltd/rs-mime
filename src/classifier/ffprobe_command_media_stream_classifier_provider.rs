@@ -9,14 +9,11 @@
 
 use std::sync::Arc;
 
-use qubit_spi::error::{
-    ProviderCreationError,
-    ProviderError,
-};
+use qubit_spi::error::ProviderError;
 use qubit_spi::{
-    ProviderDefinition,
     ProviderDescriptor,
     ProviderId,
+    ProviderMetadata,
     ServiceProvider,
 };
 
@@ -47,18 +44,17 @@ impl ServiceProvider<MediaStreamClassifierSpec>
     ///
     /// # Errors
     ///
-    /// Returns [`ProviderCreationError`] classified as unavailable when the
+    /// Returns [`ProviderError`] classified as unavailable when the
     /// `ffprobe` command cannot be executed.
     #[inline]
     fn create_configured(
         &self,
         config: &MimeConfig,
-    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderCreationError> {
+    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderError> {
         if !FfprobeCommandMediaStreamClassifier::is_available() {
             return Err(ProviderError::unavailable(
                 "`ffprobe` command is not available",
-            )
-            .into());
+            ));
         }
         Ok(Arc::new(
             FfprobeCommandMediaStreamClassifier::from_mime_config(
@@ -68,9 +64,7 @@ impl ServiceProvider<MediaStreamClassifierSpec>
     }
 }
 
-impl ProviderDefinition<MediaStreamClassifierSpec>
-    for FfprobeCommandMediaStreamClassifierProvider
-{
+impl ProviderMetadata for FfprobeCommandMediaStreamClassifierProvider {
     /// Returns the stable FFprobe provider identity and priority.
     ///
     /// # Returns
