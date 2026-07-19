@@ -213,29 +213,32 @@ impl MimeConfig {
         let list_config = config.with_read_options(LIST_READ_OPTIONS.clone());
         let mapping_config =
             config.with_read_options(MAPPING_READ_OPTIONS.clone());
-        let mime_detector_default = value_config.get_any_or(
+        let mime_detector_default = value_config.get_any_interpolated_or(
             [CONFIG_MIME_DETECTOR_DEFAULT, ENV_MIME_DETECTOR_DEFAULT],
             DEFAULT_MIME_DETECTOR.to_owned(),
         )?;
-        let mime_detector_fallbacks = list_config.get_any_or(
+        let mime_detector_fallbacks = list_config.get_any_interpolated_or(
             [CONFIG_MIME_DETECTOR_FALLBACKS, ENV_MIME_DETECTOR_FALLBACKS],
             fallback_defaults(),
         )?;
-        let media_stream_classifier_default = value_config.get_any_or(
+        let media_stream_classifier_default =
+            value_config.get_any_interpolated_or(
             [
                 CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
                 ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
             ],
             DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
         )?;
-        let media_stream_max_staging_size = value_config.get_any_or(
+        let media_stream_max_staging_size =
+            value_config.get_any_interpolated_or(
             [
                 CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
                 ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
             ],
             DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
         )?;
-        let command_output_max_bytes: u64 = value_config.get_any_or(
+        let command_output_max_bytes: u64 =
+            value_config.get_any_interpolated_or(
             [
                 CONFIG_COMMAND_OUTPUT_MAX_BYTES,
                 ENV_COMMAND_OUTPUT_MAX_BYTES,
@@ -251,28 +254,31 @@ impl MimeConfig {
             })?;
         #[cfg(target_pointer_width = "64")]
         let command_output_max_bytes = command_output_max_bytes as usize;
-        let enable_precise_detection = value_config.get_any_or(
+        let enable_precise_detection =
+            value_config.get_any_interpolated_or(
             [
                 CONFIG_MIME_ENABLE_PRECISE_DETECTION,
                 ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
             ],
             DEFAULT_ENABLE_PRECISE_DETECTION,
         )?;
-        let precise_detection_patterns = value_config.get_any_or(
+        let precise_detection_patterns =
+            value_config.get_any_interpolated_or(
             [
                 CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
                 ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
             ],
             DEFAULT_PRECISE_DETECTION_PATTERNS,
         )?;
-        let ambiguous_mime_mapping = mapping_config.get_any_or(
+        let ambiguous_mime_mapping =
+            mapping_config.get_any_interpolated_or(
             [
                 CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
                 ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
             ],
             DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES,
         )?;
-        let max_buffer_size: u64 = value_config.get_any_or(
+        let max_buffer_size: u64 = value_config.get_any_interpolated_or(
             [CONFIG_MIME_MAX_BUFFER_SIZE, ENV_MIME_MAX_BUFFER_SIZE],
             DEFAULT_MIME_MAX_BUFFER_SIZE as u64,
         )?;
