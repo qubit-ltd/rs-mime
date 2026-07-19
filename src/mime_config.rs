@@ -299,7 +299,7 @@ impl MimeConfig {
     /// or classifier-name error when a configured provider selector is
     /// invalid.
     pub fn from_env() -> MimeResult<Self> {
-        let config = Config::from_env()?;
+        let config = Config::from_env_options("QUBIT_", false, false, false)?;
         Self::from_config(&config)
     }
 
