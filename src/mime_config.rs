@@ -221,30 +221,30 @@ impl MimeConfig {
             [CONFIG_MIME_DETECTOR_FALLBACKS, ENV_MIME_DETECTOR_FALLBACKS],
             fallback_defaults(),
         )?;
-        let media_stream_classifier_default =
-            value_config.get_any_interpolated_or(
-            [
-                CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
-                ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
-            ],
-            DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
-        )?;
-        let media_stream_max_staging_size =
-            value_config.get_any_interpolated_or(
-            [
-                CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
-                ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
-            ],
-            DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
-        )?;
-        let command_output_max_bytes: u64 =
-            value_config.get_any_interpolated_or(
-            [
-                CONFIG_COMMAND_OUTPUT_MAX_BYTES,
-                ENV_COMMAND_OUTPUT_MAX_BYTES,
-            ],
-            DEFAULT_COMMAND_OUTPUT_MAX_BYTES as u64,
-        )?;
+        let media_stream_classifier_default = value_config
+            .get_any_interpolated_or(
+                [
+                    CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+                    ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+                ],
+                DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
+            )?;
+        let media_stream_max_staging_size = value_config
+            .get_any_interpolated_or(
+                [
+                    CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
+                    ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
+                ],
+                DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
+            )?;
+        let command_output_max_bytes: u64 = value_config
+            .get_any_interpolated_or(
+                [
+                    CONFIG_COMMAND_OUTPUT_MAX_BYTES,
+                    ENV_COMMAND_OUTPUT_MAX_BYTES,
+                ],
+                DEFAULT_COMMAND_OUTPUT_MAX_BYTES as u64,
+            )?;
         #[cfg(target_pointer_width = "32")]
         let command_output_max_bytes = usize::try_from(command_output_max_bytes)
             .map_err(|_| MimeError::InvalidClassifierInput {
@@ -254,24 +254,21 @@ impl MimeConfig {
             })?;
         #[cfg(target_pointer_width = "64")]
         let command_output_max_bytes = command_output_max_bytes as usize;
-        let enable_precise_detection =
-            value_config.get_any_interpolated_or(
+        let enable_precise_detection = value_config.get_any_interpolated_or(
             [
                 CONFIG_MIME_ENABLE_PRECISE_DETECTION,
                 ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
             ],
             DEFAULT_ENABLE_PRECISE_DETECTION,
         )?;
-        let precise_detection_patterns =
-            value_config.get_any_interpolated_or(
+        let precise_detection_patterns = value_config.get_any_interpolated_or(
             [
                 CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
                 ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
             ],
             DEFAULT_PRECISE_DETECTION_PATTERNS,
         )?;
-        let ambiguous_mime_mapping =
-            mapping_config.get_any_interpolated_or(
+        let ambiguous_mime_mapping = mapping_config.get_any_interpolated_or(
             [
                 CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
                 ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
