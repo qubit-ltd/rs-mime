@@ -160,6 +160,25 @@ fn test_from_config_reads_logical_config_keys() {
 }
 
 #[test]
+fn test_from_config_interpolates_provider_selectors() {
+    let mut config = Config::new();
+    config
+        .set("preferred.detector", "repository")
+        .expect("detector reference should be configurable");
+    config
+        .set(CONFIG_MIME_DETECTOR_DEFAULT, "${preferred.detector}")
+        .expect("detector selector should be configurable");
+
+    let mime_config = MimeConfig::from_config(&config)
+        .expect("interpolated detector selector should parse");
+
+    assert_eq!(
+        "repository",
+        selection_primary(mime_config.mime_detector_selection()),
+    );
+}
+
+#[test]
 fn test_from_config_reads_command_output_limit() {
     let mut config = Config::new();
     config
