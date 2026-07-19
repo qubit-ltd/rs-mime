@@ -390,10 +390,15 @@ mapping values are split on `;` as `extension:video-mime,audio-mime`.
 | MIME detector fallbacks | `mime.detector.fallbacks` | `QUBIT_MIME_DETECTOR_FALLBACKS` | empty |
 | Media stream classifier | `mime.media.stream.classifier.default` | `QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT` | `ffprobe` |
 | Media stream staging limit | `mime.media.stream.max.staging.size` | `QUBIT_MEDIA_STREAM_MAX_STAGING_SIZE` | `67108864` |
+| Command output limit | `mime.command.output.max.bytes` | `QUBIT_MIME_COMMAND_OUTPUT_MAX_BYTES` | `65536` |
 | Precise detection enabled | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` |
 | Precise detection patterns | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` |
 | Ambiguous MIME mapping | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` |
 | Maximum detector buffer size | `mime.max.buffer.size` | `QUBIT_MIME_MAX_BUFFER_SIZE` | `16777216` |
+
+The command output limit is applied independently to stdout and stderr of the
+native `file` detector and `ffprobe` classifier; excess bytes are drained but
+not retained in memory.
 
 ### Detect a filesystem path
 

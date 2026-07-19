@@ -23,7 +23,7 @@ use std::sync::{
 
 use qubit_config::{
     Config,
-    options::ConfigReadOptions,
+    options::ReadOptions,
 };
 use qubit_datatype::{
     CollectionConversionOptions,
@@ -34,6 +34,7 @@ use qubit_spi::error::ProviderSelectionBuildError;
 
 use crate::MimeError;
 use crate::{
+    CONFIG_COMMAND_OUTPUT_MAX_BYTES,
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
@@ -42,12 +43,14 @@ use crate::{
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
     CONFIG_MIME_MAX_BUFFER_SIZE,
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
+    DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
     DEFAULT_ENABLE_PRECISE_DETECTION,
     DEFAULT_MEDIA_STREAM_CLASSIFIER,
     DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
     DEFAULT_MIME_DETECTOR,
     DEFAULT_MIME_DETECTOR_FALLBACKS,
     DEFAULT_MIME_MAX_BUFFER_SIZE,
+    ENV_COMMAND_OUTPUT_MAX_BYTES,
     ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
     ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
@@ -73,6 +76,7 @@ use crate::{
 /// | MIME detector fallbacks | `mime.detector.fallbacks` | `QUBIT_MIME_DETECTOR_FALLBACKS` | empty | List split on `,` or `;` |
 /// | Media stream classifier | `mime.media.stream.classifier.default` | `QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT` | `ffprobe` | Classifier selector |
 /// | Media stream staging limit | `mime.media.stream.max.staging.size` | `QUBIT_MEDIA_STREAM_MAX_STAGING_SIZE` | `67108864` | Byte count |
+/// | Command output limit | `mime.command.output.max.bytes` | `QUBIT_MIME_COMMAND_OUTPUT_MAX_BYTES` | `65536` | Per-stream byte count |
 /// | Precise detection switch | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` | Boolean |
 /// | Precise detection patterns | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` | Extension list |
 /// | Ambiguous MIME mapping | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` | `ext:video,audio` entries split on `;` |
@@ -91,6 +95,9 @@ pub struct MimeConfig {
     /// Maximum bytes staged from reader/content input for media stream
     /// classification.
     media_stream_max_staging_size: u64,
+    /// Maximum retained stdout and stderr bytes for each native command-based
+    /// MIME detection stream.
+    command_output_max_bytes: usize,
     /// Whether precise media-stream detection is enabled.
     enable_precise_detection: bool,
     /// Extensions requiring precise detection.
@@ -106,12 +113,12 @@ static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
     LazyLock::new(|| RwLock::new(MimeConfig::load()));
 
 /// Value read options.
-static VALUE_READ_OPTIONS: LazyLock<ConfigReadOptions> =
-    LazyLock::new(ConfigReadOptions::env_friendly);
+static VALUE_READ_OPTIONS: LazyLock<ReadOptions> =
+    LazyLock::new(ReadOptions::env_friendly);
 
 /// List value read options.
-static LIST_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
-    ConfigReadOptions::env_friendly().with_collection_options(
+static LIST_READ_OPTIONS: LazyLock<ReadOptions> = LazyLock::new(|| {
+    ReadOptions::env_friendly().with_collection_options(
         CollectionConversionOptions::default()
             .with_split_scalar_strings(true)
             .with_delimiters([',', ';'])
@@ -121,16 +128,15 @@ static LIST_READ_OPTIONS: LazyLock<ConfigReadOptions> = LazyLock::new(|| {
 });
 
 /// Mapping read options.
-static MAPPING_READ_OPTIONS: LazyLock<ConfigReadOptions> =
-    LazyLock::new(|| {
-        ConfigReadOptions::env_friendly().with_collection_options(
-            CollectionConversionOptions::default()
-                .with_split_scalar_strings(true)
-                .with_delimiters([';'])
-                .with_trim_items(true)
-                .with_empty_item_policy(EmptyItemPolicy::Skip),
-        )
-    });
+static MAPPING_READ_OPTIONS: LazyLock<ReadOptions> = LazyLock::new(|| {
+    ReadOptions::env_friendly().with_collection_options(
+        CollectionConversionOptions::default()
+            .with_split_scalar_strings(true)
+            .with_delimiters([';'])
+            .with_trim_items(true)
+            .with_empty_item_policy(EmptyItemPolicy::Skip),
+    )
+});
 
 /// Built-in precise detection patterns.
 static DEFAULT_PRECISE_DETECTION_PATTERNS: &[&str] = &["webm", "ogg"];
@@ -203,60 +209,72 @@ impl MimeConfig {
     /// a detector- or classifier-name error when a configured provider
     /// selector is invalid.
     pub fn from_config(config: &Config) -> MimeResult<Self> {
-        let mime_detector_default = config.get_any_or_with(
+        let value_config = config.with_read_options(VALUE_READ_OPTIONS.clone());
+        let list_config = config.with_read_options(LIST_READ_OPTIONS.clone());
+        let mapping_config =
+            config.with_read_options(MAPPING_READ_OPTIONS.clone());
+        let mime_detector_default = value_config.get_any_or(
             [CONFIG_MIME_DETECTOR_DEFAULT, ENV_MIME_DETECTOR_DEFAULT],
             DEFAULT_MIME_DETECTOR.to_owned(),
-            &VALUE_READ_OPTIONS,
         )?;
-        let mime_detector_fallbacks = config.get_any_or_with(
+        let mime_detector_fallbacks = list_config.get_any_or(
             [CONFIG_MIME_DETECTOR_FALLBACKS, ENV_MIME_DETECTOR_FALLBACKS],
             fallback_defaults(),
-            &LIST_READ_OPTIONS,
         )?;
-        let media_stream_classifier_default = config.get_any_or_with(
+        let media_stream_classifier_default = value_config.get_any_or(
             [
                 CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
                 ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
             ],
             DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
-            &VALUE_READ_OPTIONS,
         )?;
-        let media_stream_max_staging_size = config.get_any_or_with(
+        let media_stream_max_staging_size = value_config.get_any_or(
             [
                 CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
                 ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
             ],
             DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
-            &VALUE_READ_OPTIONS,
         )?;
-        let enable_precise_detection = config.get_any_or_with(
+        let command_output_max_bytes: u64 = value_config.get_any_or(
+            [
+                CONFIG_COMMAND_OUTPUT_MAX_BYTES,
+                ENV_COMMAND_OUTPUT_MAX_BYTES,
+            ],
+            DEFAULT_COMMAND_OUTPUT_MAX_BYTES as u64,
+        )?;
+        #[cfg(target_pointer_width = "32")]
+        let command_output_max_bytes = usize::try_from(command_output_max_bytes)
+            .map_err(|_| MimeError::InvalidClassifierInput {
+                reason: format!(
+                    "MIME command output limit {command_output_max_bytes} exceeds this platform's usize range"
+                ),
+            })?;
+        #[cfg(target_pointer_width = "64")]
+        let command_output_max_bytes = command_output_max_bytes as usize;
+        let enable_precise_detection = value_config.get_any_or(
             [
                 CONFIG_MIME_ENABLE_PRECISE_DETECTION,
                 ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
             ],
             DEFAULT_ENABLE_PRECISE_DETECTION,
-            &VALUE_READ_OPTIONS,
         )?;
-        let precise_detection_patterns = config.get_any_or_with(
+        let precise_detection_patterns = value_config.get_any_or(
             [
                 CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
                 ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
             ],
             DEFAULT_PRECISE_DETECTION_PATTERNS,
-            &VALUE_READ_OPTIONS,
         )?;
-        let ambiguous_mime_mapping = config.get_any_or_with(
+        let ambiguous_mime_mapping = mapping_config.get_any_or(
             [
                 CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
                 ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
             ],
             DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES,
-            &MAPPING_READ_OPTIONS,
         )?;
-        let max_buffer_size: u64 = config.get_any_or_with(
+        let max_buffer_size: u64 = value_config.get_any_or(
             [CONFIG_MIME_MAX_BUFFER_SIZE, ENV_MIME_MAX_BUFFER_SIZE],
             DEFAULT_MIME_MAX_BUFFER_SIZE as u64,
-            &VALUE_READ_OPTIONS,
         )?;
         #[cfg(target_pointer_width = "32")]
         let max_buffer_size =
@@ -277,6 +295,7 @@ impl MimeConfig {
             mime_detector_selection,
             media_stream_classifier_selection,
             media_stream_max_staging_size,
+            command_output_max_bytes,
             enable_precise_detection,
             precise_detection_patterns: normalize_patterns(
                 precise_detection_patterns,
@@ -373,6 +392,15 @@ impl MimeConfig {
         self.media_stream_max_staging_size
     }
 
+    /// Gets the maximum stdout or stderr bytes retained for each native
+    /// command-based MIME detection stream.
+    ///
+    /// # Returns
+    /// Per-stream retained output byte limit applied to `file` and `ffprobe`.
+    pub fn command_output_max_bytes(&self) -> usize {
+        self.command_output_max_bytes
+    }
+
     /// Tells whether precise media-stream detection is enabled.
     ///
     /// # Returns
@@ -424,6 +452,7 @@ impl MimeConfig {
             ),
             media_stream_max_staging_size:
                 DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
+            command_output_max_bytes: DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
             enable_precise_detection: DEFAULT_ENABLE_PRECISE_DETECTION,
             precise_detection_patterns: normalize_patterns(
                 DEFAULT_PRECISE_DETECTION_PATTERNS

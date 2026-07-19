@@ -12,14 +12,17 @@ use qubit_command::{
     CommandRunner,
     DEFAULT_COMMAND_TIMEOUT,
 };
+use qubit_config::Config;
 #[cfg(unix)]
 use qubit_local_files::LocalTempDir;
 #[cfg(unix)]
 use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::{
+    CONFIG_COMMAND_OUTPUT_MAX_BYTES,
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+    DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
     FileBasedMimeDetector,
     FileCommandMimeDetector,
     MimeConfig,
@@ -52,6 +55,34 @@ fn test_default_file_command_runner_uses_default_timeout() {
     assert_eq!(
         detector.command_runner().configured_timeout(),
         Some(DEFAULT_COMMAND_TIMEOUT),
+    );
+    assert_eq!(
+        detector.command_runner().configured_max_stdout_bytes(),
+        Some(DEFAULT_COMMAND_OUTPUT_MAX_BYTES),
+    );
+    assert_eq!(
+        detector.command_runner().configured_max_stderr_bytes(),
+        Some(DEFAULT_COMMAND_OUTPUT_MAX_BYTES),
+    );
+}
+
+#[test]
+fn test_from_mime_config_limits_file_command_output() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_COMMAND_OUTPUT_MAX_BYTES, 1024_u64)
+        .expect("command output limit should be configurable");
+    let detector = FileCommandMimeDetector::from_mime_config(
+        MimeConfig::from_config(&config).expect("MIME config should parse"),
+    );
+
+    assert_eq!(
+        Some(1024),
+        detector.command_runner().configured_max_stdout_bytes()
+    );
+    assert_eq!(
+        Some(1024),
+        detector.command_runner().configured_max_stderr_bytes()
     );
 }
 

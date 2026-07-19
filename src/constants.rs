@@ -23,6 +23,11 @@ pub const ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT: &str =
 pub const ENV_MEDIA_STREAM_MAX_STAGING_SIZE: &str =
     "QUBIT_MEDIA_STREAM_MAX_STAGING_SIZE";
 
+/// Environment variable limiting retained stdout and stderr bytes for native
+/// command-based MIME detection.
+pub const ENV_COMMAND_OUTPUT_MAX_BYTES: &str =
+    "QUBIT_MIME_COMMAND_OUTPUT_MAX_BYTES";
+
 /// Environment variable controlling precise MIME detection.
 pub const ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION: &str =
     "QUBIT_MIME_ENABLE_PRECISE_DETECTION";
@@ -54,6 +59,11 @@ pub const CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT: &str =
 pub const CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE: &str =
     "mime.media.stream.max.staging.size";
 
+/// Configuration key limiting retained stdout and stderr bytes for native
+/// command-based MIME detection.
+pub const CONFIG_COMMAND_OUTPUT_MAX_BYTES: &str =
+    "mime.command.output.max.bytes";
+
 /// Configuration key controlling precise MIME detection.
 pub const CONFIG_MIME_ENABLE_PRECISE_DETECTION: &str =
     "mime.enable.precise.detection";
@@ -81,6 +91,10 @@ pub const DEFAULT_MEDIA_STREAM_CLASSIFIER: &str = "ffprobe";
 /// Default maximum bytes staged from reader/content input for media stream
 /// classification.
 pub const DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE: u64 = 64 * 1024 * 1024;
+
+/// Default retained stdout and stderr byte limit for each native command-based
+/// MIME detection stream.
+pub const DEFAULT_COMMAND_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 
 /// Default value for precise media stream based detection.
 pub const DEFAULT_ENABLE_PRECISE_DETECTION: bool = true;

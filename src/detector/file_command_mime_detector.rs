@@ -61,7 +61,7 @@ impl FileCommandMimeDetector<'static> {
     pub fn from_mime_config(config: MimeConfig) -> Self {
         Self::with_repository_runner_and_config(
             default_repository(),
-            Self::default_command_runner(),
+            Self::default_command_runner(&config),
             config,
         )
     }
@@ -83,9 +83,11 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// File command detector borrowing `repository`.
     pub fn with_repository(repository: &'a MimeRepository) -> Self {
-        Self::with_repository_and_runner(
+        let config = MimeConfig::default();
+        Self::with_repository_runner_and_config(
             repository,
-            Self::default_command_runner(),
+            Self::default_command_runner(&config),
+            config,
         )
     }
 
@@ -256,7 +258,8 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// `true` when the command can be executed.
     pub fn is_available() -> bool {
-        Self::default_command_runner()
+        let config = MimeConfig::default();
+        Self::default_command_runner(&config)
             .disable_logging(true)
             .run(Self::command_for_path(Path::new(".")))
             .is_ok()
@@ -303,8 +306,8 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// Runner used by the default detector.
-    fn default_command_runner() -> CommandRunner {
-        CommandRunner::new()
+    fn default_command_runner(config: &MimeConfig) -> CommandRunner {
+        CommandRunner::new().max_output_bytes(config.command_output_max_bytes())
     }
 
     /// Builds the structured `file` command for one path.
