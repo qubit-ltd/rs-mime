@@ -44,9 +44,10 @@ use qubit_mime::{
     MimeDetectorRegistry,
     MimeError,
 };
+use qubit_spi::error::ProviderResolutionError;
 use qubit_spi::{
     ProviderSelection,
-    ProviderSelector,
+    ProviderSelectionTargetRef,
 };
 
 static MIME_CONFIG_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -68,22 +69,18 @@ fn test_mime_config_retains_validated_provider_selections() {
     let mime_config = MimeConfig::from_config(&config)
         .expect("valid selections should parse");
 
-    assert_eq!(
-        ["file", "repository"],
-        mime_config
-            .mime_detector_selection()
-            .selectors()
-            .iter()
-            .map(ProviderSelector::as_str)
-            .collect::<Vec<_>>()
-            .as_slice(),
-    );
-    assert!(
-        mime_config
-            .media_stream_classifier_selection()
-            .selectors()
-            .is_empty(),
-    );
+    assert!(matches!(
+        mime_config.mime_detector_selection().target(),
+        ProviderSelectionTargetRef::Chain { selectors, .. }
+            if selectors
+                .iter()
+                .map(|selector| selector.as_str())
+                .eq(["file", "repository"])
+    ));
+    assert!(matches!(
+        mime_config.media_stream_classifier_selection().target(),
+        ProviderSelectionTargetRef::Auto,
+    ));
 }
 
 /// Verifies malformed provider selections fail while configuration is loaded.
@@ -107,6 +104,30 @@ fn test_mime_config_rejects_invalid_provider_selections() {
         MimeConfig::from_config(&classifier),
         Err(MimeError::InvalidClassifierName { ref name, .. })
             if name == "bad selector"
+    ));
+}
+
+/// Verifies that configured fallback chains reject unregistered providers.
+#[test]
+fn test_mime_config_uses_strict_detector_chain_resolution() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_MIME_DETECTOR_DEFAULT, "missing")
+        .expect("detector default should be configurable");
+    config
+        .set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")
+        .expect("detector fallbacks should be configurable");
+    let mime_config = MimeConfig::from_config(&config)
+        .expect("selector syntax should be valid");
+
+    let error = MimeDetectorRegistry::builtin()
+        .resolve_selected(mime_config.mime_detector_selection())
+        .expect_err("strict chain should reject the missing provider");
+
+    assert!(matches!(
+        error,
+        ProviderResolutionError::UnknownProviders { selectors, .. }
+            if selectors.len() == 1 && selectors[0].as_str() == "missing"
     ));
 }
 
@@ -553,11 +574,16 @@ fn mime_config_test_lock() -> MutexGuard<'static, ()> {
 ///
 /// Panics when `selection` is automatic or contains no explicit selector.
 fn selection_primary(selection: &ProviderSelection) -> &str {
-    selection
-        .selectors()
-        .first()
-        .expect("test selection should contain an explicit provider")
-        .as_str()
+    match selection.target() {
+        ProviderSelectionTargetRef::Named(selector) => selector.as_str(),
+        ProviderSelectionTargetRef::Chain { selectors, .. } => selectors
+            .first()
+            .expect("test chain should contain an explicit provider")
+            .as_str(),
+        ProviderSelectionTargetRef::Auto => {
+            panic!("test selection should contain an explicit provider")
+        }
+    }
 }
 
 fn create_test_config(

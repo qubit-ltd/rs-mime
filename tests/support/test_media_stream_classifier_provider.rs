@@ -13,14 +13,11 @@ use qubit_mime::{
     MediaStreamClassifierSpec,
     MimeConfig,
 };
-use qubit_spi::error::{
-    ProviderCreationError,
-    ProviderError,
-};
+use qubit_spi::error::ProviderError;
 use qubit_spi::{
-    ProviderDefinition,
     ProviderDescriptor,
     ProviderId,
+    ProviderMetadata,
     ServiceProvider,
 };
 
@@ -72,28 +69,25 @@ impl ServiceProvider<MediaStreamClassifierSpec>
     fn create_configured(
         &self,
         _config: &MimeConfig,
-    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderCreationError> {
+    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderError> {
         match self.behavior {
             TestProviderBehavior::Success(_) => {
                 Ok(Arc::new(StaticMediaStreamClassifier))
             }
             TestProviderBehavior::Unsupported => {
-                Err(ProviderError::unsupported("unsupported input").into())
+                Err(ProviderError::unsupported("unsupported input"))
             }
             TestProviderBehavior::Unavailable => {
-                Err(ProviderError::unavailable("missing executable").into())
+                Err(ProviderError::unavailable("missing executable"))
             }
             TestProviderBehavior::InitializationFailed => {
-                Err(ProviderError::initialization_failed("startup failed")
-                    .into())
+                Err(ProviderError::initialization_failed("startup failed"))
             }
         }
     }
 }
 
-impl ProviderDefinition<MediaStreamClassifierSpec>
-    for TestMediaStreamClassifierProvider
-{
+impl ProviderMetadata for TestMediaStreamClassifierProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor::new(
             ProviderId::new(self.id)

@@ -11,7 +11,7 @@ use qubit_mime::{
     RepositoryMimeDetectorProvider,
 };
 use qubit_spi::{
-    ProviderDefinition,
+    ProviderMetadata,
     ServiceProvider,
 };
 

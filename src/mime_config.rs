@@ -177,6 +177,7 @@ impl MimeConfig {
     ///     MimeConfig,
     ///     MimeResult,
     /// };
+    /// use qubit_spi::ProviderSelectionTargetRef;
     ///
     /// # fn main() -> MimeResult<()> {
     /// let mut source = Config::new();
@@ -184,14 +185,13 @@ impl MimeConfig {
     /// source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
     ///
     /// let config = MimeConfig::from_config(&source)?;
-    /// assert_eq!(
-    ///     "file",
-    ///     config.mime_detector_selection().selectors()[0].as_str(),
-    /// );
-    /// assert_eq!(
-    ///     "repository",
-    ///     config.mime_detector_selection().selectors()[1].as_str(),
-    /// );
+    /// let ProviderSelectionTargetRef::Chain { selectors, .. } =
+    ///     config.mime_detector_selection().target()
+    /// else {
+    ///     panic!("configured detector fallbacks should form a chain");
+    /// };
+    /// assert_eq!("file", selectors[0].as_str());
+    /// assert_eq!("repository", selectors[1].as_str());
     /// # Ok(())
     /// # }
     /// ```

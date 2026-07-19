@@ -9,7 +9,10 @@
 
 use std::sync::Arc;
 
-use qubit_spi::ServiceSpec;
+use qubit_spi::{
+    ServiceSpec,
+    SyncServiceSpec,
+};
 
 use crate::{
     MimeConfig,
@@ -25,5 +28,8 @@ pub struct MimeDetectorSpec;
 
 impl ServiceSpec for MimeDetectorSpec {
     type Config = MimeConfig;
+}
+
+impl SyncServiceSpec for MimeDetectorSpec {
     type Output = Arc<dyn MimeDetector>;
 }

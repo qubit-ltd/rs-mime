@@ -13,12 +13,9 @@ use qubit_mime::{
     FileCommandMimeDetectorProvider,
     MimeConfig,
 };
-use qubit_spi::error::{
-    ProviderCreationError,
-    ProviderErrorKind,
-};
+use qubit_spi::error::ProviderErrorKind;
 use qubit_spi::{
-    ProviderDefinition,
+    ProviderMetadata,
     ServiceProvider,
 };
 #[test]
@@ -49,11 +46,7 @@ fn test_file_command_provider_reports_unavailable_command() {
             .create_configured(&MimeConfig::default())
             .expect_err("provider should reject a missing file command");
 
-        assert!(matches!(
-            error,
-            ProviderCreationError::Provider(ref source)
-                if source.kind() == ProviderErrorKind::Unavailable
-        ));
+        assert_eq!(ProviderErrorKind::Unavailable, error.kind());
         return;
     }
 

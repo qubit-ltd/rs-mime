@@ -9,14 +9,11 @@
 
 use std::sync::Arc;
 
-use qubit_spi::error::{
-    ProviderCreationError,
-    ProviderError,
-};
+use qubit_spi::error::ProviderError;
 use qubit_spi::{
-    ProviderDefinition,
     ProviderDescriptor,
     ProviderId,
+    ProviderMetadata,
     ServiceProvider,
 };
 
@@ -36,12 +33,11 @@ impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
     fn create_configured(
         &self,
         config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderCreationError> {
+    ) -> Result<Arc<dyn MimeDetector>, ProviderError> {
         if !FileCommandMimeDetector::is_available() {
             return Err(ProviderError::unavailable(
                 "`file` command is not available",
-            )
-            .into());
+            ));
         }
         Ok(Arc::new(FileCommandMimeDetector::from_mime_config(
             config.clone(),
@@ -49,7 +45,7 @@ impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
     }
 }
 
-impl ProviderDefinition<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
+impl ProviderMetadata for FileCommandMimeDetectorProvider {
     /// Returns the stable identity and automatic-selection priority.
     ///
     /// # Returns

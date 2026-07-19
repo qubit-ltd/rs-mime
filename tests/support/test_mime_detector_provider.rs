@@ -13,14 +13,11 @@ use qubit_mime::{
     MimeDetector,
     MimeDetectorSpec,
 };
-use qubit_spi::error::{
-    ProviderCreationError,
-    ProviderError,
-};
+use qubit_spi::error::ProviderError;
 use qubit_spi::{
-    ProviderDefinition,
     ProviderDescriptor,
     ProviderId,
+    ProviderMetadata,
     ServiceProvider,
 };
 
@@ -91,26 +88,25 @@ impl ServiceProvider<MimeDetectorSpec> for TestMimeDetectorProvider {
     fn create_configured(
         &self,
         _config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderCreationError> {
+    ) -> Result<Arc<dyn MimeDetector>, ProviderError> {
         match self.behavior {
             TestProviderBehavior::Success(mime_type) => {
                 Ok(Arc::new(StaticMimeDetector::new(mime_type)))
             }
             TestProviderBehavior::Unsupported => {
-                Err(ProviderError::unsupported("unsupported input").into())
+                Err(ProviderError::unsupported("unsupported input"))
             }
             TestProviderBehavior::Unavailable => {
-                Err(ProviderError::unavailable("missing executable").into())
+                Err(ProviderError::unavailable("missing executable"))
             }
             TestProviderBehavior::InitializationFailed => {
-                Err(ProviderError::initialization_failed("startup failed")
-                    .into())
+                Err(ProviderError::initialization_failed("startup failed"))
             }
         }
     }
 }
 
-impl ProviderDefinition<MimeDetectorSpec> for TestMimeDetectorProvider {
+impl ProviderMetadata for TestMimeDetectorProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor::new(
             ProviderId::new(self.id)
