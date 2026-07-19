@@ -18,7 +18,9 @@ use qubit_local_files::LocalTempDir;
 #[cfg(unix)]
 use qubit_mime::MediaStreamClassifier;
 use qubit_mime::{
+    CONFIG_COMMAND_OUTPUT_MAX_BYTES,
     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
+    DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
     FfprobeCommandMediaStreamClassifier,
     MediaStreamType,
     MimeConfig,
@@ -81,6 +83,14 @@ fn test_default_uses_disabled_logging_runner() {
         classifier.command_runner().configured_timeout(),
         Some(DEFAULT_COMMAND_TIMEOUT),
     );
+    assert_eq!(
+        classifier.command_runner().configured_max_stdout_bytes(),
+        Some(DEFAULT_COMMAND_OUTPUT_MAX_BYTES),
+    );
+    assert_eq!(
+        classifier.command_runner().configured_max_stderr_bytes(),
+        Some(DEFAULT_COMMAND_OUTPUT_MAX_BYTES),
+    );
 }
 
 #[test]
@@ -94,6 +104,26 @@ fn test_from_mime_config_sets_max_staging_size() {
     );
 
     assert_eq!(1024, classifier.max_staging_size());
+}
+
+#[test]
+fn test_from_mime_config_limits_ffprobe_output() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_COMMAND_OUTPUT_MAX_BYTES, 1024_u64)
+        .expect("command output limit should be configurable");
+    let classifier = FfprobeCommandMediaStreamClassifier::from_mime_config(
+        MimeConfig::from_config(&config).expect("MIME config should parse"),
+    );
+
+    assert_eq!(
+        Some(1024),
+        classifier.command_runner().configured_max_stdout_bytes()
+    );
+    assert_eq!(
+        Some(1024),
+        classifier.command_runner().configured_max_stderr_bytes()
+    );
 }
 
 #[test]

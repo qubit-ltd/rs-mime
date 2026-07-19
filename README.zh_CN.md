@@ -375,10 +375,14 @@ Registry 选择和服务创建使用不同的 SPI 错误类型：
 | MIME detector fallback | `mime.detector.fallbacks` | `QUBIT_MIME_DETECTOR_FALLBACKS` | 空 |
 | 媒体流 classifier | `mime.media.stream.classifier.default` | `QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT` | `ffprobe` |
 | 媒体流临时 staging 上限 | `mime.media.stream.max.staging.size` | `QUBIT_MEDIA_STREAM_MAX_STAGING_SIZE` | `67108864` |
+| 命令输出上限 | `mime.command.output.max.bytes` | `QUBIT_MIME_COMMAND_OUTPUT_MAX_BYTES` | `65536` |
 | 启用精确检测 | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` |
 | 精确检测扩展名 | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` |
 | 有歧义 MIME 映射 | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` |
 | detector 最大 buffer 大小 | `mime.max.buffer.size` | `QUBIT_MIME_MAX_BUFFER_SIZE` | `16777216` |
+
+命令输出上限会分别应用于原生命令 `file` 检测器和 `ffprobe` classifier 的 stdout、
+stderr；超出的字节仍会被读取以避免阻塞子进程，但不会保留在内存中。
 
 ### 检测文件系统路径
 

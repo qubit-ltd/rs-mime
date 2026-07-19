@@ -59,7 +59,7 @@ impl FfprobeCommandMediaStreamClassifier {
     pub fn from_mime_config(config: MimeConfig) -> Self {
         Self {
             working_directory: None,
-            command_runner: Self::default_command_runner(),
+            command_runner: Self::default_command_runner(&config),
             max_staging_size: config.media_stream_max_staging_size(),
         }
     }
@@ -169,7 +169,8 @@ impl FfprobeCommandMediaStreamClassifier {
     /// # Returns
     /// `true` when `ffprobe -version` executes successfully.
     pub fn is_available() -> bool {
-        Self::default_command_runner()
+        let config = MimeConfig::default();
+        Self::default_command_runner(&config)
             .run(Command::new(Self::COMMAND).arg("-version"))
             .is_ok()
     }
@@ -210,8 +211,10 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// Runner used by the default classifier.
-    fn default_command_runner() -> CommandRunner {
-        CommandRunner::new().disable_logging(true)
+    fn default_command_runner(config: &MimeConfig) -> CommandRunner {
+        CommandRunner::new()
+            .disable_logging(true)
+            .max_output_bytes(config.command_output_max_bytes())
     }
 
     /// Builds the structured `ffprobe` command for one path.
