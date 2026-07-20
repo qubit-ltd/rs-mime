@@ -6,6 +6,7 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+use std::fs;
 use std::io::{
     Cursor,
     Error,
@@ -21,10 +22,7 @@ use std::sync::{
     Mutex,
 };
 
-use qubit_local_files::{
-    LocalFiles,
-    LocalTempDir,
-};
+use qubit_local_files::LocalTempDir;
 use qubit_mime::{
     FileBasedMediaStreamClassifier,
     MediaStreamClassifier,
@@ -335,7 +333,7 @@ fn test_file_based_classifier_reports_temporary_file_creation_error() {
     let temp_dir = LocalTempDir::with_prefix("qubit-mime-classifier-error-")
         .expect("temporary parent directory should be created");
     let invalid_temp_dir = temp_dir.path().join("not-a-directory");
-    LocalFiles::atomic_write(&invalid_temp_dir, b"not a directory")
+    fs::write(&invalid_temp_dir, b"not a directory")
         .expect("invalid temporary directory placeholder should be created");
     let output = std::process::Command::new(
         std::env::current_exe()

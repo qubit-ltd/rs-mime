@@ -14,7 +14,6 @@ use std::path::{
 use std::sync::Mutex;
 
 use qubit_local_files::{
-    LocalFiles,
     LocalTempDir,
     LocalTempFile,
 };
@@ -211,7 +210,7 @@ fn test_detect_reader_reports_temporary_file_creation_error() {
     let temp_dir = LocalTempDir::with_prefix("qubit-mime-detector-error-")
         .expect("temporary parent directory should be created");
     let invalid_temp_dir = temp_dir.path().join("not-a-directory");
-    LocalFiles::atomic_write(&invalid_temp_dir, b"not a directory")
+    fs::write(&invalid_temp_dir, b"not a directory")
         .expect("invalid temporary directory placeholder should be created");
     let output = std::process::Command::new(
         std::env::current_exe()
