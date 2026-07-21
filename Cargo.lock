@@ -240,7 +240,7 @@ dependencies = [
  "log",
  "process-wrap",
  "qubit-clock",
- "qubit-sanitize",
+ "qubit-redact",
  "same-file",
  "thiserror",
 ]
@@ -250,7 +250,7 @@ name = "qubit-config"
 version = "0.14.0"
 dependencies = [
  "qubit-datatype",
- "qubit-sanitize",
+ "qubit-redact",
  "qubit-value",
  "regex",
  "serde",
@@ -299,7 +299,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "qubit-sanitize"
+name = "qubit-redact"
 version = "0.3.0"
 
 [[package]]
