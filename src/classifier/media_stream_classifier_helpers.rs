@@ -37,17 +37,18 @@ use crate::{
 /// [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput)
 /// when the path is not a regular file.
 pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
-    let metadata = path.metadata()?;
-    if !metadata.is_file() {
-        return Err(MimeError::invalid_classifier_input(format!(
-            "path is not a regular file: {}",
-            path.display()
-        )));
-    }
-    drop(LocalFiles::open_reader(
-        path,
-        FileReadOptions::unbuffered(),
-    )?);
+    let result = LocalFiles::open_reader(path, FileReadOptions::unbuffered());
+    let reader = result.map_err(|error| {
+        if error.kind() == ErrorKind::InvalidInput {
+            MimeError::invalid_classifier_input(format!(
+                "path is not a regular file: {}",
+                path.display()
+            ))
+        } else {
+            error.into()
+        }
+    })?;
+    drop(reader);
     Ok(())
 }
 
