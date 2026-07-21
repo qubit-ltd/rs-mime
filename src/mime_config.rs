@@ -22,18 +22,16 @@ use std::sync::{
 };
 
 use qubit_config::{
-    Config,
     options::ReadOptions,
+    Config,
 };
-use qubit_datatype::{
-    CollectionConversionOptions,
-    EmptyItemPolicy,
-};
-use qubit_spi::ProviderSelection;
+use qubit_datatype::CollectionConversionOptions;
 use qubit_spi::error::ProviderSelectionBuildError;
+use qubit_spi::ProviderSelection;
 
 use crate::MimeError;
 use crate::{
+    MimeResult,
     CONFIG_COMMAND_OUTPUT_MAX_BYTES,
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
@@ -59,7 +57,6 @@ use crate::{
     ENV_MIME_DETECTOR_FALLBACKS,
     ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
     ENV_MIME_MAX_BUFFER_SIZE,
-    MimeResult,
 };
 
 /// Runtime configuration for MIME detectors.
@@ -119,22 +116,14 @@ static VALUE_READ_OPTIONS: LazyLock<ReadOptions> =
 /// List value read options.
 static LIST_READ_OPTIONS: LazyLock<ReadOptions> = LazyLock::new(|| {
     ReadOptions::env_friendly().with_collection_options(
-        CollectionConversionOptions::default()
-            .with_split_scalar_strings(true)
-            .with_delimiters([',', ';'])
-            .with_trim_items(true)
-            .with_empty_item_policy(EmptyItemPolicy::Skip),
+        CollectionConversionOptions::env_friendly().with_delimiters([',', ';']),
     )
 });
 
 /// Mapping read options.
 static MAPPING_READ_OPTIONS: LazyLock<ReadOptions> = LazyLock::new(|| {
     ReadOptions::env_friendly().with_collection_options(
-        CollectionConversionOptions::default()
-            .with_split_scalar_strings(true)
-            .with_delimiters([';'])
-            .with_trim_items(true)
-            .with_empty_item_policy(EmptyItemPolicy::Skip),
+        CollectionConversionOptions::env_friendly().with_delimiters([';']),
     )
 });
 
