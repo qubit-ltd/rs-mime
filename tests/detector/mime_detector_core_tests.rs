@@ -6,7 +6,10 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use std::io::Read;
+use std::io::{
+    Cursor,
+    Read,
+};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -23,6 +26,7 @@ use qubit_mime::{
 #[derive(Debug)]
 struct StaticClassifier {
     stream_type: MediaStreamType,
+    expected_first_byte: Option<u8>,
 }
 
 #[derive(Debug)]
@@ -38,8 +42,17 @@ impl MediaStreamClassifier for StaticClassifier {
 
     fn classify_reader(
         &self,
-        _reader: &mut dyn Read,
+        reader: &mut dyn Read,
     ) -> Result<MediaStreamType, MimeError> {
+        if let Some(expected_first_byte) = self.expected_first_byte {
+            let mut buffer = [0_u8; 1];
+            reader.read_exact(&mut buffer)?;
+            if buffer[0] != expected_first_byte {
+                return Err(MimeError::InvalidClassifierInput {
+                    reason: "reader did not start at the beginning".to_owned(),
+                });
+            }
+        }
         Ok(self.stream_type)
     }
 }
@@ -106,6 +119,7 @@ fn test_refine_detected_mime_type_uses_media_stream_classifier() {
     ));
     detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
         stream_type: MediaStreamType::AudioOnly,
+        expected_first_byte: None,
     })));
 
     let refined = detector.refine_detected_mime_type(
@@ -126,6 +140,7 @@ fn test_select_result_honors_prefer_filename_and_refines_content_result() {
     ));
     detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
         stream_type: MediaStreamType::VideoOnly,
+        expected_first_byte: None,
     })));
 
     assert_eq!(
@@ -159,6 +174,7 @@ fn test_refine_detected_mime_type_handles_disabled_missing_and_failing_cases() {
     ));
     detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
         stream_type: MediaStreamType::VideoOnly,
+        expected_first_byte: None,
     })));
 
     assert!(detector.media_stream_classifier().is_some());
@@ -245,6 +261,36 @@ fn test_refine_detected_mime_type_handles_disabled_missing_and_failing_cases() {
             DetectionSource::Path(Path::new("Cargo.toml")),
         )
     );
+}
+
+/// Verifies reader-based refinement classifies the stream and restores its
+/// original position.
+#[test]
+fn test_select_reader_result_refines_without_consuming_reader_position() {
+    let mut detector = MimeDetectorCore::new(create_precise_config(
+        true,
+        "webm",
+        "webm:video/webm,audio/webm",
+    ));
+    detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
+        stream_type: MediaStreamType::AudioOnly,
+        expected_first_byte: Some(b'w'),
+    })));
+    let mut reader = Cursor::new(b"webm".to_vec());
+    reader.set_position(1);
+
+    let refined = detector
+        .select_reader_result(
+            &[],
+            &["video/webm".to_owned()],
+            Some("sample.webm"),
+            MimeDetectionPolicy::VerifyContent,
+            &mut reader,
+        )
+        .expect("reader refinement should succeed");
+
+    assert_eq!(Some("audio/webm".to_owned()), refined);
+    assert_eq!(1, reader.position());
 }
 
 fn create_precise_config(
