@@ -599,6 +599,9 @@ fn selection_primary(selection: &ProviderSelection) -> &str {
         ProviderSelectionTargetRef::Auto => {
             panic!("test selection should contain an explicit provider")
         }
+        other => {
+            panic!("unsupported provider selection target in test: {other:?}")
+        }
     }
 }
 
