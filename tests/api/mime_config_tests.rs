@@ -181,6 +181,22 @@ fn test_from_config_reads_logical_config_keys() {
 }
 
 #[test]
+fn test_from_config_accepts_reader_and_splits_semicolon_patterns() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, "mkv;webm")
+        .expect("precise patterns should be configurable");
+    let root = config.section("");
+
+    let mime_config =
+        MimeConfig::from_config(&root).expect("reader should parse");
+
+    assert_eq!(mime_config.precise_detection_patterns().len(), 2);
+    assert!(mime_config.precise_detection_patterns().contains("mkv"));
+    assert!(mime_config.precise_detection_patterns().contains("webm"));
+}
+
+#[test]
 fn test_from_config_interpolates_provider_selectors() {
     let mut config = Config::new();
     config

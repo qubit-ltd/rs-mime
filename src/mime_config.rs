@@ -22,16 +22,16 @@ use std::sync::{
 };
 
 use qubit_config::{
-    options::ReadOptions,
     Config,
+    ConfigReader,
+    options::ReadOptions,
 };
 use qubit_datatype::CollectionConversionOptions;
-use qubit_spi::error::ProviderSelectionBuildError;
 use qubit_spi::ProviderSelection;
+use qubit_spi::error::ProviderSelectionBuildError;
 
 use crate::MimeError;
 use crate::{
-    MimeResult,
     CONFIG_COMMAND_OUTPUT_MAX_BYTES,
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
@@ -57,6 +57,7 @@ use crate::{
     ENV_MIME_DETECTOR_FALLBACKS,
     ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
     ENV_MIME_MAX_BUFFER_SIZE,
+    MimeResult,
 };
 
 /// Runtime configuration for MIME detectors.
@@ -197,11 +198,18 @@ impl MimeConfig {
     /// configuration value cannot be converted to the expected type. Returns
     /// a detector- or classifier-name error when a configured provider
     /// selector is invalid.
-    pub fn from_config(config: &Config) -> MimeResult<Self> {
-        let value_config = config.with_read_options(VALUE_READ_OPTIONS.clone());
-        let list_config = config.with_read_options(LIST_READ_OPTIONS.clone());
+    ///
+    /// # Type Parameters
+    ///
+    /// * `R` - Root or scoped configuration reader type.
+    pub fn from_config<R>(config: &R) -> MimeResult<Self>
+    where
+        R: ConfigReader + ?Sized,
+    {
+        let value_config = config.with_read_options_view(&VALUE_READ_OPTIONS);
+        let list_config = config.with_read_options_view(&LIST_READ_OPTIONS);
         let mapping_config =
-            config.with_read_options(MAPPING_READ_OPTIONS.clone());
+            config.with_read_options_view(&MAPPING_READ_OPTIONS);
         let mime_detector_default = value_config.get_any_interpolated_or(
             [CONFIG_MIME_DETECTOR_DEFAULT, ENV_MIME_DETECTOR_DEFAULT],
             DEFAULT_MIME_DETECTOR.to_owned(),
@@ -250,7 +258,7 @@ impl MimeConfig {
             ],
             DEFAULT_ENABLE_PRECISE_DETECTION,
         )?;
-        let precise_detection_patterns = value_config.get_any_interpolated_or(
+        let precise_detection_patterns = list_config.get_any_interpolated_or(
             [
                 CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
                 ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
