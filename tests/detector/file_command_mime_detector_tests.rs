@@ -64,6 +64,11 @@ fn test_default_file_command_runner_uses_default_timeout() {
         detector.command_runner().configured_max_stderr_bytes(),
         Some(DEFAULT_COMMAND_OUTPUT_MAX_BYTES),
     );
+    assert!(
+        detector
+            .command_runner()
+            .is_output_truncation_failure_enabled()
+    );
 }
 
 #[test]
@@ -83,6 +88,11 @@ fn test_from_mime_config_limits_file_command_output() {
     assert_eq!(
         Some(1024),
         detector.command_runner().configured_max_stderr_bytes()
+    );
+    assert!(
+        detector
+            .command_runner()
+            .is_output_truncation_failure_enabled()
     );
 }
 

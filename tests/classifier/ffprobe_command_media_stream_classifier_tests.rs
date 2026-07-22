@@ -91,6 +91,11 @@ fn test_default_uses_disabled_logging_runner() {
         classifier.command_runner().configured_max_stderr_bytes(),
         Some(DEFAULT_COMMAND_OUTPUT_MAX_BYTES),
     );
+    assert!(
+        classifier
+            .command_runner()
+            .is_output_truncation_failure_enabled()
+    );
 }
 
 #[test]
@@ -123,6 +128,11 @@ fn test_from_mime_config_limits_ffprobe_output() {
     assert_eq!(
         Some(1024),
         classifier.command_runner().configured_max_stderr_bytes()
+    );
+    assert!(
+        classifier
+            .command_runner()
+            .is_output_truncation_failure_enabled()
     );
 }
 
