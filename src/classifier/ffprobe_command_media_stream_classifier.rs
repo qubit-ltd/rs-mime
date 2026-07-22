@@ -215,6 +215,7 @@ impl FfprobeCommandMediaStreamClassifier {
         CommandRunner::new()
             .disable_logging(true)
             .max_output_bytes(config.command_output_max_bytes())
+            .fail_on_output_truncation(true)
     }
 
     /// Builds the structured `ffprobe` command for one path.

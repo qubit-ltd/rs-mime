@@ -307,7 +307,9 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// Runner used by the default detector.
     fn default_command_runner(config: &MimeConfig) -> CommandRunner {
-        CommandRunner::new().max_output_bytes(config.command_output_max_bytes())
+        CommandRunner::new()
+            .max_output_bytes(config.command_output_max_bytes())
+            .fail_on_output_truncation(true)
     }
 
     /// Builds the structured `file` command for one path.
