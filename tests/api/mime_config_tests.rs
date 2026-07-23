@@ -44,7 +44,6 @@ use qubit_mime::{
     MimeDetectorRegistry,
     MimeError,
 };
-use qubit_spi::error::ProviderResolutionError;
 use qubit_spi::{
     ProviderSelection,
     ProviderSelectionTargetRef,
@@ -124,11 +123,12 @@ fn test_mime_config_uses_strict_detector_chain_resolution() {
         .resolve_selected(mime_config.mime_detector_selection())
         .expect_err("strict chain should reject the missing provider");
 
-    assert!(matches!(
-        error,
-        ProviderResolutionError::UnknownProviders { selectors, .. }
-            if selectors.len() == 1 && selectors[0].as_str() == "missing"
-    ));
+    assert!(error.is_unknown_providers());
+    let selectors = error
+        .selectors()
+        .expect("unknown-provider errors should retain selectors");
+    assert_eq!(1, selectors.len());
+    assert_eq!("missing", selectors[0].as_str());
 }
 
 #[test]

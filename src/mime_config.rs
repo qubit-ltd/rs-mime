@@ -533,15 +533,15 @@ fn create_classifier_selection(
 /// A detector-specific configuration error.
 fn detector_selection_error(error: ProviderSelectionBuildError) -> MimeError {
     let reason = error.to_string();
-    match error {
-        ProviderSelectionBuildError::InvalidSelector { source, .. } => {
-            MimeError::InvalidDetectorName {
-                name: source.input().to_owned(),
-                reason,
-            }
+    if let Some(source) = error.selector_error() {
+        MimeError::InvalidDetectorName {
+            name: source.input().to_owned(),
+            reason,
         }
-        ProviderSelectionBuildError::EmptyChain => MimeError::EmptyDetectorName,
-        _ => MimeError::NoAvailableDetector { reason },
+    } else if error.is_empty_chain() {
+        MimeError::EmptyDetectorName
+    } else {
+        MimeError::NoAvailableDetector { reason }
     }
 }
 
@@ -556,17 +556,15 @@ fn detector_selection_error(error: ProviderSelectionBuildError) -> MimeError {
 /// A classifier-specific configuration error.
 fn classifier_selection_error(error: ProviderSelectionBuildError) -> MimeError {
     let reason = error.to_string();
-    match error {
-        ProviderSelectionBuildError::InvalidSelector { source, .. } => {
-            MimeError::InvalidClassifierName {
-                name: source.input().to_owned(),
-                reason,
-            }
+    if let Some(source) = error.selector_error() {
+        MimeError::InvalidClassifierName {
+            name: source.input().to_owned(),
+            reason,
         }
-        ProviderSelectionBuildError::EmptyChain => {
-            MimeError::EmptyClassifierName
-        }
-        _ => MimeError::NoAvailableClassifier { reason },
+    } else if error.is_empty_chain() {
+        MimeError::EmptyClassifierName
+    } else {
+        MimeError::NoAvailableClassifier { reason }
     }
 }
 

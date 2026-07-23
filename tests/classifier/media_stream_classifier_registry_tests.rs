@@ -18,10 +18,7 @@ use qubit_mime::{
     MediaStreamClassifierSpec,
     MimeConfig,
 };
-use qubit_spi::error::{
-    ProviderErrorKind,
-    ProviderResolutionError,
-};
+use qubit_spi::error::ProviderErrorKind;
 use qubit_spi::{
     FallbackPolicy,
     ProviderCreationTermination,
@@ -201,15 +198,20 @@ fn test_resolve_reports_classifier_selection_errors_before_creation() {
     let missing = ProviderSelection::named("missing")
         .expect("missing selector should still be syntactically valid");
 
-    assert!(matches!(
-        registry.resolve_selected(&missing),
-        Err(ProviderResolutionError::UnknownProviders { selectors, .. })
-            if selectors.len() == 1 && selectors[0].as_str() == "missing"
-    ));
-    assert!(matches!(
-        registry.resolve_selected(&ProviderSelection::auto()),
-        Err(ProviderResolutionError::EmptyRegistry)
-    ));
+    let unknown = registry
+        .resolve_selected(&missing)
+        .expect_err("missing provider should fail resolution");
+    assert!(unknown.is_unknown_providers());
+    let selectors = unknown
+        .selectors()
+        .expect("unknown-provider errors should retain selectors");
+    assert_eq!(1, selectors.len());
+    assert_eq!("missing", selectors[0].as_str());
+
+    let empty = registry
+        .resolve_selected(&ProviderSelection::auto())
+        .expect_err("automatic selection from an empty Registry should fail");
+    assert!(empty.is_empty_registry());
 }
 
 #[test]
