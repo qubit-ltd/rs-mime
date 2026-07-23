@@ -100,7 +100,7 @@ fn test_registry_registers_owned_and_shared_providers_atomically() {
             TestProviderBehavior::Success("application/x-duplicate"),
         ))
         .expect_err("duplicate selector should be rejected");
-    assert!(duplicate.to_string().contains("shared"));
+    assert_eq!("shared", duplicate.selector());
 
     let runtime_shared: Arc<dyn ProviderDefinition<MimeDetectorSpec>> =
         Arc::new(TestMimeDetectorProvider::new(
