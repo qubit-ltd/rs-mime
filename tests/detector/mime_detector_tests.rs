@@ -19,7 +19,6 @@ use qubit_mime::{
     RepositoryMimeDetector,
 };
 use qubit_spi::ProviderSelection;
-use qubit_spi::error::ProviderResolutionError;
 
 #[cfg(unix)]
 use crate::support::PathEnvGuard;
@@ -331,11 +330,14 @@ fn test_configured_fallback_rejects_unknown_detector() {
         .resolve_selected(config.mime_detector_selection())
         .expect_err("strict configured chain should reject unknown providers");
 
-    assert!(matches!(
-        error,
-        ProviderResolutionError::UnknownProviders { selectors, .. }
-            if selectors.iter().any(|selector| selector.as_str() == "unknown")
-    ));
+    assert!(error.is_unknown_providers());
+    assert!(
+        error
+            .selectors()
+            .expect("unknown-provider errors should retain selectors")
+            .iter()
+            .any(|selector| selector.as_str() == "unknown")
+    );
 }
 
 #[test]
