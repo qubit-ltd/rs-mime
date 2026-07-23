@@ -157,7 +157,7 @@ impl MimeDetectorRegistry {
     ///
     /// # Returns
     ///
-    /// A point-in-time candidate snapshot implementing `ServiceProvider`.
+    /// A point-in-time candidate snapshot with inherent creation methods.
     ///
     /// # Errors
     ///
@@ -180,7 +180,7 @@ impl MimeDetectorRegistry {
     ///
     /// # Returns
     ///
-    /// A point-in-time candidate snapshot implementing `ServiceProvider`.
+    /// A point-in-time candidate snapshot with inherent creation methods.
     ///
     /// # Errors
     ///
