@@ -98,7 +98,7 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
         &self,
         file: &Path,
     ) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let mut reader = read::open(file, &read::OpenOptions::default())?;
+        let mut reader = read::open(file)?;
         self.guess_from_reader_stream(&mut reader)
     }
 }
