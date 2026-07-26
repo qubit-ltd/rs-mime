@@ -6,7 +6,7 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use qubit_local_files::LocalTempFile;
+use qubit_local_files::temp::TempFile;
 use qubit_mime::{
     CONFIG_MIME_DETECTOR_FALLBACKS,
     FileCommandMimeDetector,
@@ -65,8 +65,8 @@ fn test_mime_detector_trait_supports_reader_and_file_detection() {
         )
         .expect("trait-object reader detection should succeed");
 
-    let mut file = LocalTempFile::with_suffix(".pdf")
-        .expect("temp file should be created");
+    let mut file =
+        TempFile::with_suffix(".pdf").expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"%PDF-1.7\n")
         .expect("temp file should be writable");
     let from_file = detector
@@ -87,7 +87,7 @@ fn test_mime_detector_backend_defaults_read_reader_and_file_prefix() {
         MimeDetectorBackend::guess_from_reader(&detector, &mut reader)
             .expect("backend reader default should read content prefix");
 
-    let mut file = LocalTempFile::new().expect("temp file should be created");
+    let mut file = TempFile::new().expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"hello world")
         .expect("temp file should be writable");
     let (file_candidates, file_content) =
@@ -114,8 +114,8 @@ fn test_mime_detector_backend_prefer_filename_skips_reader_and_file_content() {
         )
         .expect("filename-preferred reader detection should succeed");
 
-    let mut file = LocalTempFile::with_suffix(".txt")
-        .expect("temp file should be created");
+    let mut file =
+        TempFile::with_suffix(".txt").expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"xxxxx")
         .expect("temp file should be writable");
     let from_file = detector

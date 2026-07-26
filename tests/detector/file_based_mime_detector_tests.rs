@@ -13,9 +13,9 @@ use std::path::{
 };
 use std::sync::Mutex;
 
-use qubit_local_files::{
-    LocalTempDir,
-    LocalTempFile,
+use qubit_local_files::temp::{
+    TempDir,
+    TempFile,
 };
 
 use qubit_mime::{
@@ -207,7 +207,7 @@ fn test_detect_reader_reports_temporary_file_creation_error() {
         return;
     }
 
-    let temp_dir = LocalTempDir::with_prefix("qubit-mime-detector-error-")
+    let temp_dir = TempDir::with_prefix("qubit-mime-detector-error-")
         .expect("temporary parent directory should be created");
     let invalid_temp_dir = temp_dir.path().join("not-a-directory");
     fs::write(&invalid_temp_dir, b"not a directory")
@@ -254,7 +254,7 @@ fn test_detect_reader_creates_missing_temporary_directory() {
         return;
     }
 
-    let temp_dir = LocalTempDir::with_prefix("qubit-mime-detector-missing-")
+    let temp_dir = TempDir::with_prefix("qubit-mime-detector-missing-")
         .expect("temporary parent directory should be created");
     let missing_temp_dir = temp_dir.path().join("missing").join("nested");
     let output = std::process::Command::new(
@@ -285,8 +285,7 @@ fn test_detect_reader_creates_missing_temporary_directory() {
 /// Verifies local-file input delegates directly to the file-based hook.
 #[test]
 fn test_detect_file_delegates_to_local_file_hook() {
-    let temp_file =
-        LocalTempFile::new().expect("temporary file should be created");
+    let temp_file = TempFile::new().expect("temporary file should be created");
     let detector = PathRecordingDetector::new();
 
     let detected = detector
@@ -300,8 +299,7 @@ fn test_detect_file_delegates_to_local_file_hook() {
 #[test]
 fn test_detect_reader_propagates_file_based_callback_error() {
     let detector = FailingDetector::new();
-    let temp_file =
-        LocalTempFile::new().expect("temporary file should be created");
+    let temp_file = TempFile::new().expect("temporary file should be created");
     let mut reader = std::io::Cursor::new(b"plain text".to_vec());
 
     let error = detector

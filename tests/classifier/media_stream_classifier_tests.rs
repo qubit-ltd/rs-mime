@@ -22,7 +22,7 @@ use std::sync::{
     Mutex,
 };
 
-use qubit_local_files::LocalTempDir;
+use qubit_local_files::temp::TempDir;
 use qubit_mime::{
     FileBasedMediaStreamClassifier,
     MediaStreamClassifier,
@@ -330,7 +330,7 @@ fn test_file_based_classifier_reports_temporary_file_creation_error() {
         return;
     }
 
-    let temp_dir = LocalTempDir::with_prefix("qubit-mime-classifier-error-")
+    let temp_dir = TempDir::with_prefix("qubit-mime-classifier-error-")
         .expect("temporary parent directory should be created");
     let invalid_temp_dir = temp_dir.path().join("not-a-directory");
     fs::write(&invalid_temp_dir, b"not a directory")
@@ -372,7 +372,7 @@ fn test_file_based_classifier_creates_missing_temporary_directory() {
         return;
     }
 
-    let temp_dir = LocalTempDir::with_prefix("qubit-mime-classifier-missing-")
+    let temp_dir = TempDir::with_prefix("qubit-mime-classifier-missing-")
         .expect("temporary parent directory should be created");
     let missing_temp_dir = temp_dir.path().join("missing").join("nested");
     let output = std::process::Command::new(
