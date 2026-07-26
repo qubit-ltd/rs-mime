@@ -17,7 +17,8 @@ glob、内容魔数规则和父类型关系。
 
 公开 API 分为三层：
 
-- `MimeDetector`：顶层检测器 trait。业务代码需要兼容不同检测器实现时依赖它。
+- `MimeDetector`：顶层检测器 trait。`detect_resource` 接受 provider-neutral
+  的 `qubit_fs::FileResource`；本地命令检测器仍可使用 local-path 入口。
 - `detector`：检测器实现和共享检测逻辑，包括
   `MimeDetectorCore`、`MimeDetectorBackend`、`RepositoryMimeDetector` 和
   `FileCommandMimeDetector`。

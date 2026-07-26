@@ -20,7 +20,9 @@ relationships.
 The public surface is organized into three layers:
 
 - `MimeDetector`: the top-level detector trait. Use it when code should work
-  with any detector implementation.
+  with any detector implementation. `detect_resource` accepts a
+  provider-neutral `qubit_fs::FileResource`; local-path entry points remain
+  available for native command detectors.
 - `detector`: detector implementations and shared detector logic,
   including `MimeDetectorCore`, `MimeDetectorBackend`,
   `RepositoryMimeDetector`, and `FileCommandMimeDetector`.
