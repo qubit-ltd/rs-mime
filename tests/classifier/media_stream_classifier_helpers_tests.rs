@@ -5,7 +5,7 @@ use std::path::Path;
 use std::os::unix::fs::PermissionsExt;
 
 #[cfg(unix)]
-use qubit_local_files::LocalTempFile;
+use qubit_local_files::temp::TempFile;
 use qubit_mime::{
     MediaStreamClassifier,
     MediaStreamClassifierBackend,
@@ -56,7 +56,7 @@ fn test_media_stream_classifier_helpers_validate_public_file_entrypoint() {
 #[test]
 fn test_media_stream_classifier_helpers_report_unreadable_file() {
     let backend = Backend;
-    let file = LocalTempFile::new().expect("temporary file should be created");
+    let file = TempFile::new().expect("temporary file should be created");
     std::fs::set_permissions(
         file.path(),
         std::fs::Permissions::from_mode(0o000),
