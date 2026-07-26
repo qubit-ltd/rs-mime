@@ -14,6 +14,7 @@ mod mime_detector_backend_tests;
 mod mime_detector_core_tests;
 mod mime_detector_provider_tests;
 mod mime_detector_registry_tests;
+mod mime_detector_spec_tests;
 mod mime_detector_tests;
 mod repository_mime_detector_provider_tests;
 mod repository_mime_detector_tests;

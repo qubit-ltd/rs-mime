@@ -213,6 +213,7 @@ dependencies = [
 name = "qubit-clock"
 version = "0.10.0"
 dependencies = [
+ "qubit-collections",
  "thiserror",
 ]
 
@@ -230,6 +231,15 @@ dependencies = [
  "base64",
  "qubit-codec",
  "thiserror",
+]
+
+[[package]]
+name = "qubit-collections"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e52fb7b0bbadb0b5ab1227d527c8ab46922338fbc9cdd71480dbdb83cfd472af"
+dependencies = [
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -260,11 +270,19 @@ dependencies = [
 [[package]]
 name = "qubit-datatype"
 version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9dd16b80a75460ac639b745af90ef486a7544574c63d0949994678afe05dd83"
 dependencies = [
  "serde",
  "serde_json",
- "strum",
  "thiserror",
+]
+
+[[package]]
+name = "qubit-fs"
+version = "0.2.0"
+dependencies = [
+ "qubit-io",
 ]
 
 [[package]]
@@ -289,6 +307,7 @@ dependencies = [
  "qubit-command",
  "qubit-config",
  "qubit-datatype",
+ "qubit-fs",
  "qubit-io",
  "qubit-local-files",
  "qubit-spi",
@@ -306,6 +325,7 @@ name = "qubit-spi"
 version = "0.10.0"
 dependencies = [
  "parking_lot",
+ "qubit-collections",
  "thiserror",
 ]
 
@@ -450,27 +470,6 @@ name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
-
-[[package]]
-name = "strum"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
-dependencies = [
- "strum_macros",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "syn",
-]
 
 [[package]]
 name = "syn"

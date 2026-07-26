@@ -5,10 +5,13 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+mod ffprobe_command_media_stream_classifier_provider_tests;
 mod ffprobe_command_media_stream_classifier_tests;
 mod file_based_media_stream_classifier_tests;
 mod media_stream_classifier_backend_tests;
 mod media_stream_classifier_helpers_tests;
+mod media_stream_classifier_provider_tests;
 mod media_stream_classifier_registry_tests;
+mod media_stream_classifier_spec_tests;
 mod media_stream_classifier_tests;
 mod media_stream_type_tests;

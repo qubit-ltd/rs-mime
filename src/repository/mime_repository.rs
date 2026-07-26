@@ -16,7 +16,6 @@ use qubit_codec_misc::{
     HexCodec,
     MiscCodecError,
 };
-use qubit_local_files::LocalFilenames;
 use roxmltree::{
     Document,
     NS_XML_URI,
@@ -137,7 +136,8 @@ impl MimeRepository {
     /// Matching MIME types ordered by best glob weight and pattern length.
     /// Returns an empty vector when no glob matches.
     pub fn detect_by_filename(&self, filename: &str) -> Vec<&MimeType> {
-        let exact_filename = LocalFilenames::file_name_from_path(filename);
+        let exact_filename =
+            filename.rsplit(['/', '\\']).next().unwrap_or_default();
         if exact_filename.is_empty() {
             return Vec::new();
         }

@@ -182,6 +182,10 @@ pub enum MimeError {
     #[error("I/O error while detecting MIME type: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Detection through a provider-neutral filesystem resource failed.
+    #[error("filesystem error while detecting MIME type: {0}")]
+    FileSystem(#[from] qubit_fs::FsError),
+
     /// Detection using an external command failed.
     #[error("command error while detecting MIME type: {0}")]
     Command(#[from] qubit_command::CommandError),

@@ -11,6 +11,7 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::sync::Arc;
 
+use qubit_fs::FileResource;
 use qubit_io::ReadSeek;
 
 use crate::{
@@ -93,6 +94,29 @@ pub trait MimeDetector: Debug + Send + Sync {
         file: &Path,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>>;
+
+    /// Detects a MIME type through a provider-neutral filesystem resource.
+    ///
+    /// # Errors
+    /// Returns a filesystem or detector error when the resource cannot be
+    /// opened or inspected.
+    ///
+    /// `max_bytes` bounds the provider-neutral whole-resource read.
+    fn detect_resource(
+        &self,
+        resource: &FileResource,
+        max_bytes: usize,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        let content = resource.read_all(max_bytes)?;
+        let filename = resource
+            .path()
+            .as_str()
+            .rsplit('/')
+            .next()
+            .filter(|name| !name.is_empty());
+        Ok(self.detect(&content, filename, policy))
+    }
 }
 
 impl MimeDetector for Box<dyn MimeDetector> {
@@ -134,6 +158,15 @@ impl MimeDetector for Box<dyn MimeDetector> {
     ) -> MimeResult<Option<String>> {
         self.as_ref().detect_file(file, policy)
     }
+
+    fn detect_resource(
+        &self,
+        resource: &FileResource,
+        max_bytes: usize,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        self.as_ref().detect_resource(resource, max_bytes, policy)
+    }
 }
 
 impl MimeDetector for Arc<dyn MimeDetector> {
@@ -174,5 +207,14 @@ impl MimeDetector for Arc<dyn MimeDetector> {
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
         self.as_ref().detect_file(file, policy)
+    }
+
+    fn detect_resource(
+        &self,
+        resource: &FileResource,
+        max_bytes: usize,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        self.as_ref().detect_resource(resource, max_bytes, policy)
     }
 }

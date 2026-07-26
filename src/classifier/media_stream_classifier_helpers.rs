@@ -16,9 +16,8 @@ use std::path::Path;
 
 use qubit_io::Streams;
 use qubit_local_files::{
-    FileReadOptions,
-    LocalFiles,
-    LocalTempFile,
+    read,
+    temp::TempFile,
 };
 
 use crate::{
@@ -37,7 +36,7 @@ use crate::{
 /// [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput)
 /// when the path is not a regular file.
 pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
-    let result = LocalFiles::open_reader(path, FileReadOptions::unbuffered());
+    let result = read::open(path, &read::OpenOptions::default());
     let reader = result.map_err(|error| {
         if error.kind() == ErrorKind::InvalidInput {
             MimeError::invalid_classifier_input(format!(
@@ -74,7 +73,7 @@ pub(crate) fn with_temp_reader<T>(
     classify: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
     let mut file =
-        LocalTempFile::with_affixes("FileBasedMediaStreamClassifier-", ".tmp")?;
+        TempFile::with_affixes("FileBasedMediaStreamClassifier-", ".tmp")?;
     copy_to_temp_file(reader, &mut file, max_staging_size)?;
     file.close();
     classify(file.path())

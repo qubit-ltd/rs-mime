@@ -11,10 +11,7 @@ use std::fmt::Debug;
 use std::path::Path;
 
 use qubit_io::ReadSeek;
-use qubit_local_files::{
-    FileReadOptions,
-    LocalFiles,
-};
+use qubit_local_files::read;
 
 use crate::{
     DetectionSource,
@@ -100,8 +97,7 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
         &self,
         file: &Path,
     ) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let mut reader =
-            LocalFiles::open_reader(file, FileReadOptions::buffered())?;
+        let mut reader = read::open(file, &read::OpenOptions::default())?;
         self.guess_from_reader(&mut reader)
     }
 }
