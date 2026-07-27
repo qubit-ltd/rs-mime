@@ -6,6 +6,7 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+#[cfg(unix)]
 use std::process::Command;
 
 use qubit_mime::{
@@ -13,6 +14,7 @@ use qubit_mime::{
     FileCommandMimeDetectorProvider,
     MimeConfig,
 };
+#[cfg(unix)]
 use qubit_spi::error::ProviderFailureKind;
 use qubit_spi::{
     ProviderMetadata,

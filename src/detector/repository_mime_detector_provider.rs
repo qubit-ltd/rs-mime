@@ -12,9 +12,9 @@ use std::sync::Arc;
 use qubit_spi::error::ProviderFailure;
 use qubit_spi::{
     ProviderDescriptor,
-    ProviderId,
     ProviderMetadata,
     ServiceProvider,
+    provider_descriptor,
 };
 
 use crate::{
@@ -49,11 +49,6 @@ impl ProviderMetadata for RepositoryMimeDetectorProvider {
     ///
     /// The `repository` provider descriptor and its accepted alias.
     fn descriptor(&self) -> ProviderDescriptor {
-        ProviderDescriptor::new(
-            ProviderId::new("repository")
-                .expect("built-in provider ID should be valid"),
-        )
-        .with_aliases(["repository-mime-detector"])
-        .expect("built-in repository detector aliases should be valid")
+        provider_descriptor!("repository", aliases: ["repository-mime-detector"])
     }
 }
