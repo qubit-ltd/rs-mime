@@ -17,6 +17,7 @@ use qubit_spi::{
 use crate::{
     MediaStreamClassifier,
     MimeConfig,
+    MimeError,
 };
 
 /// Service specification for pluggable media stream classifier providers.
@@ -28,6 +29,7 @@ pub struct MediaStreamClassifierSpec;
 
 impl ServiceSpec for MediaStreamClassifierSpec {
     type Config = MimeConfig;
+    type Error = MimeError;
 }
 
 impl SyncServiceSpec for MediaStreamClassifierSpec {

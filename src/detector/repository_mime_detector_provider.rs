@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use qubit_spi::error::ProviderError;
+use qubit_spi::error::ProviderFailure;
 use qubit_spi::{
     ProviderDescriptor,
     ProviderId,
@@ -20,6 +20,7 @@ use qubit_spi::{
 use crate::{
     MimeConfig,
     MimeDetector,
+    MimeError,
     RepositoryMimeDetector,
 };
 
@@ -34,7 +35,7 @@ impl ServiceProvider<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
     fn create_configured(
         &self,
         config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderError> {
+    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         Ok(Arc::new(RepositoryMimeDetector::from_mime_config(
             config.clone(),
         )))

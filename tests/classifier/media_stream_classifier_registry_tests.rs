@@ -18,7 +18,7 @@ use qubit_mime::{
     MediaStreamClassifierSpec,
     MimeConfig,
 };
-use qubit_spi::error::ProviderErrorKind;
+use qubit_spi::error::ProviderFailureKind;
 use qubit_spi::{
     FallbackPolicy,
     ProviderCreationTermination,
@@ -49,7 +49,7 @@ fn test_ffprobe_provider_reports_unavailable_when_command_is_missing() {
             .expect_err("missing FFprobe should fail during creation");
         let attempt = error.decisive_attempt();
 
-        assert_eq!(ProviderErrorKind::Unavailable, attempt.error().kind());
+        assert_eq!(ProviderFailureKind::Unavailable, attempt.failure().kind());
         return;
     }
 
@@ -117,8 +117,8 @@ fn test_builtin_registry_lists_and_resolves_ffprobe_provider() {
     for creation in [alias_creation, default_creation] {
         if let Err(error) = creation {
             assert_eq!(
-                ProviderErrorKind::Unavailable,
-                error.decisive_attempt().error().kind(),
+                ProviderFailureKind::Unavailable,
+                error.decisive_attempt().failure().kind(),
             );
         }
     }
@@ -236,8 +236,8 @@ fn test_resolve_and_create_keep_classifier_errors_separate() {
     let attempt = error.decisive_attempt();
     assert_eq!("failed", attempt.provider_id().as_str());
     assert_eq!(
-        ProviderErrorKind::InitializationFailed,
-        attempt.error().kind()
+        ProviderFailureKind::InitializationFailed,
+        attempt.failure().kind()
     );
 }
 

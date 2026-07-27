@@ -17,6 +17,7 @@ use qubit_spi::{
 use crate::{
     MimeConfig,
     MimeDetector,
+    MimeError,
 };
 
 /// Service specification for pluggable MIME detector providers.
@@ -28,6 +29,7 @@ pub struct MimeDetectorSpec;
 
 impl ServiceSpec for MimeDetectorSpec {
     type Config = MimeConfig;
+    type Error = MimeError;
 }
 
 impl SyncServiceSpec for MimeDetectorSpec {
