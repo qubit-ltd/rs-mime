@@ -51,7 +51,8 @@ impl ServiceProvider<MediaStreamClassifierSpec>
     fn create_configured(
         &self,
         config: &MimeConfig,
-    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderFailure<MimeError>> {
+    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderFailure<MimeError>>
+    {
         if !FfprobeCommandMediaStreamClassifier::is_available() {
             return Err(ProviderFailure::unavailable(
                 MimeError::ClassifierUnavailable {
