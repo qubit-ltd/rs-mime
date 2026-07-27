@@ -11,8 +11,14 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::sync::Arc;
 
-use qubit_fs::{FileResource, ReadOptions};
-use qubit_io::{Input, ReadSeek};
+use qubit_fs::{
+    FileResource,
+    ReadOptions,
+};
+use qubit_io::{
+    Input,
+    ReadSeek,
+};
 
 use crate::{
     MimeDetectionPolicy,

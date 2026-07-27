@@ -100,17 +100,19 @@ impl ServiceProvider<MimeDetectorSpec> for TestMimeDetectorProvider {
                     reason: "unsupported input".to_owned(),
                 }))
             }
-            TestProviderBehavior::Unavailable => {
-                Err(ProviderFailure::unavailable(MimeError::DetectorUnavailable {
+            TestProviderBehavior::Unavailable => Err(
+                ProviderFailure::unavailable(MimeError::DetectorUnavailable {
                     name: "test".to_owned(),
                     reason: "missing executable".to_owned(),
-                }))
-            }
+                }),
+            ),
             TestProviderBehavior::InitializationFailed => {
-                Err(ProviderFailure::initialization_failed(MimeError::DetectorBackend {
-                    backend: "test".to_owned(),
-                    reason: "startup failed".to_owned(),
-                }))
+                Err(ProviderFailure::initialization_failed(
+                    MimeError::DetectorBackend {
+                        backend: "test".to_owned(),
+                        reason: "startup failed".to_owned(),
+                    },
+                ))
             }
         }
     }
