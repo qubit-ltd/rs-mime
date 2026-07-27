@@ -197,6 +197,41 @@ fn test_detect_file_by_content_reads_file_command_stdout() {
 
 #[test]
 #[cfg(unix)]
+fn test_detect_file_by_content_ends_file_option_parsing_before_path() {
+    let temp_dir =
+        TempDir::new().expect("temporary command directory should be created");
+    let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
+    std::fs::write(
+        &script_path,
+        "#!/bin/sh\n\
+         [ \"$1\" = \"--mime-type\" ] && [ \"$2\" = \"--brief\" ] && \\\n         [ \"$3\" = \"--\" ] && [ \"$4\" = \"--leading-dash\" ] || exit 9\n\
+         printf 'text/plain\\n'\n",
+    )
+    .expect("fake file command should be written");
+    let mut permissions = std::fs::metadata(&script_path)
+        .expect("fake file command metadata should be readable")
+        .permissions();
+    use std::os::unix::fs::PermissionsExt;
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&script_path, permissions)
+        .expect("fake file command should be executable");
+    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    let repository = MimeRepository::empty();
+    let detector = FileCommandMimeDetector::with_repository_and_runner(
+        &repository,
+        CommandRunner::new().disable_logging(true),
+    );
+
+    assert_eq!(
+        Some("text/plain".to_owned()),
+        detector
+            .detect_file_by_content(std::path::Path::new("--leading-dash"))
+            .expect("file command should receive the path after its option terminator")
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn test_detect_file_by_content_returns_none_for_empty_stdout() {
     let temp_dir =
         TempDir::new().expect("temporary command directory should be created");
