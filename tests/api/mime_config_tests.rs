@@ -186,7 +186,7 @@ fn test_from_config_accepts_reader_and_splits_semicolon_patterns() {
     config
         .set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, "mkv;webm")
         .expect("precise patterns should be configurable");
-    let root = config.section("");
+    let root = config.section("").expect("root section should exist");
 
     let mime_config =
         MimeConfig::from_config(&root).expect("reader should parse");
