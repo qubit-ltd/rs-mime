@@ -206,9 +206,11 @@ impl MimeConfig {
     where
         R: ConfigReader + ?Sized,
     {
-        let value_config = config.with_read_options_view(&VALUE_READ_OPTIONS)?;
+        let value_config =
+            config.with_read_options_view(&VALUE_READ_OPTIONS)?;
         let list_config = config.with_read_options_view(&LIST_READ_OPTIONS)?;
-        let mapping_config = config.with_read_options_view(&MAPPING_READ_OPTIONS)?;
+        let mapping_config =
+            config.with_read_options_view(&MAPPING_READ_OPTIONS)?;
         let mime_detector_default = value_config.get_any_interpolated_or(
             [CONFIG_MIME_DETECTOR_DEFAULT, ENV_MIME_DETECTOR_DEFAULT],
             DEFAULT_MIME_DETECTOR.to_owned(),

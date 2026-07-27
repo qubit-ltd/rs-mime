@@ -132,7 +132,8 @@ fn test_with_repository_and_runner_uses_runner_configuration() {
 #[test]
 #[cfg(unix)]
 fn test_detect_file_by_content_propagates_runner_timeout() {
-    let temp_dir = TempDir::new().expect("temporary command directory should be created");
+    let temp_dir =
+        TempDir::new().expect("temporary command directory should be created");
     let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
     std::fs::write(&script_path, "#!/bin/sh\nsleep 1\n")
         .expect("fake file command should be written");
