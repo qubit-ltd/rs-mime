@@ -323,6 +323,7 @@ impl<'a> FileCommandMimeDetector<'a> {
         Command::new(Self::COMMAND)
             .arg(Self::MIME_TYPE_ARG)
             .arg(Self::BRIEF_ARG)
+            .arg("--")
             .sensitive_arg_os(path)
     }
 }
