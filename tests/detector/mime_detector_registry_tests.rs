@@ -15,7 +15,7 @@ use qubit_mime::{
     MimeDetectorRegistry,
     MimeDetectorSpec,
 };
-use qubit_spi::error::ProviderErrorKind;
+use qubit_spi::error::ProviderFailureKind;
 use qubit_spi::{
     FallbackPolicy,
     ProviderCreationTermination,
@@ -159,8 +159,8 @@ fn test_resolve_and_create_keep_selection_and_creation_errors_separate() {
     let attempt = error.decisive_attempt();
     assert_eq!("failed", attempt.provider_id().as_str());
     assert_eq!(
-        ProviderErrorKind::InitializationFailed,
-        attempt.error().kind()
+        ProviderFailureKind::InitializationFailed,
+        attempt.failure().kind()
     );
 }
 

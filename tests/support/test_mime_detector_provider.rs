@@ -12,8 +12,9 @@ use qubit_mime::{
     MimeConfig,
     MimeDetector,
     MimeDetectorSpec,
+    MimeError,
 };
-use qubit_spi::error::ProviderError;
+use qubit_spi::error::ProviderFailure;
 use qubit_spi::{
     ProviderDescriptor,
     ProviderId,
@@ -88,19 +89,28 @@ impl ServiceProvider<MimeDetectorSpec> for TestMimeDetectorProvider {
     fn create_configured(
         &self,
         _config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderError> {
+    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         match self.behavior {
             TestProviderBehavior::Success(mime_type) => {
                 Ok(Arc::new(StaticMimeDetector::new(mime_type)))
             }
             TestProviderBehavior::Unsupported => {
-                Err(ProviderError::unsupported("unsupported input"))
+                Err(ProviderFailure::unsupported(MimeError::DetectorBackend {
+                    backend: "test".to_owned(),
+                    reason: "unsupported input".to_owned(),
+                }))
             }
             TestProviderBehavior::Unavailable => {
-                Err(ProviderError::unavailable("missing executable"))
+                Err(ProviderFailure::unavailable(MimeError::DetectorUnavailable {
+                    name: "test".to_owned(),
+                    reason: "missing executable".to_owned(),
+                }))
             }
             TestProviderBehavior::InitializationFailed => {
-                Err(ProviderError::initialization_failed("startup failed"))
+                Err(ProviderFailure::initialization_failed(MimeError::DetectorBackend {
+                    backend: "test".to_owned(),
+                    reason: "startup failed".to_owned(),
+                }))
             }
         }
     }
