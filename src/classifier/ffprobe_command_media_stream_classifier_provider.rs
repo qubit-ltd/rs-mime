@@ -12,9 +12,9 @@ use std::sync::Arc;
 use qubit_spi::error::ProviderFailure;
 use qubit_spi::{
     ProviderDescriptor,
-    ProviderId,
     ProviderMetadata,
     ServiceProvider,
+    provider_descriptor,
 };
 
 use crate::{
@@ -76,15 +76,10 @@ impl ProviderMetadata for FfprobeCommandMediaStreamClassifierProvider {
     ///
     /// The `ffprobe` descriptor and its accepted aliases.
     fn descriptor(&self) -> ProviderDescriptor {
-        ProviderDescriptor::new(
-            ProviderId::new("ffprobe")
-                .expect("built-in provider ID should be valid"),
+        provider_descriptor!(
+            "ffprobe",
+            aliases: ["ffprobe-command", "ffprobe-command-media-stream-classifier"],
+            priority: 10,
         )
-        .with_aliases([
-            "ffprobe-command",
-            "ffprobe-command-media-stream-classifier",
-        ])
-        .expect("built-in FFprobe classifier aliases should be valid")
-        .with_priority(10)
     }
 }

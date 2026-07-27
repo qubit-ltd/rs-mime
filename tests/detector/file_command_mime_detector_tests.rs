@@ -8,6 +8,8 @@
 
 use std::time::Duration;
 
+#[cfg(unix)]
+use qubit_command::CommandError;
 use qubit_command::{
     CommandRunner,
     DEFAULT_COMMAND_TIMEOUT,
@@ -17,6 +19,8 @@ use qubit_config::Config;
 use qubit_local_files::temp::TempDir;
 #[cfg(unix)]
 use qubit_mime::MimeDetectionPolicy;
+#[cfg(unix)]
+use qubit_mime::MimeError;
 use qubit_mime::{
     CONFIG_COMMAND_OUTPUT_MAX_BYTES,
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
@@ -126,18 +130,36 @@ fn test_with_repository_and_runner_uses_runner_configuration() {
 }
 
 #[test]
-fn test_detect_file_by_content_uses_runner_timeout() {
-    if !FileCommandMimeDetector::is_available() {
-        return;
-    }
-    let detector = FileCommandMimeDetector::new()
-        .with_command_runner(CommandRunner::new().timeout(Duration::ZERO));
-
-    assert!(
-        detector
-            .detect_file_by_content(std::path::Path::new("Cargo.toml"))
-            .is_err()
+#[cfg(unix)]
+fn test_detect_file_by_content_propagates_runner_timeout() {
+    let temp_dir = TempDir::new().expect("temporary command directory should be created");
+    let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
+    std::fs::write(&script_path, "#!/bin/sh\nsleep 1\n")
+        .expect("fake file command should be written");
+    let mut permissions = std::fs::metadata(&script_path)
+        .expect("fake file command metadata should be readable")
+        .permissions();
+    use std::os::unix::fs::PermissionsExt;
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&script_path, permissions)
+        .expect("fake file command should be executable");
+    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    let repository = MimeRepository::empty();
+    let detector = FileCommandMimeDetector::with_repository_and_runner(
+        &repository,
+        CommandRunner::new()
+            .timeout(Duration::from_millis(20))
+            .disable_logging(true),
     );
+
+    let error = detector
+        .detect_file_by_content(std::path::Path::new("Cargo.toml"))
+        .expect_err("slow fake file command should time out");
+
+    assert!(matches!(
+        error,
+        MimeError::Command(CommandError::TimedOut { .. })
+    ));
 }
 
 #[test]

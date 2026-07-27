@@ -12,9 +12,9 @@ use std::sync::Arc;
 use qubit_spi::error::ProviderFailure;
 use qubit_spi::{
     ProviderDescriptor,
-    ProviderId,
     ProviderMetadata,
     ServiceProvider,
+    provider_descriptor,
 };
 
 use crate::{
@@ -56,12 +56,10 @@ impl ProviderMetadata for FileCommandMimeDetectorProvider {
     ///
     /// The `file` provider descriptor and its accepted aliases.
     fn descriptor(&self) -> ProviderDescriptor {
-        ProviderDescriptor::new(
-            ProviderId::new("file")
-                .expect("built-in provider ID should be valid"),
+        provider_descriptor!(
+            "file",
+            aliases: ["file-command", "file-command-mime-detector"],
+            priority: 10,
         )
-        .with_aliases(["file-command", "file-command-mime-detector"])
-        .expect("built-in file detector aliases should be valid")
-        .with_priority(10)
     }
 }
