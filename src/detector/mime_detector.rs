@@ -11,8 +11,8 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::sync::Arc;
 
-use qubit_fs::FileResource;
-use qubit_io::ReadSeek;
+use qubit_fs::{FileResource, ReadOptions};
+use qubit_io::{Input, ReadSeek};
 
 use crate::{
     MimeDetectionPolicy,
@@ -101,14 +101,18 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// Returns a filesystem or detector error when the resource cannot be
     /// opened or inspected.
     ///
-    /// `max_bytes` bounds the provider-neutral whole-resource read.
+    /// `max_bytes` bounds the prefix read used for content inspection; larger
+    /// resources remain eligible for detection.
     fn detect_resource(
         &self,
         resource: &FileResource,
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        let content = resource.read_all(max_bytes)?;
+        let mut reader = resource.open_reader(ReadOptions::default())?;
+        let mut content = vec![0; max_bytes];
+        let read = reader.read_fully(&mut content)?;
+        content.truncate(read);
         let filename = resource
             .path()
             .as_str()
