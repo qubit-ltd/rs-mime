@@ -6,7 +6,7 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use qubit_local_files::temp::TempFile;
+use qubit_local_files::LocalTempFile as TempFile;
 use qubit_mime::{
     CONFIG_MIME_DETECTOR_FALLBACKS,
     FileCommandMimeDetector,

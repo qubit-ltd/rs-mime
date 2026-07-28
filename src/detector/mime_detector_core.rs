@@ -11,7 +11,7 @@ use std::io::SeekFrom;
 use std::path::Path;
 use std::sync::Arc;
 
-use qubit_io::ReadSeek;
+use qubit_io::std_io::ReadSeek;
 
 use crate::{
     MediaStreamClassifier,

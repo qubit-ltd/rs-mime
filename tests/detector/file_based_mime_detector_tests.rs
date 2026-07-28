@@ -13,9 +13,9 @@ use std::path::{
 };
 use std::sync::Mutex;
 
-use qubit_local_files::temp::{
-    TempDir,
-    TempFile,
+use qubit_local_files::{
+    LocalTempDirectory as TempDir,
+    LocalTempFile as TempFile,
 };
 
 use qubit_mime::{

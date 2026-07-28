@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use qubit_io::ReadSeek;
+use qubit_io::std_io::ReadSeek;
 use qubit_mime::{
     MimeDetectionPolicy,
     MimeDetector,

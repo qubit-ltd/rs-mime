@@ -15,10 +15,8 @@ use qubit_fs::{
     FileResource,
     ReadOptions,
 };
-use qubit_io::{
-    Input,
-    ReadSeek,
-};
+use qubit_io::Input;
+use qubit_io::std_io::ReadSeek;
 
 use crate::{
     MimeDetectionPolicy,

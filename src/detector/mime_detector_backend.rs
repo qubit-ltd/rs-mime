@@ -10,8 +10,7 @@
 use std::fmt::Debug;
 use std::path::Path;
 
-use qubit_io::ReadSeek;
-use qubit_local_files::read;
+use qubit_io::std_io::ReadSeek;
 
 use crate::{
     DetectionSource,
@@ -22,7 +21,10 @@ use crate::{
     StreamBasedMimeDetector,
 };
 
-use super::stream_based_mime_detector::read_prefix;
+use super::stream_based_mime_detector::{
+    open_readable_file,
+    read_prefix,
+};
 
 /// Core implementation contract for MIME detectors.
 pub trait MimeDetectorBackend: Debug + Send + Sync {
@@ -97,7 +99,7 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
         &self,
         file: &Path,
     ) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let mut reader = read::open(file)?;
+        let mut reader = open_readable_file(file)?;
         self.guess_from_reader(&mut reader)
     }
 }

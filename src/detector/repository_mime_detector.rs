@@ -175,7 +175,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// fails.
     pub fn detect_reader(
         &self,
-        reader: &mut dyn qubit_io::ReadSeek,
+        reader: &mut dyn qubit_io::std_io::ReadSeek,
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {

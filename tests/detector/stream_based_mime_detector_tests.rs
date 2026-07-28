@@ -16,9 +16,9 @@ use std::io::{
     SeekFrom,
 };
 
-use qubit_local_files::temp::{
-    TempDir,
-    TempFile,
+use qubit_local_files::{
+    LocalTempDirectory as TempDir,
+    LocalTempFile as TempFile,
 };
 
 use qubit_mime::{

@@ -16,7 +16,7 @@ use qubit_command::{
 };
 use qubit_config::Config;
 #[cfg(unix)]
-use qubit_local_files::temp::TempDir;
+use qubit_local_files::LocalTempDirectory as TempDir;
 #[cfg(unix)]
 use qubit_mime::MimeDetectionPolicy;
 #[cfg(unix)]

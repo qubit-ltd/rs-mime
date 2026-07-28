@@ -22,7 +22,7 @@ use std::sync::{
     Mutex,
 };
 
-use qubit_local_files::temp::TempDir;
+use qubit_local_files::LocalTempDirectory as TempDir;
 use qubit_mime::{
     FileBasedMediaStreamClassifier,
     MediaStreamClassifier,

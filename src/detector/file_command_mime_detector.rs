@@ -16,7 +16,7 @@ use qubit_command::{
     Command,
     CommandRunner,
 };
-use qubit_io::ReadSeek;
+use qubit_io::std_io::ReadSeek;
 use std::path::Path;
 
 use crate::{
