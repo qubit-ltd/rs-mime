@@ -7,6 +7,7 @@
 // =============================================================================
 //! Shared media stream classifier helpers.
 
+use std::fs;
 use std::io::{
     ErrorKind,
     Read,
@@ -15,10 +16,7 @@ use std::io::{
 use std::path::Path;
 
 use qubit_io::Streams;
-use qubit_local_files::{
-    read,
-    temp::TempFile,
-};
+use qubit_local_files::LocalTempFile;
 
 use crate::{
     MimeError,
@@ -36,17 +34,14 @@ use crate::{
 /// [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput)
 /// when the path is not a regular file.
 pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
-    let result = read::open(path);
-    let reader = result.map_err(|error| {
-        if error.kind() == ErrorKind::InvalidInput {
-            MimeError::invalid_classifier_input(format!(
-                "path is not a regular file: {}",
-                path.display()
-            ))
-        } else {
-            error.into()
-        }
-    })?;
+    let metadata = fs::metadata(path)?;
+    if !metadata.is_file() {
+        return Err(MimeError::invalid_classifier_input(format!(
+            "path is not a regular file: {}",
+            path.display()
+        )));
+    }
+    let reader = fs::File::open(path)?;
     drop(reader);
     Ok(())
 }
@@ -73,7 +68,7 @@ pub(crate) fn with_temp_reader<T>(
     classify: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
     let mut file =
-        TempFile::with_affixes("FileBasedMediaStreamClassifier-", ".tmp")?;
+        LocalTempFile::with_affixes("FileBasedMediaStreamClassifier-", ".tmp")?;
     copy_to_temp_file(reader, &mut file, max_staging_size)?;
     file.close();
     classify(file.path())

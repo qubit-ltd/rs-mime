@@ -8,13 +8,15 @@
 //! Helpers for stream-backed MIME detectors.
 
 use std::fmt::Debug;
+use std::fs::File;
+use std::io::{
+    self,
+    ErrorKind,
+};
 use std::path::Path;
 
-use qubit_io::{
-    ReadSeek,
-    ReadSeekExt,
-};
-use qubit_local_files::read;
+use qubit_io::std_io::ReadSeek;
+use qubit_io::std_io::ext::ReadSeekExt;
 
 use crate::{
     MimeDetectorCore,
@@ -98,9 +100,24 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
         &self,
         file: &Path,
     ) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let mut reader = read::open(file)?;
+        let mut reader = open_readable_file(file)?;
         self.guess_from_reader_stream(&mut reader)
     }
+}
+
+/// Opens a local regular file for detector reads.
+///
+/// # Errors
+/// Returns an invalid-input error when `path` is not a regular file, or the
+/// operating-system error raised while reading metadata or opening the file.
+pub(crate) fn open_readable_file(path: &Path) -> io::Result<File> {
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            "path is not a regular file",
+        ));
+    }
+    File::open(path)
 }
 
 /// Reads a prefix from a stream and restores the original position.

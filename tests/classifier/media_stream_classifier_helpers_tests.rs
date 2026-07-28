@@ -5,7 +5,7 @@ use std::path::Path;
 use std::os::unix::fs::PermissionsExt;
 
 #[cfg(unix)]
-use qubit_local_files::temp::TempFile;
+use qubit_local_files::LocalTempFile as TempFile;
 use qubit_mime::{
     MediaStreamClassifier,
     MediaStreamClassifierBackend,

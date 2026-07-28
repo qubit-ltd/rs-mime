@@ -16,7 +16,7 @@ use std::io::{
     SeekFrom,
 };
 
-use qubit_local_files::temp::TempFile;
+use qubit_local_files::LocalTempFile as TempFile;
 use qubit_mime::{
     MimeConfig,
     MimeDetectionPolicy,

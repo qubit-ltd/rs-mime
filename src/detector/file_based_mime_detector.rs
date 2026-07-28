@@ -11,7 +11,7 @@ use std::fmt::Debug;
 use std::io::Write;
 use std::path::Path;
 
-use qubit_local_files::temp::TempFile;
+use qubit_local_files::LocalTempFile;
 
 use crate::{
     MimeDetectorCore,
@@ -112,7 +112,7 @@ pub(crate) fn with_temp_file<T>(
     content: &[u8],
     detect: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
-    let mut file = TempFile::with_affixes("MimeDetectorTemp-", ".tmp")?;
+    let mut file = LocalTempFile::with_affixes("MimeDetectorTemp-", ".tmp")?;
     file.write_all(content)?;
     file.close();
     detect(file.path())
