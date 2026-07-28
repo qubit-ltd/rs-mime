@@ -11,10 +11,14 @@ use std::fmt::Debug;
 use std::io::Write;
 use std::path::Path;
 
-use qubit_local_files::LocalTempFile;
+use qubit_local_files::{
+    LocalFileSystem,
+    LocalTempFileOptions,
+};
 
 use crate::{
     MimeDetectorCore,
+    MimeError,
     MimeResult,
     StreamBasedMimeDetector,
 };
@@ -112,7 +116,11 @@ pub(crate) fn with_temp_file<T>(
     content: &[u8],
     detect: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
-    let mut file = LocalTempFile::with_affixes("MimeDetectorTemp-", ".tmp")?;
+    let options = LocalTempFileOptions::new()
+        .with_prefix("MimeDetectorTemp-")
+        .with_suffix(".tmp");
+    let mut file = LocalFileSystem::create_temp_file(&options)
+        .map_err(|error| MimeError::Io(std::io::Error::other(error)))?;
     file.write_all(content)?;
     file.close();
     detect(file.path())

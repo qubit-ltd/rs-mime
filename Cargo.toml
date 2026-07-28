@@ -44,5 +44,8 @@ qubit-datatype = { version = "0.9", default-features = false, features = ["conve
 qubit-local-files = { path = "../rs-local-files", version = "0.7" }
 qubit-spi = { path = "../rs-spi", version = "0.11" }
 
+[dev-dependencies]
+qubit-fs-local = { path = "../rs-fs-local", version = "0.1" }
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }

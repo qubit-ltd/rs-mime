@@ -22,7 +22,7 @@ use std::sync::{
     Mutex,
 };
 
-use qubit_local_files::LocalTempDirectory as TempDir;
+use qubit_local_files::{LocalFileSystem, LocalTempDirectoryOptions};
 use qubit_mime::{
     FileBasedMediaStreamClassifier,
     MediaStreamClassifier,
@@ -277,6 +277,14 @@ fn test_file_based_classifier_uses_non_predictable_temporary_file_name() {
     let predictable_prefix =
         format!("FileBasedMediaStreamClassifier-{}-", std::process::id(),);
     assert!(
+        filename.starts_with("FileBasedMediaStreamClassifier-"),
+        "staged temp filename should preserve the configured prefix: {filename}",
+    );
+    assert!(
+        filename.ends_with(".tmp"),
+        "staged temp filename should preserve the configured suffix: {filename}",
+    );
+    assert!(
         !filename.starts_with(&predictable_prefix),
         "staged temp filename should not use a predictable pid/counter pattern: {filename}",
     );
@@ -330,8 +338,11 @@ fn test_file_based_classifier_reports_temporary_file_creation_error() {
         return;
     }
 
-    let temp_dir = TempDir::with_prefix("qubit-mime-classifier-error-")
-        .expect("temporary parent directory should be created");
+    let temp_dir = LocalFileSystem::create_temp_directory(
+        &LocalTempDirectoryOptions::new()
+            .with_prefix("qubit-mime-classifier-error-"),
+    )
+    .expect("temporary parent directory should be created");
     let invalid_temp_dir = temp_dir.path().join("not-a-directory");
     fs::write(&invalid_temp_dir, b"not a directory")
         .expect("invalid temporary directory placeholder should be created");
@@ -372,8 +383,11 @@ fn test_file_based_classifier_creates_missing_temporary_directory() {
         return;
     }
 
-    let temp_dir = TempDir::with_prefix("qubit-mime-classifier-missing-")
-        .expect("temporary parent directory should be created");
+    let temp_dir = LocalFileSystem::create_temp_directory(
+        &LocalTempDirectoryOptions::new()
+            .with_prefix("qubit-mime-classifier-missing-"),
+    )
+    .expect("temporary parent directory should be created");
     let missing_temp_dir = temp_dir.path().join("missing").join("nested");
     let output = std::process::Command::new(
         std::env::current_exe()

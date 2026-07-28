@@ -12,7 +12,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use qubit_fs::{
-    FileResource,
+    FileSystem,
+    Path as FsPath,
     ReadOptions,
 };
 use qubit_io::Input;
@@ -99,26 +100,35 @@ pub trait MimeDetector: Debug + Send + Sync {
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>>;
 
-    /// Detects a MIME type through a provider-neutral filesystem resource.
+    /// Detects a MIME type through a provider-neutral filesystem path.
+    ///
+    /// # Parameters
+    /// - `file_system`: Filesystem facade that owns `path`.
+    /// - `path`: Provider-neutral path to inspect.
+    /// - `max_bytes`: Maximum prefix length read for content inspection.
+    /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns a filesystem or detector error when the resource cannot be
-    /// opened or inspected.
+    /// Returns a filesystem or detector error when `path` cannot be opened or
+    /// inspected.
     ///
     /// `max_bytes` bounds the prefix read used for content inspection; larger
     /// resources remain eligible for detection.
-    fn detect_resource(
+    fn detect_path(
         &self,
-        resource: &FileResource,
+        file_system: &FileSystem,
+        path: &FsPath,
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        let mut reader = resource.open_reader(ReadOptions::default())?;
+        let mut reader = file_system.open_reader(path, ReadOptions::default())?;
         let mut content = vec![0; max_bytes];
         let read = reader.read_fully(&mut content)?;
         content.truncate(read);
-        let filename = resource
-            .path()
+        let filename = path
             .as_str()
             .rsplit('/')
             .next()
@@ -167,13 +177,14 @@ impl MimeDetector for Box<dyn MimeDetector> {
         self.as_ref().detect_file(file, policy)
     }
 
-    fn detect_resource(
+    fn detect_path(
         &self,
-        resource: &FileResource,
+        file_system: &FileSystem,
+        path: &FsPath,
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        self.as_ref().detect_resource(resource, max_bytes, policy)
+        self.as_ref().detect_path(file_system, path, max_bytes, policy)
     }
 }
 
@@ -217,12 +228,13 @@ impl MimeDetector for Arc<dyn MimeDetector> {
         self.as_ref().detect_file(file, policy)
     }
 
-    fn detect_resource(
+    fn detect_path(
         &self,
-        resource: &FileResource,
+        file_system: &FileSystem,
+        path: &FsPath,
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        self.as_ref().detect_resource(resource, max_bytes, policy)
+        self.as_ref().detect_path(file_system, path, max_bytes, policy)
     }
 }

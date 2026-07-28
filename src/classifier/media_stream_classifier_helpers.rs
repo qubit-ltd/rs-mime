@@ -16,7 +16,10 @@ use std::io::{
 use std::path::Path;
 
 use qubit_io::Streams;
-use qubit_local_files::LocalTempFile;
+use qubit_local_files::{
+    LocalFileSystem,
+    LocalTempFileOptions,
+};
 
 use crate::{
     MimeError,
@@ -67,8 +70,11 @@ pub(crate) fn with_temp_reader<T>(
     max_staging_size: u64,
     classify: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
-    let mut file =
-        LocalTempFile::with_affixes("FileBasedMediaStreamClassifier-", ".tmp")?;
+    let options = LocalTempFileOptions::new()
+        .with_prefix("FileBasedMediaStreamClassifier-")
+        .with_suffix(".tmp");
+    let mut file = LocalFileSystem::create_temp_file(&options)
+        .map_err(|error| MimeError::Io(std::io::Error::other(error)))?;
     copy_to_temp_file(reader, &mut file, max_staging_size)?;
     file.close();
     classify(file.path())
