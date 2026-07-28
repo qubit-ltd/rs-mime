@@ -17,8 +17,9 @@ use std::io::{
 };
 
 use qubit_local_files::{
-    LocalTempDirectory as TempDir,
-    LocalTempFile as TempFile,
+    LocalFileSystem,
+    LocalTempDirectoryOptions,
+    LocalTempFileOptions,
 };
 
 use qubit_mime::{
@@ -201,7 +202,8 @@ fn test_detect_reader_restores_position_after_read_error() {
 #[test]
 fn test_detect_file_uses_stream_based_defaults() {
     let detector = PrefixDetector::new();
-    let mut file = TempFile::new().expect("temporary file should be created");
+    let mut file = LocalFileSystem::create_temp_file(&LocalTempFileOptions::new())
+        .expect("temporary file should be created");
     std::io::Write::write_all(&mut file, b"hello world")
         .expect("temporary file should be writable");
 
@@ -232,7 +234,10 @@ fn test_stream_based_backend_max_bytes_and_file_open_error_are_covered() {
 #[test]
 fn test_guess_from_file_stream_rejects_directory_before_reading() {
     let detector = PrefixDetector::new();
-    let dir = TempDir::new().expect("temporary directory should be created");
+    let dir = LocalFileSystem::create_temp_directory(
+        &LocalTempDirectoryOptions::new(),
+    )
+    .expect("temporary directory should be created");
 
     let error =
         StreamBasedMimeDetector::guess_from_file_stream(&detector, dir.path())

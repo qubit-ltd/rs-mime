@@ -12,7 +12,7 @@ use std::{
 };
 
 #[cfg(unix)]
-use qubit_local_files::LocalTempDirectory as TempDir;
+use qubit_local_files::{LocalFileSystem, LocalTempDirectoryOptions};
 use qubit_mime::{
     MediaStreamClassifierRegistry,
     MediaStreamClassifierSpec,
@@ -76,8 +76,10 @@ fn test_ffprobe_provider_reports_unavailable_when_command_is_missing() {
 fn test_ffprobe_provider_creates_classifier_when_command_is_available() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp_dir =
-        TempDir::new().expect("temporary command directory should be created");
+    let temp_dir = LocalFileSystem::create_temp_directory(
+        &LocalTempDirectoryOptions::new(),
+    )
+    .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join("ffprobe");
     std::fs::write(&script_path, "#!/bin/sh\nexit 0\n")
         .expect("fake FFprobe should be written");
