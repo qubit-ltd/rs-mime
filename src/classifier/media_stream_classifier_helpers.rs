@@ -8,23 +8,13 @@
 //! Shared media stream classifier helpers.
 
 use std::fs;
-use std::io::{
-    ErrorKind,
-    Read,
-    Write,
-};
+use std::io::{ErrorKind, Read, Write};
 use std::path::Path;
 
 use qubit_io::Streams;
-use qubit_local_files::{
-    LocalFileSystem,
-    LocalTempFileOptions,
-};
+use qubit_local_files::{LocalFileSystem, LocalTempFileOptions};
 
-use crate::{
-    MimeError,
-    MimeResult,
-};
+use crate::{MimeError, MimeResult};
 
 /// Validates that a path is a readable local file.
 ///
@@ -74,7 +64,7 @@ pub(crate) fn with_temp_reader<T>(
         .with_prefix("FileBasedMediaStreamClassifier-")
         .with_suffix(".tmp");
     let mut file = LocalFileSystem::create_temp_file(&options)
-        .map_err(|error| MimeError::Io(std::io::Error::other(error)))?;
+        .map_err(|error| MimeError::Io(error.into_io_error()))?;
     copy_to_temp_file(reader, &mut file, max_staging_size)?;
     file.close();
     classify(file.path())
