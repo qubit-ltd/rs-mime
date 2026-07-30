@@ -191,9 +191,7 @@ dependencies = [
 
 [[package]]
 name = "qubit-clock"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38fc24f18d694b74188032e77ac925a87efb0fe365fea68d85eb7d54c18774d8"
+version = "0.12.0"
 dependencies = [
  "qubit-collections",
  "thiserror",
@@ -315,6 +313,9 @@ dependencies = [
 [[package]]
 name = "qubit-redact"
 version = "0.3.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "qubit-spi"
@@ -330,6 +331,7 @@ name = "qubit-value"
 version = "0.10.0"
 dependencies = [
  "qubit-datatype",
+ "qubit-redact",
  "serde",
  "serde_json",
  "thiserror",
