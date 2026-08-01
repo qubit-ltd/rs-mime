@@ -24,7 +24,8 @@ use std::sync::{
 use qubit_config::{
     Config,
     ConfigReader,
-    options::ReadOptions,
+    options::{InterpolationSources, ReadPolicy},
+    source::EnvConfigOptions,
 };
 use qubit_datatype::CollectionConversionOptions;
 use qubit_spi::ProviderSelection;
@@ -110,20 +111,25 @@ pub struct MimeConfig {
 static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
     LazyLock::new(|| RwLock::new(MimeConfig::load()));
 
-/// Value read options.
-static VALUE_READ_OPTIONS: LazyLock<ReadOptions> =
-    LazyLock::new(ReadOptions::env_friendly);
+/// Value read policy.
+static VALUE_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
+    ReadPolicy::env_friendly().with_interpolation_sources(InterpolationSources::ConfigThenEnv)
+});
 
-/// List value read options.
-static LIST_READ_OPTIONS: LazyLock<ReadOptions> = LazyLock::new(|| {
-    ReadOptions::env_friendly().with_collection_options(
+/// List value read policy.
+static LIST_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
+    ReadPolicy::env_friendly()
+        .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
+        .with_collection_options(
         CollectionConversionOptions::env_friendly().with_delimiters([',', ';']),
     )
 });
 
-/// Mapping read options.
-static MAPPING_READ_OPTIONS: LazyLock<ReadOptions> = LazyLock::new(|| {
-    ReadOptions::env_friendly().with_collection_options(
+/// Mapping read policy.
+static MAPPING_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
+    ReadPolicy::env_friendly()
+        .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
+        .with_collection_options(
         CollectionConversionOptions::env_friendly().with_delimiters([';']),
     )
 });
@@ -206,11 +212,9 @@ impl MimeConfig {
     where
         R: ConfigReader + ?Sized,
     {
-        let value_config =
-            config.with_read_options_view(&VALUE_READ_OPTIONS)?;
-        let list_config = config.with_read_options_view(&LIST_READ_OPTIONS)?;
-        let mapping_config =
-            config.with_read_options_view(&MAPPING_READ_OPTIONS)?;
+        let value_config = config.read_with(&VALUE_READ_POLICY);
+        let list_config = config.read_with(&LIST_READ_POLICY);
+        let mapping_config = config.read_with(&MAPPING_READ_POLICY);
         let mime_detector_default = value_config.get_any_interpolated_or(
             [CONFIG_MIME_DETECTOR_DEFAULT, ENV_MIME_DETECTOR_DEFAULT],
             DEFAULT_MIME_DETECTOR.to_owned(),
@@ -319,7 +323,7 @@ impl MimeConfig {
     /// or classifier-name error when a configured provider selector is
     /// invalid.
     pub fn from_env() -> MimeResult<Self> {
-        let config = Config::from_env_options("QUBIT_", false, false, false)?;
+        let config = Config::from_env_options(EnvConfigOptions::new().prefix("QUBIT_"))?;
         Self::from_config(&config)
     }
 
