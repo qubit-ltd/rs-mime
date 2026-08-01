@@ -41,7 +41,7 @@ qubit-codec-misc = { path = "../rs-codec-misc", version = "0.3" }
 qubit-command = { version = "0.6", path = "../rs-command" }
 qubit-config = { path = "../rs-config", version = "0.14" }
 qubit-datatype = { version = "0.10", default-features = false, features = ["converter"] }
-qubit-local-files = { path = "../rs-local-files", version = "0.7" }
+qubit-local-files = { path = "../rs-local-files", version = "0.8" }
 qubit-spi = { path = "../rs-spi", version = "0.11" }
 
 [dev-dependencies]
