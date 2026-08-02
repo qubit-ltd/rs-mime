@@ -196,7 +196,7 @@ fn test_detect_reader_reports_temporary_file_creation_error() {
         let MimeError::Io(error) = error else {
             panic!("temporary file creation should report an I/O error");
         };
-        assert_eq!(std::io::ErrorKind::AlreadyExists, error.kind());
+        assert_eq!(std::io::ErrorKind::NotADirectory, error.kind());
         return;
     }
 
