@@ -11,9 +11,17 @@ use std::fmt::Debug;
 use std::io::Write;
 use std::path::Path;
 
-use qubit_local_files::{LocalFileSystem, LocalTempFileOptions};
+use qubit_local_files::{
+    LocalFileSystem,
+    LocalTempFileOptions,
+};
 
-use crate::{MimeDetectorCore, MimeError, MimeResult, StreamBasedMimeDetector};
+use crate::{
+    MimeDetectorCore,
+    MimeError,
+    MimeResult,
+    StreamBasedMimeDetector,
+};
 
 /// Core implementation contract for detectors that only inspect local files.
 pub trait FileBasedMimeDetector: Debug + Send + Sync {
@@ -71,14 +79,20 @@ where
     }
 
     /// Stages content to a temporary local file before inspection.
-    fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+    fn guess_from_content_bytes(
+        &self,
+        content: &[u8],
+    ) -> MimeResult<Vec<String>> {
         with_temp_file(content, |path| {
             FileBasedMimeDetector::guess_from_local_file(self, path)
         })
     }
 
     /// Delegates local-file inspection to the file-based hook.
-    fn guess_from_file_stream(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
+    fn guess_from_file_stream(
+        &self,
+        file: &Path,
+    ) -> MimeResult<(Vec<String>, Vec<u8>)> {
         Ok((
             FileBasedMimeDetector::guess_from_local_file(self, file)?,
             Vec::new(),
@@ -105,7 +119,8 @@ pub(crate) fn with_temp_file<T>(
     let options = LocalTempFileOptions::new()
         .with_prefix("MimeDetectorTemp-")
         .with_suffix(".tmp");
-    let mut file = LocalFileSystem::create_temp_file(&options)
+    let mut file = LocalFileSystem::host()
+        .create_temp_file(&options)
         .map_err(|error| MimeError::Io(error.into_io_error()))?;
     file.write_all(content)?;
     file.close();
