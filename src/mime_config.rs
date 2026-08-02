@@ -24,7 +24,10 @@ use std::sync::{
 use qubit_config::{
     Config,
     ConfigReader,
-    options::{InterpolationSources, ReadPolicy},
+    options::{
+        InterpolationSources,
+        ReadPolicy,
+    },
     source::EnvConfigOptions,
 };
 use qubit_datatype::CollectionConversionOptions;
@@ -113,7 +116,8 @@ static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
 
 /// Value read policy.
 static VALUE_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
-    ReadPolicy::env_friendly().with_interpolation_sources(InterpolationSources::ConfigThenEnv)
+    ReadPolicy::env_friendly()
+        .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
 });
 
 /// List value read policy.
@@ -121,8 +125,9 @@ static LIST_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
     ReadPolicy::env_friendly()
         .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
         .with_collection_options(
-        CollectionConversionOptions::env_friendly().with_delimiters([',', ';']),
-    )
+            CollectionConversionOptions::env_friendly()
+                .with_delimiters([',', ';']),
+        )
 });
 
 /// Mapping read policy.
@@ -130,8 +135,8 @@ static MAPPING_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
     ReadPolicy::env_friendly()
         .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
         .with_collection_options(
-        CollectionConversionOptions::env_friendly().with_delimiters([';']),
-    )
+            CollectionConversionOptions::env_friendly().with_delimiters([';']),
+        )
 });
 
 /// Built-in precise detection patterns.
@@ -323,7 +328,8 @@ impl MimeConfig {
     /// or classifier-name error when a configured provider selector is
     /// invalid.
     pub fn from_env() -> MimeResult<Self> {
-        let config = Config::from_env_options(EnvConfigOptions::new().prefix("QUBIT_"))?;
+        let config =
+            Config::from_env_options(EnvConfigOptions::new().prefix("QUBIT_"))?;
         Self::from_config(&config)
     }
 

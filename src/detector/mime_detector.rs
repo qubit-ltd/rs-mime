@@ -124,7 +124,8 @@ pub trait MimeDetector: Debug + Send + Sync {
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        let mut reader = file_system.open_reader(path, ReadOptions::default())?;
+        let mut reader =
+            file_system.open_reader(path, ReadOptions::default())?;
         let mut content = vec![0; max_bytes];
         let read = reader.read_fully(&mut content)?;
         content.truncate(read);
@@ -184,7 +185,8 @@ impl MimeDetector for Box<dyn MimeDetector> {
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        self.as_ref().detect_path(file_system, path, max_bytes, policy)
+        self.as_ref()
+            .detect_path(file_system, path, max_bytes, policy)
     }
 }
 
@@ -235,6 +237,7 @@ impl MimeDetector for Arc<dyn MimeDetector> {
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        self.as_ref().detect_path(file_system, path, max_bytes, policy)
+        self.as_ref()
+            .detect_path(file_system, path, max_bytes, policy)
     }
 }
