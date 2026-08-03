@@ -170,6 +170,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "percent-encoding"
+version = "2.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -202,6 +208,8 @@ dependencies = [
 [[package]]
 name = "qubit-codec"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4bc36adafd80ce93a2ef35e8f6f5d84fed39ed4ff0ca068d0db8978abb0a2bf"
 dependencies = [
  "thiserror",
 ]
@@ -211,6 +219,7 @@ name = "qubit-codec-misc"
 version = "0.3.0"
 dependencies = [
  "base64",
+ "percent-encoding",
  "qubit-codec",
  "thiserror",
 ]
@@ -318,6 +327,7 @@ dependencies = [
 name = "qubit-redact"
 version = "0.6.0"
 dependencies = [
+ "fluent-uri",
  "serde_json",
 ]
 
