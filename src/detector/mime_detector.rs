@@ -16,7 +16,6 @@ use qubit_fs::{
     Path as FsPath,
     ReadOptions,
 };
-use qubit_io::Input;
 use qubit_io::std_io::ReadSeek;
 
 use crate::{
@@ -124,16 +123,9 @@ pub trait MimeDetector: Debug + Send + Sync {
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        let mut reader =
-            file_system.open_reader(path, ReadOptions::default())?;
-        let mut content = vec![0; max_bytes];
-        let read = reader.read_fully(&mut content)?;
-        content.truncate(read);
-        let filename = path
-            .as_str()
-            .rsplit('/')
-            .next()
-            .filter(|name| !name.is_empty());
+        let content =
+            file_system.read_prefix(path, ReadOptions::default(), max_bytes)?;
+        let filename = path.file_name();
         Ok(self.detect(&content, filename, policy))
     }
 }
