@@ -454,8 +454,7 @@ fn main() -> Result<(), MimeError> {
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
 
-    let runner = CommandRunner::new()
-        .timeout(Duration::from_secs(2))
+    let runner = CommandRunner::new(Duration::from_secs(2))
         .disable_logging(true);
     let detector = FileCommandMimeDetector::new().with_command_runner(runner);
     assert!(detector.command_runner().configured_timeout().is_some());
