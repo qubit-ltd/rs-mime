@@ -7,6 +7,8 @@
 // =============================================================================
 //! Configuration constants used by MIME detectors.
 
+use std::time::Duration;
+
 /// Environment variable selecting the default MIME detector implementation.
 pub const ENV_MIME_DETECTOR_DEFAULT: &str = "QUBIT_MIME_DETECTOR_DEFAULT";
 
@@ -27,6 +29,9 @@ pub const ENV_MEDIA_STREAM_MAX_STAGING_SIZE: &str =
 /// command-based MIME detection.
 pub const ENV_COMMAND_OUTPUT_MAX_BYTES: &str =
     "QUBIT_MIME_COMMAND_OUTPUT_MAX_BYTES";
+
+/// Environment variable controlling command timeout for native MIME detectors.
+pub const ENV_COMMAND_TIMEOUT: &str = "QUBIT_MIME_COMMAND_TIMEOUT";
 
 /// Environment variable controlling precise MIME detection.
 pub const ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION: &str =
@@ -64,6 +69,9 @@ pub const CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE: &str =
 pub const CONFIG_COMMAND_OUTPUT_MAX_BYTES: &str =
     "mime.command.output.max.bytes";
 
+/// Configuration key controlling command timeout for native MIME detectors.
+pub const CONFIG_COMMAND_TIMEOUT: &str = "mime.command.timeout";
+
 /// Configuration key controlling precise MIME detection.
 pub const CONFIG_MIME_ENABLE_PRECISE_DETECTION: &str =
     "mime.enable.precise.detection";
@@ -95,6 +103,9 @@ pub const DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE: u64 = 64 * 1024 * 1024;
 /// Default retained stdout and stderr byte limit for each native command-based
 /// MIME detection stream.
 pub const DEFAULT_COMMAND_OUTPUT_MAX_BYTES: usize = 64 * 1024;
+
+/// Default command timeout for native MIME detector commands.
+pub const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default value for precise media stream based detection.
 pub const DEFAULT_ENABLE_PRECISE_DETECTION: bool = true;

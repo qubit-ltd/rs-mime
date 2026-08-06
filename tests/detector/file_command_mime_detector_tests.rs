@@ -12,7 +12,6 @@ use std::time::Duration;
 use qubit_command::CommandError;
 use qubit_command::{
     CommandRunner,
-    DEFAULT_COMMAND_TIMEOUT,
 };
 use qubit_config::Config;
 #[cfg(unix)]
@@ -26,9 +25,11 @@ use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeError;
 use qubit_mime::{
     CONFIG_COMMAND_OUTPUT_MAX_BYTES,
+    CONFIG_COMMAND_TIMEOUT,
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+    DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
     FileBasedMimeDetector,
     FileCommandMimeDetector,
@@ -106,8 +107,7 @@ fn test_from_mime_config_limits_file_command_output() {
 #[test]
 fn test_with_repository_and_runner_uses_runner_configuration() {
     let repository = MimeRepository::empty();
-    let runner = CommandRunner::new()
-        .timeout(Duration::from_secs(2))
+    let runner = CommandRunner::new(Duration::from_secs(2))
         .disable_logging(true);
     let mut detector = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
@@ -128,7 +128,9 @@ fn test_with_repository_and_runner_uses_runner_configuration() {
         detector.command_runner().configured_working_directory()
     );
 
-    detector.set_command_runner(CommandRunner::new().disable_logging(false));
+    detector.set_command_runner(
+        CommandRunner::new(Duration::from_secs(10)).disable_logging(false),
+    );
     assert!(!detector.command_runner().is_logging_disabled());
 }
 
@@ -152,9 +154,7 @@ fn test_detect_file_by_content_propagates_runner_timeout() {
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
-        CommandRunner::new()
-            .timeout(Duration::from_millis(20))
-            .disable_logging(true),
+        CommandRunner::new(Duration::from_millis(20)).disable_logging(true),
     );
 
     let error = detector
@@ -187,7 +187,7 @@ fn test_detect_file_by_content_reads_file_command_stdout() {
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
-        CommandRunner::new().disable_logging(true),
+        CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
     );
 
     assert_eq!(0, detector.repository().all().len());
@@ -248,7 +248,7 @@ fn test_detect_file_by_content_ends_file_option_parsing_before_path() {
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
-        CommandRunner::new().disable_logging(true),
+        CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
     );
 
     assert_eq!(
@@ -279,7 +279,7 @@ fn test_detect_file_by_content_returns_none_for_empty_stdout() {
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
-        CommandRunner::new().disable_logging(true),
+        CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
     );
 
     assert_eq!(
@@ -318,7 +318,7 @@ fn test_file_command_detector_accessors_and_repository_only_policy() {
     let mut detector =
         FileCommandMimeDetector::with_repository_runner_and_config(
             &repository,
-            CommandRunner::new(),
+            CommandRunner::new(Duration::from_secs(10)),
             create_precise_config(),
         );
 
@@ -328,10 +328,29 @@ fn test_file_command_detector_accessors_and_repository_only_policy() {
     assert_eq!(0, detector.max_test_bytes());
 
     let replaced = FileCommandMimeDetector::with_repository(&repository)
-        .with_command_runner(CommandRunner::new().disable_logging(true));
+        .with_command_runner(
+            CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
+        );
     assert!(replaced.command_runner().is_logging_disabled());
 
     assert_eq!(None, detector.detect_by_filename("unknown.bin"));
+}
+
+#[test]
+fn test_default_file_command_runner_uses_config_timeout() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_COMMAND_TIMEOUT, "2500ms")
+        .expect("command timeout should support unit-based value");
+    let detector = FileCommandMimeDetector::from_mime_config(
+        MimeConfig::from_config(&config)
+            .expect("file command config should parse"),
+    );
+
+    assert_eq!(
+        Some(Duration::from_millis(2500)),
+        detector.command_runner().configured_timeout(),
+    );
 }
 
 fn create_precise_config() -> MimeConfig {

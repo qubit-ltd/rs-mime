@@ -16,6 +16,7 @@ use std::collections::{
     HashMap,
     HashSet,
 };
+use std::time::Duration;
 use std::sync::{
     LazyLock,
     RwLock,
@@ -30,7 +31,10 @@ use qubit_config::{
     },
     source::EnvConfigOptions,
 };
-use qubit_datatype::CollectionConversionOptions;
+use qubit_datatype::{
+    CollectionConversionOptions,
+    DurationConversionOptions,
+};
 use qubit_spi::ProviderSelection;
 use qubit_spi::error::ProviderSelectionBuildError;
 
@@ -42,6 +46,7 @@ use crate::{
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_DETECTOR_FALLBACKS,
+    CONFIG_COMMAND_TIMEOUT,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
     CONFIG_MIME_MAX_BUFFER_SIZE,
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
@@ -49,10 +54,12 @@ use crate::{
     DEFAULT_ENABLE_PRECISE_DETECTION,
     DEFAULT_MEDIA_STREAM_CLASSIFIER,
     DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
+    DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_MIME_DETECTOR,
     DEFAULT_MIME_DETECTOR_FALLBACKS,
     DEFAULT_MIME_MAX_BUFFER_SIZE,
     ENV_COMMAND_OUTPUT_MAX_BYTES,
+    ENV_COMMAND_TIMEOUT,
     ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
     ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
@@ -74,6 +81,7 @@ use crate::{
 ///
 /// | Field | Logical key | Environment key | Default | Format |
 /// | --- | --- | --- | --- | --- |
+/// | Command timeout | `mime.command.timeout` | `QUBIT_MIME_COMMAND_TIMEOUT` | `30s` | Duration with unit |
 /// | Default MIME detector | `mime.detector.default` | `QUBIT_MIME_DETECTOR_DEFAULT` | `repository` | Provider id, alias, or `auto` |
 /// | MIME detector fallbacks | `mime.detector.fallbacks` | `QUBIT_MIME_DETECTOR_FALLBACKS` | empty | List split on `,` or `;` |
 /// | Media stream classifier | `mime.media.stream.classifier.default` | `QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT` | `ffprobe` | Classifier selector |
@@ -100,6 +108,8 @@ pub struct MimeConfig {
     /// Maximum retained stdout and stderr bytes for each native command-based
     /// MIME detection stream.
     command_output_max_bytes: usize,
+    /// Timeout for native command executions.
+    command_timeout: Duration,
     /// Whether precise media-stream detection is enabled.
     enable_precise_detection: bool,
     /// Extensions requiring precise detection.
@@ -118,6 +128,12 @@ static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
 static VALUE_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
     ReadPolicy::env_friendly()
         .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
+});
+
+static DURATION_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
+    ReadPolicy::env_friendly()
+        .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
+        .with_duration_options(DurationConversionOptions::default())
 });
 
 /// List value read policy.
@@ -218,6 +234,7 @@ impl MimeConfig {
         R: ConfigReader + ?Sized,
     {
         let value_config = config.read_with(&VALUE_READ_POLICY);
+        let duration_config = config.read_with(&DURATION_READ_POLICY);
         let list_config = config.read_with(&LIST_READ_POLICY);
         let mapping_config = config.read_with(&MAPPING_READ_POLICY);
         let mime_detector_default = value_config.get_any_interpolated_or(
@@ -261,6 +278,11 @@ impl MimeConfig {
             })?;
         #[cfg(target_pointer_width = "64")]
         let command_output_max_bytes = command_output_max_bytes as usize;
+        let command_timeout = duration_config
+            .get_any_interpolated_or(
+                [CONFIG_COMMAND_TIMEOUT, ENV_COMMAND_TIMEOUT],
+                DEFAULT_COMMAND_TIMEOUT,
+            )?;
         let enable_precise_detection = value_config.get_any_interpolated_or(
             [
                 CONFIG_MIME_ENABLE_PRECISE_DETECTION,
@@ -306,6 +328,7 @@ impl MimeConfig {
             media_stream_classifier_selection,
             media_stream_max_staging_size,
             command_output_max_bytes,
+            command_timeout,
             enable_precise_detection,
             precise_detection_patterns: normalize_patterns(
                 precise_detection_patterns,
@@ -412,6 +435,14 @@ impl MimeConfig {
         self.command_output_max_bytes
     }
 
+    /// Gets the command timeout for native MIME detection.
+    ///
+    /// # Returns
+    /// Timeout used by command-backed MIME detectors and classifiers.
+    pub fn command_timeout(&self) -> Duration {
+        self.command_timeout
+    }
+
     /// Tells whether precise media-stream detection is enabled.
     ///
     /// # Returns
@@ -464,6 +495,7 @@ impl MimeConfig {
             media_stream_max_staging_size:
                 DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
             command_output_max_bytes: DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
+            command_timeout: DEFAULT_COMMAND_TIMEOUT,
             enable_precise_detection: DEFAULT_ENABLE_PRECISE_DETECTION,
             precise_detection_patterns: normalize_patterns(
                 DEFAULT_PRECISE_DETECTION_PATTERNS
