@@ -1,13 +1,16 @@
 use qubit_mime::{
     CONFIG_COMMAND_OUTPUT_MAX_BYTES,
+    CONFIG_COMMAND_TIMEOUT,
     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_MAX_BUFFER_SIZE,
     DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
+    DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
     DEFAULT_MIME_DETECTOR,
     DEFAULT_MIME_MAX_BUFFER_SIZE,
     DEFAULT_PRECISE_DETECTION_PATTERNS,
+    ENV_COMMAND_TIMEOUT,
     ENV_COMMAND_OUTPUT_MAX_BYTES,
     ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
     ENV_MIME_DETECTOR_DEFAULT,
@@ -24,6 +27,8 @@ fn test_mime_configuration_constants_expose_expected_keys_and_defaults() {
         "mime.command.output.max.bytes",
         CONFIG_COMMAND_OUTPUT_MAX_BYTES
     );
+    assert_eq!("mime.command.timeout", CONFIG_COMMAND_TIMEOUT);
+    assert_eq!("QUBIT_MIME_COMMAND_TIMEOUT", ENV_COMMAND_TIMEOUT);
     assert_eq!("QUBIT_MIME_DETECTOR_DEFAULT", ENV_MIME_DETECTOR_DEFAULT);
     assert_eq!("mime.detector.default", CONFIG_MIME_DETECTOR_DEFAULT);
     assert_eq!("QUBIT_MIME_MAX_BUFFER_SIZE", ENV_MIME_MAX_BUFFER_SIZE);
@@ -40,6 +45,7 @@ fn test_mime_configuration_constants_expose_expected_keys_and_defaults() {
     assert_eq!(16 * 1024 * 1024, DEFAULT_MIME_MAX_BUFFER_SIZE);
     assert_eq!(64 * 1024 * 1024, DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE);
     assert_eq!(64 * 1024, DEFAULT_COMMAND_OUTPUT_MAX_BYTES);
+    assert_eq!(30, DEFAULT_COMMAND_TIMEOUT.as_secs());
     assert!(
         DEFAULT_PRECISE_DETECTION_PATTERNS
             .split(',')

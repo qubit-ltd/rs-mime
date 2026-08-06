@@ -11,10 +11,12 @@ use std::sync::{
     Mutex,
     MutexGuard,
 };
+use std::time::Duration;
 
 use qubit_config::Config;
 use qubit_mime::{
     CONFIG_COMMAND_OUTPUT_MAX_BYTES,
+    CONFIG_COMMAND_TIMEOUT,
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
@@ -25,12 +27,14 @@ use qubit_mime::{
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
     DEFAULT_AMBIGUOUS_MIME_MAPPING,
     DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
+    DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_ENABLE_PRECISE_DETECTION,
     DEFAULT_MEDIA_STREAM_CLASSIFIER,
     DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
     DEFAULT_MIME_DETECTOR,
     DEFAULT_MIME_MAX_BUFFER_SIZE,
     DEFAULT_PRECISE_DETECTION_PATTERNS,
+    ENV_COMMAND_TIMEOUT,
     ENV_COMMAND_OUTPUT_MAX_BYTES,
     ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
@@ -229,6 +233,55 @@ fn test_from_config_reads_command_output_limit() {
 }
 
 #[test]
+fn test_from_config_reads_command_timeout_with_duration_unit() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_COMMAND_TIMEOUT, "500ms")
+        .expect("command timeout should be configurable");
+
+    let mime_config = MimeConfig::from_config(&config)
+        .expect("command timeout should parse");
+
+    assert_eq!(Duration::from_millis(500), mime_config.command_timeout());
+}
+
+#[test]
+fn test_from_config_rejects_invalid_command_timeout_values() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_COMMAND_TIMEOUT, "30")
+        .expect("unitless numeric timeout should be rejected by parser");
+    assert!(matches!(
+        MimeConfig::from_config(&config),
+        Err(MimeError::Config(_))
+    ));
+
+    config
+        .set(CONFIG_COMMAND_TIMEOUT, "-1s")
+        .expect("negative timeout should be rejected by parser");
+    assert!(matches!(
+        MimeConfig::from_config(&config),
+        Err(MimeError::Config(_))
+    ));
+
+    config
+        .set(CONFIG_COMMAND_TIMEOUT, "1fortnight")
+        .expect("invalid unit should be rejected by parser");
+    assert!(matches!(
+        MimeConfig::from_config(&config),
+        Err(MimeError::Config(_))
+    ));
+
+    config
+        .set(CONFIG_COMMAND_TIMEOUT, "184467440737095516160ms")
+        .expect("oversized timeout should be rejected by parser");
+    assert!(matches!(
+        MimeConfig::from_config(&config),
+        Err(MimeError::Config(_))
+    ));
+}
+
+#[test]
 fn test_from_config_reads_env_aliases_with_env_friendly_options() {
     let mut config = Config::new();
     config
@@ -264,6 +317,9 @@ fn test_from_config_reads_env_aliases_with_env_friendly_options() {
     config
         .set(ENV_COMMAND_OUTPUT_MAX_BYTES, "4096")
         .expect("command output limit env value should be configurable");
+    config
+        .set(ENV_COMMAND_TIMEOUT, "2min")
+        .expect("command timeout env value should be configurable");
 
     let mime_config =
         MimeConfig::from_config(&config).expect("env aliases should parse");
@@ -286,6 +342,7 @@ fn test_from_config_reads_env_aliases_with_env_friendly_options() {
     assert_eq!(8192, mime_config.max_buffer_size());
     assert_eq!(16_777_216, mime_config.media_stream_max_staging_size());
     assert_eq!(4096, mime_config.command_output_max_bytes());
+    assert_eq!(Duration::from_secs(120), mime_config.command_timeout());
 }
 
 #[test]
@@ -402,6 +459,7 @@ fn test_load_falls_back_to_builtin_default_when_env_is_invalid() {
         DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
         loaded.command_output_max_bytes()
     );
+    assert_eq!(DEFAULT_COMMAND_TIMEOUT, loaded.command_timeout());
 }
 
 #[test]
@@ -412,6 +470,7 @@ fn test_load_uses_environment_when_valid() {
         ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
         ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
         ENV_COMMAND_OUTPUT_MAX_BYTES,
+        ENV_COMMAND_TIMEOUT,
         ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
     ]);
 
@@ -420,6 +479,7 @@ fn test_load_uses_environment_when_valid() {
         std::env::set_var(ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT, "ffprobe");
         std::env::set_var(ENV_MEDIA_STREAM_MAX_STAGING_SIZE, "33554432");
         std::env::set_var(ENV_COMMAND_OUTPUT_MAX_BYTES, "4096");
+        std::env::set_var(ENV_COMMAND_TIMEOUT, "45s");
         std::env::set_var(ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION, "false");
     }
     let loaded = MimeConfig::load();
@@ -435,6 +495,7 @@ fn test_load_uses_environment_when_valid() {
     assert_eq!(33_554_432, loaded.media_stream_max_staging_size());
     assert_eq!(4096, loaded.command_output_max_bytes());
     assert!(!loaded.enable_precise_detection());
+    assert_eq!(Duration::from_secs(45), loaded.command_timeout());
 }
 
 #[test]
@@ -523,6 +584,7 @@ fn test_reload_default_from_env_uses_config_from_env() {
         std::env::remove_var(ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION);
         std::env::remove_var(ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS);
         std::env::remove_var(ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING);
+        std::env::remove_var(ENV_COMMAND_TIMEOUT);
     }
 
     result.expect("default config should reload from environment");

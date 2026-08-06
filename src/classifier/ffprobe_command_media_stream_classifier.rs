@@ -209,10 +209,12 @@ impl FfprobeCommandMediaStreamClassifier {
 
     /// Creates the default command runner for FFprobe classification.
     ///
+    /// Timeout comes from `config.command_timeout()`.
+    ///
     /// # Returns
     /// Runner used by the default classifier.
     fn default_command_runner(config: &MimeConfig) -> CommandRunner {
-        CommandRunner::new()
+        CommandRunner::new(config.command_timeout())
             .disable_logging(true)
             .bounded_output(config.command_output_max_bytes())
     }

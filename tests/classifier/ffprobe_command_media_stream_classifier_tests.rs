@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use qubit_command::{
     CommandRunner,
-    DEFAULT_COMMAND_TIMEOUT,
 };
 use qubit_config::Config;
 #[cfg(unix)]
@@ -22,7 +21,9 @@ use qubit_local_files::{
 use qubit_mime::MediaStreamClassifier;
 use qubit_mime::{
     CONFIG_COMMAND_OUTPUT_MAX_BYTES,
+    CONFIG_COMMAND_TIMEOUT,
     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
+    DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
     FfprobeCommandMediaStreamClassifier,
     MediaStreamType,
@@ -56,13 +57,13 @@ fn test_classify_stream_listing_maps_ffprobe_output() {
 
 #[test]
 fn test_with_command_runner_uses_runner_configuration() {
-    let runner = CommandRunner::new()
-        .timeout(Duration::from_secs(2))
+    let runner = CommandRunner::new(Duration::from_secs(2))
         .disable_logging(true);
     let mut classifier =
         FfprobeCommandMediaStreamClassifier::new().with_command_runner(runner);
 
     assert_eq!(
+        Duration::from_secs(2),
         Some(Duration::from_secs(2)),
         classifier.command_runner().configured_timeout()
     );
@@ -118,6 +119,54 @@ fn test_from_mime_config_sets_max_staging_size() {
 fn test_from_mime_config_limits_ffprobe_output() {
     let mut config = Config::new();
     config
+        .set(CONFIG_COMMAND_TIMEOUT, "31s")
+        .expect("command timeout should be configurable");
+    config
+        .set(CONFIG_COMMAND_OUTPUT_MAX_BYTES, 1024_u64)
+        .expect("command output limit should be configurable");
+    let classifier = FfprobeCommandMediaStreamClassifier::from_mime_config(
+        MimeConfig::from_config(&config).expect("MIME config should parse"),
+    );
+
+    assert_eq!(
+        Some(Duration::from_secs(31)),
+        classifier.command_runner().configured_timeout()
+    );
+    assert_eq!(
+        Some(1024),
+        classifier.command_runner().configured_max_stdout_bytes()
+    );
+    assert_eq!(
+        Some(1024),
+        classifier.command_runner().configured_max_stderr_bytes()
+    );
+    assert!(
+        classifier
+            .command_runner()
+            .is_output_truncation_failure_enabled()
+    );
+}
+
+#[test]
+fn test_from_mime_config_uses_configured_timeout() {
+    let mut config = Config::new();
+    config
+        .set(CONFIG_COMMAND_TIMEOUT, "2500ms")
+        .expect("command timeout should be configurable");
+    let classifier = FfprobeCommandMediaStreamClassifier::from_mime_config(
+        MimeConfig::from_config(&config).expect("MIME config should parse"),
+    );
+
+    assert_eq!(
+        Some(Duration::from_millis(2500)),
+        classifier.command_runner().configured_timeout()
+    );
+}
+
+#[test]
+fn test_from_mime_config_limits_ffprobe_output_and_stage_size() {
+    let mut config = Config::new();
+    config
         .set(CONFIG_COMMAND_OUTPUT_MAX_BYTES, 1024_u64)
         .expect("command output limit should be configurable");
     let classifier = FfprobeCommandMediaStreamClassifier::from_mime_config(
@@ -171,7 +220,9 @@ fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
 
     let classifier = FfprobeCommandMediaStreamClassifier::new()
-        .with_command_runner(CommandRunner::new().disable_logging(true));
+        .with_command_runner(
+            CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true),
+        );
     let mut working_classifier = classifier.clone();
     working_classifier.set_working_directory(Some(".".to_owned()));
 
@@ -207,7 +258,9 @@ fn test_classify_file_propagates_ffprobe_start_error() {
         .expect("temporary command directory should be created");
     let _path_guard = PathEnvGuard::set(temp_dir.path());
     let classifier = FfprobeCommandMediaStreamClassifier::new()
-        .with_command_runner(CommandRunner::new().disable_logging(true));
+        .with_command_runner(
+            CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true),
+        );
 
     let private_path =
         temp_dir.path().join("private-customer-source-video.mp4");
@@ -249,7 +302,9 @@ fn test_classify_file_maps_unexpected_ffprobe_exit_to_none() {
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
 
     let classifier = FfprobeCommandMediaStreamClassifier::new()
-        .with_command_runner(CommandRunner::new().disable_logging(true));
+        .with_command_runner(
+            CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true),
+        );
 
     assert_eq!(
         MediaStreamType::None,

@@ -304,10 +304,13 @@ impl<'a> FileCommandMimeDetector<'a> {
 
     /// Creates the default command runner for file detection.
     ///
+    /// Timeout comes from `config.command_timeout()`.
+    ///
     /// # Returns
     /// Runner used by the default detector.
     fn default_command_runner(config: &MimeConfig) -> CommandRunner {
-        CommandRunner::new().bounded_output(config.command_output_max_bytes())
+        CommandRunner::new(config.command_timeout())
+            .bounded_output(config.command_output_max_bytes())
     }
 
     /// Builds the structured `file` command for one path.
