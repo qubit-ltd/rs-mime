@@ -16,11 +16,11 @@ use std::collections::{
     HashMap,
     HashSet,
 };
-use std::time::Duration;
 use std::sync::{
     LazyLock,
     RwLock,
 };
+use std::time::Duration;
 
 use qubit_config::{
     Config,
@@ -41,20 +41,20 @@ use qubit_spi::error::ProviderSelectionBuildError;
 use crate::MimeError;
 use crate::{
     CONFIG_COMMAND_OUTPUT_MAX_BYTES,
+    CONFIG_COMMAND_TIMEOUT,
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
     CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_DETECTOR_FALLBACKS,
-    CONFIG_COMMAND_TIMEOUT,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
     CONFIG_MIME_MAX_BUFFER_SIZE,
     CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
     DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
+    DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_ENABLE_PRECISE_DETECTION,
     DEFAULT_MEDIA_STREAM_CLASSIFIER,
     DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
-    DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_MIME_DETECTOR,
     DEFAULT_MIME_DETECTOR_FALLBACKS,
     DEFAULT_MIME_MAX_BUFFER_SIZE,
@@ -278,11 +278,10 @@ impl MimeConfig {
             })?;
         #[cfg(target_pointer_width = "64")]
         let command_output_max_bytes = command_output_max_bytes as usize;
-        let command_timeout = duration_config
-            .get_any_interpolated_or(
-                [CONFIG_COMMAND_TIMEOUT, ENV_COMMAND_TIMEOUT],
-                DEFAULT_COMMAND_TIMEOUT,
-            )?;
+        let command_timeout = duration_config.get_any_interpolated_or(
+            [CONFIG_COMMAND_TIMEOUT, ENV_COMMAND_TIMEOUT],
+            DEFAULT_COMMAND_TIMEOUT,
+        )?;
         let enable_precise_detection = value_config.get_any_interpolated_or(
             [
                 CONFIG_MIME_ENABLE_PRECISE_DETECTION,
