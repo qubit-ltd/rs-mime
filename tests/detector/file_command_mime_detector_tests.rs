@@ -10,9 +10,7 @@ use std::time::Duration;
 
 #[cfg(unix)]
 use qubit_command::CommandError;
-use qubit_command::{
-    CommandRunner,
-};
+use qubit_command::CommandRunner;
 use qubit_config::Config;
 #[cfg(unix)]
 use qubit_local_files::{
@@ -29,8 +27,8 @@ use qubit_mime::{
     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     CONFIG_MIME_DETECTOR_DEFAULT,
     CONFIG_MIME_ENABLE_PRECISE_DETECTION,
-    DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
+    DEFAULT_COMMAND_TIMEOUT,
     FileBasedMimeDetector,
     FileCommandMimeDetector,
     MimeConfig,
@@ -107,8 +105,8 @@ fn test_from_mime_config_limits_file_command_output() {
 #[test]
 fn test_with_repository_and_runner_uses_runner_configuration() {
     let repository = MimeRepository::empty();
-    let runner = CommandRunner::new(Duration::from_secs(2))
-        .disable_logging(true);
+    let runner =
+        CommandRunner::new(Duration::from_secs(2)).disable_logging(true);
     let mut detector = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
         runner,
