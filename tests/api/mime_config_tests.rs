@@ -34,8 +34,8 @@ use qubit_mime::{
     DEFAULT_MIME_DETECTOR,
     DEFAULT_MIME_MAX_BUFFER_SIZE,
     DEFAULT_PRECISE_DETECTION_PATTERNS,
-    ENV_COMMAND_TIMEOUT,
     ENV_COMMAND_OUTPUT_MAX_BYTES,
+    ENV_COMMAND_TIMEOUT,
     ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
     ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
     ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
@@ -239,8 +239,8 @@ fn test_from_config_reads_command_timeout_with_duration_unit() {
         .set(CONFIG_COMMAND_TIMEOUT, "500ms")
         .expect("command timeout should be configurable");
 
-    let mime_config = MimeConfig::from_config(&config)
-        .expect("command timeout should parse");
+    let mime_config =
+        MimeConfig::from_config(&config).expect("command timeout should parse");
 
     assert_eq!(Duration::from_millis(500), mime_config.command_timeout());
 }
@@ -273,7 +273,7 @@ fn test_from_config_rejects_invalid_command_timeout_values() {
     ));
 
     config
-        .set(CONFIG_COMMAND_TIMEOUT, "184467440737095516160ms")
+        .set(CONFIG_COMMAND_TIMEOUT, "18446744073709551616000ms")
         .expect("oversized timeout should be rejected by parser");
     assert!(matches!(
         MimeConfig::from_config(&config),
