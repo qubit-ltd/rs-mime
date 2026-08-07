@@ -8,9 +8,7 @@
 
 use std::time::Duration;
 
-use qubit_command::{
-    CommandRunner,
-};
+use qubit_command::CommandRunner;
 use qubit_config::Config;
 #[cfg(unix)]
 use qubit_local_files::{
@@ -23,8 +21,8 @@ use qubit_mime::{
     CONFIG_COMMAND_OUTPUT_MAX_BYTES,
     CONFIG_COMMAND_TIMEOUT,
     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
-    DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
+    DEFAULT_COMMAND_TIMEOUT,
     FfprobeCommandMediaStreamClassifier,
     MediaStreamType,
     MimeConfig,
@@ -57,13 +55,12 @@ fn test_classify_stream_listing_maps_ffprobe_output() {
 
 #[test]
 fn test_with_command_runner_uses_runner_configuration() {
-    let runner = CommandRunner::new(Duration::from_secs(2))
-        .disable_logging(true);
+    let runner =
+        CommandRunner::new(Duration::from_secs(2)).disable_logging(true);
     let mut classifier =
         FfprobeCommandMediaStreamClassifier::new().with_command_runner(runner);
 
     assert_eq!(
-        Duration::from_secs(2),
         Some(Duration::from_secs(2)),
         classifier.command_runner().configured_timeout()
     );
