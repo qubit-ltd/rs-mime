@@ -19,6 +19,7 @@ use crate::{
     FileBasedMediaStreamClassifier,
     MediaStreamType,
     MimeConfig,
+    MimeError,
     MimeResult,
 };
 
@@ -197,8 +198,15 @@ impl FfprobeCommandMediaStreamClassifier {
         }
         match self.command_runner.run(command) {
             Ok(output) => {
-                let stdout = output.stdout_lossy_text();
-                Ok(Self::classify_stream_listing(&stdout))
+                let stdout = output.stdout_text().map_err(|source| {
+                    MimeError::ClassifierBackend {
+                        backend: Self::COMMAND.to_owned(),
+                        reason: format!(
+                            "ffprobe stdout is not valid UTF-8: {source}"
+                        ),
+                    }
+                })?;
+                Ok(Self::classify_stream_listing(stdout))
             }
             Err(CommandError::UnexpectedExit { .. }) => {
                 Ok(MediaStreamType::None)
@@ -234,6 +242,7 @@ impl FfprobeCommandMediaStreamClassifier {
             .arg("stream=codec_type")
             .arg("-of")
             .arg("csv=p=0")
+            .arg("-i")
             .sensitive_arg_os(path)
     }
 }

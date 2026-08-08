@@ -25,6 +25,7 @@ use crate::{
     MimeDetectionPolicy,
     MimeDetector,
     MimeDetectorCore,
+    MimeError,
     MimeRepository,
     MimeResult,
 };
@@ -293,7 +294,12 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// execution fails.
     fn guess_from_file_command(&self, path: &Path) -> MimeResult<Vec<String>> {
         let output = self.command_runner.run(Self::command_for_path(path))?;
-        let text = output.stdout_lossy_text();
+        let text = output.stdout_text().map_err(|source| {
+            MimeError::detector_backend(
+                Self::COMMAND,
+                format!("file stdout is not valid UTF-8: {source}"),
+            )
+        })?;
         let result = text.trim();
         if result.is_empty() {
             Ok(Vec::new())

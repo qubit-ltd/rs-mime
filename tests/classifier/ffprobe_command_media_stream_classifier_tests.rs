@@ -17,6 +17,8 @@ use qubit_local_files::{
 };
 #[cfg(unix)]
 use qubit_mime::MediaStreamClassifier;
+#[cfg(unix)]
+use qubit_mime::MimeError;
 use qubit_mime::{
     CONFIG_COMMAND_OUTPUT_MAX_BYTES,
     CONFIG_COMMAND_TIMEOUT,
@@ -309,4 +311,92 @@ fn test_classify_file_maps_unexpected_ffprobe_exit_to_none() {
             .classify_file(std::path::Path::new("Cargo.toml"))
             .expect("unexpected ffprobe exit should be best-effort none")
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_classify_file_passes_path_through_ffprobe_input_option() {
+    let temp_dir = LocalFileSystem::host()
+        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("temporary command directory should be created");
+    let script_path = temp_dir
+        .path()
+        .join(FfprobeCommandMediaStreamClassifier::COMMAND);
+    std::fs::write(
+        &script_path,
+        r#"#!/bin/sh
+[ "$1" = "-v" ] && [ "$2" = "error" ] && \
+[ "$3" = "-show_entries" ] && [ "$4" = "stream=codec_type" ] && \
+[ "$5" = "-of" ] && [ "$6" = "csv=p=0" ] && [ "$7" = "-i" ] || exit 9
+case "$8" in
+--qubit-ffprobe-leading-dash-*) ;;
+*) exit 9 ;;
+esac
+printf 'video\n'
+"#,
+    )
+    .expect("fake ffprobe should be written");
+    let mut permissions = std::fs::metadata(&script_path)
+        .expect("fake ffprobe metadata should be readable")
+        .permissions();
+    use std::os::unix::fs::PermissionsExt;
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&script_path, permissions)
+        .expect("fake ffprobe should be executable");
+    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    let relative_path =
+        format!("--qubit-ffprobe-leading-dash-{}", std::process::id(),);
+    std::fs::write(&relative_path, b"media")
+        .expect("leading-dash media fixture should be written");
+
+    let classifier = FfprobeCommandMediaStreamClassifier::new()
+        .with_command_runner(
+            CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true),
+        );
+
+    let result = classifier.classify_file(std::path::Path::new(&relative_path));
+    std::fs::remove_file(&relative_path)
+        .expect("leading-dash media fixture should be removed");
+    assert_eq!(
+        MediaStreamType::VideoOnly,
+        result.expect("ffprobe should receive the path after -i")
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn test_classify_file_rejects_invalid_utf8_stdout() {
+    let temp_dir = LocalFileSystem::host()
+        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("temporary command directory should be created");
+    let script_path = temp_dir
+        .path()
+        .join(FfprobeCommandMediaStreamClassifier::COMMAND);
+    std::fs::write(&script_path, "#!/bin/sh\nprintf '\\377'\n")
+        .expect("fake ffprobe should be written");
+    let mut permissions = std::fs::metadata(&script_path)
+        .expect("fake ffprobe metadata should be readable")
+        .permissions();
+    use std::os::unix::fs::PermissionsExt;
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&script_path, permissions)
+        .expect("fake ffprobe should be executable");
+    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    let media_path = temp_dir.path().join("media.bin");
+    std::fs::write(&media_path, b"media")
+        .expect("media fixture should be written");
+
+    let classifier = FfprobeCommandMediaStreamClassifier::new()
+        .with_command_runner(
+            CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true),
+        );
+    let error = classifier
+        .classify_file(&media_path)
+        .expect_err("invalid ffprobe UTF-8 should be reported");
+
+    assert!(matches!(
+        error,
+        MimeError::ClassifierBackend { backend, reason }
+            if backend == "ffprobe" && reason.contains("UTF-8")
+    ));
 }
