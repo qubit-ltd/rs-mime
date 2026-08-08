@@ -9,7 +9,7 @@
 use std::time::Duration;
 
 #[cfg(unix)]
-use qubit_command::CommandError;
+use qubit_command::CommandErrorKind;
 use qubit_command::CommandRunner;
 use qubit_config::Config;
 #[cfg(unix)]
@@ -161,7 +161,8 @@ fn test_detect_file_by_content_propagates_runner_timeout() {
 
     assert!(matches!(
         error,
-        MimeError::Command(CommandError::TimedOut { .. })
+        MimeError::Command(ref command_error)
+            if command_error.kind() == CommandErrorKind::TimedOut
     ));
 }
 

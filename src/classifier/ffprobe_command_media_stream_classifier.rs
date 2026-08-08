@@ -11,7 +11,7 @@ use std::path::Path;
 
 use qubit_command::{
     Command,
-    CommandError,
+    CommandErrorKind,
     CommandRunner,
 };
 
@@ -208,7 +208,7 @@ impl FfprobeCommandMediaStreamClassifier {
                 })?;
                 Ok(Self::classify_stream_listing(stdout))
             }
-            Err(CommandError::UnexpectedExit { .. }) => {
+            Err(error) if error.kind() == CommandErrorKind::UnexpectedExit => {
                 Ok(MediaStreamType::None)
             }
             Err(error) => Err(error.into()),
