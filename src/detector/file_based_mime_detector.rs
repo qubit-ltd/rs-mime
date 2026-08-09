@@ -124,5 +124,11 @@ pub(crate) fn with_temp_file<T>(
         .map_err(|error| MimeError::Io(error.into_io_error()))?;
     file.write_all(content)?;
     file.close();
-    detect(file.path())
+    let result = detect(file.path());
+    let cleanup = file.cleanup();
+    match (result, cleanup) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(MimeError::Io(error.into_io_error())),
+    }
 }

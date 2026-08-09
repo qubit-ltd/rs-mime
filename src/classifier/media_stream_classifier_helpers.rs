@@ -78,7 +78,13 @@ pub(crate) fn with_temp_reader<T>(
         .map_err(|error| MimeError::Io(error.into_io_error()))?;
     copy_to_temp_file(reader, &mut file, max_staging_size)?;
     file.close();
-    classify(file.path())
+    let result = classify(file.path());
+    let cleanup = file.cleanup();
+    match (result, cleanup) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(MimeError::Io(error.into_io_error())),
+    }
 }
 
 /// Copies a reader into a temporary file while enforcing a byte limit.
