@@ -40,7 +40,7 @@ qubit-fs = { path = "../rs-fs", version = "0.2", default-features = false }
 qubit-codec-misc = "0.3"
 qubit-command = { version = "0.6", path = "../rs-command" }
 qubit-config = { path = "../rs-config", version = "0.16" }
-qubit-datatype = { version = "0.10", default-features = false, features = ["converter"] }
+qubit-datatype = { version = "0.10", path = "../rs-datatype", default-features = false, features = ["converter"] }
 qubit-local-files = { path = "../rs-local-files", version = "0.3" }
 qubit-spi = { path = "../rs-spi", version = "0.11" }
 
