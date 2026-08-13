@@ -13,18 +13,11 @@ use std::path::Path;
 use qubit_io::std_io::ReadSeek;
 
 use crate::{
-    DetectionSource,
-    MimeDetectionPolicy,
-    MimeDetector,
-    MimeDetectorCore,
-    MimeResult,
+    DetectionSource, MimeDetectionPolicy, MimeDetector, MimeDetectorCore, MimeResult,
     StreamBasedMimeDetector,
 };
 
-use super::stream_based_mime_detector::{
-    open_readable_file,
-    read_prefix,
-};
+use super::stream_based_mime_detector::{open_readable_file, read_prefix};
 
 /// Core implementation contract for MIME detectors.
 pub trait MimeDetectorBackend: Debug + Send + Sync {
@@ -71,15 +64,8 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     ///
     /// # Errors
     /// Returns an error when reading, seeking, or backend inspection fails.
-    fn guess_from_reader(
-        &self,
-        reader: &mut dyn ReadSeek,
-    ) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let content = read_prefix(
-            reader,
-            self.max_test_bytes(),
-            self.core().max_buffer_size(),
-        )?;
+    fn guess_from_reader(&self, reader: &mut dyn ReadSeek) -> MimeResult<(Vec<String>, Vec<u8>)> {
+        let content = read_prefix(reader, self.max_test_bytes(), self.core().max_buffer_size())?;
         let candidates = self.guess_from_content(&content)?;
         Ok((candidates, content))
     }
@@ -95,10 +81,7 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// # Errors
     /// Returns an error when opening, reading, seeking, or backend inspection
     /// fails.
-    fn guess_from_file(
-        &self,
-        file: &Path,
-    ) -> MimeResult<(Vec<String>, Vec<u8>)> {
+    fn guess_from_file(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
         let mut reader = open_readable_file(file)?;
         self.guess_from_reader(&mut reader)
     }
@@ -108,21 +91,28 @@ impl<T> MimeDetector for T
 where
     T: MimeDetectorBackend,
 {
+    /// Gets the configured prefix-buffer limit from the shared detector core.
+    fn max_buffer_size(&self) -> usize {
+        self.core().max_buffer_size()
+    }
+
     /// Detects a MIME type from filename candidates.
-    fn detect_by_filename(&self, filename: &str) -> Option<String> {
-        self.guess_from_filename(filename).first().map(|mime_type| {
+    fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
+        self.guess_from_filename(filename)
+            .first()
+            .map(|mime_type| {
             self.core().refine_detected_mime_type(
                 mime_type,
                 Some(filename),
                 DetectionSource::None,
             )
         })
+            .transpose()
     }
 
     /// Detects a MIME type from content candidates.
-    fn detect_by_content(&self, content: &[u8]) -> Option<String> {
-        self.guess_from_content(content)
-            .ok()?
+    fn detect_by_content(&self, content: &[u8]) -> MimeResult<Option<String>> {
+        self.guess_from_content(content)?
             .first()
             .map(|mime_type| {
                 self.core().refine_detected_mime_type(
@@ -131,6 +121,7 @@ where
                     DetectionSource::Content(content),
                 )
             })
+            .transpose()
     }
 
     /// Detects a MIME type from content bytes and an optional filename.
@@ -139,16 +130,15 @@ where
         content: &[u8],
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
-    ) -> Option<String> {
+    ) -> MimeResult<Option<String>> {
         let from_filename = filename
             .map(|filename| self.guess_from_filename(filename))
             .unwrap_or_default();
-        let from_content = if from_filename.len() == 1
-            && policy == MimeDetectionPolicy::PreferFilename
-        {
+        let from_content =
+            if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
             Vec::new()
         } else {
-            self.guess_from_content(content).unwrap_or_default()
+                self.guess_from_content(content)?
         };
         self.core().select_result(
             &from_filename,
@@ -169,44 +159,33 @@ where
         let from_filename = filename
             .map(|filename| self.guess_from_filename(filename))
             .unwrap_or_default();
-        let (from_content, content) = if from_filename.len() == 1
-            && policy == MimeDetectionPolicy::PreferFilename
-        {
+        let (from_content, _content) =
+            if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
             (Vec::new(), Vec::new())
         } else {
             self.guess_from_reader(reader)?
         };
-        Ok(self.core().select_result(
-            &from_filename,
-            &from_content,
-            filename,
-            policy,
-            DetectionSource::Content(&content),
-        ))
+        self.core()
+            .select_reader_result(&from_filename, &from_content, filename, policy, reader)
     }
 
     /// Detects a MIME type from a local file.
-    fn detect_file(
-        &self,
-        file: &Path,
-        policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>> {
+    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         let filename = file.to_string_lossy();
         let from_filename = self.guess_from_filename(&filename);
-        let (from_content, _content) = if from_filename.len() == 1
-            && policy == MimeDetectionPolicy::PreferFilename
-        {
+        let (from_content, _content) =
+            if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
             (Vec::new(), Vec::new())
         } else {
             self.guess_from_file(file)?
         };
-        Ok(self.core().select_result(
+        self.core().select_result(
             &from_filename,
             &from_content,
             Some(&filename),
             policy,
             DetectionSource::Path(file),
-        ))
+        )
     }
 }
 
@@ -235,18 +214,12 @@ where
     }
 
     /// Delegates reader inspection to the stream-based hook.
-    fn guess_from_reader(
-        &self,
-        reader: &mut dyn ReadSeek,
-    ) -> MimeResult<(Vec<String>, Vec<u8>)> {
+    fn guess_from_reader(&self, reader: &mut dyn ReadSeek) -> MimeResult<(Vec<String>, Vec<u8>)> {
         StreamBasedMimeDetector::guess_from_reader_stream(self, reader)
     }
 
     /// Delegates local-file inspection to the stream-based hook.
-    fn guess_from_file(
-        &self,
-        file: &Path,
-    ) -> MimeResult<(Vec<String>, Vec<u8>)> {
+    fn guess_from_file(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
         StreamBasedMimeDetector::guess_from_file_stream(self, file)
     }
 }

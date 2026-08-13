@@ -9,23 +9,23 @@
 use std::path::Path;
 
 use qubit_io::std_io::ReadSeek;
-use qubit_mime::{
-    MimeDetectionPolicy,
-    MimeDetector,
-    MimeResult,
-};
+use qubit_mime::{MimeDetectionPolicy, MimeDetector, MimeResult};
 
 /// Detector fixture returning a distinct value from each trait entry point.
 #[derive(Debug)]
 pub(crate) struct StaticEntryPointMimeDetector;
 
 impl MimeDetector for StaticEntryPointMimeDetector {
-    fn detect_by_filename(&self, _filename: &str) -> Option<String> {
-        Some("application/x-static-name".to_owned())
+    fn max_buffer_size(&self) -> usize {
+        0
     }
 
-    fn detect_by_content(&self, _content: &[u8]) -> Option<String> {
-        Some("application/x-static-content".to_owned())
+    fn detect_by_filename(&self, _filename: &str) -> MimeResult<Option<String>> {
+        Ok(Some("application/x-static-name".to_owned()))
+    }
+
+    fn detect_by_content(&self, _content: &[u8]) -> MimeResult<Option<String>> {
+        Ok(Some("application/x-static-content".to_owned()))
     }
 
     fn detect(
@@ -33,8 +33,8 @@ impl MimeDetector for StaticEntryPointMimeDetector {
         _content: &[u8],
         _filename: Option<&str>,
         _policy: MimeDetectionPolicy,
-    ) -> Option<String> {
-        Some("application/x-static-detect".to_owned())
+    ) -> MimeResult<Option<String>> {
+        Ok(Some("application/x-static-detect".to_owned()))
     }
 
     fn detect_reader(

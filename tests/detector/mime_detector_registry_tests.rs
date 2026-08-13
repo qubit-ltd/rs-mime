@@ -9,30 +9,19 @@
 use std::process::Command;
 use std::sync::Arc;
 
-use qubit_mime::{
-    MimeConfig,
-    MimeDetector,
-    MimeDetectorRegistry,
-    MimeDetectorSpec,
-};
+use qubit_mime::{MimeConfig, MimeDetector, MimeDetectorRegistry, MimeDetectorSpec};
 use qubit_spi::error::ProviderFailureKind;
 use qubit_spi::{
-    FallbackPolicy,
-    ProviderCreationTermination,
-    ProviderDefinition,
-    ProviderSelection,
+    FallbackPolicy, ProviderCreationTermination, ProviderDefinition, ProviderSelection,
 };
 
-use crate::support::{
-    TestMimeDetectorProvider,
-    TestProviderBehavior,
-};
+use crate::support::{TestMimeDetectorProvider, TestProviderBehavior};
 
 #[test]
 fn test_builtin_registry_lists_and_resolves_repository_provider() {
     let registry = MimeDetectorRegistry::builtin();
-    let expected_default = ProviderSelection::named("repository")
-        .expect("repository provider ID should be valid");
+    let expected_default =
+        ProviderSelection::named("repository").expect("repository provider ID should be valid");
     let selection = ProviderSelection::named("repository-mime-detector")
         .expect("repository alias should be valid");
     let detector = registry
@@ -52,7 +41,9 @@ fn test_builtin_registry_lists_and_resolves_repository_provider() {
     assert_eq!(expected_default, registry.default_selection());
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detector.detect_by_filename("document.pdf"),
+        detector
+            .detect_by_filename("document.pdf")
+            .expect("filename detection should succeed"),
     );
 }
 
@@ -67,8 +58,7 @@ fn test_global_registry_exposes_builtin_defaults_in_this_process() {
             .any(|id| id.as_str() == "repository"),
     );
     assert_eq!(
-        ProviderSelection::named("repository")
-            .expect("repository provider ID should be valid"),
+        ProviderSelection::named("repository").expect("repository provider ID should be valid"),
         registry.default_selection(),
     );
 }
@@ -147,8 +137,7 @@ fn test_resolve_and_create_keep_selection_and_creation_errors_separate() {
             TestProviderBehavior::InitializationFailed,
         ))
         .expect("failing provider should register");
-    let selection = ProviderSelection::named("failed")
-        .expect("test selector should be valid");
+    let selection = ProviderSelection::named("failed").expect("test selector should be valid");
     let provider = registry
         .resolve_selected(&selection)
         .expect("provider selection should succeed before creation");
@@ -175,8 +164,7 @@ fn test_default_selection_is_independent_from_service_configuration() {
         ))
         .expect("configured provider should register");
     registry.set_default_selection(
-        ProviderSelection::named("configured")
-            .expect("configured selector should be valid"),
+        ProviderSelection::named("configured").expect("configured selector should be valid"),
     );
 
     let provider = registry
@@ -192,11 +180,15 @@ fn test_default_selection_is_independent_from_service_configuration() {
 
     assert_eq!(
         Some("application/x-configured".to_owned()),
-        explicit.detect_by_filename("sample.static"),
+        explicit
+            .detect_by_filename("sample.static")
+            .expect("filename detection should succeed"),
     );
     assert_eq!(
         Some("application/x-configured".to_owned()),
-        defaulted.detect_by_filename("sample.static"),
+        defaulted
+            .detect_by_filename("sample.static")
+            .expect("filename detection should succeed"),
     );
 }
 
@@ -228,7 +220,9 @@ fn test_resolving_provider_applies_selection_fallback_policy() {
 
     assert_eq!(
         Some("application/x-static".to_owned()),
-        detector.detect_by_filename("sample.static"),
+        detector
+            .detect_by_filename("sample.static")
+            .expect("filename detection should succeed"),
     );
 }
 
@@ -294,8 +288,8 @@ fn test_global_registry_shares_app_provider_with_library_x() {
                 TestProviderBehavior::Success("application/x-app-global"),
             ))
             .expect("App provider should register globally");
-        let selection = ProviderSelection::named(PROVIDER_ID)
-            .expect("App provider selector should be valid");
+        let selection =
+            ProviderSelection::named(PROVIDER_ID).expect("App provider selector should be valid");
 
         let explicit = registry
             .resolve_selected(&selection)
@@ -307,17 +301,21 @@ fn test_global_registry_shares_app_provider_with_library_x() {
 
         assert_eq!(
             Some("application/x-app-global".to_owned()),
-            explicit.detect_by_filename("sample.static"),
+            explicit
+                .detect_by_filename("sample.static")
+                .expect("filename detection should succeed"),
         );
         assert_eq!(
             Some("application/x-app-global".to_owned()),
-            defaulted.detect_by_filename("sample.static"),
+            defaulted
+                .detect_by_filename("sample.static")
+                .expect("filename detection should succeed"),
         );
         return;
     }
 
-    let current_test = std::env::current_exe()
-        .expect("current integration test executable should be available");
+    let current_test =
+        std::env::current_exe().expect("current integration test executable should be available");
     let test_name = "detector::mime_detector_registry_tests::test_global_registry_shares_app_provider_with_library_x";
     let status = Command::new(current_test)
         .args(["--exact", test_name, "--nocapture"])

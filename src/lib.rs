@@ -37,7 +37,7 @@
 //! let detector = provider.create()?;
 //! assert_eq!(
 //!     Some("application/pdf".to_owned()),
-//!     detector.detect_by_filename("document.pdf"),
+//!     detector.detect_by_filename("document.pdf")?,
 //! );
 //! # Ok(())
 //! # }
@@ -68,7 +68,7 @@
 //! let detector = provider.create_configured(&config)?;
 //! assert_eq!(
 //!     Some("image/png".to_owned()),
-//!     detector.detect_by_filename("image.png"),
+//!     detector.detect_by_filename("image.png")?,
 //! );
 //! # Ok(())
 //! # }
@@ -85,43 +85,23 @@ mod mime_error;
 mod mime_result;
 
 pub use classifier::{
-    FfprobeCommandMediaStreamClassifier,
-    FfprobeCommandMediaStreamClassifierProvider,
-    FileBasedMediaStreamClassifier,
-    MediaStreamClassifier,
-    MediaStreamClassifierBackend,
-    MediaStreamClassifierProvider,
-    MediaStreamClassifierRegistry,
-    MediaStreamClassifierSpec,
+    FfprobeCommandMediaStreamClassifier, FfprobeCommandMediaStreamClassifierProvider,
+    FileBasedMediaStreamClassifier, MediaStreamClassifier, MediaStreamClassifierBackend,
+    MediaStreamClassifierProvider, MediaStreamClassifierRegistry, MediaStreamClassifierSpec,
     MediaStreamType,
 };
 pub use common_mime_types::*;
 pub use constants::*;
 pub use detector::{
-    DetectionSource,
-    FileBasedMimeDetector,
-    FileCommandMimeDetector,
-    FileCommandMimeDetectorProvider,
-    MimeDetectionPolicy,
-    MimeDetector,
-    MimeDetectorBackend,
-    MimeDetectorCore,
-    MimeDetectorProvider,
-    MimeDetectorRegistry,
-    MimeDetectorSpec,
-    RepositoryMimeDetector,
-    RepositoryMimeDetectorProvider,
-    StreamBasedMimeDetector,
+    DetectionSource, FileBasedMimeDetector, FileCommandMimeDetector,
+    FileCommandMimeDetectorProvider, MimeDetectionPolicy, MimeDetector, MimeDetectorBackend,
+    MimeDetectorCore, MimeDetectorProvider, MimeDetectorRegistry, MimeDetectorSpec,
+    RepositoryMimeDetector, RepositoryMimeDetectorProvider, StreamBasedMimeDetector,
 };
 pub use mime_config::MimeConfig;
 pub use mime_error::MimeError;
 pub use mime_result::MimeResult;
 pub use repository::{
-    MagicValueType,
-    MimeGlob,
-    MimeMagic,
-    MimeMagicMatcher,
-    MimeRepository,
-    MimeType,
+    MagicValueType, MimeGlob, MimeMagic, MimeMagicMatcher, MimeRepository, MimeType,
     MimeTypeBuilder,
 };
