@@ -9,11 +9,7 @@
 use std::path::Path;
 
 use qubit_io::std_io::ReadSeek;
-use qubit_mime::{
-    MimeDetectionPolicy,
-    MimeDetector,
-    MimeResult,
-};
+use qubit_mime::{MimeDetectionPolicy, MimeDetector, MimeResult};
 
 /// MIME detector returning one test-controlled type for `.static` filenames.
 #[derive(Debug)]
@@ -39,14 +35,18 @@ impl StaticMimeDetector {
 }
 
 impl MimeDetector for StaticMimeDetector {
-    fn detect_by_filename(&self, filename: &str) -> Option<String> {
-        filename
-            .ends_with(".static")
-            .then(|| self.mime_type.to_owned())
+    fn max_buffer_size(&self) -> usize {
+        0
     }
 
-    fn detect_by_content(&self, _content: &[u8]) -> Option<String> {
-        None
+    fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
+        Ok(filename
+            .ends_with(".static")
+            .then(|| self.mime_type.to_owned()))
+    }
+
+    fn detect_by_content(&self, _content: &[u8]) -> MimeResult<Option<String>> {
+        Ok(None)
     }
 
     fn detect(
@@ -54,8 +54,11 @@ impl MimeDetector for StaticMimeDetector {
         _content: &[u8],
         filename: Option<&str>,
         _policy: MimeDetectionPolicy,
-    ) -> Option<String> {
-        filename.and_then(|name| self.detect_by_filename(name))
+    ) -> MimeResult<Option<String>> {
+        filename
+            .map(|name| self.detect_by_filename(name))
+            .transpose()
+            .map(|result| result.flatten())
     }
 
     fn detect_reader(
@@ -64,18 +67,10 @@ impl MimeDetector for StaticMimeDetector {
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        Ok(self.detect(&[], filename, policy))
+        self.detect(&[], filename, policy)
     }
 
-    fn detect_file(
-        &self,
-        file: &Path,
-        policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>> {
-        Ok(self.detect(
-            &[],
-            file.file_name().and_then(|name| name.to_str()),
-            policy,
-        ))
+    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+        self.detect(&[], file.file_name().and_then(|name| name.to_str()), policy)
     }
 }

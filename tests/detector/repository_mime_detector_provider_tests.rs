@@ -6,14 +6,8 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use qubit_mime::{
-    MimeConfig,
-    RepositoryMimeDetectorProvider,
-};
-use qubit_spi::{
-    ProviderMetadata,
-    ServiceProvider,
-};
+use qubit_mime::{MimeConfig, RepositoryMimeDetectorProvider};
+use qubit_spi::{ProviderMetadata, ServiceProvider};
 
 #[test]
 fn test_repository_mime_detector_provider_creates_filename_detector() {
@@ -35,6 +29,8 @@ fn test_repository_mime_detector_provider_creates_filename_detector() {
     assert_eq!(0, descriptor.priority());
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detector.detect_by_filename("document.pdf"),
+        detector
+            .detect_by_filename("document.pdf")
+            .expect("filename detection should succeed"),
     );
 }

@@ -7,15 +7,9 @@
 // =============================================================================
 
 use qubit_mime::MimeConfig;
-use qubit_spi::{
-    ProviderMetadata,
-    ServiceProvider,
-};
+use qubit_spi::{ProviderMetadata, ServiceProvider};
 
-use crate::support::{
-    TestMimeDetectorProvider,
-    TestProviderBehavior,
-};
+use crate::support::{TestMimeDetectorProvider, TestProviderBehavior};
 
 #[test]
 fn test_mime_detector_provider_defaults_and_factory() {
@@ -35,6 +29,8 @@ fn test_mime_detector_provider_defaults_and_factory() {
     assert_eq!(7, descriptor.priority());
     assert_eq!(
         Some("application/x-static".to_owned()),
-        detector.detect_by_filename("sample.static"),
+        detector
+            .detect_by_filename("sample.static")
+            .expect("filename detection should succeed"),
     );
 }

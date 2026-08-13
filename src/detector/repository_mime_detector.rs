@@ -11,17 +11,11 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use crate::{
-    MimeConfig,
-    MimeDetectionPolicy,
-    MimeDetector,
-    MimeDetectorCore,
-    MimeRepository,
-    MimeResult,
+    MimeConfig, MimeDetectionPolicy, MimeDetector, MimeDetectorCore, MimeRepository, MimeResult,
     StreamBasedMimeDetector,
 };
 
-const DEFAULT_DATABASE: &str =
-    include_str!("../../resources/freedesktop.org-v2.4.xml");
+const DEFAULT_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
 
 static DEFAULT_REPOSITORY: OnceLock<MimeRepository> = OnceLock::new();
 
@@ -85,10 +79,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// A detector borrowing `repository`.
-    pub fn with_repository_and_config(
-        repository: &'a MimeRepository,
-        config: MimeConfig,
-    ) -> Self {
+    pub fn with_repository_and_config(repository: &'a MimeRepository, config: MimeConfig) -> Self {
         Self {
             core: MimeDetectorCore::from_mime_config(config),
             repository,
@@ -126,7 +117,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// First MIME type matched by filename, or `None`.
-    pub fn detect_by_filename(&self, filename: &str) -> Option<String> {
+    pub fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_by_filename(self, filename)
     }
 
@@ -137,7 +128,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// First MIME type matched by magic, or `None`.
-    pub fn detect_by_content(&self, bytes: &[u8]) -> Option<String> {
+    pub fn detect_by_content(&self, bytes: &[u8]) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_by_content(self, bytes)
     }
 
@@ -155,7 +146,7 @@ impl<'a> RepositoryMimeDetector<'a> {
         bytes: &[u8],
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
-    ) -> Option<String> {
+    ) -> MimeResult<Option<String>> {
         self.detect(bytes, filename, policy)
     }
 
@@ -261,10 +252,7 @@ impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
     }
 
     /// Guesses MIME type names from content magic rules.
-    fn guess_from_content_bytes(
-        &self,
-        content: &[u8],
-    ) -> MimeResult<Vec<String>> {
+    fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         Ok(RepositoryMimeDetector::guess_from_content(self, content))
     }
 }

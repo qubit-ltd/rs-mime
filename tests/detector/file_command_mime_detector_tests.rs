@@ -13,27 +13,17 @@ use qubit_command::CommandErrorKind;
 use qubit_command::CommandRunner;
 use qubit_config::Config;
 #[cfg(unix)]
-use qubit_local_files::{
-    LocalFileSystem,
-    LocalTempDirectoryOptions,
-};
+use qubit_local_files::{LocalFileSystem, LocalTempDirectoryOptions};
 #[cfg(unix)]
 use qubit_mime::MimeDetectionPolicy;
 #[cfg(unix)]
 use qubit_mime::MimeError;
 use qubit_mime::{
-    CONFIG_COMMAND_OUTPUT_MAX_BYTES,
-    CONFIG_COMMAND_TIMEOUT,
-    CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
-    CONFIG_MIME_DETECTOR_DEFAULT,
-    CONFIG_MIME_ENABLE_PRECISE_DETECTION,
-    DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
-    DEFAULT_COMMAND_TIMEOUT,
-    FileBasedMimeDetector,
-    FileCommandMimeDetector,
-    MimeConfig,
-    MimeDetector,
-    MimeRepository,
+    CONFIG_COMMAND_OUTPUT_MAX_BYTES, CONFIG_COMMAND_TIMEOUT,
+    CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, CONFIG_MIME_DETECTOR_DEFAULT,
+    CONFIG_MIME_ENABLE_PRECISE_DETECTION, DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
+    DEFAULT_COMMAND_TIMEOUT, FileBasedMimeDetector, FileCommandMimeDetector, MimeConfig,
+    MimeDetector, MimeRepository,
 };
 
 #[cfg(unix)]
@@ -45,7 +35,9 @@ fn test_detect_by_filename_uses_repository_candidates() {
 
     assert_eq!(
         Some("image/jpeg".to_owned()),
-        detector.detect_by_filename("photo.jpg")
+        detector
+            .detect_by_filename("photo.jpg")
+            .expect("filename detection should succeed")
     );
 }
 
@@ -105,12 +97,8 @@ fn test_from_mime_config_limits_file_command_output() {
 #[test]
 fn test_with_repository_and_runner_uses_runner_configuration() {
     let repository = MimeRepository::empty();
-    let runner =
-        CommandRunner::new(Duration::from_secs(2)).disable_logging(true);
-    let mut detector = FileCommandMimeDetector::with_repository_and_runner(
-        &repository,
-        runner,
-    );
+    let runner = CommandRunner::new(Duration::from_secs(2)).disable_logging(true);
+    let mut detector = FileCommandMimeDetector::with_repository_and_runner(&repository, runner);
 
     assert_eq!(
         Some(Duration::from_secs(2)),
@@ -118,17 +106,13 @@ fn test_with_repository_and_runner_uses_runner_configuration() {
     );
     assert!(detector.command_runner().is_logging_disabled());
 
-    detector.set_command_runner(
-        detector.command_runner().clone().working_directory("."),
-    );
+    detector.set_command_runner(detector.command_runner().clone().working_directory("."));
     assert_eq!(
         Some(std::path::Path::new(".")),
         detector.command_runner().configured_working_directory()
     );
 
-    detector.set_command_runner(
-        CommandRunner::new(Duration::from_secs(10)).disable_logging(false),
-    );
+    detector.set_command_runner(CommandRunner::new(Duration::from_secs(10)).disable_logging(false));
     assert!(!detector.command_runner().is_logging_disabled());
 }
 
@@ -198,17 +182,15 @@ fn test_detect_file_by_content_reads_file_command_stdout() {
     );
     assert_eq!(
         Some("text/plain".to_owned()),
-        detector.detect_by_content(b"plain text")
+        detector
+            .detect_by_content(b"plain text")
+            .expect("content detection should succeed")
     );
     let mut reader = std::io::Cursor::new(b"plain text".to_vec());
     assert_eq!(
         Some("text/plain".to_owned()),
         detector
-            .detect_reader(
-                &mut reader,
-                None,
-                MimeDetectionPolicy::VerifyContent
-            )
+            .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
             .expect("fake file command should support reader detection")
     );
     assert_eq!(
@@ -332,8 +314,7 @@ fn test_file_command_error_redacts_input_path() {
     let _path_guard = PathEnvGuard::set(temp_dir.path());
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository(&repository);
-    let private_path =
-        std::path::Path::new("/private/customer/source-document.bin");
+    let private_path = std::path::Path::new("/private/customer/source-document.bin");
 
     let error = detector
         .detect_file_by_content(private_path)
@@ -348,8 +329,7 @@ fn test_file_command_error_redacts_input_path() {
 #[test]
 fn test_file_command_detector_accessors_and_repository_only_policy() {
     let repository = MimeRepository::empty();
-    let mut detector =
-        FileCommandMimeDetector::with_repository_runner_and_config(
+    let mut detector = FileCommandMimeDetector::with_repository_runner_and_config(
             &repository,
             CommandRunner::new(Duration::from_secs(10)),
             create_precise_config(),
@@ -361,12 +341,15 @@ fn test_file_command_detector_accessors_and_repository_only_policy() {
     assert_eq!(0, detector.max_test_bytes());
 
     let replaced = FileCommandMimeDetector::with_repository(&repository)
-        .with_command_runner(
-            CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
-        );
+        .with_command_runner(CommandRunner::new(Duration::from_secs(10)).disable_logging(true));
     assert!(replaced.command_runner().is_logging_disabled());
 
-    assert_eq!(None, detector.detect_by_filename("unknown.bin"));
+    assert_eq!(
+        None,
+        detector
+            .detect_by_filename("unknown.bin")
+            .expect("filename detection should succeed")
+    );
 }
 
 #[test]
@@ -376,8 +359,7 @@ fn test_default_file_command_runner_uses_config_timeout() {
         .set(CONFIG_COMMAND_TIMEOUT, "2500ms")
         .expect("command timeout should support unit-based value");
     let detector = FileCommandMimeDetector::from_mime_config(
-        MimeConfig::from_config(&config)
-            .expect("file command config should parse"),
+        MimeConfig::from_config(&config).expect("file command config should parse"),
     );
 
     assert_eq!(

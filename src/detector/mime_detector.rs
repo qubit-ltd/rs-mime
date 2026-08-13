@@ -11,17 +11,10 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::sync::Arc;
 
-use qubit_fs::{
-    FileSystem,
-    Path as FsPath,
-    ReadOptions,
-};
+use qubit_fs::{FileSystem, Path as FsPath, ReadOptions};
 use qubit_io::std_io::ReadSeek;
 
-use crate::{
-    MimeDetectionPolicy,
-    MimeResult,
-};
+use crate::{MimeDetectionPolicy, MimeError, MimeResult};
 
 /// Detects MIME types from filenames and content.
 pub trait MimeDetector: Debug + Send + Sync {
@@ -31,8 +24,9 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// - `filename`: File path or basename.
     ///
     /// # Returns
-    /// First matching MIME type name, or `None`.
-    fn detect_by_filename(&self, filename: &str) -> Option<String>;
+    /// `Ok(Some(_))` contains the first matching MIME type; `Ok(None)` means
+    /// no filename rule matched.
+    fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>>;
 
     /// Detects a MIME type from content bytes.
     ///
@@ -40,8 +34,13 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// - `content`: Content bytes to inspect.
     ///
     /// # Returns
-    /// First matching MIME type name, or `None`.
-    fn detect_by_content(&self, content: &[u8]) -> Option<String>;
+    /// `Ok(Some(_))` contains the first matching MIME type; `Ok(None)` means
+    /// no content rule matched.
+    ///
+    /// # Errors
+    /// Returns a backend or media-classifier error when content inspection or
+    /// refinement cannot complete.
+    fn detect_by_content(&self, content: &[u8]) -> MimeResult<Option<String>>;
 
     /// Detects a MIME type from content bytes and an optional filename.
     ///
@@ -51,13 +50,20 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// - `policy`: Strategy for resolving filename and content results.
     ///
     /// # Returns
-    /// Selected MIME type name, or `None`.
+    /// `Ok(Some(_))` contains the selected MIME type; `Ok(None)` means neither
+    /// filename nor content produced a candidate.
     fn detect(
         &self,
         content: &[u8],
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
-    ) -> Option<String>;
+    ) -> MimeResult<Option<String>>;
+
+    /// Gets the largest prefix buffer this detector may allocate.
+    ///
+    /// # Returns
+    /// The inclusive byte limit enforced before reader and path prefix reads.
+    fn max_buffer_size(&self) -> usize;
 
     /// Detects a MIME type from a seekable reader without consuming its
     /// position.
@@ -68,7 +74,8 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// - `policy`: Strategy for resolving filename and content results.
     ///
     /// # Returns
-    /// Selected MIME type name, or `None`.
+    /// `Ok(Some(_))` contains the selected MIME type; `Ok(None)` means no
+    /// candidate matched.
     ///
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking
@@ -93,11 +100,7 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be
     /// opened or read, or another [`MimeError`](crate::MimeError) when a
     /// detector backend fails.
-    fn detect_file(
-        &self,
-        file: &Path,
-        policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>>;
+    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>>;
 
     /// Detects a MIME type through a provider-neutral filesystem path.
     ///
@@ -111,7 +114,8 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// Selected MIME type name, or `None`.
     ///
     /// # Errors
-    /// Returns a filesystem or detector error when `path` cannot be opened or
+    /// Returns [`MimeError::BufferLimitExceeded`] when `max_bytes` exceeds the
+    /// detector limit, or a filesystem/detector error when `path` cannot be
     /// inspected.
     ///
     /// `max_bytes` bounds the prefix read used for content inspection; larger
@@ -123,21 +127,27 @@ pub trait MimeDetector: Debug + Send + Sync {
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        let content =
-            file_system.read_prefix(path, ReadOptions::default(), max_bytes)?;
+        let limit = self.max_buffer_size();
+        if max_bytes > limit {
+            return Err(MimeError::BufferLimitExceeded {
+                requested: max_bytes,
+                limit,
+            });
+        }
+        let content = file_system.read_prefix(path, ReadOptions::default(), max_bytes)?;
         let filename = path.file_name();
-        Ok(self.detect(&content, filename, policy))
+        self.detect(&content, filename, policy)
     }
 }
 
 impl MimeDetector for Box<dyn MimeDetector> {
     /// Delegates filename detection to the boxed detector.
-    fn detect_by_filename(&self, filename: &str) -> Option<String> {
+    fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_filename(filename)
     }
 
     /// Delegates content detection to the boxed detector.
-    fn detect_by_content(&self, content: &[u8]) -> Option<String> {
+    fn detect_by_content(&self, content: &[u8]) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_content(content)
     }
 
@@ -147,8 +157,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
         content: &[u8],
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
-    ) -> Option<String> {
+    ) -> MimeResult<Option<String>> {
         self.as_ref().detect(content, filename, policy)
+    }
+
+    fn max_buffer_size(&self) -> usize {
+        self.as_ref().max_buffer_size()
     }
 
     /// Delegates reader detection to the boxed detector.
@@ -162,11 +176,7 @@ impl MimeDetector for Box<dyn MimeDetector> {
     }
 
     /// Delegates file detection to the boxed detector.
-    fn detect_file(
-        &self,
-        file: &Path,
-        policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>> {
+    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         self.as_ref().detect_file(file, policy)
     }
 
@@ -184,12 +194,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
 
 impl MimeDetector for Arc<dyn MimeDetector> {
     /// Delegates filename detection to the shared detector.
-    fn detect_by_filename(&self, filename: &str) -> Option<String> {
+    fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_filename(filename)
     }
 
     /// Delegates content detection to the shared detector.
-    fn detect_by_content(&self, content: &[u8]) -> Option<String> {
+    fn detect_by_content(&self, content: &[u8]) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_content(content)
     }
 
@@ -199,8 +209,12 @@ impl MimeDetector for Arc<dyn MimeDetector> {
         content: &[u8],
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
-    ) -> Option<String> {
+    ) -> MimeResult<Option<String>> {
         self.as_ref().detect(content, filename, policy)
+    }
+
+    fn max_buffer_size(&self) -> usize {
+        self.as_ref().max_buffer_size()
     }
 
     /// Delegates reader detection to the shared detector.
@@ -214,11 +228,7 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     }
 
     /// Delegates file detection to the shared detector.
-    fn detect_file(
-        &self,
-        file: &Path,
-        policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>> {
+    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         self.as_ref().detect_file(file, policy)
     }
 

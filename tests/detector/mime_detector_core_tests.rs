@@ -6,21 +6,13 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use std::io::{
-    Cursor,
-    Read,
-};
+use std::io::{Cursor, Read};
 use std::path::Path;
 use std::sync::Arc;
 
 use qubit_mime::{
-    DetectionSource,
-    MediaStreamClassifier,
-    MediaStreamType,
-    MimeConfig,
-    MimeDetectionPolicy,
-    MimeDetectorCore,
-    MimeError,
+    DetectionSource, MediaStreamClassifier, MediaStreamType, MimeConfig, MimeDetectionPolicy,
+    MimeDetectorCore, MimeError,
 };
 
 #[derive(Debug)]
@@ -33,17 +25,11 @@ struct StaticClassifier {
 struct FailingClassifier;
 
 impl MediaStreamClassifier for StaticClassifier {
-    fn classify_file(
-        &self,
-        _file: &Path,
-    ) -> Result<MediaStreamType, MimeError> {
+    fn classify_file(&self, _file: &Path) -> Result<MediaStreamType, MimeError> {
         Ok(self.stream_type)
     }
 
-    fn classify_reader(
-        &self,
-        reader: &mut dyn Read,
-    ) -> Result<MediaStreamType, MimeError> {
+    fn classify_reader(&self, reader: &mut dyn Read) -> Result<MediaStreamType, MimeError> {
         if let Some(expected_first_byte) = self.expected_first_byte {
             let mut buffer = [0_u8; 1];
             reader.read_exact(&mut buffer)?;
@@ -58,19 +44,13 @@ impl MediaStreamClassifier for StaticClassifier {
 }
 
 impl MediaStreamClassifier for FailingClassifier {
-    fn classify_file(
-        &self,
-        _file: &Path,
-    ) -> Result<MediaStreamType, MimeError> {
+    fn classify_file(&self, _file: &Path) -> Result<MediaStreamType, MimeError> {
         Err(MimeError::InvalidClassifierInput {
             reason: "forced".to_owned(),
         })
     }
 
-    fn classify_reader(
-        &self,
-        _reader: &mut dyn Read,
-    ) -> Result<MediaStreamType, MimeError> {
+    fn classify_reader(&self, _reader: &mut dyn Read) -> Result<MediaStreamType, MimeError> {
         Err(MimeError::InvalidClassifierInput {
             reason: "forced".to_owned(),
         })
@@ -103,10 +83,7 @@ fn test_merge_results_uses_detector_selection_strategy() {
     );
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detector.merge_results(
-            &["image/jpeg".to_owned()],
-            &["application/pdf".to_owned()]
-        )
+        detector.merge_results(&["image/jpeg".to_owned()], &["application/pdf".to_owned()])
     );
 }
 
@@ -128,7 +105,7 @@ fn test_refine_detected_mime_type_uses_media_stream_classifier() {
         DetectionSource::Content(b"webm"),
     );
 
-    assert_eq!("audio/webm", refined);
+    assert_eq!("audio/webm", refined.expect("refinement should succeed"));
 }
 
 #[test]
@@ -145,23 +122,27 @@ fn test_select_result_honors_prefer_filename_and_refines_content_result() {
 
     assert_eq!(
         Some("image/jpeg".to_owned()),
-        detector.select_result(
+        detector
+            .select_result(
             &["image/jpeg".to_owned()],
             &["video/webm".to_owned()],
             Some("movie.webm"),
             MimeDetectionPolicy::PreferFilename,
             DetectionSource::Content(b"webm"),
         )
+            .expect("selection should succeed")
     );
     assert_eq!(
         Some("video/webm".to_owned()),
-        detector.select_result(
+        detector
+            .select_result(
             &["video/webm".to_owned()],
             &["audio/webm".to_owned()],
             Some("movie.webm"),
             MimeDetectionPolicy::VerifyContent,
             DetectionSource::Content(b"webm"),
         )
+            .expect("selection should succeed")
     );
 }
 
@@ -180,19 +161,19 @@ fn test_refine_detected_mime_type_handles_disabled_missing_and_failing_cases() {
     assert!(detector.media_stream_classifier().is_some());
     assert_eq!(
         "video/ogg",
-        detector.refine_detected_mime_type(
+        detector
+            .refine_detected_mime_type(
             "audio/ogg",
             None,
             DetectionSource::Path(Path::new("Cargo.toml")),
         )
+            .expect("path refinement should succeed")
     );
     assert_eq!(
         "video/webm",
-        detector.refine_detected_mime_type(
-            "video/webm",
-            Some("movie.webm"),
-            DetectionSource::None,
-        )
+        detector
+            .refine_detected_mime_type("video/webm", Some("movie.webm"), DetectionSource::None,)
+            .expect("refinement without source should succeed")
     );
     assert_eq!(
         "video/webm",
@@ -206,6 +187,7 @@ fn test_refine_detected_mime_type_handles_disabled_missing_and_failing_cases() {
             Some("movie.webm"),
             DetectionSource::Content(b""),
         )
+        .expect("refinement without classifier should succeed")
     );
     assert_eq!(
         "video/webm",
@@ -219,6 +201,7 @@ fn test_refine_detected_mime_type_handles_disabled_missing_and_failing_cases() {
             Some("movie.webm"),
             DetectionSource::Content(b""),
         )
+        .expect("disabled refinement should succeed")
     );
     assert_eq!(
         "video/webm",
@@ -228,14 +211,17 @@ fn test_refine_detected_mime_type_handles_disabled_missing_and_failing_cases() {
                 Some("movie.webm"),
                 DetectionSource::Content(b""),
             )
+            .expect("unmapped refinement should succeed")
     );
     assert_eq!(
         "application/pdf",
-        detector.refine_detected_mime_type(
+        detector
+            .refine_detected_mime_type(
             "application/pdf",
             Some("movie.webm"),
             DetectionSource::Content(b""),
         )
+            .expect("unrelated MIME refinement should succeed")
     );
 
     let mut failing = MimeDetectorCore::new(create_precise_config(
@@ -245,22 +231,26 @@ fn test_refine_detected_mime_type_handles_disabled_missing_and_failing_cases() {
     ));
     failing.set_media_stream_classifier(Some(Arc::new(FailingClassifier)));
 
-    assert_eq!(
-        "video/webm",
-        failing.refine_detected_mime_type(
+    assert!(matches!(
+        failing
+            .refine_detected_mime_type(
             "video/webm",
             Some("movie.webm"),
             DetectionSource::Content(b""),
         )
-    );
-    assert_eq!(
-        "video/webm",
-        failing.refine_detected_mime_type(
+            .expect_err("content refinement must retain classifier failures"),
+        MimeError::InvalidClassifierInput { .. }
+    ));
+    assert!(matches!(
+        failing
+            .refine_detected_mime_type(
             "video/webm",
             Some("movie.webm"),
             DetectionSource::Path(Path::new("Cargo.toml")),
         )
-    );
+            .expect_err("path refinement must retain classifier failures"),
+        MimeError::InvalidClassifierInput { .. }
+    ));
 }
 
 /// Verifies reader-based refinement classifies the stream and restores its
@@ -290,6 +280,33 @@ fn test_select_reader_result_refines_without_consuming_reader_position() {
         .expect("reader refinement should succeed");
 
     assert_eq!(Some("audio/webm".to_owned()), refined);
+    assert_eq!(1, reader.position());
+}
+
+/// Verifies reader-based refinement propagates classifier failures and restores
+/// the original reader position.
+#[test]
+fn test_select_reader_result_propagates_classifier_failures() {
+    let mut detector = MimeDetectorCore::new(create_precise_config(
+        true,
+        "webm",
+        "webm:video/webm,audio/webm",
+    ));
+    detector.set_media_stream_classifier(Some(Arc::new(FailingClassifier)));
+    let mut reader = Cursor::new(b"webm".to_vec());
+    reader.set_position(1);
+
+    let error = detector
+        .select_reader_result(
+            &[],
+            &["video/webm".to_owned()],
+            Some("sample.webm"),
+            MimeDetectionPolicy::VerifyContent,
+            &mut reader,
+        )
+        .expect_err("reader refinement must retain classifier failures");
+
+    assert!(matches!(error, MimeError::InvalidClassifierInput { .. }));
     assert_eq!(1, reader.position());
 }
 
