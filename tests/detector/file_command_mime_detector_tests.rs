@@ -393,7 +393,7 @@ fn test_default_file_command_runner_uses_config_timeout() {
 }
 
 fn create_precise_config() -> MimeConfig {
-    let mut config = qubit_config::Config::new();
+    let mut config = Config::new();
     config
         .set(CONFIG_MIME_DETECTOR_DEFAULT, "file")
         .expect("detector default should be configurable");

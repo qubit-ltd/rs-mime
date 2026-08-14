@@ -7,6 +7,7 @@
 // =============================================================================
 //! Tests for MIME repository parsing and matching.
 
+use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeRepository;
 use qubit_mime::MimeType;
 
@@ -177,7 +178,7 @@ fn test_detect_uses_filename_when_single_candidate_and_magic_not_required() {
         names(repository.detect(
             "document.pdf",
             b"\x89PNG\r\n\x1a\n",
-            qubit_mime::MimeDetectionPolicy::PreferFilename,
+            MimeDetectionPolicy::PreferFilename,
         ))
     );
 }
@@ -191,7 +192,7 @@ fn test_detect_uses_magic_when_verify_content_policy_is_enabled() {
         names(repository.detect(
             "document.pdf",
             b"\x89PNG\r\n\x1a\n",
-            qubit_mime::MimeDetectionPolicy::VerifyContent,
+            MimeDetectionPolicy::VerifyContent,
         ))
     );
 }
@@ -205,7 +206,7 @@ fn test_detect_merges_filename_when_content_missing_or_common() {
         names(repository.detect(
             "document.pdf",
             b"nothing recognizable",
-            qubit_mime::MimeDetectionPolicy::VerifyContent,
+            MimeDetectionPolicy::VerifyContent,
         ))
     );
     assert_eq!(
@@ -213,7 +214,7 @@ fn test_detect_merges_filename_when_content_missing_or_common() {
         names(repository.detect(
             "document.pdf",
             b"%PDF-1.7\n",
-            qubit_mime::MimeDetectionPolicy::VerifyContent,
+            MimeDetectionPolicy::VerifyContent,
         ))
     );
 }
@@ -233,7 +234,7 @@ fn test_detect_returns_empty_when_no_rule_matches() {
             .detect(
                 "unknown.nope",
                 b"nothing recognizable",
-                qubit_mime::MimeDetectionPolicy::VerifyContent,
+                MimeDetectionPolicy::VerifyContent,
             )
             .is_empty()
     );

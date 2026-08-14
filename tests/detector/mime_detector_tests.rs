@@ -11,6 +11,7 @@ use qubit_fs::Path as FsPath;
 use qubit_fs_local::LocalFileSystems;
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::LocalTempFileOptions;
+use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
 use qubit_mime::CONFIG_MIME_DETECTOR_FALLBACKS;
 use qubit_mime::MimeConfig;
 use qubit_mime::MimeDetectionPolicy;
@@ -438,9 +439,9 @@ fn create_detector_config_with_fallbacks(
     detector: &str,
     fallbacks: &[&str],
 ) -> MimeConfig {
-    let mut config = qubit_config::Config::new();
+    let mut config = Config::new();
     config
-        .set(qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT, detector)
+        .set(CONFIG_MIME_DETECTOR_DEFAULT, detector)
         .expect("detector default should be configurable");
     config
         .set(CONFIG_MIME_DETECTOR_FALLBACKS, fallbacks.join(","))

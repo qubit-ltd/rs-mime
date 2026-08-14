@@ -14,6 +14,7 @@ use std::io::Result as IoResult;
 use std::io::Seek;
 use std::io::SeekFrom;
 
+use qubit_config::Config;
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::LocalTempFileOptions;
 use qubit_mime::MimeConfig;
@@ -174,7 +175,7 @@ fn test_detect_file_reads_file_and_uses_file_name() {
 #[test]
 fn test_accessors_empty_repository_and_reader_errors() {
     let repository = MimeRepository::empty();
-    let config = MimeConfig::from_config(&qubit_config::Config::new())
+    let config = MimeConfig::from_config(&Config::new())
         .expect("builtin config should parse");
     let mut detector =
         RepositoryMimeDetector::with_repository_and_config(&repository, config);

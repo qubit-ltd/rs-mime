@@ -11,6 +11,12 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
+use qubit_config::Config;
+use qubit_mime::CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT;
+use qubit_mime::CONFIG_MIME_AMBIGUOUS_MIME_MAPPING;
+use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
+use qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION;
+use qubit_mime::CONFIG_MIME_PRECISE_DETECTION_PATTERNS;
 use qubit_mime::DetectionSource;
 use qubit_mime::MediaStreamClassifier;
 use qubit_mime::MediaStreamType;
@@ -338,33 +344,27 @@ fn create_precise_config(
     precise_detection_patterns: &str,
     ambiguous_mime_mapping: &str,
 ) -> MimeConfig {
-    let mut config = qubit_config::Config::new();
+    let mut config = Config::new();
     config
-        .set(qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT, "repository")
+        .set(CONFIG_MIME_DETECTOR_DEFAULT, "repository")
         .expect("detector selector should be configurable");
     config
-        .set(
-            qubit_mime::CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
-            "ffprobe",
-        )
+        .set(CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, "ffprobe")
         .expect("classifier selector should be configurable");
     config
         .set(
-            qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION,
+            CONFIG_MIME_ENABLE_PRECISE_DETECTION,
             enable_precise_detection,
         )
         .expect("precise detection flag should be configurable");
     config
         .set(
-            qubit_mime::CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
+            CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
             precise_detection_patterns,
         )
         .expect("precise detection patterns should be configurable");
     config
-        .set(
-            qubit_mime::CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
-            ambiguous_mime_mapping,
-        )
+        .set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, ambiguous_mime_mapping)
         .expect("ambiguous MIME mapping should be configurable");
     MimeConfig::from_config(&config).expect("precise MIME config should parse")
 }

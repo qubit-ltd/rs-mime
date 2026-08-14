@@ -10,6 +10,8 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
+use qubit_io::std_io::ReadSeek;
+
 use crate::MimeConfig;
 use crate::MimeDetectionPolicy;
 use crate::MimeDetector;
@@ -179,7 +181,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// fails.
     pub fn detect_reader(
         &self,
-        reader: &mut dyn qubit_io::std_io::ReadSeek,
+        reader: &mut dyn ReadSeek,
         filename: Option<&str>,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
