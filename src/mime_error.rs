@@ -27,7 +27,9 @@ pub enum MimeError {
     },
 
     /// An XML attribute is missing or malformed.
-    #[error("invalid XML attribute '{attribute}' on <{element}>: '{value}' ({reason})")]
+    #[error(
+        "invalid XML attribute '{attribute}' on <{element}>: '{value}' ({reason})"
+    )]
     InvalidXmlAttribute {
         /// Element carrying the invalid attribute.
         element: String,
@@ -67,7 +69,9 @@ pub enum MimeError {
     },
 
     /// A detector read path could not reserve its requested buffer capacity.
-    #[error("MIME detector could not allocate a {requested}-byte buffer: {source}")]
+    #[error(
+        "MIME detector could not allocate a {requested}-byte buffer: {source}"
+    )]
     BufferAllocationFailed {
         /// Requested buffer capacity.
         requested: usize,
@@ -237,7 +241,10 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::InvalidXmlElement`](crate::MimeError::InvalidXmlElement)
     /// value.
-    pub(crate) fn invalid_element(element: &str, reason: impl Into<String>) -> Self {
+    pub(crate) fn invalid_element(
+        element: &str,
+        reason: impl Into<String>,
+    ) -> Self {
         Self::InvalidXmlElement {
             element: element.to_owned(),
             reason: reason.into(),
@@ -279,7 +286,10 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::DetectorBackend`](crate::MimeError::DetectorBackend)
     /// value.
-    pub fn detector_backend(backend: impl Into<String>, reason: impl Into<String>) -> Self {
+    pub fn detector_backend(
+        backend: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
         Self::DetectorBackend {
             backend: backend.into(),
             reason: reason.into(),

@@ -1,10 +1,8 @@
-use qubit_mime::{
-    MagicValueType,
-    MimeGlob,
-    MimeMagic,
-    MimeMagicMatcher,
-    MimeTypeBuilder,
-};
+use qubit_mime::MagicValueType;
+use qubit_mime::MimeGlob;
+use qubit_mime::MimeMagic;
+use qubit_mime::MimeMagicMatcher;
+use qubit_mime::MimeTypeBuilder;
 
 #[test]
 fn test_mime_type_builder_collects_metadata_and_matching_rules() {

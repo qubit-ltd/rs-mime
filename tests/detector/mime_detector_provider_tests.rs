@@ -7,9 +7,11 @@
 // =============================================================================
 
 use qubit_mime::MimeConfig;
-use qubit_spi::{ProviderMetadata, ServiceProvider};
+use qubit_spi::ProviderMetadata;
+use qubit_spi::ServiceProvider;
 
-use crate::support::{TestMimeDetectorProvider, TestProviderBehavior};
+use crate::support::TestMimeDetectorProvider;
+use crate::support::TestProviderBehavior;
 
 #[test]
 fn test_mime_detector_provider_defaults_and_factory() {

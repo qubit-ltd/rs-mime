@@ -8,16 +8,13 @@
 //! Top-level media stream classifier interface.
 
 use std::fmt::Debug;
-use std::io::{
-    Cursor,
-    Read,
-};
+use std::io::Cursor;
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::MimeResult;
-
 use super::MediaStreamType;
+use crate::MimeResult;
 
 /// Classifies a media source by the audio and video streams it contains.
 pub trait MediaStreamClassifier: Debug + Send + Sync {

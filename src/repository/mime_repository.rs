@@ -10,29 +10,23 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use qubit_codec_misc::{
-    CIntegerLiteralCodec,
-    CStringLiteralCodec,
-    HexCodec,
-    MiscCodecError,
-};
-use roxmltree::{
-    Document,
-    NS_XML_URI,
-    Node,
-};
+use qubit_codec_misc::CIntegerLiteralCodec;
+use qubit_codec_misc::CStringLiteralCodec;
+use qubit_codec_misc::HexCodec;
+use qubit_codec_misc::MiscCodecError;
+use roxmltree::Document;
+use roxmltree::NS_XML_URI;
+use roxmltree::Node;
 
-use crate::{
-    MagicValueType,
-    MimeDetectionPolicy,
-    MimeError,
-    MimeGlob,
-    MimeMagic,
-    MimeMagicMatcher,
-    MimeResult,
-    MimeType,
-    MimeTypeBuilder,
-};
+use crate::MagicValueType;
+use crate::MimeDetectionPolicy;
+use crate::MimeError;
+use crate::MimeGlob;
+use crate::MimeMagic;
+use crate::MimeMagicMatcher;
+use crate::MimeResult;
+use crate::MimeType;
+use crate::MimeTypeBuilder;
 
 /// A repository of MIME types and detection indexes.
 #[derive(Debug, Clone)]

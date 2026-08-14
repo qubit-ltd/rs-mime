@@ -9,20 +9,27 @@
 use qubit_config::Config;
 use qubit_fs::Path as FsPath;
 use qubit_fs_local::LocalFileSystems;
-use qubit_local_files::{LocalFileSystem, LocalTempFileOptions};
-use qubit_mime::{
-    CONFIG_MIME_DETECTOR_FALLBACKS, MimeConfig, MimeDetectionPolicy, MimeDetector,
-    MimeDetectorBackend, MimeDetectorRegistry, MimeError, RepositoryMimeDetector,
-};
+use qubit_local_files::LocalFileSystem;
+use qubit_local_files::LocalTempFileOptions;
+use qubit_mime::CONFIG_MIME_DETECTOR_FALLBACKS;
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetectionPolicy;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeDetectorBackend;
+use qubit_mime::MimeDetectorRegistry;
+use qubit_mime::MimeError;
+use qubit_mime::RepositoryMimeDetector;
 use qubit_spi::ProviderSelection;
 
+use crate::support::DirectBackendDetector;
 #[cfg(unix)]
 use crate::support::PathEnvGuard;
-use crate::support::{DirectBackendDetector, StaticEntryPointMimeDetector};
+use crate::support::StaticEntryPointMimeDetector;
 
 #[test]
 fn test_mime_detector_trait_supports_repository_detector() {
-    let detector = RepositoryMimeDetector::new().expect("default repository should load");
+    let detector =
+        RepositoryMimeDetector::new().expect("default repository should load");
     let detector: &dyn MimeDetector = &detector;
     assert_eq!(
         Some("image/jpeg".to_owned()),
@@ -40,17 +47,18 @@ fn test_mime_detector_trait_supports_repository_detector() {
         Some("application/pdf".to_owned()),
         detector
             .detect(
-            b"%PDF-1.7\n",
-            Some("photo.jpg"),
-            MimeDetectionPolicy::VerifyContent,
-        )
+                b"%PDF-1.7\n",
+                Some("photo.jpg"),
+                MimeDetectionPolicy::VerifyContent,
+            )
             .expect("combined detection should succeed")
     );
 }
 
 #[test]
 fn test_mime_detector_trait_supports_reader_and_file_detection() {
-    let detector = RepositoryMimeDetector::new().expect("default repository should load");
+    let detector =
+        RepositoryMimeDetector::new().expect("default repository should load");
     let detector: &dyn MimeDetector = &detector;
     let mut reader = std::io::Cursor::new(b"%PDF-1.7\n".to_vec());
 
@@ -65,7 +73,8 @@ fn test_mime_detector_trait_supports_reader_and_file_detection() {
     let mut file = LocalFileSystem::host()
         .create_temp_file(&LocalTempFileOptions::new().with_suffix(".pdf"))
         .expect("temp file should be created");
-    std::io::Write::write_all(&mut file, b"%PDF-1.7\n").expect("temp file should be writable");
+    std::io::Write::write_all(&mut file, b"%PDF-1.7\n")
+        .expect("temp file should be writable");
     let from_file = detector
         .detect_file(file.path(), MimeDetectionPolicy::VerifyContent)
         .expect("trait-object file detection should succeed");
@@ -77,13 +86,16 @@ fn test_mime_detector_trait_supports_reader_and_file_detection() {
 
 #[test]
 fn test_mime_detector_trait_supports_filesystem_path_detection() {
-    let detector = RepositoryMimeDetector::new().expect("default repository should load");
+    let detector =
+        RepositoryMimeDetector::new().expect("default repository should load");
     let detector: &dyn MimeDetector = &detector;
     let mut file = LocalFileSystem::host()
         .create_temp_file(&LocalTempFileOptions::new().with_suffix(".pdf"))
         .expect("temp file should be created");
-    std::io::Write::write_all(&mut file, b"%PDF-1.7\n").expect("temp file should be writable");
-    let filesystem = LocalFileSystems::host().expect("host filesystem facade should be created");
+    std::io::Write::write_all(&mut file, b"%PDF-1.7\n")
+        .expect("temp file should be writable");
+    let filesystem = LocalFileSystems::host()
+        .expect("host filesystem facade should be created");
     let path = FsPath::parse(
         file.path()
             .to_str()
@@ -101,8 +113,10 @@ fn test_mime_detector_trait_supports_filesystem_path_detection() {
 #[test]
 fn test_mime_detector_path_rejects_requests_above_detector_buffer_limit() {
     let detector = StaticEntryPointMimeDetector;
-    let filesystem = LocalFileSystems::host().expect("host filesystem facade should be created");
-    let path = FsPath::parse("/unused").expect("test path should be a valid filesystem path");
+    let filesystem = LocalFileSystems::host()
+        .expect("host filesystem facade should be created");
+    let path = FsPath::parse("/unused")
+        .expect("test path should be a valid filesystem path");
 
     let error = detector
         .detect_path(&filesystem, &path, 1, MimeDetectionPolicy::VerifyContent)
@@ -129,7 +143,8 @@ fn test_mime_detector_backend_defaults_read_reader_and_file_prefix() {
     let mut file = LocalFileSystem::host()
         .create_temp_file(&LocalTempFileOptions::new())
         .expect("temp file should be created");
-    std::io::Write::write_all(&mut file, b"hello world").expect("temp file should be writable");
+    std::io::Write::write_all(&mut file, b"hello world")
+        .expect("temp file should be writable");
     let (file_candidates, file_content) =
         MimeDetectorBackend::guess_from_file(&detector, file.path())
             .expect("backend file default should read content prefix");
@@ -157,7 +172,8 @@ fn test_mime_detector_backend_prefer_filename_skips_reader_and_file_content() {
     let mut file = LocalFileSystem::host()
         .create_temp_file(&LocalTempFileOptions::new().with_suffix(".txt"))
         .expect("temp file should be created");
-    std::io::Write::write_all(&mut file, b"xxxxx").expect("temp file should be writable");
+    std::io::Write::write_all(&mut file, b"xxxxx")
+        .expect("temp file should be writable");
     let from_file = detector
         .detect_file(file.path(), MimeDetectionPolicy::PreferFilename)
         .expect("filename-preferred file detection should succeed");
@@ -258,7 +274,8 @@ fn test_mime_detector_registry_creates_from_explicit_registry() {
 
 #[test]
 fn test_boxed_mime_detector_trait_object_delegates_all_entry_points() {
-    let detector: Box<dyn MimeDetector> = Box::new(StaticEntryPointMimeDetector);
+    let detector: Box<dyn MimeDetector> =
+        Box::new(StaticEntryPointMimeDetector);
     let mut reader = std::io::Cursor::new(b"data".to_vec());
 
     assert_eq!(
@@ -277,16 +294,20 @@ fn test_boxed_mime_detector_trait_object_delegates_all_entry_points() {
         Some("application/x-static-detect".to_owned()),
         detector
             .detect(
-            b"data",
-            Some("file.bin"),
-            MimeDetectionPolicy::PreferFilename
-        )
+                b"data",
+                Some("file.bin"),
+                MimeDetectionPolicy::PreferFilename
+            )
             .expect("boxed detection delegation should succeed")
     );
     assert_eq!(
         Some("application/x-static-reader".to_owned()),
         detector
-            .detect_reader(&mut reader, None, MimeDetectionPolicy::PreferFilename)
+            .detect_reader(
+                &mut reader,
+                None,
+                MimeDetectionPolicy::PreferFilename
+            )
             .expect("boxed reader delegation should succeed")
     );
     assert_eq!(
@@ -324,16 +345,20 @@ fn test_shared_mime_detector_trait_object_delegates_all_entry_points() {
         Some("application/x-static-detect".to_owned()),
         detector
             .detect(
-            b"data",
-            Some("file.bin"),
-            MimeDetectionPolicy::PreferFilename
-        )
+                b"data",
+                Some("file.bin"),
+                MimeDetectionPolicy::PreferFilename
+            )
             .expect("arc detection delegation should succeed")
     );
     assert_eq!(
         Some("application/x-static-reader".to_owned()),
         detector
-            .detect_reader(&mut reader, None, MimeDetectionPolicy::PreferFilename)
+            .detect_reader(
+                &mut reader,
+                None,
+                MimeDetectionPolicy::PreferFilename
+            )
             .expect("arc reader delegation should succeed")
     );
     assert_eq!(
@@ -350,7 +375,8 @@ fn test_shared_mime_detector_trait_object_delegates_all_entry_points() {
 #[test]
 fn test_mime_detector_registry_builds_from_config_defaults() {
     let registry = MimeDetectorRegistry::builtin();
-    let config = MimeConfig::from_config(&Config::new()).expect("default MIME config should parse");
+    let config = MimeConfig::from_config(&Config::new())
+        .expect("default MIME config should parse");
     let boxed = create_configured_detector(&registry, &config);
     let shared = create_configured_detector(&registry, &config);
 
@@ -371,7 +397,8 @@ fn test_mime_detector_registry_builds_from_config_defaults() {
 #[test]
 fn test_configured_fallback_rejects_unknown_detector() {
     let registry = MimeDetectorRegistry::builtin();
-    let config = create_detector_config_with_fallbacks("unknown", &["repository"]);
+    let config =
+        create_detector_config_with_fallbacks("unknown", &["repository"]);
     let error = registry
         .resolve_selected(config.mime_detector_selection())
         .expect_err("strict configured chain should reject unknown providers");
@@ -407,7 +434,10 @@ fn create_detector_config(detector: &str) -> MimeConfig {
     create_detector_config_with_fallbacks(detector, &[])
 }
 
-fn create_detector_config_with_fallbacks(detector: &str, fallbacks: &[&str]) -> MimeConfig {
+fn create_detector_config_with_fallbacks(
+    detector: &str,
+    fallbacks: &[&str],
+) -> MimeConfig {
     let mut config = qubit_config::Config::new();
     config
         .set(qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT, detector)
@@ -434,8 +464,8 @@ fn create_named_detector(
     selector: &str,
     config: &MimeConfig,
 ) -> std::sync::Arc<dyn MimeDetector> {
-    let selection =
-        ProviderSelection::named(selector).expect("test provider selector should be valid");
+    let selection = ProviderSelection::named(selector)
+        .expect("test provider selector should be valid");
     registry
         .resolve_selected(&selection)
         .expect("named detector provider should resolve")

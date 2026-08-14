@@ -1,9 +1,12 @@
 use std::path::Path;
 
-use qubit_mime::{
-    MimeConfig, MimeDetectionPolicy, MimeDetector, MimeDetectorBackend, MimeDetectorCore,
-    MimeError, MimeResult,
-};
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetectionPolicy;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeDetectorBackend;
+use qubit_mime::MimeDetectorCore;
+use qubit_mime::MimeError;
+use qubit_mime::MimeResult;
 
 #[derive(Debug)]
 struct Backend {
@@ -96,9 +99,9 @@ fn test_mime_detector_backend_blanket_impl_uses_policy_and_sources() {
         Some("text/plain".to_owned()),
         backend
             .detect(
-            b"%PDF-1.7",
-            Some("note.txt"),
-            MimeDetectionPolicy::PreferFilename
+                b"%PDF-1.7",
+                Some("note.txt"),
+                MimeDetectionPolicy::PreferFilename
             )
             .expect("combined detection should succeed"),
     );

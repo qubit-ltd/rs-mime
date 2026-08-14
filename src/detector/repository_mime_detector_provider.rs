@@ -9,22 +9,17 @@
 
 use std::sync::Arc;
 
+use qubit_spi::ProviderDescriptor;
+use qubit_spi::ProviderMetadata;
+use qubit_spi::ServiceProvider;
 use qubit_spi::error::ProviderFailure;
-use qubit_spi::{
-    ProviderDescriptor,
-    ProviderMetadata,
-    ServiceProvider,
-    provider_descriptor,
-};
-
-use crate::{
-    MimeConfig,
-    MimeDetector,
-    MimeError,
-    RepositoryMimeDetector,
-};
+use qubit_spi::provider_descriptor;
 
 use super::MimeDetectorSpec;
+use crate::MimeConfig;
+use crate::MimeDetector;
+use crate::MimeError;
+use crate::RepositoryMimeDetector;
 
 /// Provider for the built-in repository-backed detector.
 #[derive(Debug, Clone, Copy, Default)]

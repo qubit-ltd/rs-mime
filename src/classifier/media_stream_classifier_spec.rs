@@ -9,16 +9,12 @@
 
 use std::sync::Arc;
 
-use qubit_spi::{
-    ServiceSpec,
-    SyncServiceSpec,
-};
+use qubit_spi::ServiceSpec;
+use qubit_spi::SyncServiceSpec;
 
-use crate::{
-    MediaStreamClassifier,
-    MimeConfig,
-    MimeError,
-};
+use crate::MediaStreamClassifier;
+use crate::MimeConfig;
+use crate::MimeError;
 
 /// Service specification for pluggable media stream classifier providers.
 ///

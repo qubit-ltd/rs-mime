@@ -13,11 +13,13 @@ use std::sync::Arc;
 
 use qubit_io::std_io::ReadSeek;
 
-use crate::{
-    MediaStreamClassifier, MediaStreamType, MimeConfig, MimeDetectionPolicy, MimeError, MimeResult,
-};
-
 use super::detection_source::DetectionSource;
+use crate::MediaStreamClassifier;
+use crate::MediaStreamType;
+use crate::MimeConfig;
+use crate::MimeDetectionPolicy;
+use crate::MimeError;
+use crate::MimeResult;
 
 /// Shared detector core for configuration and merge/refinement logic.
 #[derive(Debug, Clone)]
@@ -72,7 +74,9 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Configured classifier, or `None`.
-    pub fn media_stream_classifier(&self) -> Option<&dyn MediaStreamClassifier> {
+    pub fn media_stream_classifier(
+        &self,
+    ) -> Option<&dyn MediaStreamClassifier> {
         self.media_stream_classifier.as_deref()
     }
 
@@ -130,7 +134,9 @@ impl MimeDetectorCore {
         policy: MimeDetectionPolicy,
         source: DetectionSource<'_>,
     ) -> MimeResult<Option<String>> {
-        let result = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+        let result = if from_filename.len() == 1
+            && policy == MimeDetectionPolicy::PreferFilename
+        {
             from_filename.first().cloned()
         } else {
             self.merge_results(from_filename, from_content)
@@ -181,7 +187,9 @@ impl MimeDetectorCore {
         else {
             return Ok(None);
         };
-        if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+        if from_filename.len() == 1
+            && policy == MimeDetectionPolicy::PreferFilename
+        {
             return Ok(Some(result));
         }
         self.refine_detected_mime_type_from_reader(&result, filename, reader)
@@ -216,13 +224,17 @@ impl MimeDetectorCore {
             return Ok(detected_mime_type.to_owned());
         };
         let stream_type = match source {
-            DetectionSource::Content(content) => classifier.classify_content(content),
+            DetectionSource::Content(content) => {
+                classifier.classify_content(content)
+            }
             DetectionSource::Path(path) => classifier.classify_file(path),
             DetectionSource::None => return Ok(detected_mime_type.to_owned()),
         };
         match stream_type? {
             MediaStreamType::AudioOnly => Ok(audio_type.clone()),
-            MediaStreamType::VideoOnly | MediaStreamType::VideoWithAudio => Ok(video_type.clone()),
+            MediaStreamType::VideoOnly | MediaStreamType::VideoWithAudio => {
+                Ok(video_type.clone())
+            }
             MediaStreamType::None => Ok(detected_mime_type.to_owned()),
         }
     }
@@ -271,7 +283,9 @@ impl MimeDetectorCore {
         };
         Ok(match stream_type {
             MediaStreamType::AudioOnly => audio_type.clone(),
-            MediaStreamType::VideoOnly | MediaStreamType::VideoWithAudio => video_type.clone(),
+            MediaStreamType::VideoOnly | MediaStreamType::VideoWithAudio => {
+                video_type.clone()
+            }
             MediaStreamType::None => detected_mime_type.to_owned(),
         })
     }
@@ -289,7 +303,8 @@ impl MimeDetectorCore {
         detected_mime_type: &str,
         filename: Option<&str>,
     ) -> Option<&[String; 2]> {
-        let mapping_key = self.precise_detection_mapping_key(detected_mime_type, filename)?;
+        let mapping_key =
+            self.precise_detection_mapping_key(detected_mime_type, filename)?;
         self.config.ambiguous_mime_mapping().get(&mapping_key)
     }
 
@@ -306,13 +321,18 @@ impl MimeDetectorCore {
         detected_mime_type: &str,
         filename: Option<&str>,
     ) -> Option<String> {
-        if !self.config.enable_precise_detection() || detected_mime_type.is_empty() {
+        if !self.config.enable_precise_detection()
+            || detected_mime_type.is_empty()
+        {
             return None;
         }
         if let Some(filename) = filename
             && let Some(extension) = extension_from_filename(filename)
         {
-            return self.precise_detection_mapping_key_by_filename(detected_mime_type, extension);
+            return self.precise_detection_mapping_key_by_filename(
+                detected_mime_type,
+                extension,
+            );
         }
         self.precise_detection_mapping_key_by_mime_type(detected_mime_type)
     }
@@ -337,7 +357,8 @@ impl MimeDetectorCore {
         {
             return None;
         }
-        let possible_mime_types = self.config.ambiguous_mime_mapping().get(&extension)?;
+        let possible_mime_types =
+            self.config.ambiguous_mime_mapping().get(&extension)?;
         if possible_mime_types
             .iter()
             .any(|mime_type| mime_type == detected_mime_type)

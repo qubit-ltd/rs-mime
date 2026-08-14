@@ -12,34 +12,52 @@
 //! [`Config`] object, from process environment variables, or from built-in
 //! defaults.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{LazyLock, RwLock};
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::sync::LazyLock;
+use std::sync::RwLock;
 use std::time::Duration;
 
-use qubit_config::{
-    Config, ConfigReader,
-    options::{InterpolationSources, ReadPolicy},
-    source::EnvConfigOptions,
-};
-use qubit_datatype::{CollectionConversionPolicy, DurationConversionPolicy};
+use qubit_config::Config;
+use qubit_config::ConfigReader;
+use qubit_config::options::InterpolationSources;
+use qubit_config::options::ReadPolicy;
+use qubit_config::source::EnvConfigOptions;
+use qubit_datatype::CollectionConversionPolicy;
+use qubit_datatype::DurationConversionPolicy;
 use qubit_spi::ProviderSelection;
 use qubit_spi::error::ProviderSelectionBuildError;
 
+use crate::CONFIG_COMMAND_OUTPUT_MAX_BYTES;
+use crate::CONFIG_COMMAND_TIMEOUT;
+use crate::CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT;
+use crate::CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE;
+use crate::CONFIG_MIME_AMBIGUOUS_MIME_MAPPING;
+use crate::CONFIG_MIME_DETECTOR_DEFAULT;
+use crate::CONFIG_MIME_DETECTOR_FALLBACKS;
+use crate::CONFIG_MIME_ENABLE_PRECISE_DETECTION;
+use crate::CONFIG_MIME_MAX_BUFFER_SIZE;
+use crate::CONFIG_MIME_PRECISE_DETECTION_PATTERNS;
+use crate::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
+use crate::DEFAULT_COMMAND_TIMEOUT;
+use crate::DEFAULT_ENABLE_PRECISE_DETECTION;
+use crate::DEFAULT_MEDIA_STREAM_CLASSIFIER;
+use crate::DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE;
+use crate::DEFAULT_MIME_DETECTOR;
+use crate::DEFAULT_MIME_DETECTOR_FALLBACKS;
+use crate::DEFAULT_MIME_MAX_BUFFER_SIZE;
+use crate::ENV_COMMAND_OUTPUT_MAX_BYTES;
+use crate::ENV_COMMAND_TIMEOUT;
+use crate::ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT;
+use crate::ENV_MEDIA_STREAM_MAX_STAGING_SIZE;
+use crate::ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING;
+use crate::ENV_MIME_DETECTOR_DEFAULT;
+use crate::ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION;
+use crate::ENV_MIME_DETECTOR_FALLBACKS;
+use crate::ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS;
+use crate::ENV_MIME_MAX_BUFFER_SIZE;
 use crate::MimeError;
-use crate::{
-    CONFIG_COMMAND_OUTPUT_MAX_BYTES, CONFIG_COMMAND_TIMEOUT,
-    CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
-    CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, CONFIG_MIME_DETECTOR_DEFAULT,
-    CONFIG_MIME_DETECTOR_FALLBACKS, CONFIG_MIME_ENABLE_PRECISE_DETECTION,
-    CONFIG_MIME_MAX_BUFFER_SIZE, CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
-    DEFAULT_COMMAND_OUTPUT_MAX_BYTES, DEFAULT_COMMAND_TIMEOUT, DEFAULT_ENABLE_PRECISE_DETECTION,
-    DEFAULT_MEDIA_STREAM_CLASSIFIER, DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE, DEFAULT_MIME_DETECTOR,
-    DEFAULT_MIME_DETECTOR_FALLBACKS, DEFAULT_MIME_MAX_BUFFER_SIZE, ENV_COMMAND_OUTPUT_MAX_BYTES,
-    ENV_COMMAND_TIMEOUT, ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT, ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
-    ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING, ENV_MIME_DETECTOR_DEFAULT,
-    ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION, ENV_MIME_DETECTOR_FALLBACKS,
-    ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS, ENV_MIME_MAX_BUFFER_SIZE, MimeResult,
-};
+use crate::MimeResult;
 
 /// Runtime configuration for MIME detectors.
 ///
@@ -96,7 +114,8 @@ static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
 
 /// Value read policy.
 static VALUE_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
-    ReadPolicy::env_friendly().with_interpolation_sources(InterpolationSources::ConfigThenEnv)
+    ReadPolicy::env_friendly()
+        .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
 });
 
 static DURATION_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
@@ -110,7 +129,8 @@ static LIST_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
     ReadPolicy::env_friendly()
         .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
         .with_collection_policy(
-            CollectionConversionPolicy::env_friendly().with_delimiters([',', ';']),
+            CollectionConversionPolicy::env_friendly()
+                .with_delimiters([',', ';']),
         )
 });
 
@@ -118,7 +138,9 @@ static LIST_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
 static MAPPING_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
     ReadPolicy::env_friendly()
         .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
-        .with_collection_policy(CollectionConversionPolicy::env_friendly().with_delimiters([';']))
+        .with_collection_policy(
+            CollectionConversionPolicy::env_friendly().with_delimiters([';']),
+        )
 });
 
 /// Built-in precise detection patterns.
@@ -211,21 +233,24 @@ impl MimeConfig {
             [CONFIG_MIME_DETECTOR_FALLBACKS, ENV_MIME_DETECTOR_FALLBACKS],
             fallback_defaults(),
         )?;
-        let media_stream_classifier_default = value_config.get_any_interpolated_or(
+        let media_stream_classifier_default = value_config
+            .get_any_interpolated_or(
                 [
                     CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
                     ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
                 ],
                 DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
             )?;
-        let media_stream_max_staging_size = value_config.get_any_interpolated_or(
+        let media_stream_max_staging_size = value_config
+            .get_any_interpolated_or(
                 [
                     CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
                     ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
                 ],
                 DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
             )?;
-        let command_output_max_bytes: u64 = value_config.get_any_interpolated_or(
+        let command_output_max_bytes: u64 = value_config
+            .get_any_interpolated_or(
                 [
                     CONFIG_COMMAND_OUTPUT_MAX_BYTES,
                     ENV_COMMAND_OUTPUT_MAX_BYTES,
@@ -292,8 +317,12 @@ impl MimeConfig {
             command_output_max_bytes,
             command_timeout,
             enable_precise_detection,
-            precise_detection_patterns: normalize_patterns(precise_detection_patterns),
-            ambiguous_mime_mapping: build_ambiguous_mime_mapping(ambiguous_mime_mapping),
+            precise_detection_patterns: normalize_patterns(
+                precise_detection_patterns,
+            ),
+            ambiguous_mime_mapping: build_ambiguous_mime_mapping(
+                ambiguous_mime_mapping,
+            ),
             max_buffer_size,
         })
     }
@@ -309,7 +338,8 @@ impl MimeConfig {
     /// or classifier-name error when a configured provider selector is
     /// invalid.
     pub fn from_env() -> MimeResult<Self> {
-        let config = Config::from_env_options(EnvConfigOptions::new().prefix("QUBIT_"))?;
+        let config =
+            Config::from_env_options(EnvConfigOptions::new().prefix("QUBIT_"))?;
         Self::from_config(&config)
     }
 
@@ -367,7 +397,9 @@ impl MimeConfig {
     /// Automatic or named selection used by classifier registries.
     #[inline(always)]
     #[must_use]
-    pub const fn media_stream_classifier_selection(&self) -> &ProviderSelection {
+    pub const fn media_stream_classifier_selection(
+        &self,
+    ) -> &ProviderSelection {
         &self.media_stream_classifier_selection
     }
 
@@ -444,8 +476,11 @@ impl MimeConfig {
             media_stream_classifier_selection: create_classifier_selection(
                 DEFAULT_MEDIA_STREAM_CLASSIFIER,
             )
-            .expect("built-in media stream classifier selection should be valid"),
-            media_stream_max_staging_size: DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
+            .expect(
+                "built-in media stream classifier selection should be valid",
+            ),
+            media_stream_max_staging_size:
+                DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
             command_output_max_bytes: DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
             command_timeout: DEFAULT_COMMAND_TIMEOUT,
             enable_precise_detection: DEFAULT_ENABLE_PRECISE_DETECTION,
@@ -488,7 +523,9 @@ fn create_detector_selection(
     if primary.is_empty() || primary.eq_ignore_ascii_case("auto") {
         return Ok(ProviderSelection::auto());
     }
-    ProviderSelection::chain(std::iter::once(primary).chain(fallbacks.iter().map(String::as_str)))
+    ProviderSelection::chain(
+        std::iter::once(primary).chain(fallbacks.iter().map(String::as_str)),
+    )
     .map_err(detector_selection_error)
 }
 
@@ -505,7 +542,9 @@ fn create_detector_selection(
 /// # Errors
 ///
 /// Returns a classifier-name error when the configured selector is invalid.
-fn create_classifier_selection(configured: &str) -> MimeResult<ProviderSelection> {
+fn create_classifier_selection(
+    configured: &str,
+) -> MimeResult<ProviderSelection> {
     let configured = configured.trim();
     if configured.is_empty() || configured.eq_ignore_ascii_case("auto") {
         return Ok(ProviderSelection::auto());
@@ -620,7 +659,9 @@ fn normalize_patterns(patterns: Vec<String>) -> HashSet<String> {
 ///
 /// # Returns
 /// Lowercase extension to MIME pair mapping.
-fn build_ambiguous_mime_mapping(entries: Vec<String>) -> HashMap<String, [String; 2]> {
+fn build_ambiguous_mime_mapping(
+    entries: Vec<String>,
+) -> HashMap<String, [String; 2]> {
     entries
         .into_iter()
         .filter_map(|entry| {

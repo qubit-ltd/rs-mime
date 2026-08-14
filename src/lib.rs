@@ -84,24 +84,38 @@ mod mime_config;
 mod mime_error;
 mod mime_result;
 
-pub use classifier::{
-    FfprobeCommandMediaStreamClassifier, FfprobeCommandMediaStreamClassifierProvider,
-    FileBasedMediaStreamClassifier, MediaStreamClassifier, MediaStreamClassifierBackend,
-    MediaStreamClassifierProvider, MediaStreamClassifierRegistry, MediaStreamClassifierSpec,
-    MediaStreamType,
-};
+pub use classifier::FfprobeCommandMediaStreamClassifier;
+pub use classifier::FfprobeCommandMediaStreamClassifierProvider;
+pub use classifier::FileBasedMediaStreamClassifier;
+pub use classifier::MediaStreamClassifier;
+pub use classifier::MediaStreamClassifierBackend;
+pub use classifier::MediaStreamClassifierProvider;
+pub use classifier::MediaStreamClassifierRegistry;
+pub use classifier::MediaStreamClassifierSpec;
+pub use classifier::MediaStreamType;
 pub use common_mime_types::*;
 pub use constants::*;
-pub use detector::{
-    DetectionSource, FileBasedMimeDetector, FileCommandMimeDetector,
-    FileCommandMimeDetectorProvider, MimeDetectionPolicy, MimeDetector, MimeDetectorBackend,
-    MimeDetectorCore, MimeDetectorProvider, MimeDetectorRegistry, MimeDetectorSpec,
-    RepositoryMimeDetector, RepositoryMimeDetectorProvider, StreamBasedMimeDetector,
-};
+pub use detector::DetectionSource;
+pub use detector::FileBasedMimeDetector;
+pub use detector::FileCommandMimeDetector;
+pub use detector::FileCommandMimeDetectorProvider;
+pub use detector::MimeDetectionPolicy;
+pub use detector::MimeDetector;
+pub use detector::MimeDetectorBackend;
+pub use detector::MimeDetectorCore;
+pub use detector::MimeDetectorProvider;
+pub use detector::MimeDetectorRegistry;
+pub use detector::MimeDetectorSpec;
+pub use detector::RepositoryMimeDetector;
+pub use detector::RepositoryMimeDetectorProvider;
+pub use detector::StreamBasedMimeDetector;
 pub use mime_config::MimeConfig;
 pub use mime_error::MimeError;
 pub use mime_result::MimeResult;
-pub use repository::{
-    MagicValueType, MimeGlob, MimeMagic, MimeMagicMatcher, MimeRepository, MimeType,
-    MimeTypeBuilder,
-};
+pub use repository::MagicValueType;
+pub use repository::MimeGlob;
+pub use repository::MimeMagic;
+pub use repository::MimeMagicMatcher;
+pub use repository::MimeRepository;
+pub use repository::MimeType;
+pub use repository::MimeTypeBuilder;

@@ -9,11 +9,9 @@
 use std::io::Read;
 use std::path::Path;
 
-use qubit_mime::{
-    MediaStreamClassifier,
-    MediaStreamType,
-    MimeResult,
-};
+use qubit_mime::MediaStreamClassifier;
+use qubit_mime::MediaStreamType;
+use qubit_mime::MimeResult;
 
 /// Deterministic media stream classifier fixture.
 #[derive(Debug)]

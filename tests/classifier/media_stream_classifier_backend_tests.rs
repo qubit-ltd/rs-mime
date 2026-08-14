@@ -1,13 +1,11 @@
 use std::io::Read;
 use std::path::Path;
 
-use qubit_mime::{
-    MediaStreamClassifier,
-    MediaStreamClassifierBackend,
-    MediaStreamType,
-    MimeError,
-    MimeResult,
-};
+use qubit_mime::MediaStreamClassifier;
+use qubit_mime::MediaStreamClassifierBackend;
+use qubit_mime::MediaStreamType;
+use qubit_mime::MimeError;
+use qubit_mime::MimeResult;
 
 #[derive(Debug)]
 struct Backend;

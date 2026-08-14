@@ -7,28 +7,20 @@
 // =============================================================================
 //! Runtime Registry and global facade for media stream classifier providers.
 
-use std::sync::{
-    Arc,
-    LazyLock,
-};
+use std::sync::Arc;
+use std::sync::LazyLock;
 
-use qubit_spi::error::{
-    ProviderResolutionError,
-    RegistrationError,
-};
-use qubit_spi::{
-    ProviderDefinition,
-    ProviderId,
-    ProviderRegistry,
-    ProviderSelection,
-    ResolvingServiceProvider,
-};
+use qubit_spi::ProviderDefinition;
+use qubit_spi::ProviderId;
+use qubit_spi::ProviderRegistry;
+use qubit_spi::ProviderSelection;
+use qubit_spi::ResolvingServiceProvider;
+use qubit_spi::error::ProviderResolutionError;
+use qubit_spi::error::RegistrationError;
 
-use super::{
-    FfprobeCommandMediaStreamClassifierProvider,
-    MediaStreamClassifierProvider,
-    MediaStreamClassifierSpec,
-};
+use super::FfprobeCommandMediaStreamClassifierProvider;
+use super::MediaStreamClassifierProvider;
+use super::MediaStreamClassifierSpec;
 
 /// Process-wide classifier Registry initialized with the built-in provider.
 static GLOBAL_MEDIA_STREAM_CLASSIFIER_REGISTRY: LazyLock<

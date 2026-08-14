@@ -1,11 +1,9 @@
 use std::path::Path;
 
-use qubit_mime::{
-    FileBasedMediaStreamClassifier,
-    MediaStreamClassifier,
-    MediaStreamType,
-    MimeResult,
-};
+use qubit_mime::FileBasedMediaStreamClassifier;
+use qubit_mime::MediaStreamClassifier;
+use qubit_mime::MediaStreamType;
+use qubit_mime::MimeResult;
 
 #[derive(Debug)]
 struct FileOnlyClassifier;

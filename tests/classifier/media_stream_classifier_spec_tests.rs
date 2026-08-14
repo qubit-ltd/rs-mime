@@ -8,15 +8,11 @@
 
 use std::sync::Arc;
 
-use qubit_mime::{
-    MediaStreamClassifier,
-    MediaStreamClassifierSpec,
-    MimeConfig,
-};
-use qubit_spi::{
-    ServiceSpec,
-    SyncServiceSpec,
-};
+use qubit_mime::MediaStreamClassifier;
+use qubit_mime::MediaStreamClassifierSpec;
+use qubit_mime::MimeConfig;
+use qubit_spi::ServiceSpec;
+use qubit_spi::SyncServiceSpec;
 
 #[test]
 fn specification_exposes_the_expected_contract_types() {

@@ -6,8 +6,10 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use qubit_mime::{MimeConfig, RepositoryMimeDetectorProvider};
-use qubit_spi::{ProviderMetadata, ServiceProvider};
+use qubit_mime::MimeConfig;
+use qubit_mime::RepositoryMimeDetectorProvider;
+use qubit_spi::ProviderMetadata;
+use qubit_spi::ServiceProvider;
 
 #[test]
 fn test_repository_mime_detector_provider_creates_filename_detector() {

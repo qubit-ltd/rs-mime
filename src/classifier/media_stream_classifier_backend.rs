@@ -11,11 +11,10 @@ use std::fmt::Debug;
 use std::io::Read;
 use std::path::Path;
 
-use crate::MimeResult;
-
 use super::MediaStreamClassifier;
 use super::MediaStreamType;
 use super::media_stream_classifier_helpers::validate_readable_file;
+use crate::MimeResult;
 
 /// Core implementation contract for classifiers that can handle local files and
 /// streams.

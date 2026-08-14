@@ -6,10 +6,8 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use qubit_mime::{
-    FfprobeCommandMediaStreamClassifierProvider,
-    MediaStreamClassifierProvider,
-};
+use qubit_mime::FfprobeCommandMediaStreamClassifierProvider;
+use qubit_mime::MediaStreamClassifierProvider;
 
 fn assert_provider<T: MediaStreamClassifierProvider>() {}
 

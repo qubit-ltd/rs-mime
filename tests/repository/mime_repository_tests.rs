@@ -7,10 +7,8 @@
 // =============================================================================
 //! Tests for MIME repository parsing and matching.
 
-use qubit_mime::{
-    MimeRepository,
-    MimeType,
-};
+use qubit_mime::MimeRepository;
+use qubit_mime::MimeType;
 
 const TEST_DATABASE: &str = r#"
 <mime-info>

@@ -8,15 +8,11 @@
 
 use std::sync::Arc;
 
-use qubit_mime::{
-    MimeConfig,
-    MimeDetector,
-    MimeDetectorSpec,
-};
-use qubit_spi::{
-    ServiceSpec,
-    SyncServiceSpec,
-};
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeDetectorSpec;
+use qubit_spi::ServiceSpec;
+use qubit_spi::SyncServiceSpec;
 
 #[test]
 fn specification_exposes_the_expected_contract_types() {

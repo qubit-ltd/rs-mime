@@ -9,19 +9,15 @@
 
 use std::path::Path;
 
-use qubit_command::{
-    Command,
-    CommandErrorKind,
-    CommandRunner,
-};
+use qubit_command::Command;
+use qubit_command::CommandErrorKind;
+use qubit_command::CommandRunner;
 
-use crate::{
-    FileBasedMediaStreamClassifier,
-    MediaStreamType,
-    MimeConfig,
-    MimeError,
-    MimeResult,
-};
+use crate::FileBasedMediaStreamClassifier;
+use crate::MediaStreamType;
+use crate::MimeConfig;
+use crate::MimeError;
+use crate::MimeResult;
 
 /// Media stream classifier backed by the `ffprobe` command.
 #[derive(Debug, Clone)]

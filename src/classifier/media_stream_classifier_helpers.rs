@@ -8,23 +8,17 @@
 //! Shared media stream classifier helpers.
 
 use std::fs;
-use std::io::{
-    ErrorKind,
-    Read,
-    Write,
-};
+use std::io::ErrorKind;
+use std::io::Read;
+use std::io::Write;
 use std::path::Path;
 
 use qubit_io::Streams;
-use qubit_local_files::{
-    LocalFileSystem,
-    LocalTempFileOptions,
-};
+use qubit_local_files::LocalFileSystem;
+use qubit_local_files::LocalTempFileOptions;
 
-use crate::{
-    MimeError,
-    MimeResult,
-};
+use crate::MimeError;
+use crate::MimeResult;
 
 /// Validates that a path is a readable local file.
 ///

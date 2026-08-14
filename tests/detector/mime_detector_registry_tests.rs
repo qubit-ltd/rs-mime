@@ -9,19 +9,24 @@
 use std::process::Command;
 use std::sync::Arc;
 
-use qubit_mime::{MimeConfig, MimeDetector, MimeDetectorRegistry, MimeDetectorSpec};
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeDetectorRegistry;
+use qubit_mime::MimeDetectorSpec;
+use qubit_spi::FallbackPolicy;
+use qubit_spi::ProviderCreationTermination;
+use qubit_spi::ProviderDefinition;
+use qubit_spi::ProviderSelection;
 use qubit_spi::error::ProviderFailureKind;
-use qubit_spi::{
-    FallbackPolicy, ProviderCreationTermination, ProviderDefinition, ProviderSelection,
-};
 
-use crate::support::{TestMimeDetectorProvider, TestProviderBehavior};
+use crate::support::TestMimeDetectorProvider;
+use crate::support::TestProviderBehavior;
 
 #[test]
 fn test_builtin_registry_lists_and_resolves_repository_provider() {
     let registry = MimeDetectorRegistry::builtin();
-    let expected_default =
-        ProviderSelection::named("repository").expect("repository provider ID should be valid");
+    let expected_default = ProviderSelection::named("repository")
+        .expect("repository provider ID should be valid");
     let selection = ProviderSelection::named("repository-mime-detector")
         .expect("repository alias should be valid");
     let detector = registry
@@ -58,7 +63,8 @@ fn test_global_registry_exposes_builtin_defaults_in_this_process() {
             .any(|id| id.as_str() == "repository"),
     );
     assert_eq!(
-        ProviderSelection::named("repository").expect("repository provider ID should be valid"),
+        ProviderSelection::named("repository")
+            .expect("repository provider ID should be valid"),
         registry.default_selection(),
     );
 }
@@ -137,7 +143,8 @@ fn test_resolve_and_create_keep_selection_and_creation_errors_separate() {
             TestProviderBehavior::InitializationFailed,
         ))
         .expect("failing provider should register");
-    let selection = ProviderSelection::named("failed").expect("test selector should be valid");
+    let selection = ProviderSelection::named("failed")
+        .expect("test selector should be valid");
     let provider = registry
         .resolve_selected(&selection)
         .expect("provider selection should succeed before creation");
@@ -164,7 +171,8 @@ fn test_default_selection_is_independent_from_service_configuration() {
         ))
         .expect("configured provider should register");
     registry.set_default_selection(
-        ProviderSelection::named("configured").expect("configured selector should be valid"),
+        ProviderSelection::named("configured")
+            .expect("configured selector should be valid"),
     );
 
     let provider = registry
@@ -288,8 +296,8 @@ fn test_global_registry_shares_app_provider_with_library_x() {
                 TestProviderBehavior::Success("application/x-app-global"),
             ))
             .expect("App provider should register globally");
-        let selection =
-            ProviderSelection::named(PROVIDER_ID).expect("App provider selector should be valid");
+        let selection = ProviderSelection::named(PROVIDER_ID)
+            .expect("App provider selector should be valid");
 
         let explicit = registry
             .resolve_selected(&selection)
@@ -314,8 +322,8 @@ fn test_global_registry_shares_app_provider_with_library_x() {
         return;
     }
 
-    let current_test =
-        std::env::current_exe().expect("current integration test executable should be available");
+    let current_test = std::env::current_exe()
+        .expect("current integration test executable should be available");
     let test_name = "detector::mime_detector_registry_tests::test_global_registry_shares_app_provider_with_library_x";
     let status = Command::new(current_test)
         .args(["--exact", test_name, "--nocapture"])

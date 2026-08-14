@@ -7,15 +7,19 @@
 // =============================================================================
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
-use qubit_local_files::{LocalFileSystem, LocalTempDirectoryOptions, LocalTempFileOptions};
-
-use qubit_mime::{
-    FileBasedMimeDetector, MimeDetectionPolicy, MimeDetector, MimeDetectorCore, MimeError,
-    MimeResult,
-};
+use qubit_local_files::LocalFileSystem;
+use qubit_local_files::LocalTempDirectoryOptions;
+use qubit_local_files::LocalTempFileOptions;
+use qubit_mime::FileBasedMimeDetector;
+use qubit_mime::MimeDetectionPolicy;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeDetectorCore;
+use qubit_mime::MimeError;
+use qubit_mime::MimeResult;
 
 #[derive(Debug)]
 struct ContentReadingDetector {
@@ -103,7 +107,8 @@ impl FileBasedMimeDetector for PathRecordingDetector {
         *self
             .seen_path
             .lock()
-            .expect("path recorder lock should not be poisoned") = Some(file.to_path_buf());
+            .expect("path recorder lock should not be poisoned") =
+            Some(file.to_path_buf());
         Ok(vec!["application/octet-stream".to_owned()])
     }
 }
@@ -169,7 +174,8 @@ fn test_detect_by_content_uses_non_predictable_temporary_file_name() {
         .file_name()
         .and_then(|name| name.to_str())
         .expect("staged filename should be UTF-8");
-    let predictable_prefix = format!("MimeDetectorTemp-{}-", std::process::id());
+    let predictable_prefix =
+        format!("MimeDetectorTemp-{}-", std::process::id());
     assert!(
         filename.starts_with("MimeDetectorTemp-"),
         "staged temp filename should preserve the configured prefix: {filename}",
@@ -194,8 +200,14 @@ fn test_detect_reader_reports_temporary_file_creation_error() {
         let mut reader = std::io::Cursor::new(b"plain text".to_vec());
 
         let error = detector
-            .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
-            .expect_err("invalid temporary directory should fail reader detection");
+            .detect_reader(
+                &mut reader,
+                None,
+                MimeDetectionPolicy::VerifyContent,
+            )
+            .expect_err(
+                "invalid temporary directory should fail reader detection",
+            );
 
         let MimeError::Io(error) = error else {
             panic!("temporary file creation should report an I/O error");
@@ -206,14 +218,16 @@ fn test_detect_reader_reports_temporary_file_creation_error() {
 
     let temp_dir = LocalFileSystem::host()
         .create_temp_directory(
-            &LocalTempDirectoryOptions::new().with_prefix("qubit-mime-detector-error-"),
+            &LocalTempDirectoryOptions::new()
+                .with_prefix("qubit-mime-detector-error-"),
         )
         .expect("temporary parent directory should be created");
     let invalid_temp_dir = temp_dir.path().join("not-a-directory");
     fs::write(&invalid_temp_dir, b"not a directory")
         .expect("invalid temporary directory placeholder should be created");
     let output = std::process::Command::new(
-        std::env::current_exe().expect("current test binary path should be available"),
+        std::env::current_exe()
+            .expect("current test binary path should be available"),
     )
     .arg(TEST_NAME)
     .arg("--exact")
@@ -242,7 +256,11 @@ fn test_detect_reader_creates_missing_temporary_directory() {
         let mut reader = std::io::Cursor::new(b"plain text".to_vec());
 
         let detected = detector
-            .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+            .detect_reader(
+                &mut reader,
+                None,
+                MimeDetectionPolicy::VerifyContent,
+            )
             .expect("missing temporary directory should be created");
 
         assert_eq!(Some("text/plain".to_owned()), detected);
@@ -251,12 +269,14 @@ fn test_detect_reader_creates_missing_temporary_directory() {
 
     let temp_dir = LocalFileSystem::host()
         .create_temp_directory(
-            &LocalTempDirectoryOptions::new().with_prefix("qubit-mime-detector-missing-"),
+            &LocalTempDirectoryOptions::new()
+                .with_prefix("qubit-mime-detector-missing-"),
         )
         .expect("temporary parent directory should be created");
     let missing_temp_dir = temp_dir.path().join("missing").join("nested");
     let output = std::process::Command::new(
-        std::env::current_exe().expect("current test binary path should be available"),
+        std::env::current_exe()
+            .expect("current test binary path should be available"),
     )
     .arg(TEST_NAME)
     .arg("--exact")

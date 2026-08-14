@@ -9,7 +9,9 @@
 use std::path::Path;
 
 use qubit_io::std_io::ReadSeek;
-use qubit_mime::{MimeDetectionPolicy, MimeDetector, MimeResult};
+use qubit_mime::MimeDetectionPolicy;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeResult;
 
 /// Detector fixture returning a distinct value from each trait entry point.
 #[derive(Debug)]
@@ -20,7 +22,10 @@ impl MimeDetector for StaticEntryPointMimeDetector {
         0
     }
 
-    fn detect_by_filename(&self, _filename: &str) -> MimeResult<Option<String>> {
+    fn detect_by_filename(
+        &self,
+        _filename: &str,
+    ) -> MimeResult<Option<String>> {
         Ok(Some("application/x-static-name".to_owned()))
     }
 

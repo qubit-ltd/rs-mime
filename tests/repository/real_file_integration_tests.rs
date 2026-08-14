@@ -9,21 +9,15 @@
 //! fixtures.
 
 use std::fs::File;
-use std::io::{
-    Read,
-    Seek,
-};
-use std::path::{
-    Path,
-    PathBuf,
-};
+use std::io::Read;
+use std::io::Seek;
+use std::path::Path;
+use std::path::PathBuf;
 
-use qubit_mime::{
-    MimeDetectionPolicy,
-    MimeRepository,
-    MimeType,
-    RepositoryMimeDetector,
-};
+use qubit_mime::MimeDetectionPolicy;
+use qubit_mime::MimeRepository;
+use qubit_mime::MimeType;
+use qubit_mime::RepositoryMimeDetector;
 
 /// Directory containing the real file fixtures.
 const FIXTURE_DIR: &str =

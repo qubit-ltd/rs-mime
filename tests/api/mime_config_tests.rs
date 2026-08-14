@@ -7,26 +7,45 @@
 // =============================================================================
 //! Tests for top-level MIME configuration defaults.
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::time::Duration;
 
 use qubit_config::Config;
-use qubit_mime::{
-    CONFIG_COMMAND_OUTPUT_MAX_BYTES, CONFIG_COMMAND_TIMEOUT,
-    CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
-    CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, CONFIG_MIME_DETECTOR_DEFAULT,
-    CONFIG_MIME_DETECTOR_FALLBACKS, CONFIG_MIME_ENABLE_PRECISE_DETECTION,
-    CONFIG_MIME_MAX_BUFFER_SIZE, CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
-    DEFAULT_AMBIGUOUS_MIME_MAPPING, DEFAULT_COMMAND_OUTPUT_MAX_BYTES, DEFAULT_COMMAND_TIMEOUT,
-    DEFAULT_ENABLE_PRECISE_DETECTION, DEFAULT_MEDIA_STREAM_CLASSIFIER,
-    DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE, DEFAULT_MIME_DETECTOR, DEFAULT_MIME_MAX_BUFFER_SIZE,
-    DEFAULT_PRECISE_DETECTION_PATTERNS, ENV_COMMAND_OUTPUT_MAX_BYTES, ENV_COMMAND_TIMEOUT,
-    ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT, ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
-    ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING, ENV_MIME_DETECTOR_DEFAULT,
-    ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION, ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
-    ENV_MIME_MAX_BUFFER_SIZE, MimeConfig, MimeDetector, MimeDetectorRegistry, MimeError,
-};
-use qubit_spi::{ProviderSelection, ProviderSelectionTargetRef};
+use qubit_mime::CONFIG_COMMAND_OUTPUT_MAX_BYTES;
+use qubit_mime::CONFIG_COMMAND_TIMEOUT;
+use qubit_mime::CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT;
+use qubit_mime::CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE;
+use qubit_mime::CONFIG_MIME_AMBIGUOUS_MIME_MAPPING;
+use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
+use qubit_mime::CONFIG_MIME_DETECTOR_FALLBACKS;
+use qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION;
+use qubit_mime::CONFIG_MIME_MAX_BUFFER_SIZE;
+use qubit_mime::CONFIG_MIME_PRECISE_DETECTION_PATTERNS;
+use qubit_mime::DEFAULT_AMBIGUOUS_MIME_MAPPING;
+use qubit_mime::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
+use qubit_mime::DEFAULT_COMMAND_TIMEOUT;
+use qubit_mime::DEFAULT_ENABLE_PRECISE_DETECTION;
+use qubit_mime::DEFAULT_MEDIA_STREAM_CLASSIFIER;
+use qubit_mime::DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE;
+use qubit_mime::DEFAULT_MIME_DETECTOR;
+use qubit_mime::DEFAULT_MIME_MAX_BUFFER_SIZE;
+use qubit_mime::DEFAULT_PRECISE_DETECTION_PATTERNS;
+use qubit_mime::ENV_COMMAND_OUTPUT_MAX_BYTES;
+use qubit_mime::ENV_COMMAND_TIMEOUT;
+use qubit_mime::ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT;
+use qubit_mime::ENV_MEDIA_STREAM_MAX_STAGING_SIZE;
+use qubit_mime::ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING;
+use qubit_mime::ENV_MIME_DETECTOR_DEFAULT;
+use qubit_mime::ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION;
+use qubit_mime::ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS;
+use qubit_mime::ENV_MIME_MAX_BUFFER_SIZE;
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeDetectorRegistry;
+use qubit_mime::MimeError;
+use qubit_spi::ProviderSelection;
+use qubit_spi::ProviderSelectionTargetRef;
 
 static MIME_CONFIG_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -44,7 +63,8 @@ fn test_mime_config_retains_validated_provider_selections() {
         .set(CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, "auto")
         .expect("classifier default should be configurable");
 
-    let mime_config = MimeConfig::from_config(&config).expect("valid selections should parse");
+    let mime_config = MimeConfig::from_config(&config)
+        .expect("valid selections should parse");
 
     assert!(matches!(
         mime_config.mime_detector_selection().target(),
@@ -94,7 +114,8 @@ fn test_mime_config_uses_strict_detector_chain_resolution() {
     config
         .set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")
         .expect("detector fallbacks should be configurable");
-    let mime_config = MimeConfig::from_config(&config).expect("selector syntax should be valid");
+    let mime_config = MimeConfig::from_config(&config)
+        .expect("selector syntax should be valid");
 
     let error = MimeDetectorRegistry::builtin()
         .resolve_selected(mime_config.mime_detector_selection())
@@ -136,7 +157,8 @@ fn test_from_config_reads_logical_config_keys() {
         .set(CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE, 8_388_608_u64)
         .expect("maximum staging size should be configurable");
 
-    let mime_config = MimeConfig::from_config(&config).expect("config should parse");
+    let mime_config =
+        MimeConfig::from_config(&config).expect("config should parse");
 
     assert_eq!(
         "repository",
@@ -164,7 +186,8 @@ fn test_from_config_accepts_reader_and_splits_semicolon_patterns() {
         .expect("precise patterns should be configurable");
     let root = config.section("").expect("root section should exist");
 
-    let mime_config = MimeConfig::from_config(&root).expect("reader should parse");
+    let mime_config =
+        MimeConfig::from_config(&root).expect("reader should parse");
 
     assert_eq!(mime_config.precise_detection_patterns().len(), 2);
     assert!(mime_config.precise_detection_patterns().contains("mkv"));
@@ -181,8 +204,8 @@ fn test_from_config_interpolates_provider_selectors() {
         .set(CONFIG_MIME_DETECTOR_DEFAULT, "${preferred.detector}")
         .expect("detector selector should be configurable");
 
-    let mime_config =
-        MimeConfig::from_config(&config).expect("interpolated detector selector should parse");
+    let mime_config = MimeConfig::from_config(&config)
+        .expect("interpolated detector selector should parse");
 
     assert_eq!(
         "repository",
@@ -197,7 +220,8 @@ fn test_from_config_reads_command_output_limit() {
         .set(CONFIG_COMMAND_OUTPUT_MAX_BYTES, 1024_u64)
         .expect("command output limit should be configurable");
 
-    let mime_config = MimeConfig::from_config(&config).expect("command output limit should parse");
+    let mime_config = MimeConfig::from_config(&config)
+        .expect("command output limit should parse");
 
     assert_eq!(1024, mime_config.command_output_max_bytes());
 }
@@ -209,7 +233,8 @@ fn test_from_config_reads_command_timeout_with_duration_unit() {
         .set(CONFIG_COMMAND_TIMEOUT, "500ms")
         .expect("command timeout should be configurable");
 
-    let mime_config = MimeConfig::from_config(&config).expect("command timeout should parse");
+    let mime_config =
+        MimeConfig::from_config(&config).expect("command timeout should parse");
 
     assert_eq!(Duration::from_millis(500), mime_config.command_timeout());
 }
@@ -290,7 +315,8 @@ fn test_from_config_reads_env_aliases_with_env_friendly_options() {
         .set(ENV_COMMAND_TIMEOUT, "2min")
         .expect("command timeout env value should be configurable");
 
-    let mime_config = MimeConfig::from_config(&config).expect("env aliases should parse");
+    let mime_config =
+        MimeConfig::from_config(&config).expect("env aliases should parse");
 
     assert_eq!(
         "repository",
@@ -328,7 +354,8 @@ fn test_from_config_reports_invalid_boolean_value() {
 #[test]
 fn test_reload_default_reports_invalid_config_and_environment() {
     let _guard = mime_config_test_lock();
-    let _env_restore = EnvRestore::new(&[ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION]);
+    let _env_restore =
+        EnvRestore::new(&[ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION]);
     let mut config = Config::new();
     config
         .set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, "maybe")
@@ -373,7 +400,8 @@ fn test_from_config_skips_blank_patterns_and_malformed_mapping_entries() {
         )
         .expect("ambiguous mapping should be configurable");
 
-    let mime_config = MimeConfig::from_config(&config).expect("config should parse");
+    let mime_config =
+        MimeConfig::from_config(&config).expect("config should parse");
 
     assert_eq!(
         "repository",
@@ -393,7 +421,8 @@ fn test_from_config_skips_blank_patterns_and_malformed_mapping_entries() {
 #[test]
 fn test_load_falls_back_to_builtin_default_when_env_is_invalid() {
     let _guard = mime_config_test_lock();
-    let _env_restore = EnvRestore::new(&[ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION]);
+    let _env_restore =
+        EnvRestore::new(&[ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION]);
 
     unsafe {
         std::env::set_var(ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION, "maybe");
@@ -587,7 +616,9 @@ fn test_registries_use_mime_config_defaults() {
     );
     assert_eq!(
         DEFAULT_MEDIA_STREAM_CLASSIFIER,
-        selection_primary(MimeConfig::default().media_stream_classifier_selection(),)
+        selection_primary(
+            MimeConfig::default().media_stream_classifier_selection(),
+        )
     );
     assert_eq!(
         Some("application/pdf".to_owned()),

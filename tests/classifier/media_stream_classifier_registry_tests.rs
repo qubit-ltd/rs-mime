@@ -6,35 +6,26 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use std::{
-    process::Command,
-    sync::Arc,
-};
+use std::process::Command;
+use std::sync::Arc;
 
 #[cfg(unix)]
-use qubit_local_files::{
-    LocalFileSystem,
-    LocalTempDirectoryOptions,
-};
-use qubit_mime::{
-    MediaStreamClassifierRegistry,
-    MediaStreamClassifierSpec,
-    MimeConfig,
-};
+use qubit_local_files::LocalFileSystem;
+#[cfg(unix)]
+use qubit_local_files::LocalTempDirectoryOptions;
+use qubit_mime::MediaStreamClassifierRegistry;
+use qubit_mime::MediaStreamClassifierSpec;
+use qubit_mime::MimeConfig;
+use qubit_spi::FallbackPolicy;
+use qubit_spi::ProviderCreationTermination;
+use qubit_spi::ProviderDefinition;
+use qubit_spi::ProviderSelection;
 use qubit_spi::error::ProviderFailureKind;
-use qubit_spi::{
-    FallbackPolicy,
-    ProviderCreationTermination,
-    ProviderDefinition,
-    ProviderSelection,
-};
 
 #[cfg(unix)]
 use crate::support::PathEnvGuard;
-use crate::support::{
-    TestMediaStreamClassifierProvider,
-    TestProviderBehavior,
-};
+use crate::support::TestMediaStreamClassifierProvider;
+use crate::support::TestProviderBehavior;
 
 const FFPROBE_MISSING_CHILD: &str = "QUBIT_MIME_FFPROBE_MISSING_CHILD";
 

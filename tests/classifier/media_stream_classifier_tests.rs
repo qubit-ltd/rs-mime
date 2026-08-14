@@ -7,33 +7,23 @@
 // =============================================================================
 
 use std::fs;
-use std::io::{
-    Cursor,
-    Error,
-    Read,
-    Result as IoResult,
-};
-use std::path::{
-    Path,
-    PathBuf,
-};
-use std::sync::{
-    Arc,
-    Mutex,
-};
+use std::io::Cursor;
+use std::io::Error;
+use std::io::Read;
+use std::io::Result as IoResult;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
 
-use qubit_local_files::{
-    LocalFileSystem,
-    LocalTempDirectoryOptions,
-};
-use qubit_mime::{
-    FileBasedMediaStreamClassifier,
-    MediaStreamClassifier,
-    MediaStreamClassifierBackend,
-    MediaStreamType,
-    MimeError,
-    MimeResult,
-};
+use qubit_local_files::LocalFileSystem;
+use qubit_local_files::LocalTempDirectoryOptions;
+use qubit_mime::FileBasedMediaStreamClassifier;
+use qubit_mime::MediaStreamClassifier;
+use qubit_mime::MediaStreamClassifierBackend;
+use qubit_mime::MediaStreamType;
+use qubit_mime::MimeError;
+use qubit_mime::MimeResult;
 
 #[derive(Debug)]
 struct StaticClassifier {
