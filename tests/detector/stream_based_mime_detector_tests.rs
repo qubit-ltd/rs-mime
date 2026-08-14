@@ -6,14 +6,26 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use std::io::{Cursor, Error, ErrorKind, Read, Result as IoResult, Seek, SeekFrom};
+use std::io::Cursor;
+use std::io::Error;
+use std::io::ErrorKind;
+use std::io::Read;
+use std::io::Result as IoResult;
+use std::io::Seek;
+use std::io::SeekFrom;
 
-use qubit_local_files::{LocalFileSystem, LocalTempDirectoryOptions, LocalTempFileOptions};
-
-use qubit_mime::{
-    CONFIG_MIME_MAX_BUFFER_SIZE, MimeConfig, MimeDetectionPolicy, MimeDetector,
-    MimeDetectorBackend, MimeDetectorCore, MimeError, MimeResult, StreamBasedMimeDetector,
-};
+use qubit_local_files::LocalFileSystem;
+use qubit_local_files::LocalTempDirectoryOptions;
+use qubit_local_files::LocalTempFileOptions;
+use qubit_mime::CONFIG_MIME_MAX_BUFFER_SIZE;
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetectionPolicy;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeDetectorBackend;
+use qubit_mime::MimeDetectorCore;
+use qubit_mime::MimeError;
+use qubit_mime::MimeResult;
+use qubit_mime::StreamBasedMimeDetector;
 
 #[derive(Debug)]
 struct PrefixDetector {
@@ -112,7 +124,10 @@ impl PrefixDetector {
     }
 
     /// Creates a detector with an explicit prefix size.
-    fn with_core_and_max(core: MimeDetectorCore, max_test_bytes: usize) -> Self {
+    fn with_core_and_max(
+        core: MimeDetectorCore,
+        max_test_bytes: usize,
+    ) -> Self {
         Self {
             core,
             max_test_bytes,
@@ -137,7 +152,10 @@ impl StreamBasedMimeDetector for PrefixDetector {
     }
 
     /// Recognizes the staged content prefix.
-    fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+    fn guess_from_content_bytes(
+        &self,
+        content: &[u8],
+    ) -> MimeResult<Vec<String>> {
         if content == b"hello" {
             Ok(vec!["text/plain".to_owned()])
         } else {
@@ -208,12 +226,16 @@ fn test_detect_file_uses_stream_based_defaults() {
 #[test]
 fn test_stream_based_backend_max_bytes_and_file_open_error_are_covered() {
     let detector = PrefixDetector::new();
-    let missing_path =
-        std::env::temp_dir().join(format!("qubit-mime-missing-{}", std::process::id()));
+    let missing_path = std::env::temp_dir()
+        .join(format!("qubit-mime-missing-{}", std::process::id()));
 
     assert_eq!(5, MimeDetectorBackend::max_test_bytes(&detector));
     assert!(
-        StreamBasedMimeDetector::guess_from_file_stream(&detector, &missing_path).is_err(),
+        StreamBasedMimeDetector::guess_from_file_stream(
+            &detector,
+            &missing_path
+        )
+        .is_err(),
         "missing file should propagate the open error"
     );
 }
@@ -225,7 +247,8 @@ fn test_guess_from_file_stream_rejects_directory_before_reading() {
         .create_temp_directory(&LocalTempDirectoryOptions::new())
         .expect("temporary directory should be created");
 
-    let error = StreamBasedMimeDetector::guess_from_file_stream(&detector, dir.path())
+    let error =
+        StreamBasedMimeDetector::guess_from_file_stream(&detector, dir.path())
             .expect_err("directory paths should be rejected as files");
 
     let MimeError::Io(error) = error else {
@@ -245,8 +268,9 @@ fn test_detect_reader_rejects_prefix_buffer_larger_than_configured_limit() {
         .set(CONFIG_MIME_MAX_BUFFER_SIZE, 4_u64)
         .expect("maximum buffer size should be configurable");
     let detector = PrefixDetector::with_core(MimeDetectorCore::new(
-        MimeConfig::from_config(&config)
-            .expect("MIME config should parse with a custom maximum buffer size"),
+        MimeConfig::from_config(&config).expect(
+            "MIME config should parse with a custom maximum buffer size",
+        ),
     ));
     let mut reader = Cursor::new(b"hello world".to_vec());
 

@@ -9,22 +9,17 @@
 
 use std::sync::Arc;
 
+use qubit_spi::ProviderDescriptor;
+use qubit_spi::ProviderMetadata;
+use qubit_spi::ServiceProvider;
 use qubit_spi::error::ProviderFailure;
-use qubit_spi::{
-    ProviderDescriptor,
-    ProviderMetadata,
-    ServiceProvider,
-    provider_descriptor,
-};
-
-use crate::{
-    FileCommandMimeDetector,
-    MimeConfig,
-    MimeDetector,
-    MimeError,
-};
+use qubit_spi::provider_descriptor;
 
 use super::MimeDetectorSpec;
+use crate::FileCommandMimeDetector;
+use crate::MimeConfig;
+use crate::MimeDetector;
+use crate::MimeError;
 
 /// Provider for the built-in system `file` command detector.
 #[derive(Debug, Clone, Copy, Default)]

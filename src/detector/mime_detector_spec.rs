@@ -9,16 +9,12 @@
 
 use std::sync::Arc;
 
-use qubit_spi::{
-    ServiceSpec,
-    SyncServiceSpec,
-};
+use qubit_spi::ServiceSpec;
+use qubit_spi::SyncServiceSpec;
 
-use crate::{
-    MimeConfig,
-    MimeDetector,
-    MimeError,
-};
+use crate::MimeConfig;
+use crate::MimeDetector;
+use crate::MimeError;
 
 /// Service specification for pluggable MIME detector providers.
 ///

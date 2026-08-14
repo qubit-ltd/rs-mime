@@ -11,24 +11,21 @@ use std::time::Duration;
 use qubit_command::CommandRunner;
 use qubit_config::Config;
 #[cfg(unix)]
-use qubit_local_files::{
-    LocalFileSystem,
-    LocalTempDirectoryOptions,
-};
+use qubit_local_files::LocalFileSystem;
+#[cfg(unix)]
+use qubit_local_files::LocalTempDirectoryOptions;
+use qubit_mime::CONFIG_COMMAND_OUTPUT_MAX_BYTES;
+use qubit_mime::CONFIG_COMMAND_TIMEOUT;
+use qubit_mime::CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE;
+use qubit_mime::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
+use qubit_mime::DEFAULT_COMMAND_TIMEOUT;
+use qubit_mime::FfprobeCommandMediaStreamClassifier;
 #[cfg(unix)]
 use qubit_mime::MediaStreamClassifier;
+use qubit_mime::MediaStreamType;
+use qubit_mime::MimeConfig;
 #[cfg(unix)]
 use qubit_mime::MimeError;
-use qubit_mime::{
-    CONFIG_COMMAND_OUTPUT_MAX_BYTES,
-    CONFIG_COMMAND_TIMEOUT,
-    CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
-    DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
-    DEFAULT_COMMAND_TIMEOUT,
-    FfprobeCommandMediaStreamClassifier,
-    MediaStreamType,
-    MimeConfig,
-};
 
 #[cfg(unix)]
 use crate::support::PathEnvGuard;

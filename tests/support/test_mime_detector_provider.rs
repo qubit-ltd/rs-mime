@@ -8,24 +8,18 @@
 
 use std::sync::Arc;
 
-use qubit_mime::{
-    MimeConfig,
-    MimeDetector,
-    MimeDetectorSpec,
-    MimeError,
-};
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeDetectorSpec;
+use qubit_mime::MimeError;
+use qubit_spi::ProviderDescriptor;
+use qubit_spi::ProviderId;
+use qubit_spi::ProviderMetadata;
+use qubit_spi::ServiceProvider;
 use qubit_spi::error::ProviderFailure;
-use qubit_spi::{
-    ProviderDescriptor,
-    ProviderId,
-    ProviderMetadata,
-    ServiceProvider,
-};
 
-use super::{
-    StaticMimeDetector,
-    TestProviderBehavior,
-};
+use super::StaticMimeDetector;
+use super::TestProviderBehavior;
 
 /// Self-described MIME detector provider used by Registry integration tests.
 #[derive(Debug)]

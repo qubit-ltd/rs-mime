@@ -7,12 +7,10 @@
 // =============================================================================
 //! Tests for MIME magic matcher rules.
 
-use qubit_mime::{
-    MagicValueType,
-    MimeError,
-    MimeMagic,
-    MimeMagicMatcher,
-};
+use qubit_mime::MagicValueType;
+use qubit_mime::MimeError;
+use qubit_mime::MimeMagic;
+use qubit_mime::MimeMagicMatcher;
 
 #[test]
 fn test_new_rejects_inverted_offset_range() {

@@ -7,29 +7,21 @@
 // =============================================================================
 //! Runtime Registry and process-wide facade for MIME detector providers.
 
-use std::sync::{
-    Arc,
-    LazyLock,
-};
+use std::sync::Arc;
+use std::sync::LazyLock;
 
-use qubit_spi::error::{
-    ProviderResolutionError,
-    RegistrationError,
-};
-use qubit_spi::{
-    ProviderDefinition,
-    ProviderId,
-    ProviderRegistry,
-    ProviderSelection,
-    ResolvingServiceProvider,
-};
+use qubit_spi::ProviderDefinition;
+use qubit_spi::ProviderId;
+use qubit_spi::ProviderRegistry;
+use qubit_spi::ProviderSelection;
+use qubit_spi::ResolvingServiceProvider;
+use qubit_spi::error::ProviderResolutionError;
+use qubit_spi::error::RegistrationError;
 
-use super::{
-    FileCommandMimeDetectorProvider,
-    MimeDetectorProvider,
-    MimeDetectorSpec,
-    RepositoryMimeDetectorProvider,
-};
+use super::FileCommandMimeDetectorProvider;
+use super::MimeDetectorProvider;
+use super::MimeDetectorSpec;
+use super::RepositoryMimeDetectorProvider;
 
 /// Process-wide MIME detector Registry initialized with built-in providers.
 static GLOBAL_MIME_DETECTOR_REGISTRY: LazyLock<MimeDetectorRegistry> =

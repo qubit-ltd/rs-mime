@@ -9,22 +9,17 @@
 
 use std::sync::Arc;
 
+use qubit_spi::ProviderDescriptor;
+use qubit_spi::ProviderMetadata;
+use qubit_spi::ServiceProvider;
 use qubit_spi::error::ProviderFailure;
-use qubit_spi::{
-    ProviderDescriptor,
-    ProviderMetadata,
-    ServiceProvider,
-    provider_descriptor,
-};
-
-use crate::{
-    FfprobeCommandMediaStreamClassifier,
-    MediaStreamClassifier,
-    MimeConfig,
-    MimeError,
-};
+use qubit_spi::provider_descriptor;
 
 use super::MediaStreamClassifierSpec;
+use crate::FfprobeCommandMediaStreamClassifier;
+use crate::MediaStreamClassifier;
+use crate::MimeConfig;
+use crate::MimeError;
 
 /// Provider for the built-in FFprobe-backed media stream classifier.
 #[derive(Debug, Clone, Copy, Default)]

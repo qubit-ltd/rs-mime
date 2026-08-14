@@ -9,7 +9,9 @@
 use std::path::Path;
 
 use qubit_io::std_io::ReadSeek;
-use qubit_mime::{MimeDetectionPolicy, MimeDetector, MimeResult};
+use qubit_mime::MimeDetectionPolicy;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeResult;
 
 /// MIME detector returning one test-controlled type for `.static` filenames.
 #[derive(Debug)]
@@ -70,7 +72,15 @@ impl MimeDetector for StaticMimeDetector {
         self.detect(&[], filename, policy)
     }
 
-    fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
-        self.detect(&[], file.file_name().and_then(|name| name.to_str()), policy)
+    fn detect_file(
+        &self,
+        file: &Path,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        self.detect(
+            &[],
+            file.file_name().and_then(|name| name.to_str()),
+            policy,
+        )
     }
 }

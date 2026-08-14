@@ -1,14 +1,12 @@
-use qubit_mime::{
-    CSV_MIME_TYPES,
-    EXCEL_MIME_TYPE,
-    EXCEL_MIME_TYPES,
-    JSON_MIME_TYPE,
-    PDF_MIME_TYPE,
-    PDF_MIME_TYPES,
-    PNG_MIME_TYPE,
-    POWERPOINT_MIME_TYPES,
-    WORD_MIME_TYPES,
-};
+use qubit_mime::CSV_MIME_TYPES;
+use qubit_mime::EXCEL_MIME_TYPE;
+use qubit_mime::EXCEL_MIME_TYPES;
+use qubit_mime::JSON_MIME_TYPE;
+use qubit_mime::PDF_MIME_TYPE;
+use qubit_mime::PDF_MIME_TYPES;
+use qubit_mime::PNG_MIME_TYPE;
+use qubit_mime::POWERPOINT_MIME_TYPES;
+use qubit_mime::WORD_MIME_TYPES;
 
 #[test]
 fn test_common_mime_type_constants_group_default_values() {

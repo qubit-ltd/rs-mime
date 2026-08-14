@@ -1,8 +1,6 @@
-use qubit_mime::{
-    MagicValueType,
-    MimeMagic,
-    MimeMagicMatcher,
-};
+use qubit_mime::MagicValueType;
+use qubit_mime::MimeMagic;
+use qubit_mime::MimeMagicMatcher;
 
 #[test]
 fn test_mime_magic_matches_any_root_matcher_and_reports_width() {

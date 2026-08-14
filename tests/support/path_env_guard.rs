@@ -7,10 +7,8 @@
 // =============================================================================
 
 use std::path::Path;
-use std::sync::{
-    Mutex,
-    MutexGuard,
-};
+use std::sync::Mutex;
+use std::sync::MutexGuard;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 

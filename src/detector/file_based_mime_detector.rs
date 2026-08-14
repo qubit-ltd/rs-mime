@@ -11,17 +11,13 @@ use std::fmt::Debug;
 use std::io::Write;
 use std::path::Path;
 
-use qubit_local_files::{
-    LocalFileSystem,
-    LocalTempFileOptions,
-};
+use qubit_local_files::LocalFileSystem;
+use qubit_local_files::LocalTempFileOptions;
 
-use crate::{
-    MimeDetectorCore,
-    MimeError,
-    MimeResult,
-    StreamBasedMimeDetector,
-};
+use crate::MimeDetectorCore;
+use crate::MimeError;
+use crate::MimeResult;
+use crate::StreamBasedMimeDetector;
 
 /// Core implementation contract for detectors that only inspect local files.
 pub trait FileBasedMimeDetector: Debug + Send + Sync {

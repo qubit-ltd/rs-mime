@@ -9,17 +9,13 @@
 #[cfg(unix)]
 use std::process::Command;
 
-use qubit_mime::{
-    FileCommandMimeDetector,
-    FileCommandMimeDetectorProvider,
-    MimeConfig,
-};
+use qubit_mime::FileCommandMimeDetector;
+use qubit_mime::FileCommandMimeDetectorProvider;
+use qubit_mime::MimeConfig;
+use qubit_spi::ProviderMetadata;
+use qubit_spi::ServiceProvider;
 #[cfg(unix)]
 use qubit_spi::error::ProviderFailureKind;
-use qubit_spi::{
-    ProviderMetadata,
-    ServiceProvider,
-};
 
 use crate::support::PathEnvGuard;
 

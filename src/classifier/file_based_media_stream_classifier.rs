@@ -11,14 +11,11 @@ use std::fmt::Debug;
 use std::io::Read;
 use std::path::Path;
 
-use crate::DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE;
-use crate::{
-    MediaStreamClassifierBackend,
-    MediaStreamType,
-    MimeResult,
-};
-
 use super::media_stream_classifier_helpers::with_temp_reader;
+use crate::DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE;
+use crate::MediaStreamClassifierBackend;
+use crate::MediaStreamType;
+use crate::MimeResult;
 
 /// Core implementation contract for classifiers that only operate on local
 /// files.

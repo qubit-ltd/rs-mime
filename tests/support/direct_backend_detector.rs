@@ -6,11 +6,9 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use qubit_mime::{
-    MimeDetectorBackend,
-    MimeDetectorCore,
-    MimeResult,
-};
+use qubit_mime::MimeDetectorBackend;
+use qubit_mime::MimeDetectorCore;
+use qubit_mime::MimeResult;
 
 /// Detector fixture exercising `MimeDetectorBackend` default entry points.
 #[derive(Debug)]

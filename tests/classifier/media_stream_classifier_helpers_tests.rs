@@ -1,21 +1,17 @@
 use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
+use qubit_local_files::LocalFileSystem;
 #[cfg(unix)]
-use qubit_local_files::{
-    LocalFileSystem,
-    LocalTempFileOptions,
-};
-use qubit_mime::{
-    MediaStreamClassifier,
-    MediaStreamClassifierBackend,
-    MediaStreamType,
-    MimeError,
-    MimeResult,
-};
+use qubit_local_files::LocalTempFileOptions;
+use qubit_mime::MediaStreamClassifier;
+use qubit_mime::MediaStreamClassifierBackend;
+use qubit_mime::MediaStreamType;
+use qubit_mime::MimeError;
+use qubit_mime::MimeResult;
 
 #[derive(Debug)]
 struct Backend;

@@ -9,13 +9,16 @@
 
 use std::fmt::Debug;
 use std::fs::File;
-use std::io::{self, ErrorKind};
+use std::io::ErrorKind;
+use std::io::{self};
 use std::path::Path;
 
 use qubit_io::std_io::ReadSeek;
 use qubit_io::std_io::ext::ReadSeekExt;
 
-use crate::{MimeDetectorCore, MimeError, MimeResult};
+use crate::MimeDetectorCore;
+use crate::MimeError;
+use crate::MimeResult;
 
 /// Core implementation contract for detectors that can inspect content bytes.
 pub trait StreamBasedMimeDetector: Debug + Send + Sync {
@@ -50,7 +53,10 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     ///
     /// # Errors
     /// Returns an error when a backend cannot inspect the supplied content.
-    fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>>;
+    fn guess_from_content_bytes(
+        &self,
+        content: &[u8],
+    ) -> MimeResult<Vec<String>>;
 
     /// Guesses MIME type names from a seekable reader.
     ///
@@ -66,7 +72,11 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
         &self,
         reader: &mut dyn ReadSeek,
     ) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        let content = read_prefix(reader, self.max_test_bytes(), self.core().max_buffer_size())?;
+        let content = read_prefix(
+            reader,
+            self.max_test_bytes(),
+            self.core().max_buffer_size(),
+        )?;
         let candidates = self.guess_from_content_bytes(&content)?;
         Ok((candidates, content))
     }
@@ -82,7 +92,10 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     /// # Errors
     /// Returns an error when opening, reading, seeking, or backend inspection
     /// fails.
-    fn guess_from_file_stream(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
+    fn guess_from_file_stream(
+        &self,
+        file: &Path,
+    ) -> MimeResult<(Vec<String>, Vec<u8>)> {
         let mut reader = open_readable_file(file)?;
         self.guess_from_reader_stream(&mut reader)
     }
@@ -129,12 +142,12 @@ pub(crate) fn read_prefix(
         });
     }
     let mut buffer = Vec::new();
-    buffer
-        .try_reserve_exact(max_bytes)
-        .map_err(|source| MimeError::BufferAllocationFailed {
+    buffer.try_reserve_exact(max_bytes).map_err(|source| {
+        MimeError::BufferAllocationFailed {
             requested: max_bytes,
             source,
-        })?;
+        }
+    })?;
     buffer.resize(max_bytes, 0);
     let bytes_read = reader.peek_exact_or_eof(&mut buffer)?;
     buffer.truncate(bytes_read);

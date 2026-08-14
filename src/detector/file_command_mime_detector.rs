@@ -12,25 +12,21 @@
 //! temporary files staged from seekable readers. It is registered under the
 //! built-in provider id `file` and aliases such as `file-command`.
 
-use qubit_command::{
-    Command,
-    CommandRunner,
-};
-use qubit_io::std_io::ReadSeek;
 use std::path::Path;
 
-use crate::{
-    FileBasedMimeDetector,
-    MimeConfig,
-    MimeDetectionPolicy,
-    MimeDetector,
-    MimeDetectorCore,
-    MimeError,
-    MimeRepository,
-    MimeResult,
-};
+use qubit_command::Command;
+use qubit_command::CommandRunner;
+use qubit_io::std_io::ReadSeek;
 
 use super::repository_mime_detector::default_repository;
+use crate::FileBasedMimeDetector;
+use crate::MimeConfig;
+use crate::MimeDetectionPolicy;
+use crate::MimeDetector;
+use crate::MimeDetectorCore;
+use crate::MimeError;
+use crate::MimeRepository;
+use crate::MimeResult;
 
 /// MIME detector backed by `file --mime-type --brief`.
 #[derive(Debug, Clone)]
