@@ -9,8 +9,8 @@
 
 use std::fmt::Debug;
 use std::fs::File;
+use std::io;
 use std::io::ErrorKind;
-use std::io::{self};
 use std::path::Path;
 
 use qubit_io::std_io::ReadSeek;

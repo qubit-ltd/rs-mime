@@ -14,6 +14,7 @@ use std::io::Result as IoResult;
 use std::io::Seek;
 use std::io::SeekFrom;
 
+use qubit_config::Config;
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::LocalTempDirectoryOptions;
 use qubit_local_files::LocalTempFileOptions;
@@ -263,7 +264,7 @@ fn test_guess_from_file_stream_rejects_directory_before_reading() {
 
 #[test]
 fn test_detect_reader_rejects_prefix_buffer_larger_than_configured_limit() {
-    let mut config = qubit_config::Config::new();
+    let mut config = Config::new();
     config
         .set(CONFIG_MIME_MAX_BUFFER_SIZE, 4_u64)
         .expect("maximum buffer size should be configurable");
@@ -290,7 +291,7 @@ fn test_detect_reader_rejects_prefix_buffer_larger_than_configured_limit() {
 
 #[test]
 fn test_detect_reader_reports_prefix_buffer_allocation_failure() {
-    let mut config = qubit_config::Config::new();
+    let mut config = Config::new();
     config
         .set(CONFIG_MIME_MAX_BUFFER_SIZE, u64::MAX)
         .expect("maximum buffer size should be configurable");

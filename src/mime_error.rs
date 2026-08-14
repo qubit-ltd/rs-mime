@@ -7,6 +7,10 @@
 // =============================================================================
 //! Error type used by MIME database parsing and detection.
 
+use qubit_command::CommandError;
+use qubit_config::ConfigError;
+use qubit_fs::FsError;
+use roxmltree::Error as XmlError;
 use thiserror::Error;
 
 /// Error type for MIME repository parsing and I/O backed detection.
@@ -188,7 +192,7 @@ pub enum MimeError {
 
     /// The XML document could not be parsed.
     #[error("failed to parse MIME XML: {0}")]
-    Xml(#[from] roxmltree::Error),
+    Xml(#[from] XmlError),
 
     /// Detection from a path or reader failed due to I/O.
     #[error("I/O error while detecting MIME type: {0}")]
@@ -196,15 +200,15 @@ pub enum MimeError {
 
     /// Detection through a provider-neutral filesystem resource failed.
     #[error("filesystem error while detecting MIME type: {0}")]
-    FileSystem(#[from] qubit_fs::FsError),
+    FileSystem(#[from] FsError),
 
     /// Detection using an external command failed.
     #[error("command error while detecting MIME type: {0}")]
-    Command(#[from] qubit_command::CommandError),
+    Command(#[from] CommandError),
 
     /// Loading MIME configuration failed.
     #[error("configuration error while loading MIME settings: {0}")]
-    Config(#[from] qubit_config::ConfigError),
+    Config(#[from] ConfigError),
 }
 
 impl MimeError {
