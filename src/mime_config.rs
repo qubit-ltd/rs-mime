@@ -20,7 +20,6 @@ use std::time::Duration;
 
 use qubit_config::Config;
 use qubit_config::ConfigReader;
-use qubit_config::options::InterpolationSources;
 use qubit_config::options::ReadPolicy;
 use qubit_config::source::EnvConfigOptions;
 use qubit_datatype::CollectionConversionPolicy;
@@ -114,33 +113,66 @@ static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
 
 /// Value read policy.
 static VALUE_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
-    ReadPolicy::env_friendly()
-        .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
+    ReadPolicy::builder()
+        .conversion_policy(qubit_datatype::ConversionPolicy::env_friendly())
+        .interpolation_sources(
+            qubit_config::options::InterpolationSources::ConfigThenEnv,
+        )
+        .build()
 });
 
 static DURATION_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
-    ReadPolicy::env_friendly()
-        .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
-        .with_duration_policy(DurationConversionPolicy::default())
+    ReadPolicy::builder()
+        .conversion_policy(
+            qubit_datatype::ConversionPolicy::env_friendly()
+                .into_builder()
+                .duration_policy(DurationConversionPolicy::default())
+                .build(),
+        )
+        .interpolation_sources(
+            qubit_config::options::InterpolationSources::ConfigThenEnv,
+        )
+        .build()
 });
 
 /// List value read policy.
 static LIST_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
-    ReadPolicy::env_friendly()
-        .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
-        .with_collection_policy(
-            CollectionConversionPolicy::env_friendly()
-                .with_delimiters([',', ';']),
+    ReadPolicy::builder()
+        .conversion_policy(
+            qubit_datatype::ConversionPolicy::env_friendly()
+                .into_builder()
+                .collection_policy(
+                    CollectionConversionPolicy::env_friendly()
+                        .into_builder()
+                        .delimiters([',', ';'])
+                        .build(),
+                )
+                .build(),
         )
+        .interpolation_sources(
+            qubit_config::options::InterpolationSources::ConfigThenEnv,
+        )
+        .build()
 });
 
 /// Mapping read policy.
 static MAPPING_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
-    ReadPolicy::env_friendly()
-        .with_interpolation_sources(InterpolationSources::ConfigThenEnv)
-        .with_collection_policy(
-            CollectionConversionPolicy::env_friendly().with_delimiters([';']),
+    ReadPolicy::builder()
+        .conversion_policy(
+            qubit_datatype::ConversionPolicy::env_friendly()
+                .into_builder()
+                .collection_policy(
+                    CollectionConversionPolicy::env_friendly()
+                        .into_builder()
+                        .delimiters([';'])
+                        .build(),
+                )
+                .build(),
         )
+        .interpolation_sources(
+            qubit_config::options::InterpolationSources::ConfigThenEnv,
+        )
+        .build()
 });
 
 /// Built-in precise detection patterns.
@@ -339,7 +371,9 @@ impl MimeConfig {
     /// invalid.
     pub fn from_env() -> MimeResult<Self> {
         let config =
-            Config::from_env_options(EnvConfigOptions::new().prefix("QUBIT_"))?;
+            Config::from_env_options(
+                EnvConfigOptions::builder().prefix("QUBIT_").build(),
+            )?;
         Self::from_config(&config)
     }
 

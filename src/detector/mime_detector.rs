@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use qubit_fs::FileSystem;
 use qubit_fs::Path as FsPath;
-use qubit_fs::ReadOptions;
+use qubit_fs::read::ReadOptions;
 use qubit_io::std_io::ReadSeek;
 
 use crate::MimeDetectionPolicy;
