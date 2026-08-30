@@ -135,7 +135,8 @@ fn test_with_repository_and_runner_uses_runner_configuration() {
 #[cfg(unix)]
 fn test_detect_file_by_content_propagates_runner_timeout() {
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
     std::fs::write(&script_path, "#!/bin/sh\nsleep 1\n")
@@ -169,7 +170,8 @@ fn test_detect_file_by_content_propagates_runner_timeout() {
 #[cfg(unix)]
 fn test_detect_file_by_content_reads_file_command_stdout() {
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
     std::fs::write(&script_path, "#!/bin/sh\nprintf 'text/plain\\n'\n")
@@ -227,7 +229,8 @@ fn test_detect_file_by_content_reads_file_command_stdout() {
 #[cfg(unix)]
 fn test_detect_file_by_content_ends_file_option_parsing_before_path() {
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
     std::fs::write(
@@ -263,7 +266,8 @@ fn test_detect_file_by_content_ends_file_option_parsing_before_path() {
 #[cfg(unix)]
 fn test_detect_file_by_content_returns_none_for_empty_stdout() {
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
     std::fs::write(&script_path, "#!/bin/sh\nexit 0\n")
@@ -294,7 +298,8 @@ fn test_detect_file_by_content_returns_none_for_empty_stdout() {
 #[cfg(unix)]
 fn test_detect_file_by_content_rejects_invalid_utf8_stdout() {
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
     std::fs::write(&script_path, "#!/bin/sh\nprintf '\\377'\n")
@@ -328,7 +333,8 @@ fn test_detect_file_by_content_rejects_invalid_utf8_stdout() {
 #[cfg(unix)]
 fn test_file_command_error_redacts_input_path() {
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let _path_guard = PathEnvGuard::set(temp_dir.path());
     let repository = MimeRepository::empty();

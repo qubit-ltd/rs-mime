@@ -9,6 +9,9 @@
 
 use std::time::Duration;
 
+/// Application-level collision budget for MIME staging names.
+pub(crate) const DEFAULT_TEMP_NAME_MAX_ATTEMPTS: usize = 256;
+
 /// Environment variable selecting the default MIME detector implementation.
 pub const ENV_MIME_DETECTOR_DEFAULT: &str = "QUBIT_MIME_DETECTOR_DEFAULT";
 

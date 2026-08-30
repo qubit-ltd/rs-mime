@@ -56,7 +56,8 @@ fn test_media_stream_classifier_helpers_validate_public_file_entrypoint() {
 fn test_media_stream_classifier_helpers_report_unreadable_file() {
     let backend = Backend;
     let file = LocalFileSystem::host()
-        .create_temp_file(&LocalTempFileOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_file_with_options(&LocalTempFileOptions::new())
         .expect("temporary file should be created");
     std::fs::set_permissions(
         file.path(),

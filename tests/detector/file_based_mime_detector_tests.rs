@@ -217,7 +217,8 @@ fn test_detect_reader_reports_temporary_file_creation_error() {
     }
 
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(
             &LocalTempDirectoryOptions::new()
                 .with_prefix("qubit-mime-detector-error-"),
         )
@@ -268,7 +269,8 @@ fn test_detect_reader_creates_missing_temporary_directory() {
     }
 
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(
             &LocalTempDirectoryOptions::new()
                 .with_prefix("qubit-mime-detector-missing-"),
         )
@@ -303,7 +305,8 @@ fn test_detect_reader_creates_missing_temporary_directory() {
 #[test]
 fn test_detect_file_delegates_to_local_file_hook() {
     let temp_file = LocalFileSystem::host()
-        .create_temp_file(&LocalTempFileOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_file_with_options(&LocalTempFileOptions::new())
         .expect("temporary file should be created");
     let detector = PathRecordingDetector::new();
 
@@ -319,7 +322,8 @@ fn test_detect_file_delegates_to_local_file_hook() {
 fn test_detect_reader_propagates_file_based_callback_error() {
     let detector = FailingDetector::new();
     let temp_file = LocalFileSystem::host()
-        .create_temp_file(&LocalTempFileOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_file_with_options(&LocalTempFileOptions::new())
         .expect("temporary file should be created");
     let mut reader = std::io::Cursor::new(b"plain text".to_vec());
 

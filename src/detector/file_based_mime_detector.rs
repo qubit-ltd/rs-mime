@@ -18,6 +18,7 @@ use crate::MimeDetectorCore;
 use crate::MimeError;
 use crate::MimeResult;
 use crate::StreamBasedMimeDetector;
+use crate::constants::DEFAULT_TEMP_NAME_MAX_ATTEMPTS;
 
 /// Core implementation contract for detectors that only inspect local files.
 pub trait FileBasedMimeDetector: Debug + Send + Sync {
@@ -113,10 +114,15 @@ pub(crate) fn with_temp_file<T>(
     detect: impl FnOnce(&Path) -> MimeResult<T>,
 ) -> MimeResult<T> {
     let options = LocalTempFileOptions::new()
+        .with_parent(&std::env::temp_dir())
         .with_prefix("MimeDetectorTemp-")
-        .with_suffix(".tmp");
-    let mut file = LocalFileSystem::host()
-        .create_temp_file(&options)
+        .with_suffix(".tmp")
+        .with_max_attempts(DEFAULT_TEMP_NAME_MAX_ATTEMPTS)
+        .with_create_parent();
+    let filesystem = LocalFileSystem::host()
+        .map_err(|error| MimeError::Io(error.into_io_error()))?;
+    let mut file = filesystem
+        .create_temp_file_with_options(&options)
         .map_err(|error| MimeError::Io(error.into_io_error()))?;
     file.write_all(content)?;
     file.close();
