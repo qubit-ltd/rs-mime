@@ -13,9 +13,9 @@ dependencies = [
 
 [[package]]
 name = "base64"
-version = "0.22.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "bitflags"
@@ -197,16 +197,16 @@ dependencies = [
 
 [[package]]
 name = "qubit-budget"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "qubit-clock"
-version = "0.12.1"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11d57ead76f106a1c5b2eac4e859bacd2ed8f1e13024fe8c03c9f829fc30fa65"
+checksum = "4b6ac8d4db46f084d6e21db1f091901d8a1561bacfe73d40eefae0cc4581a5e1"
 dependencies = [
  "qubit-collections",
  "thiserror",
@@ -214,22 +214,24 @@ dependencies = [
 
 [[package]]
 name = "qubit-codec"
-version = "0.11.1"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1158aaae7caa63ba3bf17a6ccf15e310f5099b199786f30483cd9818deb7cccb"
+checksum = "fa8cc61afb745a85ce27f8c1ad5c4f189683ac36b9af8ef1f9b202c782f5978a"
 dependencies = [
+ "qubit-utils",
  "thiserror",
 ]
 
 [[package]]
 name = "qubit-codec-misc"
-version = "0.3.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef46ed08caaf959e6a97cd070cfa0a934d3e14b5b3c6e5c1940dd84c3c1131a5"
+checksum = "0c707d29b9735d22a0ec172dfb76ce73f4d32928edec340035005b73822717b7"
 dependencies = [
  "base64",
  "percent-encoding",
  "qubit-codec",
+ "qubit-utils",
  "thiserror",
 ]
 
@@ -303,9 +305,9 @@ dependencies = [
 
 [[package]]
 name = "qubit-io"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0cfb886daab1580ac1c270e77515114de04c0a5ec0211512ca91e8930cbd3c7"
+checksum = "150e82d6bc1397f90c9d11c15aef225d298f06c0bbce860699863268015ce94e"
 dependencies = [
  "qubit-utils",
 ]
@@ -318,7 +320,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
- "zmij",
 ]
 
 [[package]]
@@ -358,6 +359,7 @@ dependencies = [
  "fluent-uri",
  "qubit-budget",
  "qubit-json",
+ "serde",
  "serde_json",
 ]
 
@@ -372,9 +374,9 @@ dependencies = [
 
 [[package]]
 name = "qubit-utils"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a4e2a99ede9d46a1cccb7631957f553c1f91e6dfde5a0d628058b92d6566b55"
+checksum = "7f9bf5cd2e783a8a6edd6536826084ef0a82d1924b14f82e79fe0088b7b33748"
 
 [[package]]
 name = "qubit-value"
