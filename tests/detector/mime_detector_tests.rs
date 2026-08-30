@@ -72,7 +72,10 @@ fn test_mime_detector_trait_supports_reader_and_file_detection() {
         .expect("trait-object reader detection should succeed");
 
     let mut file = LocalFileSystem::host()
-        .create_temp_file(&LocalTempFileOptions::new().with_suffix(".pdf"))
+        .expect("Host filesystem should open")
+        .create_temp_file_with_options(
+            &LocalTempFileOptions::new().with_suffix(".pdf"),
+        )
         .expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"%PDF-1.7\n")
         .expect("temp file should be writable");
@@ -91,7 +94,10 @@ fn test_mime_detector_trait_supports_filesystem_path_detection() {
         RepositoryMimeDetector::new().expect("default repository should load");
     let detector: &dyn MimeDetector = &detector;
     let mut file = LocalFileSystem::host()
-        .create_temp_file(&LocalTempFileOptions::new().with_suffix(".pdf"))
+        .expect("Host filesystem should open")
+        .create_temp_file_with_options(
+            &LocalTempFileOptions::new().with_suffix(".pdf"),
+        )
         .expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"%PDF-1.7\n")
         .expect("temp file should be writable");
@@ -142,7 +148,8 @@ fn test_mime_detector_backend_defaults_read_reader_and_file_prefix() {
             .expect("backend reader default should read content prefix");
 
     let mut file = LocalFileSystem::host()
-        .create_temp_file(&LocalTempFileOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_file_with_options(&LocalTempFileOptions::new())
         .expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"hello world")
         .expect("temp file should be writable");
@@ -171,7 +178,10 @@ fn test_mime_detector_backend_prefer_filename_skips_reader_and_file_content() {
         .expect("filename-preferred reader detection should succeed");
 
     let mut file = LocalFileSystem::host()
-        .create_temp_file(&LocalTempFileOptions::new().with_suffix(".txt"))
+        .expect("Host filesystem should open")
+        .create_temp_file_with_options(
+            &LocalTempFileOptions::new().with_suffix(".txt"),
+        )
         .expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"xxxxx")
         .expect("temp file should be writable");

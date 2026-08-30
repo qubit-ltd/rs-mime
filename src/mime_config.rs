@@ -20,9 +20,11 @@ use std::time::Duration;
 
 use qubit_config::Config;
 use qubit_config::ConfigReader;
+use qubit_config::options::InterpolationSources;
 use qubit_config::options::ReadPolicy;
 use qubit_config::source::EnvConfigOptions;
 use qubit_datatype::CollectionConversionPolicy;
+use qubit_datatype::ConversionPolicy;
 use qubit_datatype::DurationConversionPolicy;
 use qubit_spi::ProviderSelection;
 use qubit_spi::error::ProviderSelectionBuildError;
@@ -114,24 +116,20 @@ static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
 /// Value read policy.
 static VALUE_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
     ReadPolicy::builder()
-        .conversion_policy(qubit_datatype::ConversionPolicy::env_friendly())
-        .interpolation_sources(
-            qubit_config::options::InterpolationSources::ConfigThenEnv,
-        )
+        .conversion_policy(ConversionPolicy::env_friendly())
+        .interpolation_sources(InterpolationSources::ConfigThenEnv)
         .build()
 });
 
 static DURATION_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
     ReadPolicy::builder()
         .conversion_policy(
-            qubit_datatype::ConversionPolicy::env_friendly()
+            ConversionPolicy::env_friendly()
                 .into_builder()
                 .duration_policy(DurationConversionPolicy::default())
                 .build(),
         )
-        .interpolation_sources(
-            qubit_config::options::InterpolationSources::ConfigThenEnv,
-        )
+        .interpolation_sources(InterpolationSources::ConfigThenEnv)
         .build()
 });
 
@@ -139,7 +137,7 @@ static DURATION_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
 static LIST_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
     ReadPolicy::builder()
         .conversion_policy(
-            qubit_datatype::ConversionPolicy::env_friendly()
+            ConversionPolicy::env_friendly()
                 .into_builder()
                 .collection_policy(
                     CollectionConversionPolicy::env_friendly()
@@ -149,9 +147,7 @@ static LIST_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
                 )
                 .build(),
         )
-        .interpolation_sources(
-            qubit_config::options::InterpolationSources::ConfigThenEnv,
-        )
+        .interpolation_sources(InterpolationSources::ConfigThenEnv)
         .build()
 });
 
@@ -159,7 +155,7 @@ static LIST_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
 static MAPPING_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
     ReadPolicy::builder()
         .conversion_policy(
-            qubit_datatype::ConversionPolicy::env_friendly()
+            ConversionPolicy::env_friendly()
                 .into_builder()
                 .collection_policy(
                     CollectionConversionPolicy::env_friendly()
@@ -169,9 +165,7 @@ static MAPPING_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
                 )
                 .build(),
         )
-        .interpolation_sources(
-            qubit_config::options::InterpolationSources::ConfigThenEnv,
-        )
+        .interpolation_sources(InterpolationSources::ConfigThenEnv)
         .build()
 });
 
@@ -370,10 +364,9 @@ impl MimeConfig {
     /// or classifier-name error when a configured provider selector is
     /// invalid.
     pub fn from_env() -> MimeResult<Self> {
-        let config =
-            Config::from_env_options(
-                EnvConfigOptions::builder().prefix("QUBIT_").build(),
-            )?;
+        let config = Config::from_env_options(
+            EnvConfigOptions::builder().prefix("QUBIT_").build(),
+        )?;
         Self::from_config(&config)
     }
 

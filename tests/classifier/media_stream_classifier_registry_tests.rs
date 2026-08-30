@@ -71,7 +71,8 @@ fn test_ffprobe_provider_creates_classifier_when_command_is_available() {
     use std::os::unix::fs::PermissionsExt;
 
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join("ffprobe");
     std::fs::write(&script_path, "#!/bin/sh\nexit 0\n")

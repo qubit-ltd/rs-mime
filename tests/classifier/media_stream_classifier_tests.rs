@@ -332,7 +332,8 @@ fn test_file_based_classifier_reports_temporary_file_creation_error() {
     }
 
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(
             &LocalTempDirectoryOptions::new()
                 .with_prefix("qubit-mime-classifier-error-"),
         )
@@ -378,7 +379,8 @@ fn test_file_based_classifier_creates_missing_temporary_directory() {
     }
 
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(
             &LocalTempDirectoryOptions::new()
                 .with_prefix("qubit-mime-classifier-missing-"),
         )

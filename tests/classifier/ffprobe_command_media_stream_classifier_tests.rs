@@ -199,7 +199,8 @@ fn test_max_staging_size_accessors_update_limit() {
 #[cfg(unix)]
 fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir
         .path()
@@ -250,7 +251,8 @@ fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
 #[cfg(unix)]
 fn test_classify_file_propagates_ffprobe_start_error() {
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let _path_guard = PathEnvGuard::set(temp_dir.path());
     let classifier = FfprobeCommandMediaStreamClassifier::new()
@@ -281,7 +283,8 @@ fn test_classify_file_propagates_ffprobe_start_error() {
 #[cfg(unix)]
 fn test_classify_file_maps_unexpected_ffprobe_exit_to_none() {
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir
         .path()
@@ -314,7 +317,8 @@ fn test_classify_file_maps_unexpected_ffprobe_exit_to_none() {
 #[cfg(unix)]
 fn test_classify_file_passes_path_through_ffprobe_input_option() {
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir
         .path()
@@ -364,7 +368,8 @@ printf 'video\n'
 #[cfg(unix)]
 fn test_classify_file_rejects_invalid_utf8_stdout() {
     let temp_dir = LocalFileSystem::host()
-        .create_temp_directory(&LocalTempDirectoryOptions::new())
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir
         .path()
