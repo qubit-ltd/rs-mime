@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use qubit_local_files::LocalFileSystem;
-use qubit_local_files::LocalTempDirectoryOptions;
+use qubit_local_files::options::LocalTempDirectoryOptions;
 use qubit_mime::FileBasedMediaStreamClassifier;
 use qubit_mime::MediaStreamClassifier;
 use qubit_mime::MediaStreamClassifierBackend;

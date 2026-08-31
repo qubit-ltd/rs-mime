@@ -12,7 +12,7 @@ use std::sync::Arc;
 #[cfg(unix)]
 use qubit_local_files::LocalFileSystem;
 #[cfg(unix)]
-use qubit_local_files::LocalTempDirectoryOptions;
+use qubit_local_files::options::LocalTempDirectoryOptions;
 use qubit_mime::MediaStreamClassifierRegistry;
 use qubit_mime::MediaStreamClassifierSpec;
 use qubit_mime::MimeConfig;

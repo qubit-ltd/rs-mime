@@ -10,7 +10,7 @@ use qubit_config::Config;
 use qubit_fs::Path as FsPath;
 use qubit_fs_local::LocalFileSystems;
 use qubit_local_files::LocalFileSystem;
-use qubit_local_files::LocalTempFileOptions;
+use qubit_local_files::options::LocalTempFileOptions;
 use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
 use qubit_mime::CONFIG_MIME_DETECTOR_FALLBACKS;
 use qubit_mime::MimeConfig;

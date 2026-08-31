@@ -15,7 +15,7 @@ use std::path::Path;
 
 use qubit_io::Streams;
 use qubit_local_files::LocalFileSystem;
-use qubit_local_files::LocalTempFileOptions;
+use qubit_local_files::options::LocalTempFileOptions;
 
 use crate::MimeError;
 use crate::MimeResult;

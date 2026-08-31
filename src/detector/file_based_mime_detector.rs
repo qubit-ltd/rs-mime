@@ -12,7 +12,7 @@ use std::io::Write;
 use std::path::Path;
 
 use qubit_local_files::LocalFileSystem;
-use qubit_local_files::LocalTempFileOptions;
+use qubit_local_files::options::LocalTempFileOptions;
 
 use crate::MimeDetectorCore;
 use crate::MimeError;

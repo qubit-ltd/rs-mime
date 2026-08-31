@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use qubit_local_files::LocalFileSystem;
-use qubit_local_files::LocalTempDirectoryOptions;
-use qubit_local_files::LocalTempFileOptions;
+use qubit_local_files::options::LocalTempDirectoryOptions;
+use qubit_local_files::options::LocalTempFileOptions;
 use qubit_mime::FileBasedMimeDetector;
 use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeDetector;
