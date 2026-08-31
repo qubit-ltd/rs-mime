@@ -6,7 +6,7 @@ use std::path::Path;
 #[cfg(unix)]
 use qubit_local_files::LocalFileSystem;
 #[cfg(unix)]
-use qubit_local_files::LocalTempFileOptions;
+use qubit_local_files::options::LocalTempFileOptions;
 use qubit_mime::MediaStreamClassifier;
 use qubit_mime::MediaStreamClassifierBackend;
 use qubit_mime::MediaStreamType;

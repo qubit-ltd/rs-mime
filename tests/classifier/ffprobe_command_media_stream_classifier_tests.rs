@@ -13,7 +13,7 @@ use qubit_config::Config;
 #[cfg(unix)]
 use qubit_local_files::LocalFileSystem;
 #[cfg(unix)]
-use qubit_local_files::LocalTempDirectoryOptions;
+use qubit_local_files::options::LocalTempDirectoryOptions;
 use qubit_mime::CONFIG_COMMAND_OUTPUT_MAX_BYTES;
 use qubit_mime::CONFIG_COMMAND_TIMEOUT;
 use qubit_mime::CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE;
