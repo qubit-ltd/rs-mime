@@ -9,6 +9,7 @@
 use qubit_config::Config;
 use qubit_fs::Path as FsPath;
 use qubit_fs_local::LocalFileSystems;
+use qubit_fs_local::LocalResourcePolicy;
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::options::LocalTempFileOptions;
 use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
@@ -101,7 +102,8 @@ fn test_mime_detector_trait_supports_filesystem_path_detection() {
         .expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"%PDF-1.7\n")
         .expect("temp file should be writable");
-    let filesystem = LocalFileSystems::host()
+    // These path-only tests never invoke recursive list or tree-copy work.
+    let filesystem = LocalFileSystems::host(LocalResourcePolicy::unbounded())
         .expect("host filesystem facade should be created");
     let path = FsPath::parse(
         file.path()
@@ -120,7 +122,7 @@ fn test_mime_detector_trait_supports_filesystem_path_detection() {
 #[test]
 fn test_mime_detector_path_rejects_requests_above_detector_buffer_limit() {
     let detector = StaticEntryPointMimeDetector;
-    let filesystem = LocalFileSystems::host()
+    let filesystem = LocalFileSystems::host(LocalResourcePolicy::unbounded())
         .expect("host filesystem facade should be created");
     let path = FsPath::parse("/unused")
         .expect("test path should be a valid filesystem path");
