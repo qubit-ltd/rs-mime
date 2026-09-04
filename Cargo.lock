@@ -333,6 +333,7 @@ dependencies = [
  "getrandom",
  "libc",
  "qubit-budget",
+ "qubit-redact",
  "rustix",
  "windows-sys",
 ]
