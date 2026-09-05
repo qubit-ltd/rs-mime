@@ -52,9 +52,9 @@ fn test_file_command_provider_reports_unavailable_command() {
         return;
     }
 
-    let current_test = std::env::current_exe()
-        .expect("current integration test executable should be available");
-    let test_name = "detector::file_command_mime_detector_provider_tests::test_file_command_provider_reports_unavailable_command";
+    let current_test = std::env::current_exe().expect("current integration test executable should be available");
+    let test_name =
+        "detector::file_command_mime_detector_provider_tests::test_file_command_provider_reports_unavailable_command";
     let status = Command::new(current_test)
         .args(["--exact", test_name, "--nocapture"])
         .env(CHILD_MARKER, "1")

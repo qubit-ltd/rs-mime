@@ -112,10 +112,7 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// The updated classifier.
-    pub fn with_command_runner(
-        mut self,
-        command_runner: CommandRunner,
-    ) -> Self {
+    pub fn with_command_runner(mut self, command_runner: CommandRunner) -> Self {
         self.command_runner = command_runner;
         self
     }
@@ -144,10 +141,8 @@ impl FfprobeCommandMediaStreamClassifier {
     /// # Returns
     /// Media stream classification.
     pub fn classify_stream_listing(output: &str) -> MediaStreamType {
-        let has_video =
-            output.lines().any(|line| line.trim() == Self::VIDEO_STREAM);
-        let has_audio =
-            output.lines().any(|line| line.trim() == Self::AUDIO_STREAM);
+        let has_video = output.lines().any(|line| line.trim() == Self::VIDEO_STREAM);
+        let has_audio = output.lines().any(|line| line.trim() == Self::AUDIO_STREAM);
         match (has_video, has_audio) {
             (true, true) => MediaStreamType::VideoWithAudio,
             (true, false) => MediaStreamType::VideoOnly,
@@ -184,29 +179,20 @@ impl FfprobeCommandMediaStreamClassifier {
     /// # Errors
     /// Returns [`MimeError::Command`](crate::MimeError::Command) when process
     /// execution itself fails.
-    fn classify_with_ffprobe(
-        &self,
-        path: &Path,
-    ) -> MimeResult<MediaStreamType> {
+    fn classify_with_ffprobe(&self, path: &Path) -> MimeResult<MediaStreamType> {
         let mut command = Self::command_for_path(path);
         if let Some(working_directory) = &self.working_directory {
             command = command.working_directory(working_directory);
         }
         match self.command_runner.run(command) {
             Ok(output) => {
-                let stdout = output.stdout_text().map_err(|source| {
-                    MimeError::ClassifierBackend {
-                        backend: Self::COMMAND.to_owned(),
-                        reason: format!(
-                            "ffprobe stdout is not valid UTF-8: {source}"
-                        ),
-                    }
+                let stdout = output.stdout_text().map_err(|source| MimeError::ClassifierBackend {
+                    backend: Self::COMMAND.to_owned(),
+                    reason: format!("ffprobe stdout is not valid UTF-8: {source}"),
                 })?;
                 Ok(Self::classify_stream_listing(stdout))
             }
-            Err(error) if error.kind() == CommandErrorKind::UnexpectedExit => {
-                Ok(MediaStreamType::None)
-            }
+            Err(error) if error.kind() == CommandErrorKind::UnexpectedExit => Ok(MediaStreamType::None),
             Err(error) => Err(error.into()),
         }
     }
@@ -257,10 +243,7 @@ impl FileBasedMediaStreamClassifier for FfprobeCommandMediaStreamClassifier {
     }
 
     /// Classifies a readable local media file using FFprobe.
-    fn classify_by_local_file(
-        &self,
-        file: &Path,
-    ) -> MimeResult<MediaStreamType> {
+    fn classify_by_local_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
         self.classify_with_ffprobe(file)
     }
 }

@@ -45,10 +45,7 @@ pub trait MediaStreamClassifier: Debug + Send + Sync {
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when the stream cannot
     /// be read, or another [`MimeError`](crate::MimeError) when the
     /// classifier backend fails.
-    fn classify_reader(
-        &self,
-        reader: &mut dyn Read,
-    ) -> MimeResult<MediaStreamType>;
+    fn classify_reader(&self, reader: &mut dyn Read) -> MimeResult<MediaStreamType>;
 
     /// Classifies an in-memory media payload.
     ///
@@ -74,10 +71,7 @@ impl MediaStreamClassifier for Box<dyn MediaStreamClassifier> {
     }
 
     /// Delegates stream classification to the boxed classifier.
-    fn classify_reader(
-        &self,
-        reader: &mut dyn Read,
-    ) -> MimeResult<MediaStreamType> {
+    fn classify_reader(&self, reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
         self.as_ref().classify_reader(reader)
     }
 }
@@ -89,10 +83,7 @@ impl MediaStreamClassifier for Arc<dyn MediaStreamClassifier> {
     }
 
     /// Delegates stream classification to the shared classifier.
-    fn classify_reader(
-        &self,
-        reader: &mut dyn Read,
-    ) -> MimeResult<MediaStreamType> {
+    fn classify_reader(&self, reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
         self.as_ref().classify_reader(reader)
     }
 }

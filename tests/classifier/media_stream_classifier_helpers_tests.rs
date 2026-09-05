@@ -17,17 +17,11 @@ use qubit_mime::MimeResult;
 struct Backend;
 
 impl MediaStreamClassifierBackend for Backend {
-    fn classify_by_local_file(
-        &self,
-        _file: &Path,
-    ) -> MimeResult<MediaStreamType> {
+    fn classify_by_local_file(&self, _file: &Path) -> MimeResult<MediaStreamType> {
         Ok(MediaStreamType::VideoOnly)
     }
 
-    fn classify_by_content(
-        &self,
-        _reader: &mut dyn Read,
-    ) -> MimeResult<MediaStreamType> {
+    fn classify_by_content(&self, _reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
         Ok(MediaStreamType::AudioOnly)
     }
 }
@@ -44,11 +38,7 @@ fn test_media_stream_classifier_helpers_validate_public_file_entrypoint() {
         backend.classify_file(Path::new(".")),
         Err(MimeError::InvalidClassifierInput { .. }),
     ));
-    assert!(
-        backend
-            .classify_file(Path::new("__missing_media_file__"))
-            .is_err(),
-    );
+    assert!(backend.classify_file(Path::new("__missing_media_file__")).is_err(),);
 }
 
 #[cfg(unix)]
@@ -59,17 +49,11 @@ fn test_media_stream_classifier_helpers_report_unreadable_file() {
         .expect("Host filesystem should open")
         .create_temp_file_with_options(&LocalTempFileOptions::new())
         .expect("temporary file should be created");
-    std::fs::set_permissions(
-        file.path(),
-        std::fs::Permissions::from_mode(0o000),
-    )
-    .expect("temporary file should become unreadable");
+    std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o000))
+        .expect("temporary file should become unreadable");
 
     let result = backend.classify_file(file.path());
 
-    let _ = std::fs::set_permissions(
-        file.path(),
-        std::fs::Permissions::from_mode(0o600),
-    );
+    let _ = std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o600));
     assert!(result.is_err());
 }

@@ -23,9 +23,8 @@ use super::MediaStreamClassifierProvider;
 use super::MediaStreamClassifierSpec;
 
 /// Process-wide classifier Registry initialized with the built-in provider.
-static GLOBAL_MEDIA_STREAM_CLASSIFIER_REGISTRY: LazyLock<
-    MediaStreamClassifierRegistry,
-> = LazyLock::new(MediaStreamClassifierRegistry::builtin);
+static GLOBAL_MEDIA_STREAM_CLASSIFIER_REGISTRY: LazyLock<MediaStreamClassifierRegistry> =
+    LazyLock::new(MediaStreamClassifierRegistry::builtin);
 
 /// Shared runtime Registry for media stream classifier definitions.
 ///
@@ -54,8 +53,7 @@ impl MediaStreamClassifierRegistry {
             .register(FfprobeCommandMediaStreamClassifierProvider)
             .expect("built-in FFprobe classifier provider should register");
         registry.set_default_selection(
-            ProviderSelection::named("ffprobe")
-                .expect("built-in FFprobe selection should be valid"),
+            ProviderSelection::named("ffprobe").expect("built-in FFprobe selection should be valid"),
         );
         registry
     }
@@ -149,10 +147,7 @@ impl MediaStreamClassifierRegistry {
     pub fn resolve_selected(
         &self,
         selection: &ProviderSelection,
-    ) -> Result<
-        ResolvingServiceProvider<MediaStreamClassifierSpec>,
-        ProviderResolutionError,
-    > {
+    ) -> Result<ResolvingServiceProvider<MediaStreamClassifierSpec>, ProviderResolutionError> {
         self.providers.resolve_selected(selection)
     }
 
@@ -169,12 +164,7 @@ impl MediaStreamClassifierRegistry {
     /// Returns [`ProviderResolutionError`] when the stored default matches no
     /// registered provider.
     #[inline]
-    pub fn resolve(
-        &self,
-    ) -> Result<
-        ResolvingServiceProvider<MediaStreamClassifierSpec>,
-        ProviderResolutionError,
-    > {
+    pub fn resolve(&self) -> Result<ResolvingServiceProvider<MediaStreamClassifierSpec>, ProviderResolutionError> {
         self.providers.resolve()
     }
 

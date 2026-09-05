@@ -87,7 +87,6 @@ impl MagicValueType {
     /// matching.
     pub(crate) fn uses_little_endian_order(self) -> bool {
         matches!(self, Self::Little16 | Self::Little32)
-            || (cfg!(target_endian = "little")
-                && matches!(self, Self::Host16 | Self::Host32))
+            || (cfg!(target_endian = "little") && matches!(self, Self::Host16 | Self::Host32))
     }
 }

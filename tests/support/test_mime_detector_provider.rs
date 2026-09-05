@@ -47,11 +47,7 @@ impl TestMimeDetectorProvider {
     ///
     /// A self-described provider fixture.
     #[inline]
-    pub(crate) const fn new(
-        id: &'static str,
-        priority: i32,
-        behavior: TestProviderBehavior,
-    ) -> Self {
+    pub(crate) const fn new(id: &'static str, priority: i32, behavior: TestProviderBehavior) -> Self {
         Self {
             id,
             aliases: &[],
@@ -70,43 +66,29 @@ impl TestMimeDetectorProvider {
     ///
     /// This provider with the supplied aliases.
     #[inline(always)]
-    pub(crate) const fn with_aliases(
-        mut self,
-        aliases: &'static [&'static str],
-    ) -> Self {
+    pub(crate) const fn with_aliases(mut self, aliases: &'static [&'static str]) -> Self {
         self.aliases = aliases;
         self
     }
 }
 
 impl ServiceProvider<MimeDetectorSpec> for TestMimeDetectorProvider {
-    fn create_configured(
-        &self,
-        _config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    fn create_configured(&self, _config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         match self.behavior {
-            TestProviderBehavior::Success(mime_type) => {
-                Ok(Arc::new(StaticMimeDetector::new(mime_type)))
-            }
-            TestProviderBehavior::Unsupported => {
-                Err(ProviderFailure::unsupported(MimeError::DetectorBackend {
-                    backend: "test".to_owned(),
-                    reason: "unsupported input".to_owned(),
-                }))
-            }
-            TestProviderBehavior::Unavailable => Err(
-                ProviderFailure::unavailable(MimeError::DetectorUnavailable {
-                    name: "test".to_owned(),
-                    reason: "missing executable".to_owned(),
-                }),
-            ),
+            TestProviderBehavior::Success(mime_type) => Ok(Arc::new(StaticMimeDetector::new(mime_type))),
+            TestProviderBehavior::Unsupported => Err(ProviderFailure::unsupported(MimeError::DetectorBackend {
+                backend: "test".to_owned(),
+                reason: "unsupported input".to_owned(),
+            })),
+            TestProviderBehavior::Unavailable => Err(ProviderFailure::unavailable(MimeError::DetectorUnavailable {
+                name: "test".to_owned(),
+                reason: "missing executable".to_owned(),
+            })),
             TestProviderBehavior::InitializationFailed => {
-                Err(ProviderFailure::initialization_failed(
-                    MimeError::DetectorBackend {
-                        backend: "test".to_owned(),
-                        reason: "startup failed".to_owned(),
-                    },
-                ))
+                Err(ProviderFailure::initialization_failed(MimeError::DetectorBackend {
+                    backend: "test".to_owned(),
+                    reason: "startup failed".to_owned(),
+                }))
             }
         }
     }
@@ -114,12 +96,9 @@ impl ServiceProvider<MimeDetectorSpec> for TestMimeDetectorProvider {
 
 impl ProviderMetadata for TestMimeDetectorProvider {
     fn descriptor(&self) -> ProviderDescriptor {
-        ProviderDescriptor::new(
-            ProviderId::new(self.id)
-                .expect("test provider ID should be canonical"),
-        )
-        .with_aliases(self.aliases.iter().copied())
-        .expect("test provider aliases should be valid")
-        .with_priority(self.priority)
+        ProviderDescriptor::new(ProviderId::new(self.id).expect("test provider ID should be canonical"))
+            .with_aliases(self.aliases.iter().copied())
+            .expect("test provider aliases should be valid")
+            .with_priority(self.priority)
     }
 }

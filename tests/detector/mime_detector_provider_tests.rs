@@ -15,12 +15,8 @@ use crate::support::TestProviderBehavior;
 
 #[test]
 fn test_mime_detector_provider_defaults_and_factory() {
-    let provider = TestMimeDetectorProvider::new(
-        "static",
-        7,
-        TestProviderBehavior::Success("application/x-static"),
-    )
-    .with_aliases(&["static-alias"]);
+    let provider = TestMimeDetectorProvider::new("static", 7, TestProviderBehavior::Success("application/x-static"))
+        .with_aliases(&["static-alias"]);
     let descriptor = provider.descriptor();
     let detector = provider
         .create_configured(&MimeConfig::default())

@@ -20,8 +20,7 @@ use crate::MimeRepository;
 use crate::MimeResult;
 use crate::StreamBasedMimeDetector;
 
-const DEFAULT_DATABASE: &str =
-    include_str!("../../resources/freedesktop.org-v2.4.xml");
+const DEFAULT_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
 
 static DEFAULT_REPOSITORY: OnceLock<MimeRepository> = OnceLock::new();
 
@@ -85,10 +84,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// A detector borrowing `repository`.
-    pub fn with_repository_and_config(
-        repository: &'a MimeRepository,
-        config: MimeConfig,
-    ) -> Self {
+    pub fn with_repository_and_config(repository: &'a MimeRepository, config: MimeConfig) -> Self {
         Self {
             core: MimeDetectorCore::from_mime_config(config),
             repository,
@@ -126,10 +122,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// First MIME type matched by filename, or `None`.
-    pub fn detect_by_filename(
-        &self,
-        filename: &str,
-    ) -> MimeResult<Option<String>> {
+    pub fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_by_filename(self, filename)
     }
 
@@ -140,10 +133,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// First MIME type matched by magic, or `None`.
-    pub fn detect_by_content(
-        &self,
-        bytes: &[u8],
-    ) -> MimeResult<Option<String>> {
+    pub fn detect_by_content(&self, bytes: &[u8]) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_by_content(self, bytes)
     }
 
@@ -200,11 +190,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be
     /// opened or read.
-    pub fn detect_file(
-        &self,
-        file: &Path,
-        policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>> {
+    pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }
 
@@ -245,8 +231,7 @@ impl<'a> RepositoryMimeDetector<'a> {
 /// Shared parsed repository.
 pub(crate) fn default_repository() -> &'static MimeRepository {
     DEFAULT_REPOSITORY.get_or_init(|| {
-        MimeRepository::from_xml(DEFAULT_DATABASE)
-            .expect("embedded freedesktop MIME database should parse")
+        MimeRepository::from_xml(DEFAULT_DATABASE).expect("embedded freedesktop MIME database should parse")
     })
 }
 
@@ -267,10 +252,7 @@ impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
     }
 
     /// Guesses MIME type names from content magic rules.
-    fn guess_from_content_bytes(
-        &self,
-        content: &[u8],
-    ) -> MimeResult<Vec<String>> {
+    fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         Ok(RepositoryMimeDetector::guess_from_content(self, content))
     }
 }

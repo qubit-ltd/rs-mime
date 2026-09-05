@@ -35,17 +35,11 @@ struct StaticClassifier {
 struct FailingClassifier;
 
 impl MediaStreamClassifier for StaticClassifier {
-    fn classify_file(
-        &self,
-        _file: &Path,
-    ) -> Result<MediaStreamType, MimeError> {
+    fn classify_file(&self, _file: &Path) -> Result<MediaStreamType, MimeError> {
         Ok(self.stream_type)
     }
 
-    fn classify_reader(
-        &self,
-        reader: &mut dyn Read,
-    ) -> Result<MediaStreamType, MimeError> {
+    fn classify_reader(&self, reader: &mut dyn Read) -> Result<MediaStreamType, MimeError> {
         if let Some(expected_first_byte) = self.expected_first_byte {
             let mut buffer = [0_u8; 1];
             reader.read_exact(&mut buffer)?;
@@ -60,19 +54,13 @@ impl MediaStreamClassifier for StaticClassifier {
 }
 
 impl MediaStreamClassifier for FailingClassifier {
-    fn classify_file(
-        &self,
-        _file: &Path,
-    ) -> Result<MediaStreamType, MimeError> {
+    fn classify_file(&self, _file: &Path) -> Result<MediaStreamType, MimeError> {
         Err(MimeError::InvalidClassifierInput {
             reason: "forced".to_owned(),
         })
     }
 
-    fn classify_reader(
-        &self,
-        _reader: &mut dyn Read,
-    ) -> Result<MediaStreamType, MimeError> {
+    fn classify_reader(&self, _reader: &mut dyn Read) -> Result<MediaStreamType, MimeError> {
         Err(MimeError::InvalidClassifierInput {
             reason: "forced".to_owned(),
         })
@@ -105,41 +93,27 @@ fn test_merge_results_uses_detector_selection_strategy() {
     );
     assert_eq!(
         Some("application/pdf".to_owned()),
-        detector.merge_results(
-            &["image/jpeg".to_owned()],
-            &["application/pdf".to_owned()]
-        )
+        detector.merge_results(&["image/jpeg".to_owned()], &["application/pdf".to_owned()])
     );
 }
 
 #[test]
 fn test_refine_detected_mime_type_uses_media_stream_classifier() {
-    let mut detector = MimeDetectorCore::new(create_precise_config(
-        true,
-        "webm",
-        "webm:video/webm,audio/webm",
-    ));
+    let mut detector = MimeDetectorCore::new(create_precise_config(true, "webm", "webm:video/webm,audio/webm"));
     detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
         stream_type: MediaStreamType::AudioOnly,
         expected_first_byte: None,
     })));
 
-    let refined = detector.refine_detected_mime_type(
-        "video/webm",
-        Some("sample.webm"),
-        DetectionSource::Content(b"webm"),
-    );
+    let refined =
+        detector.refine_detected_mime_type("video/webm", Some("sample.webm"), DetectionSource::Content(b"webm"));
 
     assert_eq!("audio/webm", refined.expect("refinement should succeed"));
 }
 
 #[test]
 fn test_select_result_honors_prefer_filename_and_refines_content_result() {
-    let mut detector = MimeDetectorCore::new(create_precise_config(
-        true,
-        "webm",
-        "webm:video/webm,audio/webm",
-    ));
+    let mut detector = MimeDetectorCore::new(create_precise_config(true, "webm", "webm:video/webm,audio/webm"));
     detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
         stream_type: MediaStreamType::VideoOnly,
         expected_first_byte: None,
@@ -187,86 +161,46 @@ fn test_refine_detected_mime_type_handles_disabled_missing_and_failing_cases() {
     assert_eq!(
         "video/ogg",
         detector
-            .refine_detected_mime_type(
-                "audio/ogg",
-                None,
-                DetectionSource::Path(Path::new("Cargo.toml")),
-            )
+            .refine_detected_mime_type("audio/ogg", None, DetectionSource::Path(Path::new("Cargo.toml")),)
             .expect("path refinement should succeed")
     );
     assert_eq!(
         "video/webm",
         detector
-            .refine_detected_mime_type(
-                "video/webm",
-                Some("movie.webm"),
-                DetectionSource::None,
-            )
+            .refine_detected_mime_type("video/webm", Some("movie.webm"), DetectionSource::None,)
             .expect("refinement without source should succeed")
     );
     assert_eq!(
         "video/webm",
-        MimeDetectorCore::new(create_precise_config(
-            true,
-            "webm",
-            "webm:video/webm,audio/webm"
-        ))
-        .refine_detected_mime_type(
-            "video/webm",
-            Some("movie.webm"),
-            DetectionSource::Content(b""),
-        )
-        .expect("refinement without classifier should succeed")
+        MimeDetectorCore::new(create_precise_config(true, "webm", "webm:video/webm,audio/webm"))
+            .refine_detected_mime_type("video/webm", Some("movie.webm"), DetectionSource::Content(b""),)
+            .expect("refinement without classifier should succeed")
     );
     assert_eq!(
         "video/webm",
-        MimeDetectorCore::new(create_precise_config(
-            false,
-            "webm",
-            "webm:video/webm,audio/webm"
-        ))
-        .refine_detected_mime_type(
-            "video/webm",
-            Some("movie.webm"),
-            DetectionSource::Content(b""),
-        )
-        .expect("disabled refinement should succeed")
+        MimeDetectorCore::new(create_precise_config(false, "webm", "webm:video/webm,audio/webm"))
+            .refine_detected_mime_type("video/webm", Some("movie.webm"), DetectionSource::Content(b""),)
+            .expect("disabled refinement should succeed")
     );
     assert_eq!(
         "video/webm",
         MimeDetectorCore::new(create_precise_config(true, "webm", ""))
-            .refine_detected_mime_type(
-                "video/webm",
-                Some("movie.webm"),
-                DetectionSource::Content(b""),
-            )
+            .refine_detected_mime_type("video/webm", Some("movie.webm"), DetectionSource::Content(b""),)
             .expect("unmapped refinement should succeed")
     );
     assert_eq!(
         "application/pdf",
         detector
-            .refine_detected_mime_type(
-                "application/pdf",
-                Some("movie.webm"),
-                DetectionSource::Content(b""),
-            )
+            .refine_detected_mime_type("application/pdf", Some("movie.webm"), DetectionSource::Content(b""),)
             .expect("unrelated MIME refinement should succeed")
     );
 
-    let mut failing = MimeDetectorCore::new(create_precise_config(
-        true,
-        "webm",
-        "webm:video/webm,audio/webm",
-    ));
+    let mut failing = MimeDetectorCore::new(create_precise_config(true, "webm", "webm:video/webm,audio/webm"));
     failing.set_media_stream_classifier(Some(Arc::new(FailingClassifier)));
 
     assert!(matches!(
         failing
-            .refine_detected_mime_type(
-                "video/webm",
-                Some("movie.webm"),
-                DetectionSource::Content(b""),
-            )
+            .refine_detected_mime_type("video/webm", Some("movie.webm"), DetectionSource::Content(b""),)
             .expect_err("content refinement must retain classifier failures"),
         MimeError::InvalidClassifierInput { .. }
     ));
@@ -286,11 +220,7 @@ fn test_refine_detected_mime_type_handles_disabled_missing_and_failing_cases() {
 /// original position.
 #[test]
 fn test_select_reader_result_refines_without_consuming_reader_position() {
-    let mut detector = MimeDetectorCore::new(create_precise_config(
-        true,
-        "webm",
-        "webm:video/webm,audio/webm",
-    ));
+    let mut detector = MimeDetectorCore::new(create_precise_config(true, "webm", "webm:video/webm,audio/webm"));
     detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
         stream_type: MediaStreamType::AudioOnly,
         expected_first_byte: Some(b'w'),
@@ -316,11 +246,7 @@ fn test_select_reader_result_refines_without_consuming_reader_position() {
 /// the original reader position.
 #[test]
 fn test_select_reader_result_propagates_classifier_failures() {
-    let mut detector = MimeDetectorCore::new(create_precise_config(
-        true,
-        "webm",
-        "webm:video/webm,audio/webm",
-    ));
+    let mut detector = MimeDetectorCore::new(create_precise_config(true, "webm", "webm:video/webm,audio/webm"));
     detector.set_media_stream_classifier(Some(Arc::new(FailingClassifier)));
     let mut reader = Cursor::new(b"webm".to_vec());
     reader.set_position(1);
@@ -352,16 +278,10 @@ fn create_precise_config(
         .set(CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT, "ffprobe")
         .expect("classifier selector should be configurable");
     config
-        .set(
-            CONFIG_MIME_ENABLE_PRECISE_DETECTION,
-            enable_precise_detection,
-        )
+        .set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, enable_precise_detection)
         .expect("precise detection flag should be configurable");
     config
-        .set(
-            CONFIG_MIME_PRECISE_DETECTION_PATTERNS,
-            precise_detection_patterns,
-        )
+        .set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, precise_detection_patterns)
         .expect("precise detection patterns should be configurable");
     config
         .set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, ambiguous_mime_mapping)

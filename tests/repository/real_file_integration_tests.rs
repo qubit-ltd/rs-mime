@@ -20,8 +20,7 @@ use qubit_mime::MimeType;
 use qubit_mime::RepositoryMimeDetector;
 
 /// Directory containing the real file fixtures.
-const FIXTURE_DIR: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/real_files");
+const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/real_files");
 
 /// Describes expected repository detection results for a real fixture.
 #[derive(Debug, Clone, Copy)]
@@ -130,9 +129,7 @@ fn fixture_path(filename: &str) -> PathBuf {
 fn read_magic_prefix(repository: &MimeRepository, path: &Path) -> Vec<u8> {
     let mut file = File::open(path).expect("real fixture should open");
     let mut buffer = vec![0; repository.max_test_bytes()];
-    let bytes_read = file
-        .read(&mut buffer)
-        .expect("real fixture prefix should be readable");
+    let bytes_read = file.read(&mut buffer).expect("real fixture prefix should be readable");
     buffer.truncate(bytes_read);
     buffer
 }
@@ -164,8 +161,7 @@ fn expected_names(expected: &[&str]) -> Vec<String> {
 
 #[test]
 fn test_real_files_match_java_repository_filename_and_magic_expectations() {
-    let detector =
-        RepositoryMimeDetector::new().expect("default repository should load");
+    let detector = RepositoryMimeDetector::new().expect("default repository should load");
     let repository = detector.repository();
 
     for case in REAL_FILE_CASES {
@@ -175,9 +171,7 @@ fn test_real_files_match_java_repository_filename_and_magic_expectations() {
 
         assert_eq!(
             expected_names(case.by_filename),
-            mime_names(
-                repository.detect_by_filename(path.to_string_lossy().as_ref())
-            ),
+            mime_names(repository.detect_by_filename(path.to_string_lossy().as_ref())),
             "filename detection mismatch for {}",
             case.filename,
         );
@@ -192,8 +186,7 @@ fn test_real_files_match_java_repository_filename_and_magic_expectations() {
 
 #[test]
 fn test_repository_detector_detects_real_files_from_paths() {
-    let detector =
-        RepositoryMimeDetector::new().expect("default repository should load");
+    let detector = RepositoryMimeDetector::new().expect("default repository should load");
 
     for case in REAL_FILE_CASES {
         let path = fixture_path(case.filename);
@@ -211,10 +204,8 @@ fn test_repository_detector_detects_real_files_from_paths() {
 }
 
 #[test]
-fn test_repository_detector_detects_real_files_from_readers_without_consuming_position()
- {
-    let detector =
-        RepositoryMimeDetector::new().expect("default repository should load");
+fn test_repository_detector_detects_real_files_from_readers_without_consuming_position() {
+    let detector = RepositoryMimeDetector::new().expect("default repository should load");
     let reader_cases = [
         ("test.PNG", "image/png"),
         ("test.pdf", "application/pdf"),

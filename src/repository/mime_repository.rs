@@ -130,8 +130,7 @@ impl MimeRepository {
     /// Matching MIME types ordered by best glob weight and pattern length.
     /// Returns an empty vector when no glob matches.
     pub fn detect_by_filename(&self, filename: &str) -> Vec<&MimeType> {
-        let exact_filename =
-            filename.rsplit(['/', '\\']).next().unwrap_or_default();
+        let exact_filename = filename.rsplit(['/', '\\']).next().unwrap_or_default();
         if exact_filename.is_empty() {
             return Vec::new();
         }
@@ -188,16 +187,9 @@ impl MimeRepository {
     /// # Returns
     /// A vector containing the selected MIME type, or an empty vector when no
     /// rule matches.
-    pub fn detect(
-        &self,
-        filename: &str,
-        bytes: &[u8],
-        policy: MimeDetectionPolicy,
-    ) -> Vec<&MimeType> {
+    pub fn detect(&self, filename: &str, bytes: &[u8], policy: MimeDetectionPolicy) -> Vec<&MimeType> {
         let from_filename = self.detect_by_filename(filename);
-        if from_filename.len() == 1
-            && policy == MimeDetectionPolicy::PreferFilename
-        {
+        if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
             return from_filename;
         }
         let from_content = self.detect_by_content(bytes);
@@ -222,8 +214,7 @@ impl MimeRepository {
     /// - `mime_index`: Index of `mime_type` in `mime_types`.
     /// - `mime_type`: MIME type to index.
     fn index_names(&mut self, mime_index: usize, mime_type: &MimeType) {
-        self.name_map
-            .insert(normalize_mime_name(mime_type.name()), mime_index);
+        self.name_map.insert(normalize_mime_name(mime_type.name()), mime_index);
         for alias in mime_type.aliases() {
             self.name_map.insert(normalize_mime_name(alias), mime_index);
         }
@@ -262,8 +253,7 @@ impl MimeRepository {
     /// - `mime_type`: MIME type whose magic rules should be inspected.
     fn index_magics(&mut self, mime_type: &MimeType) {
         for magic in mime_type.magics() {
-            self.max_test_bytes =
-                self.max_test_bytes.max(magic.max_test_bytes());
+            self.max_test_bytes = self.max_test_bytes.max(magic.max_test_bytes());
         }
     }
 }
@@ -294,11 +284,7 @@ impl<'a> GlobDetectionResult<'a> {
     /// - `entries`: Candidate glob entries.
     /// - `filename`: Original-case filename to test against case-sensitive
     ///   globs.
-    fn add_matching_entries(
-        &mut self,
-        entries: &'a [GlobEntry],
-        filename: &str,
-    ) {
+    fn add_matching_entries(&mut self, entries: &'a [GlobEntry], filename: &str) {
         for entry in entries {
             if entry.glob.matches(filename) {
                 self.compare_add(entry);
@@ -352,8 +338,7 @@ fn strip_doctype(xml: &str) -> Cow<'_, str> {
     let Some(end_offset) = end_offset else {
         return Cow::Borrowed(xml);
     };
-    let mut cleaned =
-        String::with_capacity(xml.len().saturating_sub(end_offset));
+    let mut cleaned = String::with_capacity(xml.len().saturating_sub(end_offset));
     cleaned.push_str(&xml[..start]);
     cleaned.push_str(&xml[start + end_offset..]);
     Cow::Owned(cleaned)
@@ -387,9 +372,7 @@ impl<'a> MagicDetectionResult<'a> {
             self.mime_types.clear();
             self.mime_types.push(mime_type);
             self.best_priority = priority;
-        } else if priority == self.best_priority
-            && !self.mime_types.contains(&mime_type)
-        {
+        } else if priority == self.best_priority && !self.mime_types.contains(&mime_type) {
             self.mime_types.push(mime_type);
         }
     }
@@ -413,13 +396,10 @@ fn parse_mime_type(node: Node<'_, '_>) -> MimeResult<MimeType> {
         match child.tag_name().name() {
             "comment" => {
                 let language = comment_language(child);
-                builder =
-                    builder.description(language, child.text().unwrap_or(""));
+                builder = builder.description(language, child.text().unwrap_or(""));
             }
             "alias" => builder = builder.alias(required_attr(child, "type")?),
-            "sub-class-of" => {
-                builder = builder.super_type(required_attr(child, "type")?)
-            }
+            "sub-class-of" => builder = builder.super_type(required_attr(child, "type")?),
             "glob" => builder = builder.glob(parse_glob(child)?),
             "magic" => builder = builder.magic(parse_magic(child)?),
             _ => {}
@@ -498,11 +478,9 @@ fn parse_magic(node: Node<'_, '_>) -> MimeResult<MimeMagic> {
 /// Returns [`MimeError`](crate::MimeError) when matcher attributes are invalid.
 fn parse_matcher(node: Node<'_, '_>) -> MimeResult<MimeMagicMatcher> {
     let type_name = required_attr(node, "type")?;
-    let value_type = MagicValueType::from_name(type_name).ok_or_else(|| {
-        MimeError::invalid_attr("match", "type", type_name, "unknown type")
-    })?;
-    let (offset_begin, offset_end) =
-        parse_offset(required_attr(node, "offset")?)?;
+    let value_type = MagicValueType::from_name(type_name)
+        .ok_or_else(|| MimeError::invalid_attr("match", "type", type_name, "unknown type"))?;
+    let (offset_begin, offset_end) = parse_offset(required_attr(node, "offset")?)?;
     let value = parse_value(value_type, required_attr(node, "value")?)?;
     let mask = match node.attribute("mask") {
         Some(mask) => Some(parse_mask(value_type, mask)?),
@@ -514,14 +492,7 @@ fn parse_matcher(node: Node<'_, '_>) -> MimeResult<MimeMagicMatcher> {
         .filter(|child| child.tag_name().name() == "match")
         .map(parse_matcher)
         .collect();
-    MimeMagicMatcher::new(
-        value_type,
-        offset_begin,
-        offset_end,
-        value,
-        mask,
-        sub_matchers?,
-    )
+    MimeMagicMatcher::new(value_type, offset_begin, offset_end, value, mask, sub_matchers?)
 }
 
 /// Reads the language key from a `comment` element.
@@ -552,14 +523,7 @@ fn comment_language<'a>(node: Node<'a, '_>) -> &'a str {
 fn required_attr<'a>(node: Node<'a, '_>, name: &str) -> MimeResult<&'a str> {
     node.attribute(name)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            MimeError::invalid_attr(
-                node.tag_name().name(),
-                name,
-                "",
-                "required attribute is missing",
-            )
-        })
+        .ok_or_else(|| MimeError::invalid_attr(node.tag_name().name(), name, "", "required attribute is missing"))
 }
 
 /// Reads an optional bounded `u16` XML attribute.
@@ -577,24 +541,13 @@ fn required_attr<'a>(node: Node<'a, '_>, name: &str) -> MimeResult<&'a str> {
 /// # Errors
 /// Returns [`MimeError`](crate::MimeError) when the value is not an integer or
 /// is out of range.
-fn optional_u16_attr(
-    node: Node<'_, '_>,
-    name: &str,
-    min: u16,
-    max: u16,
-    default: u16,
-) -> MimeResult<u16> {
+fn optional_u16_attr(node: Node<'_, '_>, name: &str, min: u16, max: u16, default: u16) -> MimeResult<u16> {
     let Some(value) = node.attribute(name) else {
         return Ok(default);
     };
-    let parsed = value.parse::<u16>().map_err(|error| {
-        MimeError::invalid_attr(
-            node.tag_name().name(),
-            name,
-            value,
-            error.to_string(),
-        )
-    })?;
+    let parsed = value
+        .parse::<u16>()
+        .map_err(|error| MimeError::invalid_attr(node.tag_name().name(), name, value, error.to_string()))?;
     if parsed < min || parsed > max {
         return Err(MimeError::invalid_attr(
             node.tag_name().name(),
@@ -619,11 +572,7 @@ fn optional_u16_attr(
 /// # Errors
 /// Returns [`MimeError`](crate::MimeError) when the value is not `true` or
 /// `false`.
-fn optional_bool_attr(
-    node: Node<'_, '_>,
-    name: &str,
-    default: bool,
-) -> MimeResult<bool> {
+fn optional_bool_attr(node: Node<'_, '_>, name: &str, default: bool) -> MimeResult<bool> {
     match node.attribute(name) {
         Some("true") => Ok(true),
         Some("false") => Ok(false),
@@ -674,14 +623,9 @@ fn parse_offset(value: &str) -> MimeResult<(usize, usize)> {
 /// # Errors
 /// Returns [`MimeError`](crate::MimeError) when the number is invalid.
 fn parse_usize(value: &str, attribute: &str) -> MimeResult<usize> {
-    value.parse::<usize>().map_err(|error| {
-        MimeError::invalid_attr(
-            "match",
-            attribute,
-            value,
-            format!("invalid integer: {error}"),
-        )
-    })
+    value
+        .parse::<usize>()
+        .map_err(|error| MimeError::invalid_attr("match", attribute, value, format!("invalid integer: {error}")))
 }
 
 /// Parses a magic value attribute.
@@ -731,14 +675,9 @@ fn parse_mask(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
 /// # Errors
 /// Returns [`MimeError`](crate::MimeError) when the literal cannot be decoded.
 fn parse_c_string_bytes(value: &str) -> MimeResult<Vec<u8>> {
-    CStringLiteralCodec::new().decode(value).map_err(|error| {
-        MimeError::invalid_attr(
-            "match",
-            "value",
-            value,
-            format!("invalid C string literal: {error}"),
-        )
-    })
+    CStringLiteralCodec::new()
+        .decode(value)
+        .map_err(|error| MimeError::invalid_attr("match", "value", value, format!("invalid C string literal: {error}")))
 }
 
 /// Parses a numeric magic value into big-endian bytes.
@@ -752,19 +691,10 @@ fn parse_c_string_bytes(value: &str) -> MimeResult<Vec<u8>> {
 ///
 /// # Errors
 /// Returns [`MimeError`](crate::MimeError) when the value is invalid.
-fn parse_numeric_bytes(
-    value_type: MagicValueType,
-    value: &str,
-) -> MimeResult<Vec<u8>> {
-    let number =
-        CIntegerLiteralCodec::new().decode(value).map_err(|error| {
-            MimeError::invalid_attr(
-                "match",
-                "value",
-                value,
-                format!("invalid C integer literal: {error}"),
-            )
-        })?;
+fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
+    let number = CIntegerLiteralCodec::new().decode(value).map_err(|error| {
+        MimeError::invalid_attr("match", "value", value, format!("invalid C integer literal: {error}"))
+    })?;
     match value_type
         .numeric_width()
         .expect("numeric parser should only receive numeric magic types")
@@ -790,10 +720,7 @@ fn parse_numeric_bytes(
 ///
 /// # Returns
 /// Invalid XML attribute error for an oversized numeric value.
-fn numeric_value_out_of_range(
-    value_type: MagicValueType,
-    value: &str,
-) -> MimeError {
+fn numeric_value_out_of_range(value_type: MagicValueType, value: &str) -> MimeError {
     let width = value_type
         .numeric_width()
         .expect("numeric parser should only receive numeric magic types");
@@ -822,18 +749,10 @@ fn parse_hex_bytes(value: &str) -> MimeResult<Vec<u8>> {
         .with_ignore_prefix_case(true)
         .decode(value)
         .map_err(|error| match error {
-            MiscCodecError::MissingPrefix { .. } => MimeError::invalid_attr(
-                "match",
-                "mask",
-                value,
-                "string mask must start with 0x",
-            ),
-            other => MimeError::invalid_attr(
-                "match",
-                "mask",
-                value,
-                format!("invalid hex byte: {other}"),
-            ),
+            MiscCodecError::MissingPrefix { .. } => {
+                MimeError::invalid_attr("match", "mask", value, "string mask must start with 0x")
+            }
+            other => MimeError::invalid_attr("match", "mask", value, format!("invalid hex byte: {other}")),
         })
 }
 
@@ -873,9 +792,9 @@ fn extension_suffixes(filename: &str) -> Vec<&str> {
 fn extension_pattern(pattern: &str) -> Option<&str> {
     let extension = pattern.strip_prefix("*.")?;
     if extension.is_empty()
-        || extension.chars().any(|ch| {
-            matches!(ch, '*' | '?' | '{' | '}' | '!' | '[' | ']' | '^')
-        })
+        || extension
+            .chars()
+            .any(|ch| matches!(ch, '*' | '?' | '{' | '}' | '!' | '[' | ']' | '^'))
     {
         None
     } else {
@@ -904,21 +823,17 @@ fn is_literal_pattern(pattern: &str) -> bool {
 ///
 /// # Returns
 /// A single selected MIME type, or an empty vector when neither source matched.
-fn merge_results<'a>(
-    from_filename: Vec<&'a MimeType>,
-    from_content: Vec<&'a MimeType>,
-) -> Vec<&'a MimeType> {
+fn merge_results<'a>(from_filename: Vec<&'a MimeType>, from_content: Vec<&'a MimeType>) -> Vec<&'a MimeType> {
     if from_filename.is_empty() {
         return from_content.into_iter().take(1).collect();
     }
     if from_content.is_empty() {
         return from_filename.into_iter().take(1).collect();
     }
-    if let Some(common) = from_filename.iter().find(|mime_type| {
-        from_content
-            .iter()
-            .any(|content| content.name() == mime_type.name())
-    }) {
+    if let Some(common) = from_filename
+        .iter()
+        .find(|mime_type| from_content.iter().any(|content| content.name() == mime_type.name()))
+    {
         vec![*common]
     } else {
         from_content.into_iter().take(1).collect()

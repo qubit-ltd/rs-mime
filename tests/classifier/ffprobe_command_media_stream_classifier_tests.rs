@@ -34,9 +34,7 @@ use crate::support::PathEnvGuard;
 fn test_classify_stream_listing_maps_ffprobe_output() {
     assert_eq!(
         MediaStreamType::VideoWithAudio,
-        FfprobeCommandMediaStreamClassifier::classify_stream_listing(
-            "video\naudio\n"
-        )
+        FfprobeCommandMediaStreamClassifier::classify_stream_listing("video\naudio\n")
     );
     assert_eq!(
         MediaStreamType::VideoOnly,
@@ -54,10 +52,8 @@ fn test_classify_stream_listing_maps_ffprobe_output() {
 
 #[test]
 fn test_with_command_runner_uses_runner_configuration() {
-    let runner =
-        CommandRunner::new(Duration::from_secs(2)).disable_logging(true);
-    let mut classifier =
-        FfprobeCommandMediaStreamClassifier::new().with_command_runner(runner);
+    let runner = CommandRunner::new(Duration::from_secs(2)).disable_logging(true);
+    let mut classifier = FfprobeCommandMediaStreamClassifier::new().with_command_runner(runner);
 
     assert_eq!(
         Some(Duration::from_secs(2)),
@@ -65,9 +61,7 @@ fn test_with_command_runner_uses_runner_configuration() {
     );
     assert!(classifier.command_runner().is_logging_disabled());
 
-    classifier.set_command_runner(
-        classifier.command_runner().clone().working_directory("."),
-    );
+    classifier.set_command_runner(classifier.command_runner().clone().working_directory("."));
     assert_eq!(
         Some(std::path::Path::new(".")),
         classifier.command_runner().configured_working_directory()
@@ -91,11 +85,7 @@ fn test_default_uses_disabled_logging_runner() {
         classifier.command_runner().configured_max_stderr_bytes(),
         Some(DEFAULT_COMMAND_OUTPUT_MAX_BYTES),
     );
-    assert!(
-        classifier
-            .command_runner()
-            .is_output_truncation_failure_enabled()
-    );
+    assert!(classifier.command_runner().is_output_truncation_failure_enabled());
 }
 
 #[test]
@@ -128,19 +118,9 @@ fn test_from_mime_config_limits_ffprobe_output() {
         Some(Duration::from_secs(31)),
         classifier.command_runner().configured_timeout()
     );
-    assert_eq!(
-        Some(1024),
-        classifier.command_runner().configured_max_stdout_bytes()
-    );
-    assert_eq!(
-        Some(1024),
-        classifier.command_runner().configured_max_stderr_bytes()
-    );
-    assert!(
-        classifier
-            .command_runner()
-            .is_output_truncation_failure_enabled()
-    );
+    assert_eq!(Some(1024), classifier.command_runner().configured_max_stdout_bytes());
+    assert_eq!(Some(1024), classifier.command_runner().configured_max_stderr_bytes());
+    assert!(classifier.command_runner().is_output_truncation_failure_enabled());
 }
 
 #[test]
@@ -169,19 +149,9 @@ fn test_from_mime_config_limits_ffprobe_output_and_stage_size() {
         MimeConfig::from_config(&config).expect("MIME config should parse"),
     );
 
-    assert_eq!(
-        Some(1024),
-        classifier.command_runner().configured_max_stdout_bytes()
-    );
-    assert_eq!(
-        Some(1024),
-        classifier.command_runner().configured_max_stderr_bytes()
-    );
-    assert!(
-        classifier
-            .command_runner()
-            .is_output_truncation_failure_enabled()
-    );
+    assert_eq!(Some(1024), classifier.command_runner().configured_max_stdout_bytes());
+    assert_eq!(Some(1024), classifier.command_runner().configured_max_stderr_bytes());
+    assert!(classifier.command_runner().is_output_truncation_failure_enabled());
 }
 
 #[test]
@@ -202,24 +172,18 @@ fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
         .expect("Host filesystem should open")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
-    let script_path = temp_dir
-        .path()
-        .join(FfprobeCommandMediaStreamClassifier::COMMAND);
-    std::fs::write(&script_path, "#!/bin/sh\nprintf 'video\\naudio\\n'\n")
-        .expect("fake ffprobe should be written");
+    let script_path = temp_dir.path().join(FfprobeCommandMediaStreamClassifier::COMMAND);
+    std::fs::write(&script_path, "#!/bin/sh\nprintf 'video\\naudio\\n'\n").expect("fake ffprobe should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake ffprobe metadata should be readable")
         .permissions();
     use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
-    std::fs::set_permissions(&script_path, permissions)
-        .expect("fake ffprobe should be executable");
+    std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
 
     let classifier = FfprobeCommandMediaStreamClassifier::new()
-        .with_command_runner(
-            CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true),
-        );
+        .with_command_runner(CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true));
     let mut working_classifier = classifier.clone();
     working_classifier.set_working_directory(Some(".".to_owned()));
 
@@ -256,27 +220,17 @@ fn test_classify_file_propagates_ffprobe_start_error() {
         .expect("temporary command directory should be created");
     let _path_guard = PathEnvGuard::set(temp_dir.path());
     let classifier = FfprobeCommandMediaStreamClassifier::new()
-        .with_command_runner(
-            CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true),
-        );
+        .with_command_runner(CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true));
 
-    let private_path =
-        temp_dir.path().join("private-customer-source-video.mp4");
-    std::fs::write(&private_path, b"media")
-        .expect("private media fixture should be written");
+    let private_path = temp_dir.path().join("private-customer-source-video.mp4");
+    std::fs::write(&private_path, b"media").expect("private media fixture should be written");
     let error = classifier
         .classify_file(&private_path)
         .expect_err("missing ffprobe executable should report command error");
 
     assert!(error.to_string().contains("ffprobe"));
-    assert!(
-        !error
-            .to_string()
-            .contains(private_path.to_string_lossy().as_ref())
-    );
-    assert!(
-        !format!("{error:?}").contains(private_path.to_string_lossy().as_ref())
-    );
+    assert!(!error.to_string().contains(private_path.to_string_lossy().as_ref()));
+    assert!(!format!("{error:?}").contains(private_path.to_string_lossy().as_ref()));
 }
 
 #[test]
@@ -286,24 +240,18 @@ fn test_classify_file_maps_unexpected_ffprobe_exit_to_none() {
         .expect("Host filesystem should open")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
-    let script_path = temp_dir
-        .path()
-        .join(FfprobeCommandMediaStreamClassifier::COMMAND);
-    std::fs::write(&script_path, "#!/bin/sh\nexit 7\n")
-        .expect("fake ffprobe should be written");
+    let script_path = temp_dir.path().join(FfprobeCommandMediaStreamClassifier::COMMAND);
+    std::fs::write(&script_path, "#!/bin/sh\nexit 7\n").expect("fake ffprobe should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake ffprobe metadata should be readable")
         .permissions();
     use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
-    std::fs::set_permissions(&script_path, permissions)
-        .expect("fake ffprobe should be executable");
+    std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
 
     let classifier = FfprobeCommandMediaStreamClassifier::new()
-        .with_command_runner(
-            CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true),
-        );
+        .with_command_runner(CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true));
 
     assert_eq!(
         MediaStreamType::None,
@@ -320,9 +268,7 @@ fn test_classify_file_passes_path_through_ffprobe_input_option() {
         .expect("Host filesystem should open")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
-    let script_path = temp_dir
-        .path()
-        .join(FfprobeCommandMediaStreamClassifier::COMMAND);
+    let script_path = temp_dir.path().join(FfprobeCommandMediaStreamClassifier::COMMAND);
     std::fs::write(
         &script_path,
         r#"#!/bin/sh
@@ -342,22 +288,16 @@ printf 'video\n'
         .permissions();
     use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
-    std::fs::set_permissions(&script_path, permissions)
-        .expect("fake ffprobe should be executable");
+    std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
-    let relative_path =
-        format!("--qubit-ffprobe-leading-dash-{}", std::process::id(),);
-    std::fs::write(&relative_path, b"media")
-        .expect("leading-dash media fixture should be written");
+    let relative_path = format!("--qubit-ffprobe-leading-dash-{}", std::process::id(),);
+    std::fs::write(&relative_path, b"media").expect("leading-dash media fixture should be written");
 
     let classifier = FfprobeCommandMediaStreamClassifier::new()
-        .with_command_runner(
-            CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true),
-        );
+        .with_command_runner(CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true));
 
     let result = classifier.classify_file(std::path::Path::new(&relative_path));
-    std::fs::remove_file(&relative_path)
-        .expect("leading-dash media fixture should be removed");
+    std::fs::remove_file(&relative_path).expect("leading-dash media fixture should be removed");
     assert_eq!(
         MediaStreamType::VideoOnly,
         result.expect("ffprobe should receive the path after -i")
@@ -371,27 +311,20 @@ fn test_classify_file_rejects_invalid_utf8_stdout() {
         .expect("Host filesystem should open")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
-    let script_path = temp_dir
-        .path()
-        .join(FfprobeCommandMediaStreamClassifier::COMMAND);
-    std::fs::write(&script_path, "#!/bin/sh\nprintf '\\377'\n")
-        .expect("fake ffprobe should be written");
+    let script_path = temp_dir.path().join(FfprobeCommandMediaStreamClassifier::COMMAND);
+    std::fs::write(&script_path, "#!/bin/sh\nprintf '\\377'\n").expect("fake ffprobe should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake ffprobe metadata should be readable")
         .permissions();
     use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
-    std::fs::set_permissions(&script_path, permissions)
-        .expect("fake ffprobe should be executable");
+    std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
     let media_path = temp_dir.path().join("media.bin");
-    std::fs::write(&media_path, b"media")
-        .expect("media fixture should be written");
+    std::fs::write(&media_path, b"media").expect("media fixture should be written");
 
     let classifier = FfprobeCommandMediaStreamClassifier::new()
-        .with_command_runner(
-            CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true),
-        );
+        .with_command_runner(CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true));
     let error = classifier
         .classify_file(&media_path)
         .expect_err("invalid ffprobe UTF-8 should be reported");

@@ -16,12 +16,6 @@ use super::MediaStreamClassifierSpec;
 /// Implement [`ProviderDefinition<MediaStreamClassifierSpec>`] for the
 /// concrete provider type. This marker ensures every registrable classifier
 /// supplies both creation behavior and registration metadata.
-pub trait MediaStreamClassifierProvider:
-    ProviderDefinition<MediaStreamClassifierSpec>
-{
-}
+pub trait MediaStreamClassifierProvider: ProviderDefinition<MediaStreamClassifierSpec> {}
 
-impl<T> MediaStreamClassifierProvider for T where
-    T: ProviderDefinition<MediaStreamClassifierSpec> + ?Sized
-{
-}
+impl<T> MediaStreamClassifierProvider for T where T: ProviderDefinition<MediaStreamClassifierSpec> + ?Sized {}

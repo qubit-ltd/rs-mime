@@ -22,10 +22,7 @@ impl MediaStreamClassifier for StaticMediaStreamClassifier {
         Ok(MediaStreamType::None)
     }
 
-    fn classify_reader(
-        &self,
-        _reader: &mut dyn Read,
-    ) -> MimeResult<MediaStreamType> {
+    fn classify_reader(&self, _reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
         Ok(MediaStreamType::None)
     }
 }

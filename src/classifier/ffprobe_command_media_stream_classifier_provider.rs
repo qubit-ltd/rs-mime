@@ -25,9 +25,7 @@ use crate::MimeError;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FfprobeCommandMediaStreamClassifierProvider;
 
-impl ServiceProvider<MediaStreamClassifierSpec>
-    for FfprobeCommandMediaStreamClassifierProvider
-{
+impl ServiceProvider<MediaStreamClassifierSpec> for FfprobeCommandMediaStreamClassifierProvider {
     /// Creates an FFprobe-backed classifier when the command is available.
     ///
     /// # Parameters
@@ -46,21 +44,16 @@ impl ServiceProvider<MediaStreamClassifierSpec>
     fn create_configured(
         &self,
         config: &MimeConfig,
-    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderFailure<MimeError>>
-    {
+    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderFailure<MimeError>> {
         if !FfprobeCommandMediaStreamClassifier::is_available() {
-            return Err(ProviderFailure::unavailable(
-                MimeError::ClassifierUnavailable {
-                    name: "ffprobe".to_owned(),
-                    reason: "`ffprobe` command is not available".to_owned(),
-                },
-            ));
+            return Err(ProviderFailure::unavailable(MimeError::ClassifierUnavailable {
+                name: "ffprobe".to_owned(),
+                reason: "`ffprobe` command is not available".to_owned(),
+            }));
         }
-        Ok(Arc::new(
-            FfprobeCommandMediaStreamClassifier::from_mime_config(
-                config.clone(),
-            ),
-        ))
+        Ok(Arc::new(FfprobeCommandMediaStreamClassifier::from_mime_config(
+            config.clone(),
+        )))
     }
 }
 
