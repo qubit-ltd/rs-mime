@@ -83,6 +83,9 @@ mod constants;
 mod mime_config;
 mod mime_error;
 mod mime_result;
+mod temp_staging;
+#[cfg(test)]
+mod tests;
 
 pub use classifier::FfprobeCommandMediaStreamClassifier;
 pub use classifier::FfprobeCommandMediaStreamClassifierProvider;

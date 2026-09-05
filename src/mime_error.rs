@@ -10,6 +10,7 @@
 use qubit_command::CommandError;
 use qubit_config::ConfigError;
 use qubit_fs::FsError;
+use qubit_local_files::LocalFileError;
 use roxmltree::Error as XmlError;
 use thiserror::Error;
 
@@ -31,9 +32,7 @@ pub enum MimeError {
     },
 
     /// An XML attribute is missing or malformed.
-    #[error(
-        "invalid XML attribute '{attribute}' on <{element}>: '{value}' ({reason})"
-    )]
+    #[error("invalid XML attribute '{attribute}' on <{element}>: '{value}' ({reason})")]
     InvalidXmlAttribute {
         /// Element carrying the invalid attribute.
         element: String,
@@ -73,9 +72,7 @@ pub enum MimeError {
     },
 
     /// A detector read path could not reserve its requested buffer capacity.
-    #[error(
-        "MIME detector could not allocate a {requested}-byte buffer: {source}"
-    )]
+    #[error("MIME detector could not allocate a {requested}-byte buffer: {source}")]
     BufferAllocationFailed {
         /// Requested buffer capacity.
         requested: usize,
@@ -198,6 +195,20 @@ pub enum MimeError {
     #[error("I/O error while detecting MIME type: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Staging or backend inspection failed and temporary cleanup also failed.
+    ///
+    /// The primary error retains its original variant and is the source-chain
+    /// entry. The independent cleanup error exposes its resource path and
+    /// cause.
+    #[error("{primary}; temporary-file cleanup failed: {cleanup}")]
+    TemporaryCleanup {
+        /// Original staging or inspection error.
+        #[source]
+        primary: Box<MimeError>,
+        /// Structured cleanup failure, including the residual resource path.
+        cleanup: Box<LocalFileError>,
+    },
+
     /// Detection through a provider-neutral filesystem resource failed.
     #[error("filesystem error while detecting MIME type: {0}")]
     FileSystem(#[from] FsError),
@@ -222,12 +233,7 @@ impl MimeError {
     ///
     /// # Returns
     /// A [`MimeError::InvalidXmlAttribute`](crate::MimeError::InvalidXmlAttribute) value.
-    pub(crate) fn invalid_attr(
-        element: &str,
-        attribute: &str,
-        value: &str,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn invalid_attr(element: &str, attribute: &str, value: &str, reason: impl Into<String>) -> Self {
         Self::InvalidXmlAttribute {
             element: element.to_owned(),
             attribute: attribute.to_owned(),
@@ -245,10 +251,7 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::InvalidXmlElement`](crate::MimeError::InvalidXmlElement)
     /// value.
-    pub(crate) fn invalid_element(
-        element: &str,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn invalid_element(element: &str, reason: impl Into<String>) -> Self {
         Self::InvalidXmlElement {
             element: element.to_owned(),
             reason: reason.into(),
@@ -263,9 +266,7 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher) value.
     pub(crate) fn invalid_matcher(reason: impl Into<String>) -> Self {
-        Self::InvalidMagicMatcher {
-            reason: reason.into(),
-        }
+        Self::InvalidMagicMatcher { reason: reason.into() }
     }
 
     /// Builds an invalid classifier input error.
@@ -276,9 +277,7 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) value.
     pub(crate) fn invalid_classifier_input(reason: impl Into<String>) -> Self {
-        Self::InvalidClassifierInput {
-            reason: reason.into(),
-        }
+        Self::InvalidClassifierInput { reason: reason.into() }
     }
 
     /// Builds a detector backend error.
@@ -290,10 +289,7 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::DetectorBackend`](crate::MimeError::DetectorBackend)
     /// value.
-    pub fn detector_backend(
-        backend: impl Into<String>,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub fn detector_backend(backend: impl Into<String>, reason: impl Into<String>) -> Self {
         Self::DetectorBackend {
             backend: backend.into(),
             reason: reason.into(),

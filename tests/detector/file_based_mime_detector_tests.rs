@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use qubit_local_files::LocalFileSystem;
+use qubit_local_files::error::LocalFileOperation;
 use qubit_local_files::options::LocalTempDirectoryOptions;
 use qubit_local_files::options::LocalTempFileOptions;
 use qubit_mime::FileBasedMimeDetector;
@@ -107,8 +108,7 @@ impl FileBasedMimeDetector for PathRecordingDetector {
         *self
             .seen_path
             .lock()
-            .expect("path recorder lock should not be poisoned") =
-            Some(file.to_path_buf());
+            .expect("path recorder lock should not be poisoned") = Some(file.to_path_buf());
         Ok(vec!["application/octet-stream".to_owned()])
     }
 }
@@ -167,15 +167,12 @@ fn test_detect_by_content_uses_non_predictable_temporary_file_name() {
         .expect("content detection should succeed");
 
     assert_eq!(Some("application/octet-stream".to_owned()), detected);
-    let staged_path = detector
-        .seen_path()
-        .expect("staged path should be recorded");
+    let staged_path = detector.seen_path().expect("staged path should be recorded");
     let filename = staged_path
         .file_name()
         .and_then(|name| name.to_str())
         .expect("staged filename should be UTF-8");
-    let predictable_prefix =
-        format!("MimeDetectorTemp-{}-", std::process::id());
+    let predictable_prefix = format!("MimeDetectorTemp-{}-", std::process::id());
     assert!(
         filename.starts_with("MimeDetectorTemp-"),
         "staged temp filename should preserve the configured prefix: {filename}",
@@ -193,21 +190,16 @@ fn test_detect_by_content_uses_non_predictable_temporary_file_name() {
 #[test]
 fn test_detect_reader_reports_temporary_file_creation_error() {
     const CHILD_ENV: &str = "QUBIT_MIME_CHECK_DETECTOR_TEMPFILE_ERROR";
-    const TEST_NAME: &str = "detector::file_based_mime_detector_tests::test_detect_reader_reports_temporary_file_creation_error";
+    const TEST_NAME: &str =
+        "detector::file_based_mime_detector_tests::test_detect_reader_reports_temporary_file_creation_error";
 
     if std::env::var_os(CHILD_ENV).is_some() {
         let detector = ContentReadingDetector::new();
         let mut reader = std::io::Cursor::new(b"plain text".to_vec());
 
         let error = detector
-            .detect_reader(
-                &mut reader,
-                None,
-                MimeDetectionPolicy::VerifyContent,
-            )
-            .expect_err(
-                "invalid temporary directory should fail reader detection",
-            );
+            .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+            .expect_err("invalid temporary directory should fail reader detection");
 
         let MimeError::Io(error) = error else {
             panic!("temporary file creation should report an I/O error");
@@ -218,26 +210,21 @@ fn test_detect_reader_reports_temporary_file_creation_error() {
 
     let temp_dir = LocalFileSystem::host()
         .expect("Host filesystem should open")
-        .create_temp_directory_with_options(
-            &LocalTempDirectoryOptions::new()
-                .with_prefix("qubit-mime-detector-error-"),
-        )
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new().with_prefix("qubit-mime-detector-error-"))
         .expect("temporary parent directory should be created");
     let invalid_temp_dir = temp_dir.path().join("not-a-directory");
     fs::write(&invalid_temp_dir, b"not a directory")
         .expect("invalid temporary directory placeholder should be created");
-    let output = std::process::Command::new(
-        std::env::current_exe()
-            .expect("current test binary path should be available"),
-    )
-    .arg(TEST_NAME)
-    .arg("--exact")
-    .arg("--nocapture")
-    .arg("--test-threads=1")
-    .env(CHILD_ENV, "1")
-    .env("TMPDIR", invalid_temp_dir)
-    .output()
-    .expect("child test process should run");
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test binary path should be available"))
+            .arg(TEST_NAME)
+            .arg("--exact")
+            .arg("--nocapture")
+            .arg("--test-threads=1")
+            .env(CHILD_ENV, "1")
+            .env("TMPDIR", invalid_temp_dir)
+            .output()
+            .expect("child test process should run");
 
     assert!(
         output.status.success(),
@@ -250,18 +237,15 @@ fn test_detect_reader_reports_temporary_file_creation_error() {
 #[test]
 fn test_detect_reader_creates_missing_temporary_directory() {
     const CHILD_ENV: &str = "QUBIT_MIME_CHECK_DETECTOR_MISSING_TMPDIR";
-    const TEST_NAME: &str = "detector::file_based_mime_detector_tests::test_detect_reader_creates_missing_temporary_directory";
+    const TEST_NAME: &str =
+        "detector::file_based_mime_detector_tests::test_detect_reader_creates_missing_temporary_directory";
 
     if std::env::var_os(CHILD_ENV).is_some() {
         let detector = ContentReadingDetector::new();
         let mut reader = std::io::Cursor::new(b"plain text".to_vec());
 
         let detected = detector
-            .detect_reader(
-                &mut reader,
-                None,
-                MimeDetectionPolicy::VerifyContent,
-            )
+            .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
             .expect("missing temporary directory should be created");
 
         assert_eq!(Some("text/plain".to_owned()), detected);
@@ -271,23 +255,20 @@ fn test_detect_reader_creates_missing_temporary_directory() {
     let temp_dir = LocalFileSystem::host()
         .expect("Host filesystem should open")
         .create_temp_directory_with_options(
-            &LocalTempDirectoryOptions::new()
-                .with_prefix("qubit-mime-detector-missing-"),
+            &LocalTempDirectoryOptions::new().with_prefix("qubit-mime-detector-missing-"),
         )
         .expect("temporary parent directory should be created");
     let missing_temp_dir = temp_dir.path().join("missing").join("nested");
-    let output = std::process::Command::new(
-        std::env::current_exe()
-            .expect("current test binary path should be available"),
-    )
-    .arg(TEST_NAME)
-    .arg("--exact")
-    .arg("--nocapture")
-    .arg("--test-threads=1")
-    .env(CHILD_ENV, "1")
-    .env("TMPDIR", &missing_temp_dir)
-    .output()
-    .expect("child test process should run");
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test binary path should be available"))
+            .arg(TEST_NAME)
+            .arg("--exact")
+            .arg("--nocapture")
+            .arg("--test-threads=1")
+            .env(CHILD_ENV, "1")
+            .env("TMPDIR", &missing_temp_dir)
+            .output()
+            .expect("child test process should run");
 
     assert!(
         output.status.success(),
@@ -339,4 +320,61 @@ fn test_detect_reader_propagates_file_based_callback_error() {
             .to_string()
             .contains("forced")
     );
+}
+
+#[derive(Debug, Default)]
+struct CleanupFailingDetector {
+    core: MimeDetectorCore,
+    sandbox: Mutex<Option<PathBuf>>,
+}
+
+impl FileBasedMimeDetector for CleanupFailingDetector {
+    /// Returns the ordinary detector configuration.
+    fn core(&self) -> &MimeDetectorCore {
+        &self.core
+    }
+    /// Limits fixture staging to a small prefix.
+    fn max_test_bytes(&self) -> usize {
+        16
+    }
+    /// This fixture only inspects content.
+    fn guess_from_filename(&self, _: &str) -> Vec<String> {
+        Vec::new()
+    }
+    /// Makes sandbox cleanup fail while reporting an independent backend error.
+    fn guess_from_local_file(&self, file: &Path) -> MimeResult<Vec<String>> {
+        let sandbox = file.parent().expect("temporary file has a sandbox");
+        fs::write(sandbox.join("retained"), b"owned by test")?;
+        *self.sandbox.lock().expect("sandbox recorder should lock") = Some(sandbox.to_path_buf());
+        Err(MimeError::InvalidClassifierInput {
+            reason: "primary backend failure".to_owned(),
+        })
+    }
+}
+
+/// A backend failure must not hide a simultaneous sandbox-cleanup failure.
+#[test]
+fn test_detect_by_content_retains_primary_and_cleanup_failures() {
+    let detector = CleanupFailingDetector::default();
+    let error = detector.detect_by_content(b"data").expect_err("backend must fail");
+    let sandbox = detector
+        .sandbox
+        .lock()
+        .expect("sandbox recorder should lock")
+        .take()
+        .expect("sandbox should be recorded");
+    fs::remove_file(sandbox.join("retained")).expect("test-owned blocker should be removed");
+    fs::remove_dir(sandbox).expect("remaining empty sandbox should be removed");
+    assert!(error.to_string().contains("primary backend failure"));
+    assert!(
+        error.to_string().contains("cleanup failed"),
+        "secondary failure was lost: {error}"
+    );
+    match error {
+        MimeError::TemporaryCleanup { primary, cleanup } => {
+            assert!(matches!(*primary, MimeError::InvalidClassifierInput { .. }));
+            assert_eq!(LocalFileOperation::Cleanup, cleanup.operation());
+        }
+        other => panic!("expected both typed errors, got {other}"),
+    }
 }
