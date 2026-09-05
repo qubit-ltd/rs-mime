@@ -11,14 +11,9 @@ use std::fmt::Debug;
 use std::io::Write;
 use std::path::Path;
 
-use qubit_local_files::LocalFileSystem;
-use qubit_local_files::options::LocalTempFileOptions;
-
 use crate::MimeDetectorCore;
-use crate::MimeError;
 use crate::MimeResult;
 use crate::StreamBasedMimeDetector;
-use crate::constants::DEFAULT_TEMP_NAME_MAX_ATTEMPTS;
 
 /// Core implementation contract for detectors that only inspect local files.
 pub trait FileBasedMimeDetector: Debug + Send + Sync {
@@ -76,24 +71,13 @@ where
     }
 
     /// Stages content to a temporary local file before inspection.
-    fn guess_from_content_bytes(
-        &self,
-        content: &[u8],
-    ) -> MimeResult<Vec<String>> {
-        with_temp_file(content, |path| {
-            FileBasedMimeDetector::guess_from_local_file(self, path)
-        })
+    fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+        with_temp_file(content, |path| FileBasedMimeDetector::guess_from_local_file(self, path))
     }
 
     /// Delegates local-file inspection to the file-based hook.
-    fn guess_from_file_stream(
-        &self,
-        file: &Path,
-    ) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        Ok((
-            FileBasedMimeDetector::guess_from_local_file(self, file)?,
-            Vec::new(),
-        ))
+    fn guess_from_file_stream(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
+        Ok((FileBasedMimeDetector::guess_from_local_file(self, file)?, Vec::new()))
     }
 }
 
@@ -109,28 +93,10 @@ where
 /// # Errors
 /// Returns [`MimeError::Io`](crate::MimeError::Io) when the temporary file
 /// cannot be written.
-pub(crate) fn with_temp_file<T>(
-    content: &[u8],
-    detect: impl FnOnce(&Path) -> MimeResult<T>,
-) -> MimeResult<T> {
-    let options = LocalTempFileOptions::new()
-        .with_parent(&std::env::temp_dir())
-        .with_prefix("MimeDetectorTemp-")
-        .with_suffix(".tmp")
-        .with_max_attempts(DEFAULT_TEMP_NAME_MAX_ATTEMPTS)
-        .with_create_parent();
-    let filesystem = LocalFileSystem::host()
-        .map_err(|error| MimeError::Io(error.into_io_error()))?;
-    let mut file = filesystem
-        .create_temp_file_with_options(&options)
-        .map_err(|error| MimeError::Io(error.into_io_error()))?;
-    file.write_all(content)?;
-    file.close();
-    let result = detect(file.path());
-    let cleanup = file.cleanup();
-    match (result, cleanup) {
-        (Ok(value), Ok(())) => Ok(value),
-        (Err(error), _) => Err(error),
-        (Ok(_), Err(error)) => Err(MimeError::Io(error.into_io_error())),
-    }
+pub(crate) fn with_temp_file<T>(content: &[u8], detect: impl FnOnce(&Path) -> MimeResult<T>) -> MimeResult<T> {
+    crate::temp_staging::with_temp_file(
+        "MimeDetectorTemp-",
+        |file| file.write_all(content).map_err(Into::into),
+        detect,
+    )
 }
