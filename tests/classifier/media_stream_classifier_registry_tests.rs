@@ -34,8 +34,7 @@ const FFPROBE_MISSING_CHILD: &str = "QUBIT_MIME_FFPROBE_MISSING_CHILD";
 fn test_ffprobe_provider_reports_unavailable_when_command_is_missing() {
     if std::env::var_os(FFPROBE_MISSING_CHILD).is_some() {
         let registry = MediaStreamClassifierRegistry::builtin();
-        let selection = ProviderSelection::named("ffprobe")
-            .expect("FFprobe provider ID should be valid");
+        let selection = ProviderSelection::named("ffprobe").expect("FFprobe provider ID should be valid");
         let error = registry
             .resolve_selected(&selection)
             .expect("FFprobe provider should resolve")
@@ -47,8 +46,7 @@ fn test_ffprobe_provider_reports_unavailable_when_command_is_missing() {
         return;
     }
 
-    let test_binary = std::env::current_exe()
-        .expect("the integration-test executable should have a path");
+    let test_binary = std::env::current_exe().expect("the integration-test executable should have a path");
     let status = Command::new(test_binary)
         .arg("--exact")
         .arg(concat!(
@@ -75,18 +73,15 @@ fn test_ffprobe_provider_creates_classifier_when_command_is_available() {
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join("ffprobe");
-    std::fs::write(&script_path, "#!/bin/sh\nexit 0\n")
-        .expect("fake FFprobe should be written");
+    std::fs::write(&script_path, "#!/bin/sh\nexit 0\n").expect("fake FFprobe should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake FFprobe metadata should be readable")
         .permissions();
     permissions.set_mode(0o755);
-    std::fs::set_permissions(&script_path, permissions)
-        .expect("fake FFprobe should be executable");
+    std::fs::set_permissions(&script_path, permissions).expect("fake FFprobe should be executable");
     let _path_guard = PathEnvGuard::set(temp_dir.path());
 
-    let selection = ProviderSelection::named("ffprobe")
-        .expect("FFprobe provider ID should be valid");
+    let selection = ProviderSelection::named("ffprobe").expect("FFprobe provider ID should be valid");
     MediaStreamClassifierRegistry::builtin()
         .resolve_selected(&selection)
         .expect("FFprobe provider should resolve")
@@ -97,10 +92,8 @@ fn test_ffprobe_provider_creates_classifier_when_command_is_available() {
 #[test]
 fn test_builtin_registry_lists_and_resolves_ffprobe_provider() {
     let registry = MediaStreamClassifierRegistry::builtin();
-    let expected_default = ProviderSelection::named("ffprobe")
-        .expect("FFprobe provider ID should be valid");
-    let selection = ProviderSelection::named("ffprobe-command")
-        .expect("FFprobe alias should be valid");
+    let expected_default = ProviderSelection::named("ffprobe").expect("FFprobe provider ID should be valid");
+    let selection = ProviderSelection::named("ffprobe-command").expect("FFprobe alias should be valid");
 
     let alias_creation = registry
         .resolve_selected(&selection)
@@ -120,11 +113,7 @@ fn test_builtin_registry_lists_and_resolves_ffprobe_provider() {
     }
     assert_eq!(
         vec!["ffprobe"],
-        registry
-            .provider_ids()
-            .iter()
-            .map(|id| id.as_str())
-            .collect::<Vec<_>>(),
+        registry.provider_ids().iter().map(|id| id.as_str()).collect::<Vec<_>>(),
     );
     assert_eq!(expected_default, registry.default_selection());
 }
@@ -133,15 +122,9 @@ fn test_builtin_registry_lists_and_resolves_ffprobe_provider() {
 fn test_global_classifier_registry_exposes_builtin_defaults() {
     let registry = MediaStreamClassifierRegistry::global();
 
-    assert!(
-        registry
-            .provider_ids()
-            .iter()
-            .any(|id| id.as_str() == "ffprobe"),
-    );
+    assert!(registry.provider_ids().iter().any(|id| id.as_str() == "ffprobe"),);
     assert_eq!(
-        ProviderSelection::named("ffprobe")
-            .expect("FFprobe provider ID should be valid"),
+        ProviderSelection::named("ffprobe").expect("FFprobe provider ID should be valid"),
         registry.default_selection(),
     );
 }
@@ -156,12 +139,9 @@ fn test_registry_registers_owned_and_shared_providers_atomically() {
             TestProviderBehavior::Success("unused"),
         ))
         .expect("owned provider should register");
-    let shared: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>> =
-        Arc::new(TestMediaStreamClassifierProvider::new(
-            "shared",
-            10,
-            TestProviderBehavior::Success("unused"),
-        ));
+    let shared: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>> = Arc::new(
+        TestMediaStreamClassifierProvider::new("shared", 10, TestProviderBehavior::Success("unused")),
+    );
     registry
         .register_shared(shared)
         .expect("shared provider should register");
@@ -175,12 +155,9 @@ fn test_registry_registers_owned_and_shared_providers_atomically() {
         .expect_err("duplicate selector should be rejected");
     assert_eq!("shared", duplicate.selector());
 
-    let runtime_shared: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>> =
-        Arc::new(TestMediaStreamClassifierProvider::new(
-            "runtime-shared",
-            0,
-            TestProviderBehavior::Success("unused"),
-        ));
+    let runtime_shared: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>> = Arc::new(
+        TestMediaStreamClassifierProvider::new("runtime-shared", 0, TestProviderBehavior::Success("unused")),
+    );
     registry
         .register_shared(runtime_shared)
         .expect("runtime shared provider should register");
@@ -191,8 +168,7 @@ fn test_registry_registers_owned_and_shared_providers_atomically() {
 #[test]
 fn test_resolve_reports_classifier_selection_errors_before_creation() {
     let registry = MediaStreamClassifierRegistry::default();
-    let missing = ProviderSelection::named("missing")
-        .expect("missing selector should still be syntactically valid");
+    let missing = ProviderSelection::named("missing").expect("missing selector should still be syntactically valid");
 
     let unknown = registry
         .resolve_selected(&missing)
@@ -220,8 +196,7 @@ fn test_resolve_and_create_keep_classifier_errors_separate() {
             TestProviderBehavior::InitializationFailed,
         ))
         .expect("failing provider should register");
-    let selection = ProviderSelection::named("failed")
-        .expect("test selector should be valid");
+    let selection = ProviderSelection::named("failed").expect("test selector should be valid");
     let provider = registry
         .resolve_selected(&selection)
         .expect("selection should succeed before creation");
@@ -231,10 +206,7 @@ fn test_resolve_and_create_keep_classifier_errors_separate() {
 
     let attempt = error.decisive_attempt();
     assert_eq!("failed", attempt.provider_id().as_str());
-    assert_eq!(
-        ProviderFailureKind::InitializationFailed,
-        attempt.failure().kind()
-    );
+    assert_eq!(ProviderFailureKind::InitializationFailed, attempt.failure().kind());
 }
 
 #[test]
@@ -247,10 +219,8 @@ fn test_classifier_default_selection_is_independent_from_mime_config() {
             TestProviderBehavior::Success("unused"),
         ))
         .expect("successful provider should register");
-    registry.set_default_selection(
-        ProviderSelection::named("configured")
-            .expect("configured selector should be valid"),
-    );
+    registry
+        .set_default_selection(ProviderSelection::named("configured").expect("configured selector should be valid"));
     let provider = registry
         .resolve()
         .expect("default selection should resolve without MIME config");
@@ -317,9 +287,6 @@ fn test_classifier_creation_reports_policy_stop() {
         .create()
         .expect_err("initialization failure should stop absence fallback");
 
-    assert_eq!(
-        ProviderCreationTermination::StoppedByPolicy,
-        error.termination(),
-    );
+    assert_eq!(ProviderCreationTermination::StoppedByPolicy, error.termination(),);
     assert_eq!(1, error.attempts().len());
 }

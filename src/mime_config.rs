@@ -110,8 +110,7 @@ pub struct MimeConfig {
 }
 
 /// Default MIME configuration.
-static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
-    LazyLock::new(|| RwLock::new(MimeConfig::load()));
+static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> = LazyLock::new(|| RwLock::new(MimeConfig::load()));
 
 /// Value read policy.
 static VALUE_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
@@ -173,8 +172,7 @@ static MAPPING_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
 static DEFAULT_PRECISE_DETECTION_PATTERNS: &[&str] = &["webm", "ogg"];
 
 /// Built-in ambiguous MIME mapping entries.
-static DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES: &[&str] =
-    &["webm:video/webm,audio/webm", "ogg:video/ogg,audio/ogg"];
+static DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES: &[&str] = &["webm:video/webm,audio/webm", "ogg:video/ogg,audio/ogg"];
 
 impl MimeConfig {
     /// Loads configuration from environment variables and defaults.
@@ -259,43 +257,32 @@ impl MimeConfig {
             [CONFIG_MIME_DETECTOR_FALLBACKS, ENV_MIME_DETECTOR_FALLBACKS],
             fallback_defaults(),
         )?;
-        let media_stream_classifier_default = value_config
-            .get_any_interpolated_or(
-                [
-                    CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
-                    ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
-                ],
-                DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
-            )?;
-        let media_stream_max_staging_size = value_config
-            .get_any_interpolated_or(
-                [
-                    CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
-                    ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
-                ],
-                DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
-            )?;
-        let command_output_max_bytes: u64 = value_config
-            .get_any_interpolated_or(
-                [
-                    CONFIG_COMMAND_OUTPUT_MAX_BYTES,
-                    ENV_COMMAND_OUTPUT_MAX_BYTES,
-                ],
-                DEFAULT_COMMAND_OUTPUT_MAX_BYTES as u64,
-            )?;
+        let media_stream_classifier_default = value_config.get_any_interpolated_or(
+            [
+                CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+                ENV_MEDIA_STREAM_CLASSIFIER_DEFAULT,
+            ],
+            DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
+        )?;
+        let media_stream_max_staging_size = value_config.get_any_interpolated_or(
+            [CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE, ENV_MEDIA_STREAM_MAX_STAGING_SIZE],
+            DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
+        )?;
+        let command_output_max_bytes: u64 = value_config.get_any_interpolated_or(
+            [CONFIG_COMMAND_OUTPUT_MAX_BYTES, ENV_COMMAND_OUTPUT_MAX_BYTES],
+            DEFAULT_COMMAND_OUTPUT_MAX_BYTES as u64,
+        )?;
         #[cfg(target_pointer_width = "32")]
-        let command_output_max_bytes = usize::try_from(command_output_max_bytes)
-            .map_err(|_| MimeError::InvalidClassifierInput {
+        let command_output_max_bytes =
+            usize::try_from(command_output_max_bytes).map_err(|_| MimeError::InvalidClassifierInput {
                 reason: format!(
                     "MIME command output limit {command_output_max_bytes} exceeds this platform's usize range"
                 ),
             })?;
         #[cfg(target_pointer_width = "64")]
         let command_output_max_bytes = command_output_max_bytes as usize;
-        let command_timeout = duration_config.get_any_interpolated_or(
-            [CONFIG_COMMAND_TIMEOUT, ENV_COMMAND_TIMEOUT],
-            DEFAULT_COMMAND_TIMEOUT,
-        )?;
+        let command_timeout = duration_config
+            .get_any_interpolated_or([CONFIG_COMMAND_TIMEOUT, ENV_COMMAND_TIMEOUT], DEFAULT_COMMAND_TIMEOUT)?;
         let enable_precise_detection = value_config.get_any_interpolated_or(
             [
                 CONFIG_MIME_ENABLE_PRECISE_DETECTION,
@@ -322,20 +309,16 @@ impl MimeConfig {
             DEFAULT_MIME_MAX_BUFFER_SIZE as u64,
         )?;
         #[cfg(target_pointer_width = "32")]
-        let max_buffer_size =
-            usize::try_from(max_buffer_size).map_err(|_| MimeError::InvalidClassifierInput {
-                reason: format!(
-                    "MIME maximum buffer size {max_buffer_size} exceeds this platform's usize range"
-                ),
-            })?;
+        let max_buffer_size = usize::try_from(max_buffer_size).map_err(|_| MimeError::InvalidClassifierInput {
+            reason: format!("MIME maximum buffer size {max_buffer_size} exceeds this platform's usize range"),
+        })?;
         #[cfg(target_pointer_width = "64")]
         let max_buffer_size = max_buffer_size as usize;
         let mime_detector_selection = create_detector_selection(
             &mime_detector_default,
             normalize_detector_names(mime_detector_fallbacks),
         )?;
-        let media_stream_classifier_selection =
-            create_classifier_selection(&media_stream_classifier_default)?;
+        let media_stream_classifier_selection = create_classifier_selection(&media_stream_classifier_default)?;
         Ok(Self {
             mime_detector_selection,
             media_stream_classifier_selection,
@@ -343,12 +326,8 @@ impl MimeConfig {
             command_output_max_bytes,
             command_timeout,
             enable_precise_detection,
-            precise_detection_patterns: normalize_patterns(
-                precise_detection_patterns,
-            ),
-            ambiguous_mime_mapping: build_ambiguous_mime_mapping(
-                ambiguous_mime_mapping,
-            ),
+            precise_detection_patterns: normalize_patterns(precise_detection_patterns),
+            ambiguous_mime_mapping: build_ambiguous_mime_mapping(ambiguous_mime_mapping),
             max_buffer_size,
         })
     }
@@ -364,9 +343,7 @@ impl MimeConfig {
     /// or classifier-name error when a configured provider selector is
     /// invalid.
     pub fn from_env() -> MimeResult<Self> {
-        let config = Config::from_env_options(
-            EnvConfigOptions::builder().prefix("QUBIT_").build(),
-        )?;
+        let config = Config::from_env_options(EnvConfigOptions::builder().prefix("QUBIT_").build())?;
         Self::from_config(&config)
     }
 
@@ -424,9 +401,7 @@ impl MimeConfig {
     /// Automatic or named selection used by classifier registries.
     #[inline(always)]
     #[must_use]
-    pub const fn media_stream_classifier_selection(
-        &self,
-    ) -> &ProviderSelection {
+    pub const fn media_stream_classifier_selection(&self) -> &ProviderSelection {
         &self.media_stream_classifier_selection
     }
 
@@ -495,19 +470,11 @@ impl MimeConfig {
     /// Configuration populated entirely from crate constants.
     fn builtin_default() -> Self {
         Self {
-            mime_detector_selection: create_detector_selection(
-                DEFAULT_MIME_DETECTOR,
-                fallback_defaults(),
-            )
-            .expect("built-in MIME detector selection should be valid"),
-            media_stream_classifier_selection: create_classifier_selection(
-                DEFAULT_MEDIA_STREAM_CLASSIFIER,
-            )
-            .expect(
-                "built-in media stream classifier selection should be valid",
-            ),
-            media_stream_max_staging_size:
-                DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
+            mime_detector_selection: create_detector_selection(DEFAULT_MIME_DETECTOR, fallback_defaults())
+                .expect("built-in MIME detector selection should be valid"),
+            media_stream_classifier_selection: create_classifier_selection(DEFAULT_MEDIA_STREAM_CLASSIFIER)
+                .expect("built-in media stream classifier selection should be valid"),
+            media_stream_max_staging_size: DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
             command_output_max_bytes: DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
             command_timeout: DEFAULT_COMMAND_TIMEOUT,
             enable_precise_detection: DEFAULT_ENABLE_PRECISE_DETECTION,
@@ -542,18 +509,13 @@ impl MimeConfig {
 /// # Errors
 ///
 /// Returns a detector-name error when any configured selector is invalid.
-fn create_detector_selection(
-    primary: &str,
-    fallbacks: Vec<String>,
-) -> MimeResult<ProviderSelection> {
+fn create_detector_selection(primary: &str, fallbacks: Vec<String>) -> MimeResult<ProviderSelection> {
     let primary = primary.trim();
     if primary.is_empty() || primary.eq_ignore_ascii_case("auto") {
         return Ok(ProviderSelection::auto());
     }
-    ProviderSelection::chain(
-        std::iter::once(primary).chain(fallbacks.iter().map(String::as_str)),
-    )
-    .map_err(detector_selection_error)
+    ProviderSelection::chain(std::iter::once(primary).chain(fallbacks.iter().map(String::as_str)))
+        .map_err(detector_selection_error)
 }
 
 /// Builds the validated media stream classifier selection.
@@ -569,9 +531,7 @@ fn create_detector_selection(
 /// # Errors
 ///
 /// Returns a classifier-name error when the configured selector is invalid.
-fn create_classifier_selection(
-    configured: &str,
-) -> MimeResult<ProviderSelection> {
+fn create_classifier_selection(configured: &str) -> MimeResult<ProviderSelection> {
     let configured = configured.trim();
     if configured.is_empty() || configured.eq_ignore_ascii_case("auto") {
         return Ok(ProviderSelection::auto());
@@ -686,9 +646,7 @@ fn normalize_patterns(patterns: Vec<String>) -> HashSet<String> {
 ///
 /// # Returns
 /// Lowercase extension to MIME pair mapping.
-fn build_ambiguous_mime_mapping(
-    entries: Vec<String>,
-) -> HashMap<String, [String; 2]> {
+fn build_ambiguous_mime_mapping(entries: Vec<String>) -> HashMap<String, [String; 2]> {
     entries
         .into_iter()
         .filter_map(|entry| {
@@ -704,10 +662,7 @@ fn build_ambiguous_mime_mapping(
                 None
             } else {
                 Some((
-                    extension
-                        .trim()
-                        .trim_start_matches('.')
-                        .to_ascii_lowercase(),
+                    extension.trim().trim_start_matches('.').to_ascii_lowercase(),
                     [video_type, audio_type],
                 ))
             }

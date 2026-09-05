@@ -22,7 +22,4 @@ use super::MimeDetectorSpec;
 /// ensuring every registrable detector supplies its own descriptor.
 pub trait MimeDetectorProvider: ProviderDefinition<MimeDetectorSpec> {}
 
-impl<T> MimeDetectorProvider for T where
-    T: ProviderDefinition<MimeDetectorSpec> + ?Sized
-{
-}
+impl<T> MimeDetectorProvider for T where T: ProviderDefinition<MimeDetectorSpec> + ?Sized {}

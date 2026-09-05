@@ -45,52 +45,31 @@ impl TestMediaStreamClassifierProvider {
     ///
     /// A self-described classifier provider.
     #[inline]
-    pub(crate) const fn new(
-        id: &'static str,
-        priority: i32,
-        behavior: TestProviderBehavior,
-    ) -> Self {
-        Self {
-            id,
-            priority,
-            behavior,
-        }
+    pub(crate) const fn new(id: &'static str, priority: i32, behavior: TestProviderBehavior) -> Self {
+        Self { id, priority, behavior }
     }
 }
 
-impl ServiceProvider<MediaStreamClassifierSpec>
-    for TestMediaStreamClassifierProvider
-{
+impl ServiceProvider<MediaStreamClassifierSpec> for TestMediaStreamClassifierProvider {
     fn create_configured(
         &self,
         _config: &MimeConfig,
-    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderFailure<MimeError>>
-    {
+    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderFailure<MimeError>> {
         match self.behavior {
-            TestProviderBehavior::Success(_) => {
-                Ok(Arc::new(StaticMediaStreamClassifier))
-            }
-            TestProviderBehavior::Unsupported => Err(
-                ProviderFailure::unsupported(MimeError::ClassifierBackend {
-                    backend: "test".to_owned(),
-                    reason: "unsupported input".to_owned(),
-                }),
-            ),
-            TestProviderBehavior::Unavailable => {
-                Err(ProviderFailure::unavailable(
-                    MimeError::ClassifierUnavailable {
-                        name: "test".to_owned(),
-                        reason: "missing executable".to_owned(),
-                    },
-                ))
-            }
+            TestProviderBehavior::Success(_) => Ok(Arc::new(StaticMediaStreamClassifier)),
+            TestProviderBehavior::Unsupported => Err(ProviderFailure::unsupported(MimeError::ClassifierBackend {
+                backend: "test".to_owned(),
+                reason: "unsupported input".to_owned(),
+            })),
+            TestProviderBehavior::Unavailable => Err(ProviderFailure::unavailable(MimeError::ClassifierUnavailable {
+                name: "test".to_owned(),
+                reason: "missing executable".to_owned(),
+            })),
             TestProviderBehavior::InitializationFailed => {
-                Err(ProviderFailure::initialization_failed(
-                    MimeError::ClassifierBackend {
-                        backend: "test".to_owned(),
-                        reason: "startup failed".to_owned(),
-                    },
-                ))
+                Err(ProviderFailure::initialization_failed(MimeError::ClassifierBackend {
+                    backend: "test".to_owned(),
+                    reason: "startup failed".to_owned(),
+                }))
             }
         }
     }
@@ -98,10 +77,7 @@ impl ServiceProvider<MediaStreamClassifierSpec>
 
 impl ProviderMetadata for TestMediaStreamClassifierProvider {
     fn descriptor(&self) -> ProviderDescriptor {
-        ProviderDescriptor::new(
-            ProviderId::new(self.id)
-                .expect("test provider ID should be canonical"),
-        )
-        .with_priority(self.priority)
+        ProviderDescriptor::new(ProviderId::new(self.id).expect("test provider ID should be canonical"))
+            .with_priority(self.priority)
     }
 }

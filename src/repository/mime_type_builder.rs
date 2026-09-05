@@ -53,8 +53,7 @@ impl MimeTypeBuilder {
     /// # Returns
     /// The updated builder.
     pub fn description(mut self, language: &str, description: &str) -> Self {
-        self.descriptions
-            .insert(language.to_owned(), description.to_owned());
+        self.descriptions.insert(language.to_owned(), description.to_owned());
         self
     }
 

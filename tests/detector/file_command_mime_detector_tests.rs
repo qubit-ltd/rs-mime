@@ -69,11 +69,7 @@ fn test_default_file_command_runner_uses_default_timeout() {
         detector.command_runner().configured_max_stderr_bytes(),
         Some(DEFAULT_COMMAND_OUTPUT_MAX_BYTES),
     );
-    assert!(
-        detector
-            .command_runner()
-            .is_output_truncation_failure_enabled()
-    );
+    assert!(detector.command_runner().is_output_truncation_failure_enabled());
 }
 
 #[test]
@@ -82,34 +78,19 @@ fn test_from_mime_config_limits_file_command_output() {
     config
         .set(CONFIG_COMMAND_OUTPUT_MAX_BYTES, 1024_u64)
         .expect("command output limit should be configurable");
-    let detector = FileCommandMimeDetector::from_mime_config(
-        MimeConfig::from_config(&config).expect("MIME config should parse"),
-    );
+    let detector =
+        FileCommandMimeDetector::from_mime_config(MimeConfig::from_config(&config).expect("MIME config should parse"));
 
-    assert_eq!(
-        Some(1024),
-        detector.command_runner().configured_max_stdout_bytes()
-    );
-    assert_eq!(
-        Some(1024),
-        detector.command_runner().configured_max_stderr_bytes()
-    );
-    assert!(
-        detector
-            .command_runner()
-            .is_output_truncation_failure_enabled()
-    );
+    assert_eq!(Some(1024), detector.command_runner().configured_max_stdout_bytes());
+    assert_eq!(Some(1024), detector.command_runner().configured_max_stderr_bytes());
+    assert!(detector.command_runner().is_output_truncation_failure_enabled());
 }
 
 #[test]
 fn test_with_repository_and_runner_uses_runner_configuration() {
     let repository = MimeRepository::empty();
-    let runner =
-        CommandRunner::new(Duration::from_secs(2)).disable_logging(true);
-    let mut detector = FileCommandMimeDetector::with_repository_and_runner(
-        &repository,
-        runner,
-    );
+    let runner = CommandRunner::new(Duration::from_secs(2)).disable_logging(true);
+    let mut detector = FileCommandMimeDetector::with_repository_and_runner(&repository, runner);
 
     assert_eq!(
         Some(Duration::from_secs(2)),
@@ -117,17 +98,13 @@ fn test_with_repository_and_runner_uses_runner_configuration() {
     );
     assert!(detector.command_runner().is_logging_disabled());
 
-    detector.set_command_runner(
-        detector.command_runner().clone().working_directory("."),
-    );
+    detector.set_command_runner(detector.command_runner().clone().working_directory("."));
     assert_eq!(
         Some(std::path::Path::new(".")),
         detector.command_runner().configured_working_directory()
     );
 
-    detector.set_command_runner(
-        CommandRunner::new(Duration::from_secs(10)).disable_logging(false),
-    );
+    detector.set_command_runner(CommandRunner::new(Duration::from_secs(10)).disable_logging(false));
     assert!(!detector.command_runner().is_logging_disabled());
 }
 
@@ -139,15 +116,13 @@ fn test_detect_file_by_content_propagates_runner_timeout() {
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
-    std::fs::write(&script_path, "#!/bin/sh\nsleep 1\n")
-        .expect("fake file command should be written");
+    std::fs::write(&script_path, "#!/bin/sh\nsleep 1\n").expect("fake file command should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake file command metadata should be readable")
         .permissions();
     use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
-    std::fs::set_permissions(&script_path, permissions)
-        .expect("fake file command should be executable");
+    std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
@@ -174,15 +149,13 @@ fn test_detect_file_by_content_reads_file_command_stdout() {
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
-    std::fs::write(&script_path, "#!/bin/sh\nprintf 'text/plain\\n'\n")
-        .expect("fake file command should be written");
+    std::fs::write(&script_path, "#!/bin/sh\nprintf 'text/plain\\n'\n").expect("fake file command should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake file command metadata should be readable")
         .permissions();
     use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
-    std::fs::set_permissions(&script_path, permissions)
-        .expect("fake file command should be executable");
+    std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
@@ -207,20 +180,13 @@ fn test_detect_file_by_content_reads_file_command_stdout() {
     assert_eq!(
         Some("text/plain".to_owned()),
         detector
-            .detect_reader(
-                &mut reader,
-                None,
-                MimeDetectionPolicy::VerifyContent
-            )
+            .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
             .expect("fake file command should support reader detection")
     );
     assert_eq!(
         Some("text/plain".to_owned()),
         detector
-            .detect_file(
-                std::path::Path::new("Cargo.toml"),
-                MimeDetectionPolicy::PreferFilename,
-            )
+            .detect_file(std::path::Path::new("Cargo.toml"), MimeDetectionPolicy::PreferFilename,)
             .expect("fake file command should support full file detection")
     );
 }
@@ -245,8 +211,7 @@ fn test_detect_file_by_content_ends_file_option_parsing_before_path() {
         .permissions();
     use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
-    std::fs::set_permissions(&script_path, permissions)
-        .expect("fake file command should be executable");
+    std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
@@ -270,15 +235,13 @@ fn test_detect_file_by_content_returns_none_for_empty_stdout() {
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
-    std::fs::write(&script_path, "#!/bin/sh\nexit 0\n")
-        .expect("fake file command should be written");
+    std::fs::write(&script_path, "#!/bin/sh\nexit 0\n").expect("fake file command should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake file command metadata should be readable")
         .permissions();
     use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
-    std::fs::set_permissions(&script_path, permissions)
-        .expect("fake file command should be executable");
+    std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
@@ -302,15 +265,13 @@ fn test_detect_file_by_content_rejects_invalid_utf8_stdout() {
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let script_path = temp_dir.path().join(FileCommandMimeDetector::COMMAND);
-    std::fs::write(&script_path, "#!/bin/sh\nprintf '\\377'\n")
-        .expect("fake file command should be written");
+    std::fs::write(&script_path, "#!/bin/sh\nprintf '\\377'\n").expect("fake file command should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake file command metadata should be readable")
         .permissions();
     use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
-    std::fs::set_permissions(&script_path, permissions)
-        .expect("fake file command should be executable");
+    std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
@@ -339,8 +300,7 @@ fn test_file_command_error_redacts_input_path() {
     let _path_guard = PathEnvGuard::set(temp_dir.path());
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository(&repository);
-    let private_path =
-        std::path::Path::new("/private/customer/source-document.bin");
+    let private_path = std::path::Path::new("/private/customer/source-document.bin");
 
     let error = detector
         .detect_file_by_content(private_path)
@@ -355,12 +315,11 @@ fn test_file_command_error_redacts_input_path() {
 #[test]
 fn test_file_command_detector_accessors_and_repository_only_policy() {
     let repository = MimeRepository::empty();
-    let mut detector =
-        FileCommandMimeDetector::with_repository_runner_and_config(
-            &repository,
-            CommandRunner::new(Duration::from_secs(10)),
-            create_precise_config(),
-        );
+    let mut detector = FileCommandMimeDetector::with_repository_runner_and_config(
+        &repository,
+        CommandRunner::new(Duration::from_secs(10)),
+        create_precise_config(),
+    );
 
     detector.core_mut().set_media_stream_classifier(None);
     assert!(detector.core().media_stream_classifier().is_none());
@@ -368,9 +327,7 @@ fn test_file_command_detector_accessors_and_repository_only_policy() {
     assert_eq!(0, detector.max_test_bytes());
 
     let replaced = FileCommandMimeDetector::with_repository(&repository)
-        .with_command_runner(
-            CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
-        );
+        .with_command_runner(CommandRunner::new(Duration::from_secs(10)).disable_logging(true));
     assert!(replaced.command_runner().is_logging_disabled());
 
     assert_eq!(
@@ -388,8 +345,7 @@ fn test_default_file_command_runner_uses_config_timeout() {
         .set(CONFIG_COMMAND_TIMEOUT, "2500ms")
         .expect("command timeout should support unit-based value");
     let detector = FileCommandMimeDetector::from_mime_config(
-        MimeConfig::from_config(&config)
-            .expect("file command config should parse"),
+        MimeConfig::from_config(&config).expect("file command config should parse"),
     );
 
     assert_eq!(
