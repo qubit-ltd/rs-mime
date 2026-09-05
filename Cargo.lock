@@ -205,6 +205,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qubit-budget"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f93253bc135140ca58d3d4f7dffcc330394cf94fec873c5f86ec3bb41dbfa18e"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "qubit-clock"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -254,7 +263,7 @@ dependencies = [
  "log",
  "process-wrap",
  "qubit-clock",
- "qubit-redact",
+ "qubit-redact 0.5.0",
  "same-file",
  "thiserror",
 ]
@@ -263,10 +272,10 @@ dependencies = [
 name = "qubit-config"
 version = "0.16.0"
 dependencies = [
- "qubit-budget",
+ "qubit-budget 0.5.0",
  "qubit-datatype",
  "qubit-json",
- "qubit-redact",
+ "qubit-redact 0.5.0",
  "qubit-utils",
  "qubit-value",
  "serde",
@@ -279,7 +288,7 @@ dependencies = [
 name = "qubit-datatype"
 version = "0.12.0"
 dependencies = [
- "qubit-budget",
+ "qubit-budget 0.5.0",
  "qubit-json",
  "serde",
  "serde_json",
@@ -291,9 +300,9 @@ name = "qubit-fs"
 version = "0.2.0"
 dependencies = [
  "fluent-uri",
- "qubit-budget",
+ "qubit-budget 0.5.0",
  "qubit-io",
- "qubit-redact",
+ "qubit-redact 0.5.0",
 ]
 
 [[package]]
@@ -316,11 +325,11 @@ dependencies = [
 
 [[package]]
 name = "qubit-json"
-version = "0.8.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe1f2956718e19a1d362656f08e127bbcfa0c4c374e392fb250ea78b946cfff6"
+checksum = "5c34de3f5710b2cfd4d89099ffb53359b66e8bf69514590a3ef49f9378e47455"
 dependencies = [
- "qubit-budget",
+ "qubit-budget 0.5.0",
  "serde",
  "serde_json",
  "thiserror",
@@ -332,8 +341,8 @@ version = "0.3.0"
 dependencies = [
  "getrandom",
  "libc",
- "qubit-budget",
- "qubit-redact",
+ "qubit-budget 0.5.0",
+ "qubit-redact 0.5.0 (git+https://github.com/qubit-ltd/rs-redact)",
  "rustix",
  "windows-sys",
 ]
@@ -361,10 +370,18 @@ name = "qubit-redact"
 version = "0.5.0"
 dependencies = [
  "fluent-uri",
- "qubit-budget",
+ "qubit-budget 0.5.0",
  "qubit-json",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "qubit-redact"
+version = "0.5.0"
+source = "git+https://github.com/qubit-ltd/rs-redact#8f2fa0d844488990dcc7e42859258baf1be1d2c7"
+dependencies = [
+ "qubit-budget 0.4.0",
 ]
 
 [[package]]
@@ -386,10 +403,10 @@ checksum = "7f9bf5cd2e783a8a6edd6536826084ef0a82d1924b14f82e79fe0088b7b33748"
 name = "qubit-value"
 version = "0.10.0"
 dependencies = [
- "qubit-budget",
+ "qubit-budget 0.5.0",
  "qubit-datatype",
  "qubit-json",
- "qubit-redact",
+ "qubit-redact 0.5.0",
  "serde",
  "serde_json",
  "thiserror",
