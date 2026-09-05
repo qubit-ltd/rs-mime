@@ -892,6 +892,15 @@ Otherwise, content magic is evaluated and merged with filename candidates.
 | Return style | Java objects and collections | Rust `Option`, slices, and vectors |
 | Errors | Java exceptions | Concrete `MimeError` |
 
+## Temporary File Lifecycle
+
+File-backed detectors and classifiers share one temporary-file lifecycle: staging finishes
+and the handle closes before backend inspection; explicit cleanup runs after staging failure,
+backend failure, or success. Simultaneous failures return
+`MimeError::TemporaryCleanup { primary, cleanup }`, preserving the original operation error
+and typed cleanup error. A sole operation failure keeps its original variant; a sole cleanup
+failure returns `MimeError::Io`.
+
 ## Testing
 
 ```bash

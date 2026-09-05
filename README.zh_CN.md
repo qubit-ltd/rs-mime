@@ -870,6 +870,13 @@ magic 优先级排序。可使用 `repository.max_test_bytes()` 获取当前仓�
 | 返回风格 | Java 对象与集合 | Rust `Option`、slice 和 vector |
 | 错误处理 | Java 异常 | 具体 `MimeError` |
 
+## 临时文件生命周期
+
+文件型检测器与分类器共用临时文件生命周期：暂存成功后关闭句柄，再调用后端；
+暂存失败、后端失败或成功后均显式清理。主操作和清理同时失败时返回
+`MimeError::TemporaryCleanup { primary, cleanup }`，分别保留原始业务错误与类型化清理错误。
+只有主操作失败时仍返回原错误；只有清理失败时返回 `MimeError::Io`。
+
 ## 测试
 
 ```bash
