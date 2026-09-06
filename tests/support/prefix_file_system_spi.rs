@@ -133,12 +133,7 @@ struct PrefixReader {
 impl Input for PrefixReader {
     type Item = u8;
 
-    unsafe fn read_unchecked(
-        &mut self,
-        output: &mut [u8],
-        index: usize,
-        count: usize,
-    ) -> std::io::Result<usize> {
+    unsafe fn read_unchecked(&mut self, output: &mut [u8], index: usize, count: usize) -> std::io::Result<usize> {
         self.requested_read_bytes.fetch_add(count, Ordering::Relaxed);
         std::io::Read::read(&mut self.inner, &mut output[index..index + count])
     }
