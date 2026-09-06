@@ -1,6 +1,6 @@
 [package]
 name = "qubit-mime"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Haixing Hu <starfish.hu@gmail.com>"]
@@ -36,7 +36,7 @@ roxmltree = "0.21"
 thiserror = "2.0"
 
 qubit-io = "0.16"
-qubit-fs = { path = "../rs-fs", version = "0.2", default-features = false }
+qubit-fs = { path = "../rs-fs", version = "0.3", default-features = false }
 qubit-codec-misc = "0.6"
 qubit-command = { version = "0.6", path = "../rs-command" }
 qubit-config = { path = "../rs-config", version = "0.16" }
@@ -45,7 +45,7 @@ qubit-local-files = { path = "../rs-local-files", version = "0.3" }
 qubit-spi = { path = "../rs-spi", version = "0.11" }
 
 [dev-dependencies]
-qubit-fs-local = { path = "../rs-fs-local", version = "0.1" }
+qubit-fs-local = { path = "../rs-fs-local", version = "0.2" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
