@@ -9,7 +9,6 @@
 use qubit_config::Config;
 use qubit_fs::FileSystem;
 use qubit_fs::Path as FsPath;
-use qubit_fs::path::PathSemantics;
 use qubit_fs_local::LocalFileSystems;
 use qubit_fs_local::LocalResourcePolicy;
 use qubit_fs_local::host_path_to_logical;
@@ -119,6 +118,8 @@ fn test_mime_detector_path_reads_small_prefix_from_large_resource() {
         .expect("small prefix should be sufficient for a large resource");
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
+    assert_eq!(1, spi.opened());
+    assert!(spi.requested_read_bytes() <= 16);
     assert_eq!(0, spi.stat_calls());
 }
 
@@ -127,14 +128,15 @@ fn test_mime_detector_path_uses_object_key_filename_without_stat() {
     let spi = PrefixFileSystemSpi::object_key(vec![0_u8; 1024 * 1024]);
     let filesystem = FileSystem::from_spi(spi.clone()).expect("prefix filesystem should be created");
     let detector = RepositoryMimeDetector::new().expect("default repository should load");
-    let path = FsPath::parse_with_semantics("reports/photo.jpg", PathSemantics::ObjectKey)
-        .expect("object-key path should parse");
+    let path = FsPath::parse_literal("reports/photo.jpg").expect("object-key path should parse");
 
     let detected = detector
         .detect_path(&filesystem, &path, 8, MimeDetectionPolicy::PreferFilename)
         .expect("object-key filename detection should succeed");
 
     assert_eq!(Some("image/jpeg".to_owned()), detected);
+    assert_eq!(1, spi.opened());
+    assert!(spi.requested_read_bytes() <= 8);
     assert_eq!(0, spi.stat_calls());
 }
 
