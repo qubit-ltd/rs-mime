@@ -8,8 +8,11 @@
 
 use qubit_config::Config;
 use qubit_fs::Path as FsPath;
+use qubit_fs::FileSystem;
+use qubit_fs::path::PathSemantics;
 use qubit_fs_local::LocalFileSystems;
 use qubit_fs_local::LocalResourcePolicy;
+use qubit_fs_local::host_path_to_logical;
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::options::LocalTempFileOptions;
 use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
@@ -24,6 +27,7 @@ use qubit_mime::RepositoryMimeDetector;
 use qubit_spi::ProviderSelection;
 
 use crate::support::DirectBackendDetector;
+use crate::support::PrefixFileSystemSpi;
 #[cfg(unix)]
 use crate::support::PathEnvGuard;
 use crate::support::StaticEntryPointMimeDetector;
@@ -82,20 +86,90 @@ fn test_mime_detector_trait_supports_filesystem_path_detection() {
     let detector: &dyn MimeDetector = &detector;
     let mut file = LocalFileSystem::host()
         .expect("Host filesystem should open")
-        .create_temp_file_with_options(&LocalTempFileOptions::new().with_suffix(".pdf"))
+        .create_temp_file_with_options(
+            &LocalTempFileOptions::new()
+                .with_prefix("report%literal-")
+                .with_suffix(".pdf"),
+        )
         .expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"%PDF-1.7\n").expect("temp file should be writable");
     // These path-only tests never invoke recursive list or tree-copy work.
     let filesystem =
         LocalFileSystems::host(LocalResourcePolicy::unbounded()).expect("host filesystem facade should be created");
-    let path = FsPath::parse(file.path().to_str().expect("temporary file path should be UTF-8"))
-        .expect("temporary file path should be a valid filesystem path");
+    let path = host_path_to_logical(file.path())
+        .expect("native temporary path should convert without lossy text");
 
     let detected = detector
         .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent)
         .expect("filesystem-path detection should succeed");
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
+}
+
+#[test]
+fn test_mime_detector_path_reads_small_prefix_from_large_resource() {
+    let mut content = vec![0_u8; 1024 * 1024];
+    content[..9].copy_from_slice(b"%PDF-1.7\n");
+    let spi = PrefixFileSystemSpi::hierarchical(content);
+    let filesystem = FileSystem::from_spi(spi.clone()).expect("prefix filesystem should be created");
+    let detector = RepositoryMimeDetector::new().expect("default repository should load");
+    let path = FsPath::parse("/large/report.bin").expect("test path should parse");
+
+    let detected = detector
+        .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent)
+        .expect("small prefix should be sufficient for a large resource");
+
+    assert_eq!(Some("application/pdf".to_owned()), detected);
+    assert_eq!(0, spi.stat_calls());
+}
+
+#[test]
+fn test_mime_detector_path_uses_object_key_filename_without_stat() {
+    let spi = PrefixFileSystemSpi::object_key(vec![0_u8; 1024 * 1024]);
+    let filesystem = FileSystem::from_spi(spi.clone()).expect("prefix filesystem should be created");
+    let detector = RepositoryMimeDetector::new().expect("default repository should load");
+    let path = FsPath::parse_with_semantics("reports/photo.jpg", PathSemantics::ObjectKey)
+        .expect("object-key path should parse");
+
+    let detected = detector
+        .detect_path(&filesystem, &path, 8, MimeDetectionPolicy::PreferFilename)
+        .expect("object-key filename detection should succeed");
+
+    assert_eq!(Some("image/jpeg".to_owned()), detected);
+    assert_eq!(0, spi.stat_calls());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_mime_detector_path_accepts_non_utf8_native_filename() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    use qubit_local_files::options::LocalTempDirectoryOptions;
+
+    let native = LocalFileSystem::host().expect("native host");
+    let mut directory = native
+        .create_temp_directory_with_options(
+            &LocalTempDirectoryOptions::new().with_parent(&std::env::temp_dir()),
+        )
+        .expect("temporary directory");
+    let file = directory
+        .path()
+        .join(OsString::from_vec(b"report\xff.pdf".to_vec()));
+    std::fs::write(&file, b"%PDF-1.7\n").expect("raw filename fixture");
+
+    let filesystem =
+        LocalFileSystems::host(LocalResourcePolicy::unbounded()).expect("host facade");
+    let path = host_path_to_logical(&file).expect("lossless conversion");
+    let detector = RepositoryMimeDetector::new().expect("repository detector");
+
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        detector
+            .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent)
+            .expect("detect raw filename"),
+    );
+    directory.cleanup().expect("explicit cleanup");
 }
 
 #[test]
