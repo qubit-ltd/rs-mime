@@ -89,8 +89,10 @@ impl FileSystemSpi for PrefixFileSystemSpi {
 
     fn stat(&self, request: StatRequest<'_>) -> FsResult<StatResponse> {
         self.stats.fetch_add(1, Ordering::Relaxed);
-        Err(FsError::new(FsErrorKind::Io, FsOperation::Stat, "stat is not supported by fixture")
-            .with_path(request.path().clone()))
+        Err(
+            FsError::new(FsErrorKind::Io, FsOperation::Stat, "stat is not supported by fixture")
+                .with_path(request.path().clone()),
+        )
     }
 
     fn open_reader(&self, request: OpenReaderRequest<'_>) -> FsResult<OpenedReader> {
