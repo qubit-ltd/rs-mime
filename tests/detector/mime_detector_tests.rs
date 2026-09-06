@@ -7,8 +7,8 @@
 // =============================================================================
 
 use qubit_config::Config;
-use qubit_fs::Path as FsPath;
 use qubit_fs::FileSystem;
+use qubit_fs::Path as FsPath;
 use qubit_fs::path::PathSemantics;
 use qubit_fs_local::LocalFileSystems;
 use qubit_fs_local::LocalResourcePolicy;
@@ -27,9 +27,9 @@ use qubit_mime::RepositoryMimeDetector;
 use qubit_spi::ProviderSelection;
 
 use crate::support::DirectBackendDetector;
-use crate::support::PrefixFileSystemSpi;
 #[cfg(unix)]
 use crate::support::PathEnvGuard;
+use crate::support::PrefixFileSystemSpi;
 use crate::support::StaticEntryPointMimeDetector;
 
 #[test]
@@ -96,8 +96,7 @@ fn test_mime_detector_trait_supports_filesystem_path_detection() {
     // These path-only tests never invoke recursive list or tree-copy work.
     let filesystem =
         LocalFileSystems::host(LocalResourcePolicy::unbounded()).expect("host filesystem facade should be created");
-    let path = host_path_to_logical(file.path())
-        .expect("native temporary path should convert without lossy text");
+    let path = host_path_to_logical(file.path()).expect("native temporary path should convert without lossy text");
 
     let detected = detector
         .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent)
@@ -149,17 +148,12 @@ fn test_mime_detector_path_accepts_non_utf8_native_filename() {
 
     let native = LocalFileSystem::host().expect("native host");
     let mut directory = native
-        .create_temp_directory_with_options(
-            &LocalTempDirectoryOptions::new().with_parent(&std::env::temp_dir()),
-        )
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new().with_parent(&std::env::temp_dir()))
         .expect("temporary directory");
-    let file = directory
-        .path()
-        .join(OsString::from_vec(b"report\xff.pdf".to_vec()));
+    let file = directory.path().join(OsString::from_vec(b"report\xff.pdf".to_vec()));
     std::fs::write(&file, b"%PDF-1.7\n").expect("raw filename fixture");
 
-    let filesystem =
-        LocalFileSystems::host(LocalResourcePolicy::unbounded()).expect("host facade");
+    let filesystem = LocalFileSystems::host(LocalResourcePolicy::unbounded()).expect("host facade");
     let path = host_path_to_logical(&file).expect("lossless conversion");
     let detector = RepositoryMimeDetector::new().expect("repository detector");
 
