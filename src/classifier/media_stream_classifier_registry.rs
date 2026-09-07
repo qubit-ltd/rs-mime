@@ -52,9 +52,11 @@ impl MediaStreamClassifierRegistry {
         registry
             .register(FfprobeCommandMediaStreamClassifierProvider)
             .expect("built-in FFprobe classifier provider should register");
-        registry.set_default_selection(
-            ProviderSelection::named("ffprobe").expect("built-in FFprobe selection should be valid"),
-        ).expect("built-in selection should be accepted");
+        registry
+            .set_default_selection(
+                ProviderSelection::named("ffprobe").expect("built-in FFprobe selection should be valid"),
+            )
+            .expect("built-in selection should be accepted");
         registry
     }
 
@@ -77,7 +79,8 @@ impl MediaStreamClassifierRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrationError`] when its ID or an alias is already owned.
+    /// Returns [`RegistryMutationError`] when its ID or an alias is already
+    /// owned.
     #[inline]
     pub fn register<P>(&self, provider: P) -> Result<(), RegistryMutationError>
     where
@@ -97,7 +100,8 @@ impl MediaStreamClassifierRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrationError`] when its ID or an alias is already owned.
+    /// Returns [`RegistryMutationError`] when its ID or an alias is already
+    /// owned.
     #[inline]
     pub fn register_shared(
         &self,
@@ -128,11 +132,15 @@ impl MediaStreamClassifierRegistry {
     }
 
     /// Seals this registry against further mutation.
-    pub fn seal(&self) { self.providers.seal(); }
+    pub fn seal(&self) {
+        self.providers.seal();
+    }
 
     /// Returns whether this registry is sealed.
     #[must_use]
-    pub fn is_sealed(&self) -> bool { self.providers.is_sealed() }
+    pub fn is_sealed(&self) -> bool {
+        self.providers.is_sealed()
+    }
 
     /// Resolves an explicit selection into a composing service provider.
     ///

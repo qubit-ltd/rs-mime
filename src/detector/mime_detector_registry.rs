@@ -56,9 +56,11 @@ impl MimeDetectorRegistry {
         registry
             .register(FileCommandMimeDetectorProvider)
             .expect("built-in file MIME provider should register");
-        registry.set_default_selection(
-            ProviderSelection::named("repository").expect("built-in repository selection should be valid"),
-        ).expect("built-in selection should be accepted");
+        registry
+            .set_default_selection(
+                ProviderSelection::named("repository").expect("built-in repository selection should be valid"),
+            )
+            .expect("built-in selection should be accepted");
         registry
     }
 
@@ -85,7 +87,7 @@ impl MimeDetectorRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrationError`] when the provider ID or an alias is
+    /// Returns [`RegistryMutationError`] when the provider ID or an alias is
     /// already owned. The Registry remains unchanged on error.
     #[inline]
     pub fn register<P>(&self, provider: P) -> Result<(), RegistryMutationError>
@@ -105,7 +107,7 @@ impl MimeDetectorRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`RegistrationError`] when the provider ID or an alias is
+    /// Returns [`RegistryMutationError`] when the provider ID or an alias is
     /// already owned. The Registry remains unchanged on error.
     #[inline]
     pub fn register_shared(
@@ -137,11 +139,15 @@ impl MimeDetectorRegistry {
     }
 
     /// Seals this registry against further mutation.
-    pub fn seal(&self) { self.providers.seal(); }
+    pub fn seal(&self) {
+        self.providers.seal();
+    }
 
     /// Returns whether this registry is sealed.
     #[must_use]
-    pub fn is_sealed(&self) -> bool { self.providers.is_sealed() }
+    pub fn is_sealed(&self) -> bool {
+        self.providers.is_sealed()
+    }
 
     /// Resolves one explicit selection into a composing service provider.
     ///
