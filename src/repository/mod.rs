@@ -7,6 +7,8 @@
 // =============================================================================
 //! MIME repository data model and freedesktop rule parsing.
 
+pub(crate) mod glob_index;
+pub(crate) mod magic_index;
 pub(crate) mod magic_value_type;
 pub(crate) mod mime_glob;
 pub(crate) mod mime_magic;
@@ -14,6 +16,7 @@ pub(crate) mod mime_magic_matcher;
 pub(crate) mod mime_repository;
 pub(crate) mod mime_type;
 pub(crate) mod mime_type_builder;
+pub(crate) mod xml_parser;
 
 pub use magic_value_type::MagicValueType;
 pub use mime_glob::MimeGlob;

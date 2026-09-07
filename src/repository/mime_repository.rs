@@ -7,7 +7,6 @@
 // =============================================================================
 //! Repository of MIME types parsed from shared MIME-info XML.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 
 use qubit_codec_misc::CIntegerLiteralCodec;
@@ -18,6 +17,9 @@ use roxmltree::Document;
 use roxmltree::NS_XML_URI;
 use roxmltree::Node;
 
+use super::glob_index::GlobIndex;
+use super::magic_index::MagicIndex;
+use super::xml_parser::strip_doctype;
 use crate::MagicValueType;
 use crate::MimeDetectionPolicy;
 use crate::MimeError;
@@ -33,16 +35,8 @@ use crate::MimeTypeBuilder;
 pub struct MimeRepository {
     mime_types: Vec<MimeType>,
     name_map: HashMap<String, usize>,
-    literal_globs: HashMap<String, Vec<GlobEntry>>,
-    extension_globs: HashMap<String, Vec<GlobEntry>>,
-    other_globs: Vec<GlobEntry>,
-    max_test_bytes: usize,
-}
-
-#[derive(Debug, Clone)]
-struct GlobEntry {
-    glob: MimeGlob,
-    mime_index: usize,
+    glob_index: GlobIndex,
+    magic_index: MagicIndex,
 }
 
 impl MimeRepository {
@@ -70,8 +64,14 @@ impl MimeRepository {
         let mut repository = Self::empty();
         for child in root.children().filter(Node::is_element) {
             if child.tag_name().name() == "mime-type" {
-                repository.add_mime_type(parse_mime_type(child)?);
+                repository.add_mime_type(parse_mime_type(child)?)?;
             }
+        }
+        if root.tag_name().namespace() != Some("http://www.freedesktop.org/standards/shared-mime-info") {
+            return Err(MimeError::invalid_element(
+                root.tag_name().name(),
+                "root element must declare the shared-mime-info namespace",
+            ));
         }
         Ok(repository)
     }
@@ -84,10 +84,8 @@ impl MimeRepository {
         Self {
             mime_types: Vec::new(),
             name_map: HashMap::new(),
-            literal_globs: HashMap::new(),
-            extension_globs: HashMap::new(),
-            other_globs: Vec::new(),
-            max_test_bytes: 0,
+            glob_index: GlobIndex::default(),
+            magic_index: MagicIndex::default(),
         }
     }
 
@@ -117,7 +115,40 @@ impl MimeRepository {
     /// # Returns
     /// Buffer size sufficient for all content magic checks.
     pub fn max_test_bytes(&self) -> usize {
-        self.max_test_bytes
+        self.magic_index.max_test_bytes
+    }
+
+    /// Tests whether one MIME type is equal to or a descendant of another.
+    pub fn is_a(&self, child: &str, parent: &str) -> bool {
+        let child = self.canonical_name_or_input(child);
+        let parent = self.canonical_name_or_input(parent);
+        if child == parent {
+            return true;
+        }
+        if parent == "application/octet-stream" && self.get(&child).is_some() {
+            return true;
+        }
+        if child.starts_with("text/") && parent == "text/plain" {
+            return true;
+        }
+        let mut pending = vec![child];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(name) = pending.pop() {
+            if !visited.insert(name.clone()) {
+                continue;
+            }
+            let Some(mime_type) = self.get(&name) else {
+                continue;
+            };
+            for super_type in mime_type.super_types() {
+                let canonical = self.canonical_name_or_input(super_type);
+                if canonical == parent {
+                    return true;
+                }
+                pending.push(canonical);
+            }
+        }
+        false
     }
 
     /// Detects MIME types from a filename.
@@ -130,30 +161,20 @@ impl MimeRepository {
     /// Matching MIME types ordered by best glob weight and pattern length.
     /// Returns an empty vector when no glob matches.
     pub fn detect_by_filename(&self, filename: &str) -> Vec<&MimeType> {
-        let exact_filename = filename.rsplit(['/', '\\']).next().unwrap_or_default();
-        if exact_filename.is_empty() {
-            return Vec::new();
-        }
-        let lookup_filename = exact_filename.to_lowercase();
-        let mut result = GlobDetectionResult::new();
-        if let Some(entries) = self.literal_globs.get(&lookup_filename) {
-            result.add_matching_entries(entries, exact_filename);
-        }
-        for extension in extension_suffixes(&lookup_filename) {
-            if let Some(entries) = self.extension_globs.get(extension) {
-                result.add_matching_entries(entries, exact_filename);
-            }
-        }
-        for entry in &self.other_globs {
-            if entry.glob.matches(exact_filename) {
-                result.compare_add(entry);
-            }
-        }
-        result
-            .entries
+        self.glob_index
+            .matches(filename)
             .into_iter()
             .filter_map(|entry| self.mime_types.get(entry.mime_index))
             .collect()
+    }
+
+    fn canonical_name_or_input(&self, name: &str) -> String {
+        let normalized = normalize_mime_name(name);
+        self.name_map
+            .get(&normalized)
+            .and_then(|index| self.mime_types.get(*index))
+            .map(|mime_type| mime_type.name().to_owned())
+            .unwrap_or(normalized)
     }
 
     /// Detects MIME types from content bytes.
@@ -165,16 +186,11 @@ impl MimeRepository {
     /// Matching MIME types ordered by highest magic priority. Returns an empty
     /// vector when no magic rule matches.
     pub fn detect_by_content(&self, bytes: &[u8]) -> Vec<&MimeType> {
-        let mut result = MagicDetectionResult::new();
-        for mime_type in &self.mime_types {
-            for magic in mime_type.magics() {
-                let priority = magic.priority();
-                if priority >= result.best_priority && magic.matches(bytes) {
-                    result.compare_add(priority, mime_type);
-                }
-            }
-        }
-        result.mime_types
+        self.magic_index
+            .matches(bytes)
+            .into_iter()
+            .filter_map(|index| self.mime_types.get(index))
+            .collect()
     }
 
     /// Detects MIME type by merging filename and content results.
@@ -200,12 +216,19 @@ impl MimeRepository {
     ///
     /// # Parameters
     /// - `mime_type`: MIME type to insert.
-    fn add_mime_type(&mut self, mime_type: MimeType) {
+    fn add_mime_type(&mut self, mime_type: MimeType) -> MimeResult<()> {
         let mime_index = self.mime_types.len();
+        for name in std::iter::once(mime_type.name()).chain(mime_type.aliases().iter().map(String::as_str)) {
+            let normalized = normalize_mime_name(name);
+            if self.name_map.contains_key(&normalized) {
+                return Err(MimeError::DuplicateMimeName { name: normalized });
+            }
+        }
         self.index_names(mime_index, &mime_type);
         self.index_globs(mime_index, &mime_type);
-        self.index_magics(&mime_type);
+        self.index_magics(mime_index, &mime_type);
         self.mime_types.push(mime_type);
+        Ok(())
     }
 
     /// Adds canonical name and aliases to the name index.
@@ -227,23 +250,7 @@ impl MimeRepository {
     /// - `mime_type`: MIME type to index.
     fn index_globs(&mut self, mime_index: usize, mime_type: &MimeType) {
         for glob in mime_type.globs() {
-            let entry = GlobEntry {
-                glob: glob.clone(),
-                mime_index,
-            };
-            if let Some(extension) = extension_pattern(glob.pattern()) {
-                self.extension_globs
-                    .entry(extension.to_lowercase())
-                    .or_default()
-                    .push(entry);
-            } else if is_literal_pattern(glob.pattern()) {
-                self.literal_globs
-                    .entry(glob.pattern().to_lowercase())
-                    .or_default()
-                    .push(entry);
-            } else {
-                self.other_globs.push(entry);
-            }
+            self.glob_index.add(mime_index, glob);
         }
     }
 
@@ -251,129 +258,9 @@ impl MimeRepository {
     ///
     /// # Parameters
     /// - `mime_type`: MIME type whose magic rules should be inspected.
-    fn index_magics(&mut self, mime_type: &MimeType) {
+    fn index_magics(&mut self, mime_index: usize, mime_type: &MimeType) {
         for magic in mime_type.magics() {
-            self.max_test_bytes = self.max_test_bytes.max(magic.max_test_bytes());
-        }
-    }
-}
-
-#[derive(Debug)]
-struct GlobDetectionResult<'a> {
-    best_weight: u16,
-    best_length: usize,
-    entries: Vec<&'a GlobEntry>,
-}
-
-impl<'a> GlobDetectionResult<'a> {
-    /// Creates an empty glob detection result.
-    ///
-    /// # Returns
-    /// New result with no entries.
-    fn new() -> Self {
-        Self {
-            best_weight: 0,
-            best_length: 0,
-            entries: Vec::new(),
-        }
-    }
-
-    /// Adds matching entries that beat or tie the current best result.
-    ///
-    /// # Parameters
-    /// - `entries`: Candidate glob entries.
-    /// - `filename`: Original-case filename to test against case-sensitive
-    ///   globs.
-    fn add_matching_entries(&mut self, entries: &'a [GlobEntry], filename: &str) {
-        for entry in entries {
-            if entry.glob.matches(filename) {
-                self.compare_add(entry);
-            }
-        }
-    }
-
-    /// Compares one glob entry against the current best result.
-    ///
-    /// # Parameters
-    /// - `entry`: Matching glob entry.
-    fn compare_add(&mut self, entry: &'a GlobEntry) {
-        let weight = entry.glob.weight();
-        let length = entry.glob.pattern().len();
-        if self.entries.is_empty() || weight > self.best_weight {
-            self.entries.clear();
-            self.entries.push(entry);
-            self.best_weight = weight;
-            self.best_length = length;
-        } else if weight == self.best_weight {
-            if length > self.best_length {
-                self.entries.clear();
-                self.entries.push(entry);
-                self.best_length = length;
-            } else if length == self.best_length {
-                self.entries.push(entry);
-            }
-        }
-    }
-}
-
-/// Removes a DTD declaration before parsing with `roxmltree`.
-///
-/// # Parameters
-/// - `xml`: Source XML text.
-///
-/// # Returns
-/// Borrowed XML when no DTD exists; otherwise an owned XML string with the DTD
-/// declaration removed.
-fn strip_doctype(xml: &str) -> Cow<'_, str> {
-    let Some(start) = xml.find("<!DOCTYPE") else {
-        return Cow::Borrowed(xml);
-    };
-    let Some(rest) = xml.get(start..) else {
-        return Cow::Borrowed(xml);
-    };
-    let end_offset = rest
-        .find("]>")
-        .map(|index| index + 2)
-        .or_else(|| rest.find('>').map(|index| index + 1));
-    let Some(end_offset) = end_offset else {
-        return Cow::Borrowed(xml);
-    };
-    let mut cleaned = String::with_capacity(xml.len().saturating_sub(end_offset));
-    cleaned.push_str(&xml[..start]);
-    cleaned.push_str(&xml[start + end_offset..]);
-    Cow::Owned(cleaned)
-}
-
-#[derive(Debug)]
-struct MagicDetectionResult<'a> {
-    best_priority: u16,
-    mime_types: Vec<&'a MimeType>,
-}
-
-impl<'a> MagicDetectionResult<'a> {
-    /// Creates an empty magic detection result.
-    ///
-    /// # Returns
-    /// New result with no MIME types.
-    fn new() -> Self {
-        Self {
-            best_priority: 0,
-            mime_types: Vec::new(),
-        }
-    }
-
-    /// Compares one content match against the current best result.
-    ///
-    /// # Parameters
-    /// - `priority`: Priority of the matched magic rule.
-    /// - `mime_type`: MIME type matched by the rule.
-    fn compare_add(&mut self, priority: u16, mime_type: &'a MimeType) {
-        if self.mime_types.is_empty() || priority > self.best_priority {
-            self.mime_types.clear();
-            self.mime_types.push(mime_type);
-            self.best_priority = priority;
-        } else if priority == self.best_priority && !self.mime_types.contains(&mime_type) {
-            self.mime_types.push(mime_type);
+            self.magic_index.add(mime_index, magic);
         }
     }
 }
@@ -405,7 +292,7 @@ fn parse_mime_type(node: Node<'_, '_>) -> MimeResult<MimeType> {
             _ => {}
         }
     }
-    Ok(builder.build())
+    builder.build()
 }
 
 /// Parses one `glob` element.
@@ -463,7 +350,7 @@ fn parse_magic(node: Node<'_, '_>) -> MimeResult<MimeMagic> {
             "magic must contain at least one match",
         ));
     }
-    Ok(MimeMagic::new(priority, matchers))
+    MimeMagic::new(priority, matchers)
 }
 
 /// Parses one recursive `match` element.
@@ -765,54 +652,6 @@ fn parse_hex_bytes(value: &str) -> MimeResult<Vec<u8>> {
 /// Lowercase name for map lookup.
 fn normalize_mime_name(name: &str) -> String {
     name.to_lowercase()
-}
-
-/// Yields extension suffixes from longest to shortest by scanning dots.
-///
-/// # Parameters
-/// - `filename`: Lowercase basename.
-///
-/// # Returns
-/// Extension suffix slices such as `tar.gz` then `gz`.
-fn extension_suffixes(filename: &str) -> Vec<&str> {
-    filename
-        .match_indices('.')
-        .map(|(index, _)| &filename[index + 1..])
-        .filter(|extension| !extension.is_empty())
-        .collect()
-}
-
-/// Detects whether a glob is an extension pattern.
-///
-/// # Parameters
-/// - `pattern`: Glob pattern.
-///
-/// # Returns
-/// Extension without `*.`, or `None` when special glob syntax appears.
-fn extension_pattern(pattern: &str) -> Option<&str> {
-    let extension = pattern.strip_prefix("*.")?;
-    if extension.is_empty()
-        || extension
-            .chars()
-            .any(|ch| matches!(ch, '*' | '?' | '{' | '}' | '!' | '[' | ']' | '^'))
-    {
-        None
-    } else {
-        Some(extension)
-    }
-}
-
-/// Detects whether a glob is a literal pattern.
-///
-/// # Parameters
-/// - `pattern`: Glob pattern.
-///
-/// # Returns
-/// `true` when the pattern contains no glob metacharacters.
-fn is_literal_pattern(pattern: &str) -> bool {
-    !pattern
-        .chars()
-        .any(|ch| matches!(ch, '*' | '?' | '{' | '}' | '!' | '[' | ']' | '^'))
 }
 
 /// Merges filename and content detection results.

@@ -9,8 +9,10 @@
 
 use std::collections::HashMap;
 
+use crate::MimeError;
 use crate::MimeGlob;
 use crate::MimeMagic;
+use crate::MimeResult;
 use crate::MimeType;
 
 /// Builder for [`MimeType`].
@@ -109,14 +111,63 @@ impl MimeTypeBuilder {
     ///
     /// # Returns
     /// A [`MimeType`] containing the accumulated metadata.
-    pub fn build(self) -> MimeType {
-        MimeType::from_parts(
+    pub fn build(self) -> MimeResult<MimeType> {
+        validate_mime_name(&self.name)?;
+        let aliases = validate_and_deduplicate_names(self.aliases)?;
+        let super_types = validate_and_deduplicate_names(self.super_types)?;
+        let globs = deduplicate_globs(self.globs);
+        Ok(MimeType::from_parts(
             self.name,
             self.descriptions,
-            self.aliases,
-            self.globs,
+            aliases,
+            globs,
             self.magics,
-            self.super_types,
-        )
+            super_types,
+        ))
     }
+}
+
+fn validate_mime_name(name: &str) -> MimeResult<()> {
+    let Some((kind, subtype)) = name.split_once('/') else {
+        return Err(MimeError::InvalidMimeName {
+            name: name.to_owned(),
+            reason: "expected type/subtype".to_owned(),
+        });
+    };
+    if kind.is_empty() || subtype.is_empty() || subtype.contains('/') || !name.bytes().all(is_mime_token_byte) {
+        return Err(MimeError::InvalidMimeName {
+            name: name.to_owned(),
+            reason: "contains an invalid MIME token".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn is_mime_token_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'#' | b'$' | b'&' | b'^' | b'_' | b'.' | b'+' | b'-' | b'/'
+        )
+}
+
+fn validate_and_deduplicate_names(names: Vec<String>) -> MimeResult<Vec<String>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for name in names {
+        validate_mime_name(&name)?;
+        let normalized = name.to_ascii_lowercase();
+        if seen.insert(normalized) {
+            result.push(name);
+        }
+    }
+    Ok(result)
+}
+
+fn deduplicate_globs(globs: Vec<MimeGlob>) -> Vec<MimeGlob> {
+    let mut seen = std::collections::HashSet::new();
+    globs
+        .into_iter()
+        .filter(|glob| seen.insert((glob.pattern().to_owned(), glob.weight(), glob.case_sensitive())))
+        .collect()
 }
