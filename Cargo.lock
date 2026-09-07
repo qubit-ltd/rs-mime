@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "qubit-command"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "libc",
  "log",
@@ -434,7 +434,7 @@ dependencies = [
 
 [[package]]
 name = "qubit-spi"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "parking_lot",
  "qubit-collections",
