@@ -343,7 +343,7 @@ fn test_reload_default_reports_invalid_config_and_environment() {
 }
 
 #[test]
-fn test_from_config_skips_blank_patterns_and_malformed_mapping_entries() {
+fn test_from_config_rejects_malformed_mapping_entries() {
     let mut config = Config::new();
     config
         .set(CONFIG_MIME_DETECTOR_DEFAULT, " ")
@@ -364,18 +364,8 @@ fn test_from_config_skips_blank_patterns_and_malformed_mapping_entries() {
         )
         .expect("ambiguous mapping should be configurable");
 
-    let mime_config = MimeConfig::from_config(&config).expect("config should parse");
-
-    assert_eq!("repository", selection_primary(mime_config.mime_detector_selection()),);
-    assert_eq!(
-        "ffprobe",
-        selection_primary(mime_config.media_stream_classifier_selection()),
-    );
-    assert!(!mime_config.enable_precise_detection());
-    assert!(mime_config.precise_detection_patterns().contains("webm"));
-    assert!(mime_config.precise_detection_patterns().contains("ogg"));
-    assert_eq!(1, mime_config.ambiguous_mime_mapping().len());
-    assert!(mime_config.ambiguous_mime_mapping().contains_key("webm"));
+    let error = MimeConfig::from_config(&config).expect_err("malformed mapping should fail");
+    assert!(matches!(error, MimeError::InvalidConfigurationValue { .. }));
 }
 
 #[test]
