@@ -136,8 +136,8 @@ fn test_mime_detector_path_uses_object_key_filename_without_stat() {
         .expect("object-key filename detection should succeed");
 
     assert_eq!(Some("image/jpeg".to_owned()), detected);
-    assert_eq!(1, spi.opened());
-    assert!(spi.requested_read_bytes() <= 8);
+    assert_eq!(0, spi.opened());
+    assert_eq!(0, spi.requested_read_bytes());
     assert_eq!(0, spi.stat_calls());
 }
 

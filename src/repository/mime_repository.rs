@@ -8,6 +8,7 @@
 //! Repository of MIME types parsed from shared MIME-info XML.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use qubit_codec_misc::CIntegerLiteralCodec;
 use qubit_codec_misc::CStringLiteralCodec;
@@ -30,6 +31,10 @@ use crate::MimeResult;
 use crate::MimeType;
 use crate::MimeTypeBuilder;
 
+const BUNDLED_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
+
+static BUNDLED_REPOSITORY: OnceLock<MimeRepository> = OnceLock::new();
+
 /// A repository of MIME types and detection indexes.
 #[derive(Debug, Clone)]
 pub struct MimeRepository {
@@ -40,6 +45,16 @@ pub struct MimeRepository {
 }
 
 impl MimeRepository {
+    /// Returns the process-wide repository parsed from bundled MIME data.
+    ///
+    /// The embedded XML is validated when first used and shared by all
+    /// repository-backed integrations, avoiding independent copies of the
+    /// same indexes in each detector.
+    pub fn bundled() -> &'static Self {
+        BUNDLED_REPOSITORY
+            .get_or_init(|| Self::from_xml(BUNDLED_DATABASE).expect("embedded freedesktop MIME database should parse"))
+    }
+
     /// Parses a MIME repository from shared MIME-info XML.
     ///
     /// # Parameters

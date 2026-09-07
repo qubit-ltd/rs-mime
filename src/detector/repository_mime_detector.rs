@@ -8,7 +8,6 @@
 //! Repository-backed MIME detector.
 
 use std::path::Path;
-use std::sync::OnceLock;
 
 use qubit_io::std_io::ReadSeek;
 
@@ -19,10 +18,6 @@ use crate::MimeDetectorCore;
 use crate::MimeRepository;
 use crate::MimeResult;
 use crate::StreamBasedMimeDetector;
-
-const DEFAULT_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
-
-static DEFAULT_REPOSITORY: OnceLock<MimeRepository> = OnceLock::new();
 
 /// MIME detector backed by a [`MimeRepository`].
 #[derive(Debug, Clone)]
@@ -230,9 +225,7 @@ impl<'a> RepositoryMimeDetector<'a> {
 /// # Returns
 /// Shared parsed repository.
 pub(crate) fn default_repository() -> &'static MimeRepository {
-    DEFAULT_REPOSITORY.get_or_init(|| {
-        MimeRepository::from_xml(DEFAULT_DATABASE).expect("embedded freedesktop MIME database should parse")
-    })
+    MimeRepository::bundled()
 }
 
 impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
