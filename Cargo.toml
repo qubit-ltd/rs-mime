@@ -45,7 +45,7 @@ qubit-local-files = { path = "../rs-local-files", version = "0.3" }
 qubit-spi = { path = "../rs-spi", version = "0.11" }
 
 [dev-dependencies]
-qubit-fs-local = { path = "../rs-fs-local", version = "0.3" }
+qubit-fs-local = { path = "../rs-fs-local", version = "0.4" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
