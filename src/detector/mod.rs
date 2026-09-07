@@ -11,6 +11,7 @@ pub(crate) mod detection_source;
 pub(crate) mod file_based_mime_detector;
 pub(crate) mod file_command_mime_detector;
 pub(crate) mod file_command_mime_detector_provider;
+/// Content backend contracts and adapters.
 pub mod mime_content_backend;
 pub(crate) mod mime_detection_policy;
 pub(crate) mod mime_detector;
@@ -19,6 +20,7 @@ pub(crate) mod mime_detector_core;
 pub(crate) mod mime_detector_provider;
 pub(crate) mod mime_detector_registry;
 pub(crate) mod mime_detector_spec;
+/// Runtime context and detector lifecycle helpers.
 pub mod mime_runtime;
 pub(crate) mod repository_mime_detector;
 pub(crate) mod repository_mime_detector_provider;
