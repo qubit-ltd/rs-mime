@@ -219,7 +219,7 @@ fn test_classifier_default_selection_is_independent_from_mime_config() {
             TestProviderBehavior::Success("unused"),
         ))
         .expect("successful provider should register");
-    registry
+    let _ = registry
         .set_default_selection(ProviderSelection::named("configured").expect("configured selector should be valid"));
     let provider = registry
         .resolve()
