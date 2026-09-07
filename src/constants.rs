@@ -99,7 +99,7 @@ pub const DEFAULT_COMMAND_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 pub const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Default value for precise media stream based detection.
-pub const DEFAULT_ENABLE_PRECISE_DETECTION: bool = true;
+pub const DEFAULT_ENABLE_PRECISE_DETECTION: bool = false;
 
 /// Default comma-separated extensions that may need media stream
 /// classification.

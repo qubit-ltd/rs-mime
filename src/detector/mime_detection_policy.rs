@@ -8,8 +8,15 @@
 //! Policy for resolving combined MIME detection from filename and content.
 
 /// Policy for resolving combined MIME detection from filename and content.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MimeDetectionPolicy {
+    /// Follow freedesktop shared-mime-info precedence rules.
+    #[default]
+    Freedesktop,
+
+    /// Always evaluate content and use it to resolve filename ambiguity.
+    ContentFirst,
+
     /// Prefer a definitive filename result without checking content magic.
     PreferFilename,
 

@@ -327,7 +327,7 @@ impl MimeConfig {
             command_timeout,
             enable_precise_detection,
             precise_detection_patterns: normalize_patterns(precise_detection_patterns),
-            ambiguous_mime_mapping: build_ambiguous_mime_mapping(ambiguous_mime_mapping),
+            ambiguous_mime_mapping: build_ambiguous_mime_mapping(ambiguous_mime_mapping)?,
             max_buffer_size,
         })
     }
@@ -489,7 +489,8 @@ impl MimeConfig {
                     .iter()
                     .map(|entry| entry.to_string())
                     .collect(),
-            ),
+            )
+            .expect("built-in ambiguous MIME mapping should be valid"),
             max_buffer_size: DEFAULT_MIME_MAX_BUFFER_SIZE,
         }
     }
@@ -646,26 +647,31 @@ fn normalize_patterns(patterns: Vec<String>) -> HashSet<String> {
 ///
 /// # Returns
 /// Lowercase extension to MIME pair mapping.
-fn build_ambiguous_mime_mapping(entries: Vec<String>) -> HashMap<String, [String; 2]> {
-    entries
-        .into_iter()
-        .filter_map(|entry| {
-            let (extension, mime_types) = entry.split_once(':')?;
-            let mut mime_types = mime_types.split(',').map(str::trim);
-            let video_type = mime_types.next()?.to_owned();
-            let audio_type = mime_types.next()?.to_owned();
-            if extension.trim().is_empty()
-                || video_type.is_empty()
-                || audio_type.is_empty()
-                || mime_types.next().is_some()
-            {
-                None
-            } else {
-                Some((
-                    extension.trim().trim_start_matches('.').to_ascii_lowercase(),
-                    [video_type, audio_type],
-                ))
-            }
-        })
-        .collect()
+fn build_ambiguous_mime_mapping(entries: Vec<String>) -> MimeResult<HashMap<String, [String; 2]>> {
+    let mut mapping = HashMap::new();
+    for entry in entries {
+        let (extension, mime_types) = entry
+            .split_once(':')
+            .ok_or_else(|| MimeError::InvalidConfigurationValue {
+                key: CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+                value: entry.clone(),
+                reason: "expected ext:video,audio".to_owned(),
+            })?;
+        let mut mime_types = mime_types.split(',').map(str::trim);
+        let video_type = mime_types.next().unwrap_or_default().to_owned();
+        let audio_type = mime_types.next().unwrap_or_default().to_owned();
+        if extension.trim().is_empty() || video_type.is_empty() || audio_type.is_empty() || mime_types.next().is_some()
+        {
+            return Err(MimeError::InvalidConfigurationValue {
+                key: CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+                value: entry,
+                reason: "expected ext:video,audio with two MIME values".to_owned(),
+            });
+        }
+        mapping.insert(
+            extension.trim().trim_start_matches('.').to_ascii_lowercase(),
+            [video_type, audio_type],
+        );
+    }
+    Ok(mapping)
 }
