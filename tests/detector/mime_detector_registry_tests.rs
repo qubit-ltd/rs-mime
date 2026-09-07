@@ -151,7 +151,7 @@ fn test_default_selection_is_independent_from_service_configuration() {
             TestProviderBehavior::Success("application/x-configured"),
         ))
         .expect("configured provider should register");
-    registry
+    let _ = registry
         .set_default_selection(ProviderSelection::named("configured").expect("configured selector should be valid"));
 
     let provider = registry
@@ -277,7 +277,7 @@ fn test_global_registry_shares_app_provider_with_library_x() {
             .expect("explicit App selection should resolve")
             .create_configured(&MimeConfig::default())
             .expect("explicit MIME config should create the App detector");
-        registry.set_default_selection(selection);
+        let _ = registry.set_default_selection(selection);
         let defaulted = library_x_create_detector();
 
         assert_eq!(
