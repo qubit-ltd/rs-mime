@@ -55,7 +55,9 @@ fn test_is_available_can_be_called_without_panicking() {
 
 #[test]
 fn test_default_file_command_runner_uses_default_timeout() {
-    let detector = FileCommandMimeDetector::new();
+    let detector = FileCommandMimeDetector::from_mime_config(
+        MimeConfig::from_config(&Config::new()).expect("empty config should use defaults"),
+    );
 
     assert_eq!(
         detector.command_runner().configured_timeout(),
