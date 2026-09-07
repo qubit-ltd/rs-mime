@@ -153,7 +153,7 @@ fn test_registry_registers_owned_and_shared_providers_atomically() {
             TestProviderBehavior::Success("unused"),
         ))
         .expect_err("duplicate selector should be rejected");
-    assert_eq!("shared", duplicate.selector());
+    assert_eq!(Some("shared"), duplicate.selector());
 
     let runtime_shared: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>> = Arc::new(
         TestMediaStreamClassifierProvider::new("runtime-shared", 0, TestProviderBehavior::Success("unused")),
