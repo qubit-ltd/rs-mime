@@ -16,7 +16,7 @@ use qubit_spi::ProviderRegistry;
 use qubit_spi::ProviderSelection;
 use qubit_spi::ResolvingServiceProvider;
 use qubit_spi::error::ProviderResolutionError;
-use qubit_spi::error::RegistrationError;
+use qubit_spi::error::RegistryMutationError;
 
 use super::FileCommandMimeDetectorProvider;
 use super::MimeDetectorProvider;
@@ -58,7 +58,7 @@ impl MimeDetectorRegistry {
             .expect("built-in file MIME provider should register");
         registry.set_default_selection(
             ProviderSelection::named("repository").expect("built-in repository selection should be valid"),
-        );
+        ).expect("built-in selection should be accepted");
         registry
     }
 
@@ -88,7 +88,7 @@ impl MimeDetectorRegistry {
     /// Returns [`RegistrationError`] when the provider ID or an alias is
     /// already owned. The Registry remains unchanged on error.
     #[inline]
-    pub fn register<P>(&self, provider: P) -> Result<(), RegistrationError>
+    pub fn register<P>(&self, provider: P) -> Result<(), RegistryMutationError>
     where
         P: MimeDetectorProvider,
     {
@@ -111,7 +111,7 @@ impl MimeDetectorRegistry {
     pub fn register_shared(
         &self,
         provider: Arc<dyn ProviderDefinition<MimeDetectorSpec>>,
-    ) -> Result<(), RegistrationError> {
+    ) -> Result<(), RegistryMutationError> {
         self.providers.register_shared(provider)
     }
 
@@ -132,9 +132,16 @@ impl MimeDetectorRegistry {
     ///
     /// * `selection` - Validated selection and creation fallback policy.
     #[inline]
-    pub fn set_default_selection(&self, selection: ProviderSelection) {
-        self.providers.set_default_selection(selection);
+    pub fn set_default_selection(&self, selection: ProviderSelection) -> Result<(), RegistryMutationError> {
+        self.providers.set_default_selection(selection)
     }
+
+    /// Seals this registry against further mutation.
+    pub fn seal(&self) { self.providers.seal(); }
+
+    /// Returns whether this registry is sealed.
+    #[must_use]
+    pub fn is_sealed(&self) -> bool { self.providers.is_sealed() }
 
     /// Resolves one explicit selection into a composing service provider.
     ///
