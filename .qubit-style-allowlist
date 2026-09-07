@@ -1,2 +1,6 @@
+multiple-public-types | src/detector/mime_content_backend.rs | Content requirement, backend contract, and adapter form one cohesive public API.
 coverage-cfg | src/detector/mime_detector_registry.rs | Use coverage-only lock recovery for poison branches that cannot be triggered reliably through public behavior.
 coverage-cfg | src/classifier/media_stream_classifier_registry.rs | Use coverage-only lock recovery for poison branches that cannot be triggered reliably through public behavior.
+multiple-public-types | src/detector/mime_runtime.rs | Runtime context, decision engine, and runtime are a cohesive public lifecycle API.
+multiple-public-types | src/repository/glob_index.rs | Glob entry and index are implementation-facing repository index primitives.
+multiple-public-types | src/repository/magic_index.rs | Magic entry and index are implementation-facing repository index primitives.
