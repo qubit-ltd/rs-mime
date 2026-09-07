@@ -16,7 +16,7 @@ use qubit_spi::ProviderRegistry;
 use qubit_spi::ProviderSelection;
 use qubit_spi::ResolvingServiceProvider;
 use qubit_spi::error::ProviderResolutionError;
-use qubit_spi::error::RegistrationError;
+use qubit_spi::error::RegistryMutationError;
 
 use super::FfprobeCommandMediaStreamClassifierProvider;
 use super::MediaStreamClassifierProvider;
@@ -54,7 +54,7 @@ impl MediaStreamClassifierRegistry {
             .expect("built-in FFprobe classifier provider should register");
         registry.set_default_selection(
             ProviderSelection::named("ffprobe").expect("built-in FFprobe selection should be valid"),
-        );
+        ).expect("built-in selection should be accepted");
         registry
     }
 
@@ -79,7 +79,7 @@ impl MediaStreamClassifierRegistry {
     ///
     /// Returns [`RegistrationError`] when its ID or an alias is already owned.
     #[inline]
-    pub fn register<P>(&self, provider: P) -> Result<(), RegistrationError>
+    pub fn register<P>(&self, provider: P) -> Result<(), RegistryMutationError>
     where
         P: MediaStreamClassifierProvider,
     {
@@ -102,7 +102,7 @@ impl MediaStreamClassifierRegistry {
     pub fn register_shared(
         &self,
         provider: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>>,
-    ) -> Result<(), RegistrationError> {
+    ) -> Result<(), RegistryMutationError> {
         self.providers.register_shared(provider)
     }
 
@@ -123,9 +123,16 @@ impl MediaStreamClassifierRegistry {
     ///
     /// * `selection` - Validated selection and creation fallback policy.
     #[inline]
-    pub fn set_default_selection(&self, selection: ProviderSelection) {
-        self.providers.set_default_selection(selection);
+    pub fn set_default_selection(&self, selection: ProviderSelection) -> Result<(), RegistryMutationError> {
+        self.providers.set_default_selection(selection)
     }
+
+    /// Seals this registry against further mutation.
+    pub fn seal(&self) { self.providers.seal(); }
+
+    /// Returns whether this registry is sealed.
+    #[must_use]
+    pub fn is_sealed(&self) -> bool { self.providers.is_sealed() }
 
     /// Resolves an explicit selection into a composing service provider.
     ///
