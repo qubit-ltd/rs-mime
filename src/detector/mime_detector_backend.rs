@@ -10,6 +10,9 @@
 use std::fmt::Debug;
 use std::path::Path;
 
+use qubit_fs::FileSystem;
+use qubit_fs::Path as FsPath;
+use qubit_fs::read::ReadOptions;
 use qubit_io::std_io::ReadSeek;
 
 use super::stream_based_mime_detector::open_readable_file;
@@ -86,6 +89,23 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     fn guess_from_file(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
         let mut reader = open_readable_file(file)?;
         self.guess_from_reader(&mut reader)
+    }
+
+    /// Guesses MIME candidates through a provider-neutral filesystem path.
+    ///
+    /// Backends that need random access or a complete resource may override
+    /// this hook. Returning `None` as the content buffer tells the shared
+    /// orchestration layer that refinement must not assume a prefix is an
+    /// exact representation of the inspected resource.
+    fn guess_from_provider_path(
+        &self,
+        file_system: &FileSystem,
+        path: &FsPath,
+        max_bytes: usize,
+    ) -> MimeResult<(Vec<String>, Option<Vec<u8>>)> {
+        let content = file_system.read_prefix(path, ReadOptions::default(), max_bytes)?;
+        let candidates = self.guess_from_content(&content)?;
+        Ok((candidates, Some(content)))
     }
 }
 
@@ -179,6 +199,38 @@ where
             policy,
             DetectionSource::Path(file),
         )
+    }
+
+    /// Detects a MIME type through a provider-neutral filesystem path.
+    fn detect_path(
+        &self,
+        file_system: &FileSystem,
+        path: &FsPath,
+        max_bytes: usize,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        let limit = self.max_buffer_size();
+        if max_bytes > limit {
+            return Err(crate::MimeError::BufferLimitExceeded {
+                requested: max_bytes,
+                limit,
+            });
+        }
+        let filename = path.file_name();
+        let from_filename = filename
+            .map(|value| self.guess_from_filename(value))
+            .unwrap_or_default();
+        if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+            return self
+                .core()
+                .select_result(&from_filename, &[], filename, policy, DetectionSource::None);
+        }
+        let (from_content, content) = self.guess_from_provider_path(file_system, path, max_bytes)?;
+        let source = content
+            .as_deref()
+            .map_or(DetectionSource::None, DetectionSource::Content);
+        self.core()
+            .select_result(&from_filename, &from_content, filename, policy, source)
     }
 }
 

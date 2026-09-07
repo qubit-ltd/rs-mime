@@ -10,6 +10,15 @@
 use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeError;
 use qubit_mime::MimeRepository;
+
+#[test]
+fn test_bundled_repository_is_shared_and_usable() {
+    let first = MimeRepository::bundled();
+    let second = MimeRepository::bundled();
+
+    assert!(std::ptr::eq(first, second));
+    assert!(first.get("application/pdf").is_some());
+}
 use qubit_mime::MimeType;
 
 #[test]
