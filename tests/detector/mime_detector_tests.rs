@@ -92,7 +92,7 @@ fn test_mime_detector_trait_supports_filesystem_path_detection() {
         )
         .expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"%PDF-1.7\n").expect("temp file should be writable");
-    // These path-only tests never invoke recursive list or tree-copy work.
+    // MIME probe only reads explicit files and performs no recursive list/copy/delete work.
     let filesystem =
         LocalFileSystems::host(LocalResourcePolicy::unbounded()).expect("host filesystem facade should be created");
     let path = host_path_to_logical(file.path()).expect("native temporary path should convert without lossy text");
