@@ -17,6 +17,44 @@ use thiserror::Error;
 /// Error type for MIME repository parsing and I/O backed detection.
 #[derive(Debug, Error)]
 pub enum MimeError {
+    /// A MIME name is not a valid `type/subtype` token.
+    #[error("invalid MIME name '{name}': {reason}")]
+    InvalidMimeName {
+        /// Invalid MIME name.
+        name: String,
+        /// Validation detail.
+        reason: String,
+    },
+
+    /// A magic priority exceeds the shared MIME-info maximum.
+    #[error("invalid MIME magic priority: {priority}")]
+    InvalidMagicPriority {
+        /// Invalid priority.
+        priority: u16,
+    },
+
+    /// A magic rule has no root matchers.
+    #[error("MIME magic rule requires at least one matcher")]
+    EmptyMagicMatchers,
+
+    /// A canonical MIME name or alias is declared more than once.
+    #[error("duplicate canonical MIME name or alias: {name}")]
+    DuplicateMimeName {
+        /// Duplicate name.
+        name: String,
+    },
+
+    /// A configuration value is syntactically valid but violates a MIME rule.
+    #[error("invalid MIME configuration value '{key}': {value} ({reason})")]
+    InvalidConfigurationValue {
+        /// Configuration key.
+        key: &'static str,
+        /// Invalid value.
+        value: String,
+        /// Validation detail.
+        reason: String,
+    },
+
     /// A glob weight was outside the freedesktop MIME range `0..=100`.
     #[error("invalid MIME glob weight: {weight}")]
     InvalidGlobWeight {

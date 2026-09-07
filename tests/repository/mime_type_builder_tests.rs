@@ -1,8 +1,17 @@
 use qubit_mime::MagicValueType;
+use qubit_mime::MimeError;
 use qubit_mime::MimeGlob;
 use qubit_mime::MimeMagic;
 use qubit_mime::MimeMagicMatcher;
 use qubit_mime::MimeTypeBuilder;
+
+#[test]
+fn test_mime_type_builder_rejects_invalid_name() {
+    assert!(matches!(
+        MimeTypeBuilder::new("not-a-mime").build(),
+        Err(MimeError::InvalidMimeName { .. })
+    ));
+}
 
 #[test]
 fn test_mime_type_builder_collects_metadata_and_matching_rules() {
@@ -11,9 +20,10 @@ fn test_mime_type_builder_collects_metadata_and_matching_rules() {
         .description("", "Data file")
         .alias("application/data")
         .glob(MimeGlob::new("*.data", 80, false).unwrap())
-        .magic(MimeMagic::new(50, vec![matcher]))
+        .magic(MimeMagic::new(50, vec![matcher]).unwrap())
         .super_type("application/octet-stream")
-        .build();
+        .build()
+        .unwrap();
 
     assert_eq!("application/x-data", mime_type.name());
     assert_eq!(Some("Data file"), mime_type.description());

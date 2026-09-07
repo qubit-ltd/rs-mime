@@ -8,11 +8,31 @@
 //! Tests for MIME repository parsing and matching.
 
 use qubit_mime::MimeDetectionPolicy;
+use qubit_mime::MimeError;
 use qubit_mime::MimeRepository;
 use qubit_mime::MimeType;
 
+#[test]
+fn test_from_xml_rejects_alias_collision() {
+    let error = MimeRepository::from_xml(
+        r#"
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-one"><alias type="application/shared"/></mime-type>
+  <mime-type type="application/x-two"><alias type="application/shared"/></mime-type>
+</mime-info>"#,
+    )
+    .unwrap_err();
+    assert!(matches!(error, MimeError::DuplicateMimeName { .. }));
+}
+
+#[test]
+fn test_from_xml_requires_shared_mime_info_namespace() {
+    let error = MimeRepository::from_xml("<mime-info><mime-type type=\"text/plain\"/></mime-info>").unwrap_err();
+    assert!(matches!(error, MimeError::InvalidXmlElement { .. }));
+}
+
 const TEST_DATABASE: &str = r#"
-<mime-info>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/gzip">
     <comment>gzip archive</comment>
     <glob pattern="*.gz"/>
@@ -78,6 +98,58 @@ fn names(mime_types: Vec<&MimeType>) -> Vec<String> {
 }
 
 #[test]
+fn test_literal_precedes_higher_weight_wildcard() {
+    let repository = MimeRepository::from_xml(
+        r#"
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-makefile"><glob pattern="Makefile" weight="10"/></mime-type>
+  <mime-type type="text/x-generic"><glob pattern="Make*" weight="100"/></mime-type>
+</mime-info>"#,
+    )
+    .unwrap();
+    assert_eq!(
+        vec!["text/x-makefile"],
+        names(repository.detect_by_filename("Makefile"))
+    );
+}
+
+#[test]
+fn test_filename_candidates_are_deduplicated() {
+    let repository = MimeRepository::from_xml(
+        r#"
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-data">
+    <glob pattern="*.data" weight="80"/>
+    <glob pattern="sample.*" weight="80"/>
+  </mime-type>
+</mime-info>"#,
+    )
+    .unwrap();
+    assert_eq!(
+        vec!["application/x-data"],
+        names(repository.detect_by_filename("sample.data"))
+    );
+}
+
+#[test]
+fn test_is_a_is_transitive_and_implicit() {
+    let repository = MimeRepository::from_xml(
+        r#"
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-parent"/>
+  <mime-type type="application/x-child"><sub-class-of type="application/x-parent"/></mime-type>
+  <mime-type type="application/x-grandchild"><sub-class-of type="application/x-child"/></mime-type>
+  <mime-type type="text/x-note"/>
+</mime-info>"#,
+    )
+    .unwrap();
+    assert!(repository.is_a("application/x-grandchild", "application/x-parent"));
+    assert!(repository.is_a("text/x-note", "text/plain"));
+    assert!(repository.is_a("text/x-note", "application/octet-stream"));
+    assert!(!repository.is_a("application/x-parent", "application/x-grandchild"));
+}
+
+#[test]
 fn test_from_xml_indexes_names_aliases_and_max_test_bytes() {
     let repository = create_repository();
 
@@ -93,7 +165,7 @@ fn test_from_xml_indexes_names_aliases_and_max_test_bytes() {
 fn test_from_xml_preserves_default_comment_when_localized_comment_follows() {
     let repository = MimeRepository::from_xml(
         r#"
-<mime-info>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-localized-comment">
     <comment>Default description</comment>
     <comment xml:lang="en">English description</comment>
@@ -224,7 +296,7 @@ fn test_from_xml_accepts_doctype_and_reports_structural_errors() {
 <!DOCTYPE mime-info [
 <!ELEMENT mime-info (mime-type)+>
 ]>
-<mime-info>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <metadata/>
   <mime-type type="text/plain">
     <comment>plain</comment>
@@ -342,7 +414,7 @@ fn test_from_xml_rejects_numeric_magic_values_that_exceed_matcher_width() {
 fn test_from_xml_accepts_uppercase_hex_mask_prefix() {
     let repository = MimeRepository::from_xml(
         r#"
-<mime-info>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-uppercase-mask">
     <comment>uppercase mask prefix</comment>
     <magic>
@@ -364,7 +436,7 @@ fn test_from_xml_accepts_uppercase_hex_mask_prefix() {
 fn test_from_xml_decodes_single_quote_and_short_hex_escape_values() {
     let repository = MimeRepository::from_xml(
         r#"
-<mime-info>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-escaped-quote">
     <comment>escaped quote</comment>
     <magic>
@@ -406,7 +478,7 @@ fn test_from_xml_decodes_single_quote_and_short_hex_escape_values() {
 fn test_detect_by_filename_and_content_preserve_ties() {
     let repository = MimeRepository::from_xml(
         r#"
-<mime-info>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="text/short"><comment>short</comment><glob pattern="READ*" weight="50"/></mime-type>
   <mime-type type="text/long"><comment>long</comment><glob pattern="README*" weight="50"/></mime-type>
   <mime-type type="text/tie-one"><comment>tie one</comment><glob pattern="*.tie" weight="50"/></mime-type>

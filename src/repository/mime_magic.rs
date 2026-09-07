@@ -7,7 +7,9 @@
 // =============================================================================
 //! MIME content magic rule.
 
+use crate::MimeError;
 use crate::MimeMagicMatcher;
+use crate::MimeResult;
 
 /// A priority-ranked set of magic matchers for one MIME type.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,8 +35,14 @@ impl MimeMagic {
     ///
     /// # Returns
     /// A new [`MimeMagic`].
-    pub fn new(priority: u16, matchers: Vec<MimeMagicMatcher>) -> Self {
-        Self { priority, matchers }
+    pub fn new(priority: u16, matchers: Vec<MimeMagicMatcher>) -> MimeResult<Self> {
+        if priority > Self::MAX_PRIORITY {
+            return Err(MimeError::InvalidMagicPriority { priority });
+        }
+        if matchers.is_empty() {
+            return Err(MimeError::EmptyMagicMatchers);
+        }
+        Ok(Self { priority, matchers })
     }
 
     /// Gets this magic rule's priority.

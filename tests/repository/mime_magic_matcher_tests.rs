@@ -204,12 +204,9 @@ fn test_mime_magic_empty_and_non_empty_matching() {
     let empty = MimeMagic::new(0, Vec::new());
     let matcher = MimeMagicMatcher::new(MagicValueType::String, 0, 0, b"ABC".to_vec(), None, vec![])
         .expect("matcher should be valid");
-    let magic = MimeMagic::new(25, vec![matcher]);
+    let magic = MimeMagic::new(25, vec![matcher]).unwrap();
 
-    assert_eq!(0, empty.priority());
-    assert!(empty.matchers().is_empty());
-    assert_eq!(0, empty.max_test_bytes());
-    assert!(!empty.matches(b"ABC"));
+    assert!(empty.is_err());
     assert_eq!(25, magic.priority());
     assert_eq!(1, magic.matchers().len());
     assert_eq!(3, magic.max_test_bytes());
