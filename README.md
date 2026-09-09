@@ -100,7 +100,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qubit-mime = "0.12"
+qubit-mime = "0.14"
 ```
 
 ## Quick Start
@@ -893,6 +893,10 @@ Otherwise, content magic is evaluated and merged with filename candidates.
 | Errors | Java exceptions | Concrete `MimeError` |
 
 ## Temporary File Lifecycle
+
+Version 0.14 uses `qubit-local-files` 0.4 for local staging. Detectors inspect
+and clean temporary files without publishing them, so the explicit-base
+`persist_at` API is not part of the MIME detection workflow.
 
 File-backed detectors and classifiers share one temporary-file lifecycle: staging finishes
 and the handle closes before backend inspection; explicit cleanup runs after staging failure,
