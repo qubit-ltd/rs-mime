@@ -8,3 +8,6 @@
 //! Tests of crate-private staging contracts.
 
 mod temp_staging_tests;
+
+mod command_backend_tests;
+mod command_execution_tests;

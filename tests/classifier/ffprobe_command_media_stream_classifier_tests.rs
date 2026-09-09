@@ -335,3 +335,42 @@ fn test_classify_file_rejects_invalid_utf8_stdout() {
             if backend == "ffprobe" && reason.contains("UTF-8")
     ));
 }
+
+#[test]
+#[cfg(unix)]
+fn test_command_contract_rejects_truncation_and_uses_actual_exit_status() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use qubit_mime::FileBasedMediaStreamClassifier;
+    let directory = LocalFileSystem::host()
+        .expect("host filesystem available")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
+        .expect("fixture directory created");
+    let script = directory.path().join("ffprobe");
+    std::fs::write(&script, "#!/bin/sh\nprintf 'video\\naudio\\n'\n").expect("script written");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("script executable");
+    let _guard = PathEnvGuard::prepend(directory.path());
+    let runner = CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true);
+    let classifier = FfprobeCommandMediaStreamClassifier::new()
+        .with_command_runner(runner.clone().max_stdout_bytes(6).fail_on_output_truncation(false));
+    assert!(matches!(
+        classifier.classify_by_local_file(std::path::Path::new("input")),
+        Err(MimeError::ClassifierBackend { .. })
+    ));
+    let classifier =
+        FfprobeCommandMediaStreamClassifier::new().with_command_runner(runner.clone().success_exit_codes(&[7]));
+    assert_eq!(
+        classifier
+            .classify_by_local_file(std::path::Path::new("input"))
+            .expect("actual zero must be accepted"),
+        MediaStreamType::VideoWithAudio
+    );
+    std::fs::write(&script, "#!/bin/sh\nprintf 'video\\naudio\\n'\nexit 7\n").expect("nonzero fixture written");
+    let classifier = FfprobeCommandMediaStreamClassifier::new().with_command_runner(runner.success_exit_codes(&[0, 7]));
+    assert_eq!(
+        classifier
+            .classify_by_local_file(std::path::Path::new("input"))
+            .expect("nonzero probe is best effort"),
+        MediaStreamType::None
+    );
+}

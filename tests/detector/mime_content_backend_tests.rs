@@ -7,6 +7,7 @@
 // =============================================================================
 //! Content adapters preserve reader position and declared input bounds.
 
+use crate::support::DirectBackendDetector;
 use std::io::Cursor;
 
 use qubit_mime::ContentRequirement;
@@ -66,4 +67,24 @@ fn test_content_reader_obeys_prefix_and_complete_requirements() {
         );
         assert_eq!(reader.position(), 4);
     }
+}
+
+#[test]
+fn test_adapter_limits_input_and_restores_reader_position() {
+    let adapter = MimeDetectorAdapter::new(DirectBackendDetector::new());
+    assert_eq!(adapter.backend().max_test_bytes(), 5);
+    assert_eq!(adapter.content_requirement(), ContentRequirement::Prefix(5));
+    let mut reader = Cursor::new(b"xxhello ignored trailer".to_vec());
+    reader.set_position(2);
+    assert_eq!(
+        adapter.detect_reader(&mut reader).expect("prefix must be classified"),
+        ["text/plain"]
+    );
+    assert_eq!(reader.position(), 2);
+    assert!(
+        adapter
+            .detect_bytes(b"different")
+            .expect("nonmatching input is valid")
+            .is_empty()
+    );
 }
