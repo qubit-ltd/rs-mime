@@ -365,7 +365,11 @@ fn test_command_contract_rejects_truncation_and_uses_actual_exit_status() {
             .expect("actual zero must be accepted"),
         MediaStreamType::VideoWithAudio
     );
-    std::fs::write(&script, "#!/bin/sh\nprintf 'video\\naudio\\n'\nexit 7\n").expect("nonzero fixture written");
+    // Replace the inode instead of truncating a recently executed script.
+    let replacement = directory.path().join("ffprobe-next");
+    std::fs::write(&replacement, "#!/bin/sh\nprintf 'video\\naudio\\n'\nexit 7\n").expect("nonzero fixture written");
+    std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o755)).expect("replacement executable");
+    std::fs::rename(&replacement, &script).expect("nonzero fixture installed");
     let classifier = FfprobeCommandMediaStreamClassifier::new().with_command_runner(runner.success_exit_codes(&[0, 7]));
     assert_eq!(
         classifier
