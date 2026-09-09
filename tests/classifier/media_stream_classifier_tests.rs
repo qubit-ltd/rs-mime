@@ -316,7 +316,9 @@ fn test_file_based_classifier_reports_temporary_file_creation_error() {
             .arg("--nocapture")
             .arg("--test-threads=1")
             .env(CHILD_ENV, "1")
-            .env("TMPDIR", invalid_temp_dir)
+            .env("TMPDIR", &invalid_temp_dir)
+            .env("TMP", &invalid_temp_dir)
+            .env("TEMP", &invalid_temp_dir)
             .output()
             .expect("child test process should run");
 
@@ -360,6 +362,8 @@ fn test_file_based_classifier_creates_missing_temporary_directory() {
             .arg("--test-threads=1")
             .env(CHILD_ENV, "1")
             .env("TMPDIR", &missing_temp_dir)
+            .env("TMP", &missing_temp_dir)
+            .env("TEMP", &missing_temp_dir)
             .output()
             .expect("child test process should run");
 
