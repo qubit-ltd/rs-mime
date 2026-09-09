@@ -369,3 +369,37 @@ fn create_precise_config() -> MimeConfig {
         .expect("precise detection should be configurable");
     MimeConfig::from_config(&config).expect("file command config should parse")
 }
+
+#[test]
+#[cfg(unix)]
+fn test_file_command_contract_checks_truncation_and_actual_exit_status() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = LocalFileSystem::host()
+        .expect("host filesystem available")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
+        .expect("fixture directory created");
+    let script = directory.path().join("file");
+    std::fs::write(&script, "#!/bin/sh\nprintf text/plain\n").expect("script written");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("script executable");
+    let _guard = PathEnvGuard::prepend(directory.path());
+    let runner = CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true);
+    let detector = FileCommandMimeDetector::default()
+        .with_command_runner(runner.clone().max_stdout_bytes(4).fail_on_output_truncation(false));
+    assert!(matches!(
+        detector.detect_file_by_content(std::path::Path::new("input")),
+        Err(MimeError::DetectorBackend { .. })
+    ));
+    let detector = FileCommandMimeDetector::default().with_command_runner(runner.clone().success_exit_codes(&[7]));
+    assert_eq!(
+        detector
+            .detect_file_by_content(std::path::Path::new("input"))
+            .expect("actual zero must parse"),
+        Some("text/plain".to_owned())
+    );
+    std::fs::write(&script, "#!/bin/sh\nprintf text/plain\nexit 7\n").expect("nonzero script written");
+    let detector = FileCommandMimeDetector::default().with_command_runner(runner.success_exit_codes(&[0, 7]));
+    assert!(matches!(
+        detector.detect_file_by_content(std::path::Path::new("input")),
+        Err(MimeError::DetectorBackend { .. })
+    ));
+}
