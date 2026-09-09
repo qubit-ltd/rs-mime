@@ -102,6 +102,10 @@ fn test_mime_detector_trait_supports_filesystem_path_detection() {
         .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent)
         .expect("filesystem-path detection should succeed");
 
+    let native = detector
+        .detect_file(file.path(), MimeDetectionPolicy::VerifyContent)
+        .expect("native detection should agree with facade detection");
+    assert_eq!(native, detected);
     assert_eq!(Some("application/pdf".to_owned()), detected);
 }
 
@@ -510,4 +514,47 @@ fn create_configured_detector(
         .expect("configured detector selection should resolve")
         .create_configured(config)
         .expect("configured detector provider should create its service")
+}
+
+/// MIME content inspection benefits from guaranteed ranges without metadata
+/// I/O.
+#[test]
+fn test_detect_path_uses_guaranteed_prefix_range() {
+    let mut content = vec![0_u8; 1024 * 1024];
+    content[..9].copy_from_slice(b"%PDF-1.7\n");
+    let spi = PrefixFileSystemSpi::object_key(content).with_guaranteed_range();
+    let filesystem = FileSystem::from_spi(spi.clone()).unwrap();
+    let detector = RepositoryMimeDetector::new().unwrap();
+    let path = FsPath::parse_literal("large/report.bin").unwrap();
+    assert_eq!(
+        detector
+            .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent)
+            .unwrap(),
+        Some("application/pdf".to_owned())
+    );
+    assert_eq!(spi.range_length(), Some(16));
+    assert_eq!(spi.opened(), 1);
+    assert_eq!(spi.stat_calls(), 0);
+    assert!(spi.requested_read_bytes() <= 16);
+}
+
+/// Detector buffer admission happens before opening any provider reader.
+#[test]
+fn test_detect_path_rejects_buffer_limit_before_provider_open() {
+    let spi = PrefixFileSystemSpi::hierarchical(b"%PDF-1.7\n".to_vec()).with_guaranteed_range();
+    let filesystem = FileSystem::from_spi(spi.clone()).unwrap();
+    let error = StaticEntryPointMimeDetector
+        .detect_path(
+            &filesystem,
+            &FsPath::parse("/payload").unwrap(),
+            1,
+            MimeDetectionPolicy::VerifyContent,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        MimeError::BufferLimitExceeded { requested: 1, limit: 0 }
+    ));
+    assert_eq!(spi.opened(), 0);
+    assert_eq!(spi.stat_calls(), 0);
 }

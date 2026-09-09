@@ -7,6 +7,7 @@
 
 use std::io::Cursor;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
@@ -41,6 +42,8 @@ pub(crate) struct PrefixFileSystemSpi {
     requested_read_bytes: Arc<AtomicUsize>,
     stats: Arc<AtomicUsize>,
     semantics: PathSemantics,
+    guaranteed_range: bool,
+    range_length: Arc<Mutex<Option<u64>>>,
 }
 
 impl PrefixFileSystemSpi {
@@ -61,6 +64,8 @@ impl PrefixFileSystemSpi {
             requested_read_bytes: Arc::new(AtomicUsize::new(0)),
             stats: Arc::new(AtomicUsize::new(0)),
             semantics,
+            guaranteed_range: false,
+            range_length: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -79,7 +84,22 @@ impl PrefixFileSystemSpi {
         self.requested_read_bytes.load(Ordering::Relaxed)
     }
 
+    /// Enables the guaranteed range contract for request-planning tests.
+    pub(crate) fn with_guaranteed_range(mut self) -> Self {
+        self.guaranteed_range = true;
+        self
+    }
+
+    /// Returns the actual length received at the provider boundary.
+    pub(crate) fn range_length(&self) -> Option<u64> {
+        *self.range_length.lock().unwrap()
+    }
+
     fn properties_snapshot(&self) -> ProviderProperties {
+        let mut capabilities = FileSystemCapabilities::new().with_guaranteed(FileSystemCapability::Read);
+        if self.guaranteed_range {
+            capabilities = capabilities.with_guaranteed(FileSystemCapability::RangeRead);
+        }
         ProviderProperties::new(
             FileSystemInfo::new(
                 FileSystemId::new("prefix-test").expect("fixture id should be valid"),
@@ -87,7 +107,7 @@ impl PrefixFileSystemSpi {
                 self.semantics,
             ),
             ProviderOperations::new().with(ProviderOperation::OpenReader),
-            FileSystemCapabilities::new().with_guaranteed(FileSystemCapability::Read),
+            capabilities,
             FileSystemLimits::unknown(),
             PathConstraints::either(),
             SymlinkPolicy::Reject,
@@ -111,8 +131,13 @@ impl FileSystemSpi for PrefixFileSystemSpi {
 
     fn open_reader(&self, request: OpenReaderRequest<'_>) -> FsResult<OpenedReader> {
         self.opened.fetch_add(1, Ordering::Relaxed);
+        let length = request.options().options().length();
+        *self.range_length.lock().unwrap() = length;
+        let maximum = usize::try_from(length.unwrap_or(u64::MAX))
+            .unwrap_or(usize::MAX)
+            .min(self.content.len());
         let reader: Box<dyn Input<Item = u8> + Send> = Box::new(PrefixReader {
-            inner: Cursor::new((*self.content).clone()),
+            inner: Cursor::new(self.content[..maximum].to_vec()),
             requested_read_bytes: Arc::clone(&self.requested_read_bytes),
         });
         Ok(OpenedReader::new(
