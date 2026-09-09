@@ -8,11 +8,11 @@
 //! Runtime-created detectors retain their repository while inspecting local
 //! staging.
 
-use qubit_mime::DEFAULT_COMMAND_TIMEOUT;
 use std::io::Write;
 
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::options::LocalTempFileOptions;
+use qubit_mime::DEFAULT_COMMAND_TIMEOUT;
 use qubit_mime::MimeConfig;
 use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeRepository;
