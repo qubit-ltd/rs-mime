@@ -100,7 +100,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qubit-mime = "0.14"
+qubit-mime = "0.15"
 ```
 
 ## Quick Start
@@ -894,7 +894,7 @@ Otherwise, content magic is evaluated and merged with filename candidates.
 
 ## Temporary File Lifecycle
 
-Version 0.14 uses `qubit-local-files` 0.4 for local staging. Detectors inspect
+Version 0.15 uses `qubit-local-files` 0.4 for local staging. Detectors inspect
 and clean temporary files without publishing them, so the explicit-base
 `persist_at` API is not part of the MIME detection workflow.
 
@@ -905,7 +905,7 @@ backend failure, or success. Simultaneous failures return
 and typed cleanup error. A sole operation failure keeps its original variant; a sole cleanup
 failure returns `MimeError::Io`.
 
-## Command backend result policy in 0.14
+## Command backend result policy in 0.15
 
 The `file` detector and `ffprobe` classifier interpret actual numeric exit status
 independently of a custom runner's successful-exit-code configuration. Exit zero
@@ -916,6 +916,13 @@ backend error. Execution, timeout, cancellation and I/O errors remain
 `MimeError::Command`. Captured output and input paths are omitted from new
 validation messages. Runner configuration accessors continue to reflect the
 supplied configuration.
+
+## Filesystem contract update
+
+Filesystem path detection retains the same API and results. Its prefix read
+uses a provider range only when `RangeRead` is Guaranteed; local files and
+providers with Conditional or Unsupported range support still use bounded
+sequential reads. Detector buffer limits are checked before opening a reader.
 
 ## Testing
 

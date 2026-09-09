@@ -92,7 +92,7 @@ glob、内容魔数规则和父类型关系。
 
 ```toml
 [dependencies]
-qubit-mime = "0.14"
+qubit-mime = "0.15"
 ```
 
 ## 快速开始
@@ -872,7 +872,7 @@ magic 优先级排序。可使用 `repository.max_test_bytes()` 获取当前仓�
 
 ## 临时文件生命周期
 
-0.14 版本使用 `qubit-local-files` 0.4 进行本地暂存。检测器只检查和清理临时文件，
+0.15 版本使用 `qubit-local-files` 0.4 进行本地暂存。检测器只检查和清理临时文件，
 不将它们发布为持久文件，因此 MIME 检测流程不需要显式基准的 `persist_at` API。
 
 文件型检测器与分类器共用临时文件生命周期：暂存成功后关闭句柄，再调用后端；
@@ -880,7 +880,7 @@ magic 优先级排序。可使用 `repository.max_test_bytes()` 获取当前仓�
 `MimeError::TemporaryCleanup { primary, cleanup }`，分别保留原始业务错误与类型化清理错误。
 只有主操作失败时仍返回原错误；只有清理失败时返回 `MimeError::Io`。
 
-## 0.14 的命令后端结果策略
+## 0.15 的命令后端结果策略
 
 `file` 检测器和 `ffprobe` 分类器按实际退出码作业务判断，自定义 runner 的成功退出码
 集合不会改变这一规则。退出码为 0 时，只解析完整、未截断且 UTF-8 有效的 stdout；
@@ -888,6 +888,12 @@ magic 优先级排序。可使用 `repository.max_test_bytes()` 获取当前仓�
 `ffprobe` 非零退出返回 `MediaStreamType::None`；`file` 非零退出或只有信号、没有
 数字退出码时返回后端错误。执行、超时、取消及 I/O 错误仍以 `MimeError::Command`
 传播。新增校验消息不含输出原文或输入路径，runner 配置访问器继续反映调用方配置。
+
+## 文件系统契约更新
+
+文件系统路径识别保持原有 API 和结果。只有 provider 的 `RangeRead` 为 Guaranteed
+时，前缀读取才自动使用范围请求；本地文件及范围能力为 Conditional 或 Unsupported 的
+provider 仍采用有界顺序读取。检测器会在打开 reader 前检查自身的缓冲区上限。
 
 ## 测试
 
