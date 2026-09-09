@@ -49,3 +49,7 @@ qubit-fs-local = { path = "../rs-fs-local", version = "0.5" }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
+
+[[bench]]
+name = "command_backends"
+harness = false
