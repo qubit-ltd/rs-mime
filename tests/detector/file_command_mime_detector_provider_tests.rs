@@ -17,10 +17,12 @@ use qubit_spi::ServiceProvider;
 #[cfg(unix)]
 use qubit_spi::error::ProviderFailureKind;
 
+#[cfg(unix)]
 use crate::support::PathEnvGuard;
 
 #[test]
 fn test_file_command_mime_detector_provider_metadata_and_availability() {
+    #[cfg(unix)]
     let _path_guard = PathEnvGuard::preserve();
     let provider = FileCommandMimeDetectorProvider;
     let descriptor = provider.descriptor();
