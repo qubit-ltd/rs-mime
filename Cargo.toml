@@ -38,7 +38,7 @@ thiserror = "2.0"
 qubit-io = "0.16"
 qubit-fs = { path = "../rs-fs", version = "0.5", default-features = false }
 qubit-codec-misc = "0.6"
-qubit-command = { version = "0.8", path = "../rs-command" }
+qubit-command = "0.8"
 qubit-config = { path = "../rs-config", version = "0.16" }
 qubit-datatype = { version = "0.12", default-features = false, features = ["converter"] }
 qubit-local-files = { path = "../rs-local-files", version = "0.4" }

@@ -249,6 +249,8 @@ dependencies = [
 [[package]]
 name = "qubit-command"
 version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f19045413dfd18ab403247b08e9a055ce00dd8c1e96a25e9a76dc5cf3651e7ce"
 dependencies = [
  "libc",
  "log",
