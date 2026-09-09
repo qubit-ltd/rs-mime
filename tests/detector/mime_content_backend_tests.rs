@@ -7,7 +7,6 @@
 // =============================================================================
 //! Content adapters preserve reader position and declared input bounds.
 
-use crate::support::DirectBackendDetector;
 use std::io::Cursor;
 
 use qubit_mime::ContentRequirement;
@@ -16,6 +15,8 @@ use qubit_mime::MimeDetectorAdapter;
 use qubit_mime::MimeDetectorBackend;
 use qubit_mime::MimeResult;
 use qubit_mime::RepositoryMimeDetector;
+
+use crate::support::DirectBackendDetector;
 
 /// The legacy adapter retains backend limits and detects from a nonzero reader
 /// position.
