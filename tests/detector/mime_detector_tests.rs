@@ -158,11 +158,32 @@ fn test_mime_detector_path_accepts_non_utf8_native_filename() {
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new().with_parent(&std::env::temp_dir()))
         .expect("temporary directory");
     let file = directory.path().join(OsString::from_vec(b"report\xff.pdf".to_vec()));
-    std::fs::write(&file, b"%PDF-1.7\n").expect("raw filename fixture");
+    let native_creation = std::fs::write(&file, b"%PDF-1.7\n");
 
     let filesystem = LocalFileSystems::host(LocalResourcePolicy::unbounded()).expect("host facade");
     let path = host_path_to_logical(&file).expect("lossless conversion");
     let detector = RepositoryMimeDetector::new().expect("repository detector");
+
+    #[cfg(target_os = "macos")]
+    if let Err(error) = native_creation {
+        const EILSEQ: i32 = 92;
+        assert_eq!(error.raw_os_error(), Some(EILSEQ), "unexpected native filename error");
+        assert_eq!(
+            detector
+                .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::PreferFilename)
+                .expect("filename classification does not require native creation"),
+            Some("application/pdf".to_owned()),
+        );
+        assert!(
+            detector
+                .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent)
+                .is_err()
+        );
+        directory.cleanup().expect("cleanup rejected filename fixture");
+        return;
+    }
+    #[cfg(not(target_os = "macos"))]
+    native_creation.expect("raw filename fixture");
 
     assert_eq!(
         Some("application/pdf".to_owned()),
