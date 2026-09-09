@@ -92,7 +92,7 @@ glob、内容魔数规则和父类型关系。
 
 ```toml
 [dependencies]
-qubit-mime = "0.12"
+qubit-mime = "0.14"
 ```
 
 ## 快速开始
@@ -876,6 +876,15 @@ magic 优先级排序。可使用 `repository.max_test_bytes()` 获取当前仓�
 暂存失败、后端失败或成功后均显式清理。主操作和清理同时失败时返回
 `MimeError::TemporaryCleanup { primary, cleanup }`，分别保留原始业务错误与类型化清理错误。
 只有主操作失败时仍返回原错误；只有清理失败时返回 `MimeError::Io`。
+
+## 0.14 的命令后端结果策略
+
+`file` 检测器和 `ffprobe` 分类器按实际退出码作业务判断，自定义 runner 的成功退出码
+集合不会改变这一规则。退出码为 0 时，只解析完整、未截断且 UTF-8 有效的 stdout；
+即使配置 `fail_on_output_truncation(false)`，残缺输出也不会用于业务判断。
+`ffprobe` 非零退出返回 `MediaStreamType::None`；`file` 非零退出或只有信号、没有
+数字退出码时返回后端错误。执行、超时、取消及 I/O 错误仍以 `MimeError::Command`
+传播。新增校验消息不含输出原文或输入路径，runner 配置访问器继续反映调用方配置。
 
 ## 测试
 

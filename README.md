@@ -100,7 +100,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qubit-mime = "0.12"
+qubit-mime = "0.14"
 ```
 
 ## Quick Start
@@ -900,6 +900,18 @@ backend failure, or success. Simultaneous failures return
 `MimeError::TemporaryCleanup { primary, cleanup }`, preserving the original operation error
 and typed cleanup error. A sole operation failure keeps its original variant; a sole cleanup
 failure returns `MimeError::Io`.
+
+## Command backend result policy in 0.14
+
+The `file` detector and `ffprobe` classifier interpret actual numeric exit status
+independently of a custom runner's successful-exit-code configuration. Exit zero
+is parsed only when stdout is complete, untruncated and valid UTF-8, even when
+`fail_on_output_truncation(false)` is selected. A nonzero `ffprobe` exit returns
+`MediaStreamType::None`; a nonzero `file` exit or a signal-only exit produces a
+backend error. Execution, timeout, cancellation and I/O errors remain
+`MimeError::Command`. Captured output and input paths are omitted from new
+validation messages. Runner configuration accessors continue to reflect the
+supplied configuration.
 
 ## Testing
 
