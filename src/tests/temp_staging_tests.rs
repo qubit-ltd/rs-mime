@@ -94,3 +94,49 @@ fn test_successful_inspection_reports_cleanup_failure() {
     fs::remove_dir(sandbox).expect("residual sandbox should be removed");
     assert!(matches!(error, MimeError::Io(_)));
 }
+
+/// Inspection errors survive cleanup, including a simultaneous sandbox failure.
+#[test]
+fn test_failed_inspection_retains_primary_and_cleanup_context() {
+    for block_cleanup in [false, true] {
+        let mut recorded = None;
+        let error = with_temp_file::<()>(
+            "InspectionFailure-",
+            |file| {
+                file.write_all(b"payload")?;
+                Ok(())
+            },
+            |path| {
+                assert_eq!(fs::read(path)?, b"payload");
+                recorded = Some(path.to_path_buf());
+                if block_cleanup {
+                    fs::write(path.parent().expect("sandbox path").join("retained"), b"test blocker")?;
+                }
+                Err(MimeError::InvalidClassifierInput {
+                    reason: "inspection failed".to_owned(),
+                })
+            },
+        )
+        .expect_err("inspection must fail");
+        let path = recorded.expect("inspection path");
+        let sandbox = path.parent().expect("sandbox path");
+        assert!(!path.exists(), "explicit cleanup must remove the payload");
+        if block_cleanup {
+            fs::remove_file(sandbox.join("retained")).expect("remove test blocker");
+            fs::remove_dir(sandbox).expect("remove residual sandbox");
+            match error {
+                MimeError::TemporaryCleanup { primary, cleanup } => {
+                    assert!(
+                        matches!(*primary, MimeError::InvalidClassifierInput { ref reason } if reason == "inspection failed")
+                    );
+                    assert_eq!(cleanup.operation(), LocalFileOperation::Cleanup);
+                    assert_eq!(cleanup.path(), Some(sandbox));
+                }
+                other => panic!("primary and cleanup errors must remain available: {other}"),
+            }
+        } else {
+            assert!(!sandbox.exists());
+            assert!(matches!(error, MimeError::InvalidClassifierInput { ref reason } if reason == "inspection failed"));
+        }
+    }
+}
