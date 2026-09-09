@@ -290,7 +290,7 @@ dependencies = [
 
 [[package]]
 name = "qubit-fs"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "fluent-uri",
  "qubit-budget",
@@ -300,7 +300,7 @@ dependencies = [
 
 [[package]]
 name = "qubit-fs-local"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "qubit-fs",
  "qubit-io",
@@ -342,7 +342,7 @@ dependencies = [
 
 [[package]]
 name = "qubit-mime"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "qubit-codec-misc",
  "qubit-command",
