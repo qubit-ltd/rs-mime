@@ -27,6 +27,9 @@ use crate::MimeDetectorCore;
 use crate::MimeError;
 use crate::MimeRepository;
 use crate::MimeResult;
+use crate::command_execution::MimeCommandExecutor;
+use crate::command_execution::SystemMimeCommandExecutor;
+use crate::command_execution::require_complete_stdout;
 
 /// MIME detector backed by `file --mime-type --brief`.
 #[derive(Debug, Clone)]
@@ -231,10 +234,12 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// `true` when the command can be executed.
     pub fn is_available() -> bool {
         let config = MimeConfig::default();
-        Self::default_command_runner(&config)
-            .disable_logging(true)
-            .run(Self::command_for_path(Path::new(".")))
-            .is_ok()
+        SystemMimeCommandExecutor
+            .run(
+                &Self::default_command_runner(&config).disable_logging(true),
+                Self::command_for_path(Path::new(".")),
+            )
+            .is_ok_and(|output| output.exit_code == Some(0) && require_complete_stdout(&output).is_ok())
     }
 
     /// Gets filename candidates from the repository.
@@ -264,10 +269,35 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// Returns [`MimeError::Command`](crate::MimeError::Command) when command
     /// execution fails.
     fn guess_from_file_command(&self, path: &Path) -> MimeResult<Vec<String>> {
-        let output = self.command_runner.run(Self::command_for_path(path))?;
-        let text = output.stdout_text().map_err(|source| {
-            MimeError::detector_backend(Self::COMMAND, format!("file stdout is not valid UTF-8: {source}"))
-        })?;
+        self.guess_with_executor(path, &SystemMimeCommandExecutor)
+    }
+
+    /// Runs file and validates the actual exit status and complete stdout.
+    ///
+    /// # Parameters
+    /// - `path`: Input path passed after the option separator.
+    /// - `executor`: Private execution boundary using this detector's runner.
+    ///
+    /// # Returns
+    /// Zero candidates for empty output, otherwise one trimmed MIME name.
+    ///
+    /// # Errors
+    /// Propagates execution failures; nonzero/signal exits, incomplete or
+    /// truncated stdout, and invalid UTF-8 produce DetectorBackend errors.
+    pub(crate) fn guess_with_executor(
+        &self,
+        path: &Path,
+        executor: &dyn MimeCommandExecutor,
+    ) -> MimeResult<Vec<String>> {
+        let output = executor.run(&self.command_runner, Self::command_for_path(path))?;
+        if output.exit_code != Some(0) {
+            return Err(MimeError::detector_backend(
+                Self::COMMAND,
+                format!("file exited with code {:?}", output.exit_code),
+            ));
+        }
+        let text =
+            require_complete_stdout(&output).map_err(|reason| MimeError::detector_backend(Self::COMMAND, reason))?;
         let result = text.trim();
         if result.is_empty() {
             Ok(Vec::new())

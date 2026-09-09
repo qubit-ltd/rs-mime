@@ -10,7 +10,6 @@
 use std::path::Path;
 
 use qubit_command::Command;
-use qubit_command::CommandErrorKind;
 use qubit_command::CommandRunner;
 
 use crate::FileBasedMediaStreamClassifier;
@@ -18,6 +17,9 @@ use crate::MediaStreamType;
 use crate::MimeConfig;
 use crate::MimeError;
 use crate::MimeResult;
+use crate::command_execution::MimeCommandExecutor;
+use crate::command_execution::SystemMimeCommandExecutor;
+use crate::command_execution::require_complete_stdout;
 
 /// Media stream classifier backed by the `ffprobe` command.
 #[derive(Debug, Clone)]
@@ -162,9 +164,12 @@ impl FfprobeCommandMediaStreamClassifier {
     /// `true` when `ffprobe -version` executes successfully.
     pub fn is_available() -> bool {
         let config = MimeConfig::default();
-        Self::default_command_runner(&config)
-            .run(Command::new(Self::COMMAND).arg("-version"))
-            .is_ok()
+        SystemMimeCommandExecutor
+            .run(
+                &Self::default_command_runner(&config),
+                Command::new(Self::COMMAND).arg("-version"),
+            )
+            .is_ok_and(|output| output.exit_code == Some(0) && require_complete_stdout(&output).is_ok())
     }
 
     /// Executes FFprobe for one local file.
@@ -180,20 +185,46 @@ impl FfprobeCommandMediaStreamClassifier {
     /// Returns [`MimeError::Command`](crate::MimeError::Command) when process
     /// execution itself fails.
     fn classify_with_ffprobe(&self, path: &Path) -> MimeResult<MediaStreamType> {
+        self.classify_with_executor(path, &SystemMimeCommandExecutor)
+    }
+
+    /// Executes a local probe and interprets its actual exit status and stdout.
+    ///
+    /// # Parameters
+    /// - `path`: Input path passed as a sensitive structured argument.
+    /// - `executor`: Private execution boundary using this classifier's runner.
+    ///
+    /// # Returns
+    /// Classification from complete UTF-8 stdout, or None for numeric nonzero
+    /// exit.
+    ///
+    /// # Errors
+    /// Propagates execution errors. Signal termination, truncated/incomplete
+    /// stdout and invalid UTF-8 produce ClassifierBackend errors without
+    /// captured data.
+    pub(crate) fn classify_with_executor(
+        &self,
+        path: &Path,
+        executor: &dyn MimeCommandExecutor,
+    ) -> MimeResult<MediaStreamType> {
         let mut command = Self::command_for_path(path);
         if let Some(working_directory) = &self.working_directory {
             command = command.working_directory(working_directory);
         }
-        match self.command_runner.run(command) {
-            Ok(output) => {
-                let stdout = output.stdout_text().map_err(|source| MimeError::ClassifierBackend {
+        let output = executor.run(&self.command_runner, command)?;
+        match output.exit_code {
+            Some(0) => {
+                let stdout = require_complete_stdout(&output).map_err(|reason| MimeError::ClassifierBackend {
                     backend: Self::COMMAND.to_owned(),
-                    reason: format!("ffprobe stdout is not valid UTF-8: {source}"),
+                    reason: reason.to_owned(),
                 })?;
                 Ok(Self::classify_stream_listing(stdout))
             }
-            Err(error) if error.kind() == CommandErrorKind::UnexpectedExit => Ok(MediaStreamType::None),
-            Err(error) => Err(error.into()),
+            Some(_) => Ok(MediaStreamType::None),
+            None => Err(MimeError::ClassifierBackend {
+                backend: Self::COMMAND.to_owned(),
+                reason: "ffprobe exited without a numeric exit code".to_owned(),
+            }),
         }
     }
 
