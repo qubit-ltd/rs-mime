@@ -396,7 +396,11 @@ fn test_file_command_contract_checks_truncation_and_actual_exit_status() {
             .expect("actual zero must parse"),
         Some("text/plain".to_owned())
     );
-    std::fs::write(&script, "#!/bin/sh\nprintf text/plain\nexit 7\n").expect("nonzero script written");
+    // Replace the inode instead of truncating a recently executed script.
+    let replacement = directory.path().join("file-next");
+    std::fs::write(&replacement, "#!/bin/sh\nprintf text/plain\nexit 7\n").expect("nonzero script written");
+    std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o755)).expect("replacement executable");
+    std::fs::rename(&replacement, &script).expect("nonzero script installed");
     let detector = FileCommandMimeDetector::default().with_command_runner(runner.success_exit_codes(&[0, 7]));
     assert!(matches!(
         detector.detect_file_by_content(std::path::Path::new("input")),
