@@ -36,12 +36,12 @@ roxmltree = "0.21"
 thiserror = "2.0"
 
 qubit-io = "0.16"
-qubit-fs = { path = "../rs-fs", version = "0.6", default-features = false }
+qubit-fs = { path = "../rs-fs", version = "0.7", default-features = false }
 qubit-codec-misc = "0.6"
 qubit-command = "0.8"
 qubit-config = { path = "../rs-config", version = "0.17" }
 qubit-datatype = { version = "0.12", default-features = false, features = ["converter"] }
-qubit-local-files = { path = "../rs-local-files", version = "0.4" }
+qubit-local-files = { path = "../rs-local-files", version = "0.5" }
 qubit-spi = { path = "../rs-spi", version = "0.12" }
 
 [dev-dependencies]
