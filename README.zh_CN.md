@@ -872,7 +872,7 @@ magic 优先级排序。可使用 `repository.max_test_bytes()` 获取当前仓�
 
 ## 临时文件生命周期
 
-0.15 版本依赖 `qubit-fs` 0.7，并使用 `qubit-local-files` 0.5 进行本地暂存。
+0.15 版本依赖 `qubit-fs` 0.7，并使用 `qubit-local-files` 0.3 进行本地暂存。
 检测器只检查和清理临时文件，
 不将它们发布为持久文件，因此 MIME 检测流程不需要显式基准的 `persist_at` API。
 

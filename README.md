@@ -894,7 +894,7 @@ Otherwise, content magic is evaluated and merged with filename candidates.
 
 ## Temporary File Lifecycle
 
-Version 0.15 depends on `qubit-fs` 0.7 and uses `qubit-local-files` 0.5 for
+Version 0.15 depends on `qubit-fs` 0.7 and uses `qubit-local-files` 0.3 for
 local staging. Detectors inspect
 and clean temporary files without publishing them, so the explicit-base
 `persist_at` API is not part of the MIME detection workflow.
