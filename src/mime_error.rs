@@ -17,6 +17,9 @@ use thiserror::Error;
 /// Error type for MIME repository parsing and I/O backed detection.
 #[derive(Debug, Error)]
 pub enum MimeError {
+    /// The detector requires the complete resource rather than a prefix.
+    #[error("complete content is required for MIME detection")]
+    CompleteContentRequired,
     /// A MIME name is not a valid `type/subtype` token.
     #[error("invalid MIME name '{name}': {reason}")]
     InvalidMimeName {

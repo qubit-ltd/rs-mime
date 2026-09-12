@@ -8,20 +8,68 @@
 //! Top-level MIME detector interface.
 
 use std::fmt::Debug;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
 
+use qubit_fs::AsyncFileSystem;
 use qubit_fs::FileSystem;
 use qubit_fs::Path as FsPath;
 use qubit_fs::read::ReadOptions;
 use qubit_io::std_io::ReadSeek;
 
+use crate::ContentRequirement;
 use crate::MimeDetectionPolicy;
 use crate::MimeError;
 use crate::MimeResult;
 
 /// Detects MIME types from filenames and content.
 pub trait MimeDetector: Debug + Send + Sync {
+    /// Declares whether detection can operate on a bounded prefix.
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(self.max_buffer_size())
+    }
+
+    /// Detects from an already bounded prefix.
+    fn detect_prefix(
+        &self,
+        content: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        if matches!(self.content_requirement(), ContentRequirement::Complete) {
+            return Err(MimeError::CompleteContentRequired);
+        }
+        self.detect(content, filename, policy)
+    }
+
+    /// Detects through an asynchronous filesystem facade.
+    fn detect_async_path<'a>(
+        &'a self,
+        file_system: &'a AsyncFileSystem,
+        path: &'a FsPath,
+        max_bytes: usize,
+        policy: MimeDetectionPolicy,
+    ) -> Pin<Box<dyn Future<Output = MimeResult<Option<String>>> + Send + 'a>> {
+        Box::pin(async move {
+            let limit = self.max_buffer_size();
+            if max_bytes > limit {
+                return Err(MimeError::BufferLimitExceeded {
+                    requested: max_bytes,
+                    limit,
+                });
+            }
+            if matches!(self.content_requirement(), ContentRequirement::Complete) {
+                return Err(MimeError::CompleteContentRequired);
+            }
+            let content = file_system
+                .read_prefix(path, ReadOptions::default(), max_bytes)
+                .await?
+                .into_bytes();
+            self.detect_prefix(&content, path.file_name(), policy)
+        })
+    }
     /// Detects a MIME type from a filename.
     ///
     /// # Parameters
@@ -134,9 +182,11 @@ pub trait MimeDetector: Debug + Send + Sync {
                 limit,
             });
         }
-        let content = file_system.read_prefix(path, ReadOptions::default(), max_bytes)?;
+        let content = file_system
+            .read_prefix(path, ReadOptions::default(), max_bytes)?
+            .into_bytes();
         let filename = path.file_name();
-        self.detect(&content, filename, policy)
+        self.detect_prefix(&content, filename, policy)
     }
 }
 

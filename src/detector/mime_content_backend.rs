@@ -63,7 +63,7 @@ where
     B: MimeDetectorBackend,
 {
     fn content_requirement(&self) -> ContentRequirement {
-        ContentRequirement::Prefix(self.backend.max_test_bytes())
+        self.backend.content_requirement()
     }
 
     fn detect_bytes(&self, bytes: &[u8]) -> MimeResult<Vec<String>> {

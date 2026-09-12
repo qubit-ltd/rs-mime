@@ -16,6 +16,8 @@ pub enum DetectionSource<'a> {
     None,
     /// In-memory content bytes are available.
     Content(&'a [u8]),
+    /// A bounded prefix whose completeness is unknown.
+    Prefix(&'a [u8]),
     /// A local file path is available.
     Path(&'a Path),
 }
