@@ -92,7 +92,7 @@ glob、内容魔数规则和父类型关系。
 
 ```toml
 [dependencies]
-qubit-mime = "0.15"
+qubit-mime = "0.16"
 ```
 
 ## 快速开始
@@ -872,7 +872,7 @@ magic 优先级排序。可使用 `repository.max_test_bytes()` 获取当前仓�
 
 ## 临时文件生命周期
 
-0.15 版本依赖 `qubit-fs` 0.7，并使用 `qubit-local-files` 0.3 进行本地暂存。
+0.16 版本依赖 `qubit-fs` 0.8，并使用 `qubit-local-files` 0.3 进行本地暂存。
 检测器只检查和清理临时文件，
 不将它们发布为持久文件，因此 MIME 检测流程不需要显式基准的 `persist_at` API。
 
@@ -881,7 +881,7 @@ magic 优先级排序。可使用 `repository.max_test_bytes()` 获取当前仓�
 `MimeError::TemporaryCleanup { primary, cleanup }`，分别保留原始业务错误与类型化清理错误。
 只有主操作失败时仍返回原错误；只有清理失败时返回 `MimeError::Io`。
 
-## 0.15 的命令后端结果策略
+## 0.16 的命令后端结果策略
 
 `file` 检测器和 `ffprobe` 分类器按实际退出码作业务判断，自定义 runner 的成功退出码
 集合不会改变这一规则。退出码为 0 时，只解析完整、未截断且 UTF-8 有效的 stdout；

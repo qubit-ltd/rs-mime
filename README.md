@@ -100,7 +100,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qubit-mime = "0.15"
+qubit-mime = "0.16"
 ```
 
 ## Quick Start
@@ -894,7 +894,7 @@ Otherwise, content magic is evaluated and merged with filename candidates.
 
 ## Temporary File Lifecycle
 
-Version 0.15 depends on `qubit-fs` 0.7 and uses `qubit-local-files` 0.3 for
+Version 0.16 depends on `qubit-fs` 0.8 and uses `qubit-local-files` 0.3 for
 local staging. Detectors inspect
 and clean temporary files without publishing them, so the explicit-base
 `persist_at` API is not part of the MIME detection workflow.
@@ -906,7 +906,7 @@ backend failure, or success. Simultaneous failures return
 and typed cleanup error. A sole operation failure keeps its original variant; a sole cleanup
 failure returns `MimeError::Io`.
 
-## Command backend result policy in 0.15
+## Command backend result policy in 0.16
 
 The `file` detector and `ffprobe` classifier interpret actual numeric exit status
 independently of a custom runner's successful-exit-code configuration. Exit zero
