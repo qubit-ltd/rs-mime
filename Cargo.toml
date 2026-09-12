@@ -36,7 +36,7 @@ roxmltree = "0.21"
 thiserror = "2.0"
 
 qubit-io = "0.16"
-qubit-fs = { path = "../rs-fs", version = "0.7", default-features = false }
+qubit-fs = { path = "../rs-fs", version = "0.7", default-features = false, features = ["async"] }
 qubit-codec-misc = "0.6"
 qubit-command = "0.8"
 qubit-config = "0.14"

@@ -203,6 +203,7 @@ impl MimeDetectorCore {
         };
         let stream_type = match source {
             DetectionSource::Content(content) => classifier.classify_content(content),
+            DetectionSource::Prefix(_) => return Ok(detected_mime_type.to_owned()),
             DetectionSource::Path(path) => classifier.classify_file(path),
             DetectionSource::None => return Ok(detected_mime_type.to_owned()),
         };

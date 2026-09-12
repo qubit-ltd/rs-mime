@@ -17,6 +17,7 @@ use qubit_io::std_io::ReadSeek;
 
 use super::stream_based_mime_detector::open_readable_file;
 use super::stream_based_mime_detector::read_prefix;
+use crate::ContentRequirement;
 use crate::DetectionSource;
 use crate::MimeDetectionPolicy;
 use crate::MimeDetector;
@@ -26,6 +27,9 @@ use crate::StreamBasedMimeDetector;
 
 /// Core implementation contract for MIME detectors.
 pub trait MimeDetectorBackend: Debug + Send + Sync {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(self.max_test_bytes())
+    }
     /// Gets the shared detector core.
     ///
     /// # Returns
@@ -103,7 +107,12 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
         path: &FsPath,
         max_bytes: usize,
     ) -> MimeResult<(Vec<String>, Option<Vec<u8>>)> {
-        let content = file_system.read_prefix(path, ReadOptions::default(), max_bytes)?;
+        if matches!(self.content_requirement(), ContentRequirement::Complete) {
+            return Err(crate::MimeError::CompleteContentRequired);
+        }
+        let content = file_system
+            .read_prefix(path, ReadOptions::default(), max_bytes)?
+            .into_bytes();
         let candidates = self.guess_from_content(&content)?;
         Ok((candidates, Some(content)))
     }
@@ -113,6 +122,9 @@ impl<T> MimeDetector for T
 where
     T: MimeDetectorBackend,
 {
+    fn content_requirement(&self) -> ContentRequirement {
+        MimeDetectorBackend::content_requirement(self)
+    }
     /// Gets the configured prefix-buffer limit from the shared detector core.
     fn max_buffer_size(&self) -> usize {
         self.core().max_buffer_size()
@@ -138,6 +150,18 @@ where
                     .refine_detected_mime_type(mime_type, None, DetectionSource::Content(content))
             })
             .transpose()
+    }
+
+    fn detect_prefix(
+        &self,
+        content: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        if matches!(self.content_requirement(), ContentRequirement::Complete) {
+            return Err(crate::MimeError::CompleteContentRequired);
+        }
+        self.detect(content, filename, policy)
     }
 
     /// Detects a MIME type from content bytes and an optional filename.
@@ -228,7 +252,7 @@ where
         let (from_content, content) = self.guess_from_provider_path(file_system, path, max_bytes)?;
         let source = content
             .as_deref()
-            .map_or(DetectionSource::None, DetectionSource::Content);
+            .map_or(DetectionSource::None, DetectionSource::Prefix);
         self.core()
             .select_result(&from_filename, &from_content, filename, policy, source)
     }
