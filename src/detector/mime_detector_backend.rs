@@ -27,6 +27,10 @@ use crate::StreamBasedMimeDetector;
 
 /// Core implementation contract for MIME detectors.
 pub trait MimeDetectorBackend: Debug + Send + Sync {
+    /// Describes how much content the backend needs for detection.
+    ///
+    /// # Returns
+    /// A prefix bounded by [`Self::max_test_bytes`] unless overridden.
     fn content_requirement(&self) -> ContentRequirement {
         ContentRequirement::Prefix(self.max_test_bytes())
     }
