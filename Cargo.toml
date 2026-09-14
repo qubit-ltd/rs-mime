@@ -31,9 +31,9 @@ name = "qubit_mime"
 doctest = true
 
 [dependencies]
-regex = "1.12"
+regex = "^1.13"
 roxmltree = "0.21"
-thiserror = "2.0"
+thiserror = "^2.0"
 
 qubit-io = "0.17"
 qubit-fs = { path = "../rs-fs", default-features = false, features = ["async"] }
