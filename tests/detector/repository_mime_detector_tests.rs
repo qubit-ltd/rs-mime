@@ -105,13 +105,21 @@ fn test_detect_bytes_merges_filename_and_content_results() {
     assert_eq!(
         Some("image/jpeg".to_owned()),
         detector
-            .detect_bytes(b"%PDF-1.7\n", Some("photo.jpg"), MimeDetectionPolicy::PreferFilename,)
+            .detect_bytes(
+                b"%PDF-1.7\n",
+                Some("photo.jpg"),
+                MimeDetectionPolicy::PreferFilename,
+            )
             .expect("combined detection should succeed")
     );
     assert_eq!(
         Some("application/pdf".to_owned()),
         detector
-            .detect_bytes(b"%PDF-1.7\n", Some("photo.jpg"), MimeDetectionPolicy::VerifyContent,)
+            .detect_bytes(
+                b"%PDF-1.7\n",
+                Some("photo.jpg"),
+                MimeDetectionPolicy::VerifyContent,
+            )
             .expect("combined detection should succeed")
     );
     assert_eq!(
@@ -128,7 +136,11 @@ fn test_detect_reader_does_not_consume_reader_position() {
     let mut reader = Cursor::new(b"%PDF-1.7\n".to_vec());
 
     let detected = detector
-        .detect_reader(&mut reader, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
+        .detect_reader(
+            &mut reader,
+            Some("document.pdf"),
+            MimeDetectionPolicy::VerifyContent,
+        )
         .expect("reader detection should succeed");
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
@@ -165,7 +177,11 @@ fn test_accessors_empty_repository_and_reader_errors() {
     assert_eq!(
         None,
         detector
-            .detect_bytes(b"", Some("unknown.bin"), MimeDetectionPolicy::PreferFilename)
+            .detect_bytes(
+                b"",
+                Some("unknown.bin"),
+                MimeDetectionPolicy::PreferFilename
+            )
             .expect("combined detection should succeed")
     );
 

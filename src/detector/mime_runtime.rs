@@ -56,7 +56,10 @@ impl MimeRuntime {
     /// Creates a runtime using built-in configuration and repository.
     pub fn builtin() -> MimeResult<Self> {
         let detector = RepositoryMimeDetector::new()?;
-        Ok(Self::new(MimeConfig::default(), detector.repository().clone()))
+        Ok(Self::new(
+            MimeConfig::default(),
+            detector.repository().clone(),
+        ))
     }
 
     /// Returns runtime context.
@@ -67,10 +70,12 @@ impl MimeRuntime {
     /// Creates the built-in repository detector.
     pub fn create_detector(&self) -> MimeResult<Arc<dyn MimeDetector>> {
         let repository = Box::leak(Box::new(self.context.repository().clone()));
-        Ok(Arc::new(RepositoryMimeDetector::with_repository_and_config(
-            repository,
-            self.context.config().clone(),
-        )))
+        Ok(Arc::new(
+            RepositoryMimeDetector::with_repository_and_config(
+                repository,
+                self.context.config().clone(),
+            ),
+        ))
     }
 }
 
@@ -79,4 +84,3 @@ impl Default for MimeRuntime {
         Self::builtin().expect("built-in MIME runtime should initialize")
     }
 }
-// qubit-style: allow multiple-public-types

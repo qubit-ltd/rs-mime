@@ -52,4 +52,3 @@ impl MagicIndex {
             .collect()
     }
 }
-// qubit-style: allow multiple-public-types

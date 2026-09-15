@@ -82,7 +82,10 @@ fn test_builtin_runtime_detects_content_without_registration() {
 #[test]
 fn test_runtime_creates_detectors_using_its_repository_and_configuration() {
     let runtime = MimeRuntime::builtin().expect("built-in repository must initialize");
-    assert_eq!(runtime.context().config().command_timeout(), DEFAULT_COMMAND_TIMEOUT);
+    assert_eq!(
+        runtime.context().config().command_timeout(),
+        DEFAULT_COMMAND_TIMEOUT
+    );
     assert!(
         !runtime
             .context()
@@ -90,7 +93,9 @@ fn test_runtime_creates_detectors_using_its_repository_and_configuration() {
             .detect_by_filename("report.pdf")
             .is_empty()
     );
-    let detector = runtime.create_detector().expect("runtime detector must initialize");
+    let detector = runtime
+        .create_detector()
+        .expect("runtime detector must initialize");
     drop(runtime);
     assert_eq!(
         detector

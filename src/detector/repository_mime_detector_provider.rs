@@ -27,8 +27,13 @@ pub struct RepositoryMimeDetectorProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
     #[inline]
-    fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
-        Ok(Arc::new(RepositoryMimeDetector::from_mime_config(config.clone())))
+    fn create_configured(
+        &self,
+        config: &MimeConfig,
+    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+        Ok(Arc::new(RepositoryMimeDetector::from_mime_config(
+            config.clone(),
+        )))
     }
 }
 

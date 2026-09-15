@@ -162,7 +162,21 @@ fn append_character_class(chars: &[char], start: usize, regex: &mut String) -> u
 fn append_escaped_regex_char(ch: char, regex: &mut String) {
     if matches!(
         ch,
-        '.' | '+' | '(' | ')' | '|' | '^' | '$' | '{' | '}' | '=' | '!' | '<' | '>' | ':' | '-' | '\\'
+        '.' | '+'
+            | '('
+            | ')'
+            | '|'
+            | '^'
+            | '$'
+            | '{'
+            | '}'
+            | '='
+            | '!'
+            | '<'
+            | '>'
+            | ':'
+            | '-'
+            | '\\'
     ) {
         regex.push('\\');
     }

@@ -70,4 +70,3 @@ where
         self.backend.guess_from_content(bytes)
     }
 }
-// qubit-style: allow multiple-public-types

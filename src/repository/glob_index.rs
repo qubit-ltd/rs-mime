@@ -62,7 +62,11 @@ impl GlobIndex {
                 candidates.extend(entries.iter().filter(|entry| entry.glob.matches(basename)));
             }
         }
-        candidates.extend(self.wildcards.iter().filter(|entry| entry.glob.matches(basename)));
+        candidates.extend(
+            self.wildcards
+                .iter()
+                .filter(|entry| entry.glob.matches(basename)),
+        );
         select_best(candidates)
     }
 }
@@ -121,4 +125,3 @@ fn is_literal_pattern(pattern: &str) -> bool {
         .chars()
         .any(|ch| matches!(ch, '*' | '?' | '{' | '}' | '!' | '[' | ']' | '^'))
 }
-// qubit-style: allow multiple-public-types

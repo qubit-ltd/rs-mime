@@ -30,7 +30,9 @@ fn test_failed_staging_cleans_resource_and_skips_inspection() {
         |_| panic!("failed staging must not invoke inspection"),
     )
     .expect_err("staging must fail");
-    assert!(matches!(error, MimeError::Io(ref error) if error.kind() == io::ErrorKind::UnexpectedEof));
+    assert!(
+        matches!(error, MimeError::Io(ref error) if error.kind() == io::ErrorKind::UnexpectedEof)
+    );
     let path = recorded.expect("staged path should be captured");
     assert!(!path.exists());
     assert!(!path.parent().expect("sandbox exists in path").exists());
@@ -55,12 +57,17 @@ fn test_failed_staging_retains_secondary_cleanup_error() {
     .expect_err("staging must fail");
     let path = recorded.expect("staged path should be captured");
     let sandbox = path.parent().expect("sandbox should exist in path");
-    assert!(!path.exists(), "explicit cleanup should have removed the payload");
+    assert!(
+        !path.exists(),
+        "explicit cleanup should have removed the payload"
+    );
     fs::remove_file(sandbox.join("retained")).expect("test blocker should be removed");
     fs::remove_dir(sandbox).expect("residual sandbox should be removed");
     match error {
         MimeError::TemporaryCleanup { primary, cleanup } => {
-            assert!(matches!(*primary, MimeError::InvalidClassifierInput { ref reason } if reason == "input failed"));
+            assert!(
+                matches!(*primary, MimeError::InvalidClassifierInput { ref reason } if reason == "input failed")
+            );
             assert_eq!(LocalFileOperation::Cleanup, cleanup.operation());
             assert_eq!(Some(sandbox), cleanup.path());
         }
@@ -110,7 +117,10 @@ fn test_failed_inspection_retains_primary_and_cleanup_context() {
                 assert_eq!(fs::read(path)?, b"payload");
                 recorded = Some(path.to_path_buf());
                 if block_cleanup {
-                    fs::write(path.parent().expect("sandbox path").join("retained"), b"test blocker")?;
+                    fs::write(
+                        path.parent().expect("sandbox path").join("retained"),
+                        b"test blocker",
+                    )?;
                 }
                 Err(MimeError::InvalidClassifierInput {
                     reason: "inspection failed".to_owned(),
@@ -136,7 +146,9 @@ fn test_failed_inspection_retains_primary_and_cleanup_context() {
             }
         } else {
             assert!(!sandbox.exists());
-            assert!(matches!(error, MimeError::InvalidClassifierInput { ref reason } if reason == "inspection failed"));
+            assert!(
+                matches!(error, MimeError::InvalidClassifierInput { ref reason } if reason == "inspection failed")
+            );
         }
     }
 }

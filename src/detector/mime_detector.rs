@@ -104,8 +104,12 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// # Returns
     /// `Ok(Some(_))` contains the selected MIME type; `Ok(None)` means neither
     /// filename nor content produced a candidate.
-    fn detect(&self, content: &[u8], filename: Option<&str>, policy: MimeDetectionPolicy)
-    -> MimeResult<Option<String>>;
+    fn detect(
+        &self,
+        content: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>>;
 
     /// Gets the largest prefix buffer this detector may allocate.
     ///
@@ -237,7 +241,8 @@ impl MimeDetector for Box<dyn MimeDetector> {
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        self.as_ref().detect_path(file_system, path, max_bytes, policy)
+        self.as_ref()
+            .detect_path(file_system, path, max_bytes, policy)
     }
 }
 
@@ -288,6 +293,7 @@ impl MimeDetector for Arc<dyn MimeDetector> {
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        self.as_ref().detect_path(file_system, path, max_bytes, policy)
+        self.as_ref()
+            .detect_path(file_system, path, max_bytes, policy)
     }
 }

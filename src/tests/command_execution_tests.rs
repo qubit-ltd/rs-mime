@@ -57,7 +57,9 @@ fn test_executor_preserves_actual_status_and_strict_failures() {
             &runner,
             Command::new("rustc").arg("--qubit-invalid-command-test-option"),
         )
-        .unwrap_or_else(|error| panic!("numeric nonzero status must reach business policy: {error}"));
+        .unwrap_or_else(|error| {
+            panic!("numeric nonzero status must reach business policy: {error}")
+        });
     assert!(output.exit_code.is_some_and(|code| code != 0));
     let error = match SystemMimeCommandExecutor.run(
         &runner.clone().max_output_bytes(1),
@@ -67,7 +69,10 @@ fn test_executor_preserves_actual_status_and_strict_failures() {
         Err(error) => error,
     };
     assert_eq!(error.kind(), CommandErrorKind::OutputTruncated);
-    let error = match SystemMimeCommandExecutor.run(&runner, Command::new("__qubit_mime_missing_test_executable__")) {
+    let error = match SystemMimeCommandExecutor.run(
+        &runner,
+        Command::new("__qubit_mime_missing_test_executable__"),
+    ) {
         Ok(_) => panic!("missing program must fail"),
         Err(error) => error,
     };

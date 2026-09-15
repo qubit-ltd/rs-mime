@@ -50,7 +50,11 @@ fn test_mime_detector_trait_supports_repository_detector() {
     assert_eq!(
         Some("application/pdf".to_owned()),
         detector
-            .detect(b"%PDF-1.7\n", Some("photo.jpg"), MimeDetectionPolicy::VerifyContent,)
+            .detect(
+                b"%PDF-1.7\n",
+                Some("photo.jpg"),
+                MimeDetectionPolicy::VerifyContent,
+            )
             .expect("combined detection should succeed")
     );
 }
@@ -62,7 +66,11 @@ fn test_mime_detector_trait_supports_reader_and_file_detection() {
     let mut reader = std::io::Cursor::new(b"%PDF-1.7\n".to_vec());
 
     let from_reader = detector
-        .detect_reader(&mut reader, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
+        .detect_reader(
+            &mut reader,
+            Some("document.pdf"),
+            MimeDetectionPolicy::VerifyContent,
+        )
         .expect("trait-object reader detection should succeed");
 
     let mut file = LocalFileSystem::host()
@@ -94,9 +102,10 @@ fn test_mime_detector_trait_supports_filesystem_path_detection() {
     std::io::Write::write_all(&mut file, b"%PDF-1.7\n").expect("temp file should be writable");
     // MIME probe only reads explicit files and performs no recursive
     // list/copy/delete work.
-    let filesystem =
-        LocalFileSystems::host(LocalResourcePolicy::unbounded()).expect("host filesystem facade should be created");
-    let path = host_path_to_logical(file.path()).expect("native temporary path should convert without lossy text");
+    let filesystem = LocalFileSystems::host(LocalResourcePolicy::unbounded())
+        .expect("host filesystem facade should be created");
+    let path = host_path_to_logical(file.path())
+        .expect("native temporary path should convert without lossy text");
 
     let detected = detector
         .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent)
@@ -114,7 +123,8 @@ fn test_mime_detector_path_reads_small_prefix_from_large_resource() {
     let mut content = vec![0_u8; 1024 * 1024];
     content[..9].copy_from_slice(b"%PDF-1.7\n");
     let spi = PrefixFileSystemSpi::hierarchical(content);
-    let filesystem = FileSystem::from_spi(spi.clone()).expect("prefix filesystem should be created");
+    let filesystem =
+        FileSystem::from_spi(spi.clone()).expect("prefix filesystem should be created");
     let detector = RepositoryMimeDetector::new().expect("default repository should load");
     let path = FsPath::parse("/large/report.bin").expect("test path should parse");
 
@@ -131,7 +141,8 @@ fn test_mime_detector_path_reads_small_prefix_from_large_resource() {
 #[test]
 fn test_mime_detector_path_uses_object_key_filename_without_stat() {
     let spi = PrefixFileSystemSpi::object_key(vec![0_u8; 1024 * 1024]);
-    let filesystem = FileSystem::from_spi(spi.clone()).expect("prefix filesystem should be created");
+    let filesystem =
+        FileSystem::from_spi(spi.clone()).expect("prefix filesystem should be created");
     let detector = RepositoryMimeDetector::new().expect("default repository should load");
     let path = FsPath::parse_literal("reports/photo.jpg").expect("object-key path should parse");
 
@@ -155,9 +166,13 @@ fn test_mime_detector_path_accepts_non_utf8_native_filename() {
 
     let native = LocalFileSystem::host().expect("native host");
     let mut directory = native
-        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new().with_parent(&std::env::temp_dir()))
+        .create_temp_directory_with_options(
+            &LocalTempDirectoryOptions::new().with_parent(&std::env::temp_dir()),
+        )
         .expect("temporary directory");
-    let file = directory.path().join(OsString::from_vec(b"report\xff.pdf".to_vec()));
+    let file = directory
+        .path()
+        .join(OsString::from_vec(b"report\xff.pdf".to_vec()));
     let native_creation = std::fs::write(&file, b"%PDF-1.7\n");
 
     let filesystem = LocalFileSystems::host(LocalResourcePolicy::unbounded()).expect("host facade");
@@ -167,7 +182,11 @@ fn test_mime_detector_path_accepts_non_utf8_native_filename() {
     #[cfg(target_os = "macos")]
     if let Err(error) = native_creation {
         const EILSEQ: i32 = 92;
-        assert_eq!(error.raw_os_error(), Some(EILSEQ), "unexpected native filename error");
+        assert_eq!(
+            error.raw_os_error(),
+            Some(EILSEQ),
+            "unexpected native filename error"
+        );
         assert_eq!(
             detector
                 .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::PreferFilename)
@@ -179,7 +198,9 @@ fn test_mime_detector_path_accepts_non_utf8_native_filename() {
                 .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent)
                 .is_err()
         );
-        directory.cleanup().expect("cleanup rejected filename fixture");
+        directory
+            .cleanup()
+            .expect("cleanup rejected filename fixture");
         return;
     }
     #[cfg(not(target_os = "macos"))]
@@ -197,8 +218,8 @@ fn test_mime_detector_path_accepts_non_utf8_native_filename() {
 #[test]
 fn test_mime_detector_path_rejects_requests_above_detector_buffer_limit() {
     let detector = StaticEntryPointMimeDetector;
-    let filesystem =
-        LocalFileSystems::host(LocalResourcePolicy::unbounded()).expect("host filesystem facade should be created");
+    let filesystem = LocalFileSystems::host(LocalResourcePolicy::unbounded())
+        .expect("host filesystem facade should be created");
     let path = FsPath::parse("/unused").expect("test path should be a valid filesystem path");
 
     let error = detector
@@ -207,7 +228,10 @@ fn test_mime_detector_path_rejects_requests_above_detector_buffer_limit() {
 
     assert!(matches!(
         error,
-        MimeError::BufferLimitExceeded { requested: 1, limit: 0 }
+        MimeError::BufferLimitExceeded {
+            requested: 1,
+            limit: 0
+        }
     ));
 }
 
@@ -216,16 +240,18 @@ fn test_mime_detector_backend_defaults_read_reader_and_file_prefix() {
     let detector = DirectBackendDetector::new();
     let mut reader = std::io::Cursor::new(b"hello world".to_vec());
 
-    let (reader_candidates, reader_content) = MimeDetectorBackend::guess_from_reader(&detector, &mut reader)
-        .expect("backend reader default should read content prefix");
+    let (reader_candidates, reader_content) =
+        MimeDetectorBackend::guess_from_reader(&detector, &mut reader)
+            .expect("backend reader default should read content prefix");
 
     let mut file = LocalFileSystem::host()
         .expect("Host filesystem should open")
         .create_temp_file_with_options(&LocalTempFileOptions::new())
         .expect("temp file should be created");
     std::io::Write::write_all(&mut file, b"hello world").expect("temp file should be writable");
-    let (file_candidates, file_content) = MimeDetectorBackend::guess_from_file(&detector, file.path())
-        .expect("backend file default should read content prefix");
+    let (file_candidates, file_content) =
+        MimeDetectorBackend::guess_from_file(&detector, file.path())
+            .expect("backend file default should read content prefix");
 
     assert_eq!(vec!["text/plain".to_owned()], reader_candidates);
     assert_eq!(b"hello".to_vec(), reader_content);
@@ -240,7 +266,11 @@ fn test_mime_detector_backend_prefer_filename_skips_reader_and_file_content() {
     let mut reader = std::io::Cursor::new(b"xxxxx".to_vec());
 
     let from_reader = detector
-        .detect_reader(&mut reader, Some("note.txt"), MimeDetectionPolicy::PreferFilename)
+        .detect_reader(
+            &mut reader,
+            Some("note.txt"),
+            MimeDetectionPolicy::PreferFilename,
+        )
         .expect("filename-preferred reader detection should succeed");
 
     let mut file = LocalFileSystem::host()
@@ -309,7 +339,8 @@ fn test_mime_detector_registry_creates_boxed_and_shared_named_detectors() {
             .detect_by_filename("image.png")
             .expect("filename detection should succeed")
     );
-    let unknown = ProviderSelection::named("unknown").expect("unknown selector should still be syntactically valid");
+    let unknown = ProviderSelection::named("unknown")
+        .expect("unknown selector should still be syntactically valid");
     assert!(registry.resolve_selected(&unknown).is_err());
 }
 
@@ -365,7 +396,11 @@ fn test_boxed_mime_detector_trait_object_delegates_all_entry_points() {
     assert_eq!(
         Some("application/x-static-detect".to_owned()),
         detector
-            .detect(b"data", Some("file.bin"), MimeDetectionPolicy::PreferFilename)
+            .detect(
+                b"data",
+                Some("file.bin"),
+                MimeDetectionPolicy::PreferFilename
+            )
             .expect("boxed detection delegation should succeed")
     );
     assert_eq!(
@@ -377,14 +412,18 @@ fn test_boxed_mime_detector_trait_object_delegates_all_entry_points() {
     assert_eq!(
         Some("application/x-static-file".to_owned()),
         detector
-            .detect_file(std::path::Path::new("Cargo.toml"), MimeDetectionPolicy::PreferFilename)
+            .detect_file(
+                std::path::Path::new("Cargo.toml"),
+                MimeDetectionPolicy::PreferFilename
+            )
             .expect("boxed file delegation should succeed")
     );
 }
 
 #[test]
 fn test_shared_mime_detector_trait_object_delegates_all_entry_points() {
-    let detector: std::sync::Arc<dyn MimeDetector> = std::sync::Arc::new(StaticEntryPointMimeDetector);
+    let detector: std::sync::Arc<dyn MimeDetector> =
+        std::sync::Arc::new(StaticEntryPointMimeDetector);
     let cloned = detector.clone();
     let mut reader = std::io::Cursor::new(b"data".to_vec());
 
@@ -404,7 +443,11 @@ fn test_shared_mime_detector_trait_object_delegates_all_entry_points() {
     assert_eq!(
         Some("application/x-static-detect".to_owned()),
         detector
-            .detect(b"data", Some("file.bin"), MimeDetectionPolicy::PreferFilename)
+            .detect(
+                b"data",
+                Some("file.bin"),
+                MimeDetectionPolicy::PreferFilename
+            )
             .expect("arc detection delegation should succeed")
     );
     assert_eq!(
@@ -416,7 +459,10 @@ fn test_shared_mime_detector_trait_object_delegates_all_entry_points() {
     assert_eq!(
         Some("application/x-static-file".to_owned()),
         detector
-            .detect_file(std::path::Path::new("Cargo.toml"), MimeDetectionPolicy::PreferFilename)
+            .detect_file(
+                std::path::Path::new("Cargo.toml"),
+                MimeDetectionPolicy::PreferFilename
+            )
             .expect("arc file delegation should succeed")
     );
 }
@@ -508,7 +554,8 @@ fn create_named_detector(
     selector: &str,
     config: &MimeConfig,
 ) -> std::sync::Arc<dyn MimeDetector> {
-    let selection = ProviderSelection::named(selector).expect("test provider selector should be valid");
+    let selection =
+        ProviderSelection::named(selector).expect("test provider selector should be valid");
     registry
         .resolve_selected(&selection)
         .expect("named detector provider should resolve")
@@ -574,7 +621,10 @@ fn test_detect_path_rejects_buffer_limit_before_provider_open() {
         .unwrap_err();
     assert!(matches!(
         error,
-        MimeError::BufferLimitExceeded { requested: 1, limit: 0 }
+        MimeError::BufferLimitExceeded {
+            requested: 1,
+            limit: 0
+        }
     ));
     assert_eq!(spi.opened(), 0);
     assert_eq!(spi.stat_calls(), 0);

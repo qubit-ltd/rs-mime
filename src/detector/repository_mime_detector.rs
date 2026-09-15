@@ -185,7 +185,11 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be
     /// opened or read.
-    pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+    pub fn detect_file(
+        &self,
+        file: &Path,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }
 

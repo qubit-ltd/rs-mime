@@ -34,7 +34,11 @@ impl MimeCommandExecutor for FakeExecutor {
     fn run(&self, _: &CommandRunner, command: Command) -> Result<MimeCommandOutput, CommandError> {
         let args: Vec<_> = command.arguments().collect();
         assert_eq!(args.last().copied(), Some(OsStr::new("-private-media")));
-        let separator = if command.program() == "file" { "--" } else { "-i" };
+        let separator = if command.program() == "file" {
+            "--"
+        } else {
+            "-i"
+        };
         assert_eq!(args[args.len() - 2], separator);
         Ok(MimeCommandOutput {
             exit_code: self.code,
@@ -82,7 +86,14 @@ fn test_command_backend_policy_matrix() {
             false,
         ),
         (None, b"video\n".as_slice(), false, true, None, false),
-        (Some(0), b"".as_slice(), false, true, Some(MediaStreamType::None), true),
+        (
+            Some(0),
+            b"".as_slice(),
+            false,
+            true,
+            Some(MediaStreamType::None),
+            true,
+        ),
     ] {
         let executor = FakeExecutor {
             code,
@@ -102,7 +113,12 @@ fn test_command_backend_policy_matrix() {
             let expected = if bytes.is_empty() {
                 Vec::new()
             } else {
-                vec![std::str::from_utf8(bytes).expect("valid UTF-8 case").trim().to_owned()]
+                vec![
+                    std::str::from_utf8(bytes)
+                        .expect("valid UTF-8 case")
+                        .trim()
+                        .to_owned(),
+                ]
             };
             assert_eq!(result.expect("complete success must parse"), expected);
         } else {
@@ -126,8 +142,13 @@ impl MimeCommandExecutor for FailingExecutor {
 #[test]
 fn test_command_backends_propagate_execution_failure() {
     let path = Path::new("-private-media");
-    let ffprobe = FfprobeCommandMediaStreamClassifier::new().classify_with_executor(path, &FailingExecutor);
-    assert!(matches!(ffprobe, Err(MimeError::Command(ref error)) if error.kind() == CommandErrorKind::SpawnFailed));
+    let ffprobe =
+        FfprobeCommandMediaStreamClassifier::new().classify_with_executor(path, &FailingExecutor);
+    assert!(
+        matches!(ffprobe, Err(MimeError::Command(ref error)) if error.kind() == CommandErrorKind::SpawnFailed)
+    );
     let file = FileCommandMimeDetector::default().guess_with_executor(path, &FailingExecutor);
-    assert!(matches!(file, Err(MimeError::Command(ref error)) if error.kind() == CommandErrorKind::SpawnFailed));
+    assert!(
+        matches!(file, Err(MimeError::Command(ref error)) if error.kind() == CommandErrorKind::SpawnFailed)
+    );
 }

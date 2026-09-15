@@ -19,7 +19,11 @@ pub(crate) struct SystemMimeCommandExecutor;
 impl MimeCommandExecutor for SystemMimeCommandExecutor {
     /// Preserves execution errors and restores output only for clean unexpected
     /// exits.
-    fn run(&self, runner: &CommandRunner, command: Command) -> Result<MimeCommandOutput, CommandError> {
+    fn run(
+        &self,
+        runner: &CommandRunner,
+        command: Command,
+    ) -> Result<MimeCommandOutput, CommandError> {
         match runner.run(command) {
             Ok(output) => Ok(MimeCommandOutput::from_output(output)),
             Err(error)
@@ -28,7 +32,9 @@ impl MimeCommandExecutor for SystemMimeCommandExecutor {
                     && error.output().is_some() =>
             {
                 Ok(MimeCommandOutput::from_output(
-                    error.into_output().expect("checked command output must exist"),
+                    error
+                        .into_output()
+                        .expect("checked command output must exist"),
                 ))
             }
             Err(error) => Err(error),
