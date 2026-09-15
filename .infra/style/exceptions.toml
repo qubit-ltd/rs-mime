@@ -1,0 +1,36 @@
+format = 1
+
+[[exceptions]]
+rule = "coverage-cfg"
+path = "src/classifier/media_stream_classifier_registry.rs"
+reason = "Use coverage-only lock recovery for poison branches that cannot be triggered reliably through public behavior."
+
+[[exceptions]]
+rule = "coverage-cfg"
+path = "src/detector/mime_detector_registry.rs"
+reason = "Use coverage-only lock recovery for poison branches that cannot be triggered reliably through public behavior."
+
+[[exceptions]]
+rule = "public-type-layout"
+path = "src/detector/mime_content_backend.rs"
+reason = "Content requirement, backend contract, and adapter form one cohesive public API."
+
+[[exceptions]]
+rule = "public-type-layout"
+path = "src/detector/mime_runtime.rs"
+reason = "Runtime context, decision engine, and runtime are a cohesive public lifecycle API."
+
+[[exceptions]]
+rule = "public-type-layout"
+path = "src/repository/glob_index.rs"
+reason = "Glob entry and index are implementation-facing repository index primitives."
+
+[[exceptions]]
+rule = "public-type-layout"
+path = "src/repository/magic_index.rs"
+reason = "Magic entry and index are implementation-facing repository index primitives."
+
+[[exceptions]]
+rule = "test-redirect"
+path = "tests/filesystem_prefix_regression_tests.rs"
+reason = "The regression suite imports its filesystem provider fixture using an explicit path module."
