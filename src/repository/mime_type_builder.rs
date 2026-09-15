@@ -55,7 +55,8 @@ impl MimeTypeBuilder {
     /// # Returns
     /// The updated builder.
     pub fn description(mut self, language: &str, description: &str) -> Self {
-        self.descriptions.insert(language.to_owned(), description.to_owned());
+        self.descriptions
+            .insert(language.to_owned(), description.to_owned());
         self
     }
 
@@ -134,7 +135,11 @@ fn validate_mime_name(name: &str) -> MimeResult<()> {
             reason: "expected type/subtype".to_owned(),
         });
     };
-    if kind.is_empty() || subtype.is_empty() || subtype.contains('/') || !name.bytes().all(is_mime_token_byte) {
+    if kind.is_empty()
+        || subtype.is_empty()
+        || subtype.contains('/')
+        || !name.bytes().all(is_mime_token_byte)
+    {
         return Err(MimeError::InvalidMimeName {
             name: name.to_owned(),
             reason: "contains an invalid MIME token".to_owned(),
@@ -168,6 +173,12 @@ fn deduplicate_globs(globs: Vec<MimeGlob>) -> Vec<MimeGlob> {
     let mut seen = std::collections::HashSet::new();
     globs
         .into_iter()
-        .filter(|glob| seen.insert((glob.pattern().to_owned(), glob.weight(), glob.case_sensitive())))
+        .filter(|glob| {
+            seen.insert((
+                glob.pattern().to_owned(),
+                glob.weight(),
+                glob.case_sensitive(),
+            ))
+        })
         .collect()
 }

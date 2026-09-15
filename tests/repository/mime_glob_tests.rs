@@ -14,7 +14,10 @@ use qubit_mime::MimeGlob;
 fn test_new_rejects_weight_above_maximum() {
     let error = MimeGlob::new("*.txt", 101, false).expect_err("weight 101 should fail");
 
-    assert!(matches!(error, MimeError::InvalidGlobWeight { weight: 101 }));
+    assert!(matches!(
+        error,
+        MimeError::InvalidGlobWeight { weight: 101 }
+    ));
 }
 
 #[test]

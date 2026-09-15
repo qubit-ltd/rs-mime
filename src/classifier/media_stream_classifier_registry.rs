@@ -54,7 +54,8 @@ impl MediaStreamClassifierRegistry {
             .expect("built-in FFprobe classifier provider should register");
         registry
             .set_default_selection(
-                ProviderSelection::named("ffprobe").expect("built-in FFprobe selection should be valid"),
+                ProviderSelection::named("ffprobe")
+                    .expect("built-in FFprobe selection should be valid"),
             )
             .expect("built-in selection should be accepted");
         registry
@@ -127,7 +128,10 @@ impl MediaStreamClassifierRegistry {
     ///
     /// * `selection` - Validated selection and creation fallback policy.
     #[inline]
-    pub fn set_default_selection(&self, selection: ProviderSelection) -> Result<(), RegistryMutationError> {
+    pub fn set_default_selection(
+        &self,
+        selection: ProviderSelection,
+    ) -> Result<(), RegistryMutationError> {
         self.providers.set_default_selection(selection)
     }
 
@@ -179,7 +183,9 @@ impl MediaStreamClassifierRegistry {
     /// Returns [`ProviderResolutionError`] when the stored default matches no
     /// registered provider.
     #[inline]
-    pub fn resolve(&self) -> Result<ResolvingServiceProvider<MediaStreamClassifierSpec>, ProviderResolutionError> {
+    pub fn resolve(
+        &self,
+    ) -> Result<ResolvingServiceProvider<MediaStreamClassifierSpec>, ProviderResolutionError> {
         self.providers.resolve()
     }
 

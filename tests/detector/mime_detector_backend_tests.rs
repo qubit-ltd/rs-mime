@@ -98,7 +98,11 @@ fn test_mime_detector_backend_blanket_impl_uses_policy_and_sources() {
     assert_eq!(
         Some("text/plain".to_owned()),
         backend
-            .detect(b"%PDF-1.7", Some("note.txt"), MimeDetectionPolicy::PreferFilename)
+            .detect(
+                b"%PDF-1.7",
+                Some("note.txt"),
+                MimeDetectionPolicy::PreferFilename
+            )
             .expect("combined detection should succeed"),
     );
     assert_eq!(
@@ -120,7 +124,11 @@ fn test_mime_detector_backend_propagates_content_errors() {
         .detect_by_content(b"content")
         .expect_err("content detection must retain backend failures");
     let combined_error = backend
-        .detect(b"content", Some("content.bin"), MimeDetectionPolicy::VerifyContent)
+        .detect(
+            b"content",
+            Some("content.bin"),
+            MimeDetectionPolicy::VerifyContent,
+        )
         .expect_err("combined detection must retain backend failures");
 
     assert!(matches!(

@@ -42,7 +42,9 @@ impl MimeDetector for StaticMimeDetector {
     }
 
     fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
-        Ok(filename.ends_with(".static").then(|| self.mime_type.to_owned()))
+        Ok(filename
+            .ends_with(".static")
+            .then(|| self.mime_type.to_owned()))
     }
 
     fn detect_by_content(&self, _content: &[u8]) -> MimeResult<Option<String>> {

@@ -14,7 +14,8 @@ pub const EXCEL_MIME_TYPES: &[&str] = &[
 ];
 
 /// Default Microsoft Excel MIME type.
-pub const EXCEL_MIME_TYPE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+pub const EXCEL_MIME_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /// Microsoft Word MIME types.
 pub const WORD_MIME_TYPES: &[&str] = &[
@@ -23,7 +24,8 @@ pub const WORD_MIME_TYPES: &[&str] = &[
 ];
 
 /// Default Microsoft Word MIME type.
-pub const WORD_MIME_TYPE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+pub const WORD_MIME_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 /// Microsoft PowerPoint MIME types.
 pub const POWERPOINT_MIME_TYPES: &[&str] = &[
@@ -33,7 +35,8 @@ pub const POWERPOINT_MIME_TYPES: &[&str] = &[
 ];
 
 /// Default Microsoft PowerPoint MIME type.
-pub const POWERPOINT_MIME_TYPE: &str = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+pub const POWERPOINT_MIME_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation";
 
 /// PDF MIME type.
 pub const PDF_MIME_TYPE: &str = "application/pdf";

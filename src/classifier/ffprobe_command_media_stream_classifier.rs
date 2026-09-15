@@ -169,7 +169,9 @@ impl FfprobeCommandMediaStreamClassifier {
                 &Self::default_command_runner(&config),
                 Command::new(Self::COMMAND).arg("-version"),
             )
-            .is_ok_and(|output| output.exit_code == Some(0) && require_complete_stdout(&output).is_ok())
+            .is_ok_and(|output| {
+                output.exit_code == Some(0) && require_complete_stdout(&output).is_ok()
+            })
     }
 
     /// Executes FFprobe for one local file.
@@ -214,9 +216,11 @@ impl FfprobeCommandMediaStreamClassifier {
         let output = executor.run(&self.command_runner, command)?;
         match output.exit_code {
             Some(0) => {
-                let stdout = require_complete_stdout(&output).map_err(|reason| MimeError::ClassifierBackend {
-                    backend: Self::COMMAND.to_owned(),
-                    reason: reason.to_owned(),
+                let stdout = require_complete_stdout(&output).map_err(|reason| {
+                    MimeError::ClassifierBackend {
+                        backend: Self::COMMAND.to_owned(),
+                        reason: reason.to_owned(),
+                    }
                 })?;
                 Ok(Self::classify_stream_listing(stdout))
             }
