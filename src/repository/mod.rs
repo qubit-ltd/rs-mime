@@ -8,6 +8,7 @@
 //! MIME repository data model and freedesktop rule parsing.
 
 pub(crate) mod glob_index;
+pub(crate) mod internal;
 pub(crate) mod magic_index;
 pub(crate) mod magic_value_type;
 pub(crate) mod mime_glob;
