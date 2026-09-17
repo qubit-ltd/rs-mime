@@ -24,8 +24,7 @@ use super::MimeDetectorSpec;
 use super::RepositoryMimeDetectorProvider;
 
 /// Process-wide MIME detector Registry initialized with built-in providers.
-static GLOBAL_MIME_DETECTOR_REGISTRY: LazyLock<MimeDetectorRegistry> =
-    LazyLock::new(MimeDetectorRegistry::builtin);
+static GLOBAL_MIME_DETECTOR_REGISTRY: LazyLock<MimeDetectorRegistry> = LazyLock::new(MimeDetectorRegistry::builtin);
 
 /// Shared runtime Registry for MIME detector provider definitions.
 ///
@@ -59,8 +58,7 @@ impl MimeDetectorRegistry {
             .expect("built-in file MIME provider should register");
         registry
             .set_default_selection(
-                ProviderSelection::named("repository")
-                    .expect("built-in repository selection should be valid"),
+                ProviderSelection::named("repository").expect("built-in repository selection should be valid"),
             )
             .expect("built-in selection should be accepted");
         registry
@@ -136,10 +134,7 @@ impl MimeDetectorRegistry {
     ///
     /// * `selection` - Validated selection and creation fallback policy.
     #[inline]
-    pub fn set_default_selection(
-        &self,
-        selection: ProviderSelection,
-    ) -> Result<(), RegistryMutationError> {
+    pub fn set_default_selection(&self, selection: ProviderSelection) -> Result<(), RegistryMutationError> {
         self.providers.set_default_selection(selection)
     }
 
@@ -192,9 +187,7 @@ impl MimeDetectorRegistry {
     /// Returns [`ProviderResolutionError`] when the stored default matches no
     /// registered provider.
     #[inline]
-    pub fn resolve(
-        &self,
-    ) -> Result<ResolvingServiceProvider<MimeDetectorSpec>, ProviderResolutionError> {
+    pub fn resolve(&self) -> Result<ResolvingServiceProvider<MimeDetectorSpec>, ProviderResolutionError> {
         self.providers.resolve()
     }
 

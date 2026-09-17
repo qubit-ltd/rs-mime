@@ -96,8 +96,7 @@ impl PrefixFileSystemSpi {
     }
 
     fn properties_snapshot(&self) -> ProviderProperties {
-        let mut capabilities =
-            FileSystemCapabilities::new().with_guaranteed(FileSystemCapability::Read);
+        let mut capabilities = FileSystemCapabilities::new().with_guaranteed(FileSystemCapability::Read);
         if self.guaranteed_range {
             capabilities = capabilities.with_guaranteed(FileSystemCapability::RangeRead);
         }
@@ -124,12 +123,10 @@ impl FileSystemSpi for PrefixFileSystemSpi {
 
     fn stat(&self, request: StatRequest<'_>) -> FsResult<StatResponse> {
         self.stats.fetch_add(1, Ordering::Relaxed);
-        Err(FsError::new(
-            FsErrorKind::Io,
-            FsOperation::Stat,
-            "stat is not supported by fixture",
+        Err(
+            FsError::new(FsErrorKind::Io, FsOperation::Stat, "stat is not supported by fixture")
+                .with_path(request.path().clone()),
         )
-        .with_path(request.path().clone()))
     }
 
     fn open_reader(&self, request: OpenReaderRequest<'_>) -> FsResult<OpenedReader> {
@@ -161,14 +158,8 @@ struct PrefixReader {
 impl Input for PrefixReader {
     type Item = u8;
 
-    unsafe fn read_unchecked(
-        &mut self,
-        output: &mut [u8],
-        index: usize,
-        count: usize,
-    ) -> std::io::Result<usize> {
-        self.requested_read_bytes
-            .fetch_add(count, Ordering::Relaxed);
+    unsafe fn read_unchecked(&mut self, output: &mut [u8], index: usize, count: usize) -> std::io::Result<usize> {
+        self.requested_read_bytes.fetch_add(count, Ordering::Relaxed);
         std::io::Read::read(&mut self.inner, &mut output[index..index + count])
     }
 }

@@ -18,7 +18,4 @@ use super::MediaStreamClassifierSpec;
 /// supplies both creation behavior and registration metadata.
 pub trait MediaStreamClassifierProvider: ProviderDefinition<MediaStreamClassifierSpec> {}
 
-impl<T> MediaStreamClassifierProvider for T where
-    T: ProviderDefinition<MediaStreamClassifierSpec> + ?Sized
-{
-}
+impl<T> MediaStreamClassifierProvider for T where T: ProviderDefinition<MediaStreamClassifierSpec> + ?Sized {}

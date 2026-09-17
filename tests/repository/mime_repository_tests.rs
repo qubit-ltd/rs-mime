@@ -36,8 +36,7 @@ fn test_from_xml_rejects_alias_collision() {
 
 #[test]
 fn test_from_xml_requires_shared_mime_info_namespace() {
-    let error = MimeRepository::from_xml("<mime-info><mime-type type=\"text/plain\"/></mime-info>")
-        .unwrap_err();
+    let error = MimeRepository::from_xml("<mime-info><mime-type type=\"text/plain\"/></mime-info>").unwrap_err();
     assert!(matches!(error, MimeError::InvalidXmlElement { .. }));
 }
 
@@ -104,10 +103,7 @@ fn create_repository() -> MimeRepository {
 }
 
 fn names(mime_types: Vec<&MimeType>) -> Vec<String> {
-    mime_types
-        .iter()
-        .map(|mime_type| mime_type.name().to_owned())
-        .collect()
+    mime_types.iter().map(|mime_type| mime_type.name().to_owned()).collect()
 }
 
 #[test]
@@ -221,14 +217,8 @@ fn test_detect_by_filename_handles_literal_other_and_case_sensitive_globs() {
         vec!["text/x-makefile"],
         names(repository.detect_by_filename("README.zh_CN.md"))
     );
-    assert_eq!(
-        vec!["text/x-c++src"],
-        names(repository.detect_by_filename("main.C"))
-    );
-    assert_eq!(
-        vec!["text/x-csrc"],
-        names(repository.detect_by_filename("main.c"))
-    );
+    assert_eq!(vec!["text/x-c++src"], names(repository.detect_by_filename("main.C")));
+    assert_eq!(vec!["text/x-csrc"], names(repository.detect_by_filename("main.c")));
 }
 
 #[test]
@@ -269,11 +259,7 @@ fn test_detect_uses_magic_when_verify_content_policy_is_enabled() {
 
     assert_eq!(
         vec!["image/png"],
-        names(repository.detect(
-            "document.pdf",
-            b"\x89PNG\r\n\x1a\n",
-            MimeDetectionPolicy::VerifyContent,
-        ))
+        names(repository.detect("document.pdf", b"\x89PNG\r\n\x1a\n", MimeDetectionPolicy::VerifyContent,))
     );
 }
 
@@ -291,11 +277,7 @@ fn test_detect_merges_filename_when_content_missing_or_common() {
     );
     assert_eq!(
         vec!["application/pdf"],
-        names(repository.detect(
-            "document.pdf",
-            b"%PDF-1.7\n",
-            MimeDetectionPolicy::VerifyContent,
-        ))
+        names(repository.detect("document.pdf", b"%PDF-1.7\n", MimeDetectionPolicy::VerifyContent,))
     );
 }
 
@@ -304,11 +286,7 @@ fn test_detect_returns_empty_when_no_rule_matches() {
     let repository = create_repository();
 
     assert!(repository.detect_by_filename("unknown.nope").is_empty());
-    assert!(
-        repository
-            .detect_by_content(b"nothing recognizable")
-            .is_empty()
-    );
+    assert!(repository.detect_by_content(b"nothing recognizable").is_empty());
     assert!(
         repository
             .detect(
@@ -338,10 +316,7 @@ fn test_from_xml_accepts_doctype_and_reports_structural_errors() {
     )
     .expect("DTD-stripped repository should parse");
 
-    assert_eq!(
-        Some("text/plain"),
-        repository.get("text/plain").map(MimeType::name)
-    );
+    assert_eq!(Some("text/plain"), repository.get("text/plain").map(MimeType::name));
     assert!(
         MimeRepository::from_xml("<bad/>")
             .expect_err("bad root should fail")
@@ -349,12 +324,10 @@ fn test_from_xml_accepts_doctype_and_reports_structural_errors() {
             .contains("root element")
     );
     assert!(
-        MimeRepository::from_xml(
-            "<mime-info><mime-type><comment>x</comment></mime-type></mime-info>",
-        )
-        .expect_err("missing type should fail")
-        .to_string()
-        .contains("attribute")
+        MimeRepository::from_xml("<mime-info><mime-type><comment>x</comment></mime-type></mime-info>",)
+            .expect_err("missing type should fail")
+            .to_string()
+            .contains("attribute")
     );
     assert!(
         MimeRepository::from_xml("<!DOCTYPE mime-info [ <mime-info>")

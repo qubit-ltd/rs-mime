@@ -62,11 +62,7 @@ impl GlobIndex {
                 candidates.extend(entries.iter().filter(|entry| entry.glob.matches(basename)));
             }
         }
-        candidates.extend(
-            self.wildcards
-                .iter()
-                .filter(|entry| entry.glob.matches(basename)),
-        );
+        candidates.extend(self.wildcards.iter().filter(|entry| entry.glob.matches(basename)));
         select_best(candidates)
     }
 }
