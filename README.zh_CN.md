@@ -9,6 +9,9 @@
 
 面向 Rust 服务的 MIME 类型检测工具，基于文件名 glob 规则和内容魔数规则。
 
+完整的上传、文件系统、Provider、排障和运行限制说明见[中文用户手册](doc/user_guide.zh_CN.md)。
+[English README](README.md) 与[英文用户手册](doc/user_guide.md)提供对应内容。
+
 ## 概述
 
 Qubit MIME 是一个基于仓库的 Rust MIME 类型检测库。它使用 freedesktop
@@ -17,8 +20,8 @@ glob、内容魔数规则和父类型关系。
 
 公开 API 分为三层：
 
-- `MimeDetector`：顶层检测器 trait。`detect_resource` 接受 provider-neutral
-  的 `qubit_fs::FileResource`；本地命令检测器仍可使用 local-path 入口。
+- `MimeDetector`：顶层检测器 trait。本地路径使用 `detect_file`，同步 facade
+  使用 `detect_path`，异步 facade 使用 `detect_async_path`。
 - `detector`：检测器实现和共享检测逻辑，包括
   `MimeDetectorCore`、`MimeDetectorBackend`、`RepositoryMimeDetector` 和
   `FileCommandMimeDetector`。
@@ -221,7 +224,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 选择与创建刻意分成两步。`resolve_selected(selection)` 和 `resolve()` 返回
 `ResolvingServiceProvider<MimeDetectorSpec>`，只会产生
 `ProviderResolutionError`。随后既可调用 `create_configured(&MimeConfig)`，也可
-调用 `create()`；创建失败由 `ProviderCreationError` 表达。
+调用 `create()`；创建失败由 `ProviderFailure<MimeError>` 表达。
 `MimeConfig::mime_detector_selection()` 仍可作为显式 selection 的一种可选来源，
 但 Registry 不依赖该字段。
 
@@ -230,7 +233,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `MimeDetectorRegistry::builtin()` 创建隔离 Registry，适合测试或局部应用。
 
 SPI 类型属于 `qubit-spi`，`qubit-mime` 不会重新导出。第三方 Provider 同时实现
-`ServiceProvider<MimeDetectorSpec>` 与 `ProviderDefinition<MimeDetectorSpec>`，并由
+`ServiceProvider<MimeDetectorSpec>` 与 `ProviderMetadata`，并由
 `descriptor()` 自己返回注册元数据。
 
 内置 detector selector：
@@ -281,11 +284,12 @@ use qubit_mime::{
     MimeDetector,
     MimeDetectorRegistry,
     MimeDetectorSpec,
+    MimeError,
     RepositoryMimeDetector,
 };
-use qubit_spi::error::ProviderCreationError;
+use qubit_spi::error::ProviderFailure;
 use qubit_spi::{
-    ProviderDefinition,
+    ProviderMetadata,
     ProviderDescriptor,
     ProviderId,
     ProviderSelection,
@@ -298,14 +302,14 @@ impl ServiceProvider<MimeDetectorSpec> for AppMimeDetectorProvider {
     fn create_configured(
         &self,
         config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderCreationError> {
+    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         Ok(Arc::new(RepositoryMimeDetector::from_mime_config(
             config.clone(),
         )))
     }
 }
 
-impl ProviderDefinition<MimeDetectorSpec> for AppMimeDetectorProvider {
+impl ProviderMetadata for AppMimeDetectorProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor::new(
             ProviderId::new("app-detector").expect("静态 ID 合法"),
@@ -360,9 +364,9 @@ Registry 选择和服务创建使用不同的 SPI 错误类型：
 
 | 错误 | 阶段 | 含义 |
 |------|------|------|
-| `RegistrationError` | 注册 | Provider ID 或 alias 与已有 Provider 冲突 |
+| `RegistryMutationError` | 注册 | Provider ID 或 alias 与已有 Provider 冲突 |
 | `ProviderResolutionError` | 解析 | 显式或默认 selection 没有得到候选 Provider |
-| `ProviderCreationError` | 创建 | 已选候选创建失败，或 fallback policy 停止遍历 |
+| `ProviderFailure<MimeError>` | 创建 | 已选候选创建失败，或 fallback policy 停止遍历 |
 
 ### 配置键
 
@@ -377,7 +381,7 @@ Registry 选择和服务创建使用不同的 SPI 错误类型：
 | 媒体流 classifier | `mime.media.stream.classifier.default` | `QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT` | `ffprobe` |
 | 媒体流临时 staging 上限 | `mime.media.stream.max.staging.size` | `QUBIT_MEDIA_STREAM_MAX_STAGING_SIZE` | `67108864` |
 | 命令输出上限 | `mime.command.output.max.bytes` | `QUBIT_MIME_COMMAND_OUTPUT_MAX_BYTES` | `65536` |
-| 启用精确检测 | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` |
+| 启用精确检测 | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `false` |
 | 精确检测扩展名 | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` |
 | 有歧义 MIME 映射 | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` |
 | detector 最大 buffer 大小 | `mime.max.buffer.size` | `QUBIT_MIME_MAX_BUFFER_SIZE` | `16777216` |
@@ -712,7 +716,7 @@ fn main() -> Result<(), MimeError> {
 | `MimeDetectorRegistry::register_shared(provider)` | 注册已经共享的自描述 Provider |
 | `MimeDetectorRegistry::resolve_selected(selection)` | 解析显式 selection，但不创建 detector |
 | `MimeDetectorRegistry::resolve()` | 不依赖 MIME config 解析 Registry 默认值 |
-| `ResolvingServiceProvider::create(config)` | 使用显式服务配置创建 detector |
+| `ResolvingServiceProvider::create_configured(&config)` | 使用显式服务配置创建 detector |
 | `ResolvingServiceProvider::create()` | 使用默认服务配置创建 detector |
 | `MimeDetectorRegistry::provider_ids()` | 按注册顺序列出 canonical Provider ID |
 | `MimeDetectorProvider` | 可插拔 detector 实现的工厂 trait |
@@ -872,7 +876,7 @@ magic 优先级排序。可使用 `repository.max_test_bytes()` 获取当前仓�
 
 ## 临时文件生命周期
 
-0.16 版本依赖 `qubit-fs` 0.2，并使用 `qubit-local-files` 0.3 进行本地暂存。
+0.16 版本依赖 `qubit-fs` 0.2，并使用 `qubit-local-files` 0.4 进行本地暂存。
 检测器只检查和清理临时文件，
 不将它们发布为持久文件，因此 MIME 检测流程不需要显式基准的 `persist_at` API。
 
