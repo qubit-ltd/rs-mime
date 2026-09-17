@@ -8,6 +8,7 @@
 //! Repository of MIME types parsed from shared MIME-info XML.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::OnceLock;
 
 use qubit_codec_misc::CIntegerLiteralCodec;
@@ -34,6 +35,7 @@ use crate::MimeTypeBuilder;
 const BUNDLED_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
 
 static BUNDLED_REPOSITORY: OnceLock<MimeRepository> = OnceLock::new();
+static BUNDLED_SHARED_REPOSITORY: OnceLock<Arc<MimeRepository>> = OnceLock::new();
 
 /// A repository of MIME types and detection indexes.
 #[derive(Debug, Clone)]
@@ -53,6 +55,11 @@ impl MimeRepository {
     pub fn bundled() -> &'static Self {
         BUNDLED_REPOSITORY
             .get_or_init(|| Self::from_xml(BUNDLED_DATABASE).expect("embedded freedesktop MIME database should parse"))
+    }
+
+    /// Returns a shared handle to the process-wide bundled repository.
+    pub(crate) fn bundled_shared() -> Arc<Self> {
+        Arc::clone(BUNDLED_SHARED_REPOSITORY.get_or_init(|| Arc::new(Self::bundled().clone())))
     }
 
     /// Parses a MIME repository from shared MIME-info XML.

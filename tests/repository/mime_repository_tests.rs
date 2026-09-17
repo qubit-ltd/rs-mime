@@ -123,6 +123,33 @@ fn test_literal_precedes_higher_weight_wildcard() {
 }
 
 #[test]
+fn test_filename_glob_index_falls_back_after_nonmatching_literal() {
+    let repository = MimeRepository::from_xml(
+        r#"
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-report-literal"><glob pattern="Report.TXT" case-sensitive="true"/></mime-type>
+  <mime-type type="text/plain"><glob pattern="*.txt"/></mime-type>
+  <mime-type type="application/x-makefile-literal"><glob pattern="MAKEFILE" case-sensitive="true"/></mime-type>
+  <mime-type type="text/x-generic"><glob pattern="*file"/></mime-type>
+  <mime-type type="application/x-ecole"><glob pattern="école"/></mime-type>
+  <mime-type type="application/x-e-accent"><glob pattern="*.éx"/></mime-type>
+</mime-info>"#,
+    )
+    .expect("glob fallback repository should parse");
+
+    assert_eq!(vec!["text/plain"], names(repository.detect_by_filename("report.txt")));
+    assert_eq!(vec!["text/x-generic"], names(repository.detect_by_filename("makefile")));
+    assert_eq!(
+        vec!["application/x-ecole"],
+        names(repository.detect_by_filename("ÉCOLE"))
+    );
+    assert_eq!(
+        vec!["application/x-e-accent"],
+        names(repository.detect_by_filename("note.ÉX"))
+    );
+}
+
+#[test]
 fn test_filename_candidates_are_deduplicated() {
     let repository = MimeRepository::from_xml(
         r#"

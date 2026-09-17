@@ -10,13 +10,7 @@
 use std::collections::HashSet;
 
 use super::MimeMagic;
-
-#[derive(Debug, Clone)]
-pub(crate) struct MagicEntry {
-    pub(crate) priority: u16,
-    pub(crate) mime_index: usize,
-    pub(crate) magic: MimeMagic,
-}
+use super::internal::magic_entry::MagicEntry;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MagicIndex {

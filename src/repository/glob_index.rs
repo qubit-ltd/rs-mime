@@ -11,16 +11,12 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use super::MimeGlob;
-
-#[derive(Debug, Clone)]
-pub(crate) struct GlobEntry {
-    pub(crate) glob: MimeGlob,
-    pub(crate) mime_index: usize,
-}
+use super::internal::glob_entry::GlobEntry;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct GlobIndex {
     literals: HashMap<String, Vec<GlobEntry>>,
+    unicode_literals: Vec<GlobEntry>,
     extensions: HashMap<String, Vec<GlobEntry>>,
     wildcards: Vec<GlobEntry>,
 }
@@ -32,11 +28,19 @@ impl GlobIndex {
             mime_index,
         };
         if let Some(extension) = extension_pattern(glob.pattern()) {
+            if !extension.is_ascii() {
+                self.wildcards.push(entry);
+                return;
+            }
             self.extensions
                 .entry(extension.to_ascii_lowercase())
                 .or_default()
                 .push(entry);
         } else if is_literal_pattern(glob.pattern()) {
+            if !glob.pattern().is_ascii() {
+                self.unicode_literals.push(entry);
+                return;
+            }
             self.literals
                 .entry(glob.pattern().to_ascii_lowercase())
                 .or_default()
@@ -52,15 +56,43 @@ impl GlobIndex {
             return Vec::new();
         }
         let folded = basename.to_ascii_lowercase();
-        if let Some(entries) = self.literals.get(&folded) {
-            let matching = entries.iter().filter(|entry| entry.glob.matches(basename));
-            return deduplicate_by_mime(matching.collect());
+        let mut literal_candidates = self
+            .literals
+            .get(&folded)
+            .into_iter()
+            .flat_map(|entries| entries.iter())
+            .filter(|entry| entry.glob.matches(basename))
+            .collect::<Vec<_>>();
+        literal_candidates.extend(
+            self.unicode_literals
+                .iter()
+                .filter(|entry| entry.glob.matches(basename)),
+        );
+        if !basename.is_ascii() {
+            literal_candidates.extend(
+                self.literals
+                    .values()
+                    .flat_map(|entries| entries.iter())
+                    .filter(|entry| entry.glob.matches(basename)),
+            );
+        }
+        let literal_candidates = deduplicate_by_mime(literal_candidates);
+        if !literal_candidates.is_empty() {
+            return literal_candidates;
         }
         let mut candidates = Vec::new();
         for extension in extension_suffixes(&folded) {
             if let Some(entries) = self.extensions.get(extension) {
                 candidates.extend(entries.iter().filter(|entry| entry.glob.matches(basename)));
             }
+        }
+        if !basename.is_ascii() {
+            candidates.extend(
+                self.extensions
+                    .values()
+                    .flat_map(|entries| entries.iter())
+                    .filter(|entry| entry.glob.matches(basename)),
+            );
         }
         candidates.extend(self.wildcards.iter().filter(|entry| entry.glob.matches(basename)));
         select_best(candidates)
