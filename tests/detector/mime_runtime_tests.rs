@@ -9,6 +9,7 @@
 //! staging.
 
 use std::io::Write;
+use std::sync::Arc;
 
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::options::LocalTempFileOptions;
@@ -30,7 +31,9 @@ fn test_runtime_detector_retains_custom_repository_for_local_file() {
     .expect("custom report repository");
     let config = MimeConfig::default();
     let expected_limit = config.max_buffer_size();
-    let runtime = MimeRuntime::new(config, repository);
+    let repository = Arc::new(repository);
+    let weak = Arc::downgrade(&repository);
+    let runtime = MimeRuntime::new(config, Arc::clone(&repository));
     assert_eq!(runtime.context().config().max_buffer_size(), expected_limit);
     assert!(
         runtime
@@ -43,6 +46,8 @@ fn test_runtime_detector_retains_custom_repository_for_local_file() {
     let detector = cloned.create_detector().expect("runtime detector");
     drop(cloned);
     drop(runtime);
+    drop(repository);
+    assert!(weak.upgrade().is_some(), "detector should retain its repository");
 
     let filesystem = LocalFileSystem::host().expect("local filesystem");
     let mut temporary = filesystem
@@ -59,6 +64,8 @@ fn test_runtime_detector_retains_custom_repository_for_local_file() {
         Some("application/x-qubit-report")
     );
     temporary.cleanup().expect("explicit report cleanup");
+    drop(detector);
+    assert!(weak.upgrade().is_none(), "repository should release with the detector");
 }
 
 /// Built-in and default runtime construction both produce a working detector.

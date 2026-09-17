@@ -6,9 +6,31 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+use std::future::Future;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
+use std::task::RawWaker;
+use std::task::RawWakerVTable;
+use std::task::Waker;
+
 use qubit_config::Config;
+use qubit_fs::AsyncFileSystem;
 use qubit_fs::FileSystem;
+use qubit_fs::FsResult;
 use qubit_fs::Path as FsPath;
+use qubit_fs::metadata::FileSystemCapabilities;
+use qubit_fs::metadata::FileSystemId;
+use qubit_fs::metadata::FileSystemInfo;
+use qubit_fs::metadata::FileSystemLimits;
+use qubit_fs::metadata::SymlinkPolicy;
+use qubit_fs::path::PathConstraints;
+use qubit_fs::path::PathSemantics;
+use qubit_fs::spi::AsyncFileSystemSpi;
+use qubit_fs::spi::ProviderProperties;
+use qubit_fs::spi::SpiFuture;
+use qubit_fs::spi::StatRequest;
+use qubit_fs::spi::StatResponse;
 use qubit_fs_local::LocalFileSystems;
 use qubit_fs_local::LocalResourcePolicy;
 use qubit_fs_local::host_path_to_logical;
@@ -16,6 +38,7 @@ use qubit_local_files::LocalFileSystem;
 use qubit_local_files::options::LocalTempFileOptions;
 use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
 use qubit_mime::CONFIG_MIME_DETECTOR_FALLBACKS;
+use qubit_mime::ContentRequirement;
 use qubit_mime::MimeConfig;
 use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeDetector;
@@ -30,6 +53,59 @@ use crate::support::DirectBackendDetector;
 use crate::support::PathEnvGuard;
 use crate::support::PrefixFileSystemSpi;
 use crate::support::StaticEntryPointMimeDetector;
+
+#[derive(Debug)]
+struct EmptyAsyncFileSystemSpi {
+    properties: ProviderProperties,
+}
+
+impl EmptyAsyncFileSystemSpi {
+    fn new() -> Self {
+        Self {
+            properties: ProviderProperties::new(
+                FileSystemInfo::new(
+                    FileSystemId::new("mime-detector-test").expect("valid fixture id"),
+                    "mime-detector-test",
+                    PathSemantics::Hierarchical,
+                ),
+                qubit_fs::spi::ProviderOperations::new(),
+                FileSystemCapabilities::new(),
+                FileSystemLimits::unknown(),
+                PathConstraints::absolute(),
+                SymlinkPolicy::Reject,
+            )
+            .expect("valid fixture properties"),
+        }
+    }
+}
+
+impl AsyncFileSystemSpi for EmptyAsyncFileSystemSpi {
+    fn properties(&self) -> ProviderProperties {
+        self.properties.clone()
+    }
+
+    fn stat<'a>(&'a self, _request: StatRequest<'a>) -> SpiFuture<'a, FsResult<StatResponse>> {
+        Box::pin(async { panic!("stat should not be called") })
+    }
+}
+
+fn run_ready<F: Future>(future: F) -> F::Output {
+    fn no_op(_: *const ()) {}
+    fn clone(_: *const ()) -> RawWaker {
+        RawWaker::new(std::ptr::null(), &VTABLE)
+    }
+    static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, no_op, no_op, no_op);
+
+    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+    let mut context = Context::from_waker(&waker);
+    let mut future = Box::pin(future);
+    loop {
+        match Pin::as_mut(&mut future).poll(&mut context) {
+            Poll::Ready(value) => return value,
+            Poll::Pending => std::thread::yield_now(),
+        }
+    }
+}
 
 #[test]
 fn test_mime_detector_trait_supports_repository_detector() {
@@ -349,6 +425,18 @@ fn test_mime_detector_registry_creates_from_explicit_registry() {
 fn test_boxed_mime_detector_trait_object_delegates_all_entry_points() {
     let detector: Box<dyn MimeDetector> = Box::new(StaticEntryPointMimeDetector);
     let mut reader = std::io::Cursor::new(b"data".to_vec());
+    let filesystem = AsyncFileSystem::from_spi(EmptyAsyncFileSystemSpi::new()).expect("async fixture");
+    let path = FsPath::parse("/unused").expect("valid fixture path");
+
+    assert_eq!(ContentRequirement::Complete, detector.content_requirement());
+    assert!(matches!(
+        detector.detect_prefix(b"data", None, MimeDetectionPolicy::PreferFilename),
+        Err(MimeError::CompleteContentRequired)
+    ));
+    assert!(matches!(
+        run_ready(detector.detect_async_path(&filesystem, &path, 0, MimeDetectionPolicy::PreferFilename,)),
+        Err(MimeError::CompleteContentRequired)
+    ));
 
     assert_eq!(
         Some("application/x-static-name".to_owned()),
@@ -387,6 +475,18 @@ fn test_shared_mime_detector_trait_object_delegates_all_entry_points() {
     let detector: std::sync::Arc<dyn MimeDetector> = std::sync::Arc::new(StaticEntryPointMimeDetector);
     let cloned = detector.clone();
     let mut reader = std::io::Cursor::new(b"data".to_vec());
+    let filesystem = AsyncFileSystem::from_spi(EmptyAsyncFileSystemSpi::new()).expect("async fixture");
+    let path = FsPath::parse("/unused").expect("valid fixture path");
+
+    assert_eq!(ContentRequirement::Complete, detector.content_requirement());
+    assert!(matches!(
+        detector.detect_prefix(b"data", None, MimeDetectionPolicy::PreferFilename),
+        Err(MimeError::CompleteContentRequired)
+    ));
+    assert!(matches!(
+        run_ready(detector.detect_async_path(&filesystem, &path, 0, MimeDetectionPolicy::PreferFilename,)),
+        Err(MimeError::CompleteContentRequired)
+    ));
 
     assert_eq!(
         Some("application/x-static-name".to_owned()),
