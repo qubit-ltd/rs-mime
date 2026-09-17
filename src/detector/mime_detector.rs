@@ -191,6 +191,29 @@ pub trait MimeDetector: Debug + Send + Sync {
 }
 
 impl MimeDetector for Box<dyn MimeDetector> {
+    fn content_requirement(&self) -> ContentRequirement {
+        self.as_ref().content_requirement()
+    }
+
+    fn detect_prefix(
+        &self,
+        content: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        self.as_ref().detect_prefix(content, filename, policy)
+    }
+
+    fn detect_async_path<'a>(
+        &'a self,
+        file_system: &'a AsyncFileSystem,
+        path: &'a FsPath,
+        max_bytes: usize,
+        policy: MimeDetectionPolicy,
+    ) -> Pin<Box<dyn Future<Output = MimeResult<Option<String>>> + Send + 'a>> {
+        self.as_ref().detect_async_path(file_system, path, max_bytes, policy)
+    }
+
     /// Delegates filename detection to the boxed detector.
     fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_filename(filename)
@@ -242,6 +265,29 @@ impl MimeDetector for Box<dyn MimeDetector> {
 }
 
 impl MimeDetector for Arc<dyn MimeDetector> {
+    fn content_requirement(&self) -> ContentRequirement {
+        self.as_ref().content_requirement()
+    }
+
+    fn detect_prefix(
+        &self,
+        content: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        self.as_ref().detect_prefix(content, filename, policy)
+    }
+
+    fn detect_async_path<'a>(
+        &'a self,
+        file_system: &'a AsyncFileSystem,
+        path: &'a FsPath,
+        max_bytes: usize,
+        policy: MimeDetectionPolicy,
+    ) -> Pin<Box<dyn Future<Output = MimeResult<Option<String>>> + Send + 'a>> {
+        self.as_ref().detect_async_path(file_system, path, max_bytes, policy)
+    }
+
     /// Delegates filename detection to the shared detector.
     fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_filename(filename)

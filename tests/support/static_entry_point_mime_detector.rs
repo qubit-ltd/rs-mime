@@ -9,6 +9,7 @@
 use std::path::Path;
 
 use qubit_io::std_io::ReadSeek;
+use qubit_mime::ContentRequirement;
 use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeDetector;
 use qubit_mime::MimeResult;
@@ -18,6 +19,10 @@ use qubit_mime::MimeResult;
 pub(crate) struct StaticEntryPointMimeDetector;
 
 impl MimeDetector for StaticEntryPointMimeDetector {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Complete
+    }
+
     fn max_buffer_size(&self) -> usize {
         0
     }

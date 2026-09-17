@@ -1,21 +1,22 @@
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
+//! Object-safe backend contract for MIME content providers.
+
 use std::fmt::Debug;
 use std::io::Read;
 
 use qubit_io::std_io::ReadSeek;
 
-use crate::MimeDetectorBackend;
+pub use super::content_requirement::ContentRequirement;
+pub use super::mime_detector_adapter::MimeDetectorAdapter;
 use crate::MimeResult;
 
-/// Amount of input a content backend must inspect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContentRequirement {
-    /// Inspect only the leading prefix of the stream.
-    Prefix(usize),
-    /// Inspect the complete stream.
-    Complete,
-}
-
-/// Object-safe backend contract for MIME content providers.
+/// Object-safe contract for content-based MIME providers.
 pub trait MimeContentBackend: Debug + Send + Sync {
     /// Declares the amount of input required by this backend.
     fn content_requirement(&self) -> ContentRequirement;
@@ -37,36 +38,5 @@ pub trait MimeContentBackend: Debug + Send + Sync {
         }
         reader.seek(std::io::SeekFrom::Start(position))?;
         self.detect_bytes(&bytes)
-    }
-}
-
-/// Adapter exposing an existing detector backend through the content contract.
-#[derive(Debug)]
-pub struct MimeDetectorAdapter<B> {
-    backend: B,
-}
-
-impl<B> MimeDetectorAdapter<B> {
-    /// Wraps a detector backend.
-    pub fn new(backend: B) -> Self {
-        Self { backend }
-    }
-
-    /// Returns the wrapped backend.
-    pub fn backend(&self) -> &B {
-        &self.backend
-    }
-}
-
-impl<B> MimeContentBackend for MimeDetectorAdapter<B>
-where
-    B: MimeDetectorBackend,
-{
-    fn content_requirement(&self) -> ContentRequirement {
-        self.backend.content_requirement()
-    }
-
-    fn detect_bytes(&self, bytes: &[u8]) -> MimeResult<Vec<String>> {
-        self.backend.guess_from_content(bytes)
     }
 }

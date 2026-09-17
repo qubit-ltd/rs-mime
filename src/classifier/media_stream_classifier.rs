@@ -65,6 +65,11 @@ pub trait MediaStreamClassifier: Debug + Send + Sync {
 }
 
 impl MediaStreamClassifier for Box<dyn MediaStreamClassifier> {
+    /// Delegates content classification to the boxed classifier.
+    fn classify_content(&self, content: &[u8]) -> MimeResult<MediaStreamType> {
+        self.as_ref().classify_content(content)
+    }
+
     /// Delegates file classification to the boxed classifier.
     fn classify_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
         self.as_ref().classify_file(file)
@@ -77,6 +82,11 @@ impl MediaStreamClassifier for Box<dyn MediaStreamClassifier> {
 }
 
 impl MediaStreamClassifier for Arc<dyn MediaStreamClassifier> {
+    /// Delegates content classification to the shared classifier.
+    fn classify_content(&self, content: &[u8]) -> MimeResult<MediaStreamType> {
+        self.as_ref().classify_content(content)
+    }
+
     /// Delegates file classification to the shared classifier.
     fn classify_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
         self.as_ref().classify_file(file)

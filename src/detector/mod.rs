@@ -7,6 +7,7 @@
 // =============================================================================
 //! MIME detector implementations.
 
+pub mod content_requirement;
 pub(crate) mod detection_source;
 pub(crate) mod file_based_mime_detector;
 pub(crate) mod file_command_mime_detector;
@@ -15,33 +16,35 @@ pub(crate) mod file_command_mime_detector_provider;
 pub mod mime_content_backend;
 pub(crate) mod mime_detection_policy;
 pub(crate) mod mime_detector;
+pub mod mime_detector_adapter;
 pub(crate) mod mime_detector_backend;
+pub(crate) mod mime_detector_context;
 pub(crate) mod mime_detector_core;
 pub(crate) mod mime_detector_provider;
 pub(crate) mod mime_detector_registry;
 pub(crate) mod mime_detector_spec;
 /// Runtime context and detector lifecycle helpers.
 pub mod mime_runtime;
+pub(crate) mod owned_repository_mime_detector;
 pub(crate) mod repository_mime_detector;
 pub(crate) mod repository_mime_detector_provider;
 pub(crate) mod stream_based_mime_detector;
 
+pub use content_requirement::ContentRequirement;
 pub use detection_source::DetectionSource;
 pub use file_based_mime_detector::FileBasedMimeDetector;
 pub use file_command_mime_detector::FileCommandMimeDetector;
 pub use file_command_mime_detector_provider::FileCommandMimeDetectorProvider;
-pub use mime_content_backend::ContentRequirement;
 pub use mime_content_backend::MimeContentBackend;
 pub use mime_content_backend::MimeDetectorAdapter;
 pub use mime_detection_policy::MimeDetectionPolicy;
 pub use mime_detector::MimeDetector;
 pub use mime_detector_backend::MimeDetectorBackend;
+pub use mime_detector_context::MimeDetectorContext;
 pub use mime_detector_core::MimeDetectorCore;
 pub use mime_detector_provider::MimeDetectorProvider;
 pub use mime_detector_registry::MimeDetectorRegistry;
 pub use mime_detector_spec::MimeDetectorSpec;
-pub use mime_runtime::MimeDecisionEngine;
-pub use mime_runtime::MimeDetectorContext;
 pub use mime_runtime::MimeRuntime;
 pub use repository_mime_detector::RepositoryMimeDetector;
 pub use repository_mime_detector_provider::RepositoryMimeDetectorProvider;
