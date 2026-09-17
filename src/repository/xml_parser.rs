@@ -9,6 +9,7 @@
 
 use std::borrow::Cow;
 
+/// Removes an optional XML doctype declaration before parsing MIME data.
 pub(crate) fn strip_doctype(xml: &str) -> Cow<'_, str> {
     let Some(start) = xml.find("<!DOCTYPE") else {
         return Cow::Borrowed(xml);

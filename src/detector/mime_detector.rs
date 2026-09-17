@@ -191,10 +191,12 @@ pub trait MimeDetector: Debug + Send + Sync {
 }
 
 impl MimeDetector for Box<dyn MimeDetector> {
+    /// Delegates content-requirement discovery to the boxed detector.
     fn content_requirement(&self) -> ContentRequirement {
         self.as_ref().content_requirement()
     }
 
+    /// Delegates bounded-prefix detection to the boxed detector.
     fn detect_prefix(
         &self,
         content: &[u8],
@@ -204,6 +206,7 @@ impl MimeDetector for Box<dyn MimeDetector> {
         self.as_ref().detect_prefix(content, filename, policy)
     }
 
+    /// Delegates asynchronous path detection to the boxed detector.
     fn detect_async_path<'a>(
         &'a self,
         file_system: &'a AsyncFileSystem,
@@ -234,6 +237,7 @@ impl MimeDetector for Box<dyn MimeDetector> {
         self.as_ref().detect(content, filename, policy)
     }
 
+    /// Delegates the configured buffer limit to the boxed detector.
     fn max_buffer_size(&self) -> usize {
         self.as_ref().max_buffer_size()
     }
@@ -253,6 +257,7 @@ impl MimeDetector for Box<dyn MimeDetector> {
         self.as_ref().detect_file(file, policy)
     }
 
+    /// Delegates path detection to the boxed detector.
     fn detect_path(
         &self,
         file_system: &FileSystem,
@@ -265,10 +270,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
 }
 
 impl MimeDetector for Arc<dyn MimeDetector> {
+    /// Delegates content-requirement discovery to the shared detector.
     fn content_requirement(&self) -> ContentRequirement {
         self.as_ref().content_requirement()
     }
 
+    /// Delegates bounded-prefix detection to the shared detector.
     fn detect_prefix(
         &self,
         content: &[u8],
@@ -278,6 +285,7 @@ impl MimeDetector for Arc<dyn MimeDetector> {
         self.as_ref().detect_prefix(content, filename, policy)
     }
 
+    /// Delegates asynchronous path detection to the shared detector.
     fn detect_async_path<'a>(
         &'a self,
         file_system: &'a AsyncFileSystem,
@@ -308,6 +316,7 @@ impl MimeDetector for Arc<dyn MimeDetector> {
         self.as_ref().detect(content, filename, policy)
     }
 
+    /// Delegates the configured buffer limit to the shared detector.
     fn max_buffer_size(&self) -> usize {
         self.as_ref().max_buffer_size()
     }
@@ -327,6 +336,7 @@ impl MimeDetector for Arc<dyn MimeDetector> {
         self.as_ref().detect_file(file, policy)
     }
 
+    /// Delegates path detection to the shared detector.
     fn detect_path(
         &self,
         file_system: &FileSystem,

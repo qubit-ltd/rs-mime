@@ -8,6 +8,13 @@
 //! Media stream classification result.
 
 /// Audio/video stream classification for a media payload.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MediaStreamType;
+/// assert_eq!(MediaStreamType::AudioOnly, MediaStreamType::AudioOnly);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MediaStreamType {
     /// The payload contains neither audio nor video streams.

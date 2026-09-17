@@ -22,6 +22,14 @@ use crate::command_execution::SystemMimeCommandExecutor;
 use crate::command_execution::require_complete_stdout;
 
 /// Media stream classifier backed by the `ffprobe` command.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::FfprobeCommandMediaStreamClassifier;
+/// let classifier = FfprobeCommandMediaStreamClassifier::new();
+/// assert!(classifier.max_staging_size() > 0);
+/// ```
 #[derive(Debug, Clone)]
 pub struct FfprobeCommandMediaStreamClassifier {
     /// The working directory used to execute FFprobe.

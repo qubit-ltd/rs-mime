@@ -32,6 +32,15 @@ use crate::command_execution::SystemMimeCommandExecutor;
 use crate::command_execution::require_complete_stdout;
 
 /// MIME detector backed by `file --mime-type --brief`.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::{FileCommandMimeDetector, MimeDetector};
+/// let detector = FileCommandMimeDetector::new();
+/// let _ = detector.detect_by_filename("document.pdf")?;
+/// # Ok::<(), qubit_mime::MimeError>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct FileCommandMimeDetector<'a> {
     /// The shared detector core.

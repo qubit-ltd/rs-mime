@@ -16,6 +16,15 @@ use crate::MimeResult;
 use crate::MimeType;
 
 /// Builder for [`MimeType`].
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeTypeBuilder;
+/// let mime = MimeTypeBuilder::new("application/x-example").build()?;
+/// assert_eq!(mime.name(), "application/x-example");
+/// # Ok::<(), qubit_mime::MimeError>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct MimeTypeBuilder {
     name: String,
@@ -127,6 +136,7 @@ impl MimeTypeBuilder {
     }
 }
 
+/// Validates a MIME type name against the token grammar.
 fn validate_mime_name(name: &str) -> MimeResult<()> {
     let Some((kind, subtype)) = name.split_once('/') else {
         return Err(MimeError::InvalidMimeName {
@@ -143,6 +153,7 @@ fn validate_mime_name(name: &str) -> MimeResult<()> {
     Ok(())
 }
 
+/// Returns whether a byte is valid inside a MIME token.
 fn is_mime_token_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric()
         || matches!(
@@ -151,6 +162,7 @@ fn is_mime_token_byte(byte: u8) -> bool {
         )
 }
 
+/// Validates and deduplicates canonical names and aliases.
 fn validate_and_deduplicate_names(names: Vec<String>) -> MimeResult<Vec<String>> {
     let mut seen = std::collections::HashSet::new();
     let mut result = Vec::new();
@@ -164,6 +176,7 @@ fn validate_and_deduplicate_names(names: Vec<String>) -> MimeResult<Vec<String>>
     Ok(result)
 }
 
+/// Removes duplicate glob patterns while preserving their first occurrence.
 fn deduplicate_globs(globs: Vec<MimeGlob>) -> Vec<MimeGlob> {
     let mut seen = std::collections::HashSet::new();
     globs

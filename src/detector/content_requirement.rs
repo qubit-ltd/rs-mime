@@ -8,6 +8,13 @@
 //! Input size requirements for MIME content backends.
 
 /// Amount of input a content backend must inspect.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::ContentRequirement;
+/// assert_eq!(ContentRequirement::Prefix(512), ContentRequirement::Prefix(512));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentRequirement {
     /// Inspect only the leading prefix of the stream.

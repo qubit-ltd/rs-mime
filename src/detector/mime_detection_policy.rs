@@ -8,6 +8,13 @@
 //! Policy for resolving combined MIME detection from filename and content.
 
 /// Policy for resolving combined MIME detection from filename and content.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeDetectionPolicy;
+/// assert_eq!(MimeDetectionPolicy::default(), MimeDetectionPolicy::Freedesktop);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MimeDetectionPolicy {
     /// Follow freedesktop shared-mime-info precedence rules.

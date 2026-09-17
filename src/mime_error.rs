@@ -15,6 +15,14 @@ use roxmltree::Error as XmlError;
 use thiserror::Error;
 
 /// Error type for MIME repository parsing and I/O backed detection.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeError;
+/// let error = MimeError::EmptyMagicMatchers;
+/// assert!(error.to_string().contains("magic"));
+/// ```
 #[derive(Debug, Error)]
 pub enum MimeError {
     /// The detector requires the complete resource rather than a prefix.

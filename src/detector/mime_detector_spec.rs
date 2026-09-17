@@ -24,10 +24,13 @@ use crate::MimeError;
 pub struct MimeDetectorSpec;
 
 impl ServiceSpec for MimeDetectorSpec {
+    /// Configuration accepted by this service specification.
     type Config = MimeConfig;
+    /// Error returned while creating this service.
     type Error = MimeError;
 }
 
 impl SyncServiceSpec for MimeDetectorSpec {
+    /// Shared detector service produced by providers.
     type Output = Arc<dyn MimeDetector>;
 }

@@ -11,6 +11,8 @@ use super::super::MimeGlob;
 
 #[derive(Debug, Clone)]
 pub(crate) struct GlobEntry {
+    /// Parsed glob rule.
     pub(crate) glob: MimeGlob,
+    /// Index of the MIME type owning the rule.
     pub(crate) mime_index: usize,
 }

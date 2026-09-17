@@ -16,6 +16,15 @@ use crate::MimeRepository;
 use crate::MimeTypeBuilder;
 
 /// Metadata and matching rules for a MIME type.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeType;
+/// let mime = MimeType::builder("application/x-example").build()?;
+/// assert_eq!(mime.name(), "application/x-example");
+/// # Ok::<(), qubit_mime::MimeError>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct MimeType {
     pub(crate) name: String,

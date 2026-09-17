@@ -8,6 +8,13 @@
 //! Magic matcher value type.
 
 /// Value type used by a MIME magic matcher.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MagicValueType;
+/// assert_eq!(MagicValueType::from_name("byte"), Some(MagicValueType::Byte));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MagicValueType {
     /// A byte string.

@@ -15,13 +15,18 @@ use super::internal::glob_entry::GlobEntry;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct GlobIndex {
+    /// Literal patterns indexed by their complete filename.
     literals: HashMap<String, Vec<GlobEntry>>,
+    /// Literal patterns containing Unicode characters.
     unicode_literals: Vec<GlobEntry>,
+    /// Extension patterns indexed by their suffix.
     extensions: HashMap<String, Vec<GlobEntry>>,
+    /// Patterns requiring wildcard matching.
     wildcards: Vec<GlobEntry>,
 }
 
 impl GlobIndex {
+    /// Adds one MIME glob to the appropriate lookup index.
     pub(crate) fn add(&mut self, mime_index: usize, glob: &MimeGlob) {
         let entry = GlobEntry {
             glob: glob.clone(),
@@ -50,6 +55,7 @@ impl GlobIndex {
         }
     }
 
+    /// Returns the best matching entries for a filename.
     pub(crate) fn matches<'a>(&'a self, filename: &str) -> Vec<&'a GlobEntry> {
         let basename = filename.rsplit(['/', '\\']).next().unwrap_or_default();
         if basename.is_empty() {
@@ -99,6 +105,7 @@ impl GlobIndex {
     }
 }
 
+/// Selects entries with the highest glob weight and longest pattern.
 fn select_best(entries: Vec<&GlobEntry>) -> Vec<&GlobEntry> {
     let Some(best_weight) = entries.iter().map(|entry| entry.glob.weight()).max() else {
         return Vec::new();
@@ -120,6 +127,7 @@ fn select_best(entries: Vec<&GlobEntry>) -> Vec<&GlobEntry> {
     )
 }
 
+/// Removes duplicate MIME indexes while preserving match order.
 fn deduplicate_by_mime(entries: Vec<&GlobEntry>) -> Vec<&GlobEntry> {
     let mut seen = HashSet::new();
     entries
@@ -128,6 +136,7 @@ fn deduplicate_by_mime(entries: Vec<&GlobEntry>) -> Vec<&GlobEntry> {
         .collect()
 }
 
+/// Returns non-empty suffixes after each dot in a filename.
 fn extension_suffixes(filename: &str) -> impl Iterator<Item = &str> {
     filename
         .match_indices('.')
@@ -135,6 +144,7 @@ fn extension_suffixes(filename: &str) -> impl Iterator<Item = &str> {
         .filter(|extension| !extension.is_empty())
 }
 
+/// Extracts a valid extension from a `*.extension` glob pattern.
 fn extension_pattern(pattern: &str) -> Option<&str> {
     let extension = pattern.strip_prefix("*.")?;
     if extension.is_empty()
@@ -148,6 +158,7 @@ fn extension_pattern(pattern: &str) -> Option<&str> {
     }
 }
 
+/// Returns whether a pattern contains no glob metacharacters.
 fn is_literal_pattern(pattern: &str) -> bool {
     !pattern
         .chars()

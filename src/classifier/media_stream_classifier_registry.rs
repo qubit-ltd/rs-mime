@@ -31,6 +31,14 @@ static GLOBAL_MEDIA_STREAM_CLASSIFIER_REGISTRY: LazyLock<MediaStreamClassifierRe
 /// Clones observe the same synchronized provider catalog and default
 /// selection. Use [`Self::global`] for App startup registrations intended for
 /// independently developed downstream libraries.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MediaStreamClassifierRegistry;
+/// let registry = MediaStreamClassifierRegistry::builtin();
+/// assert!(!registry.provider_ids().is_empty());
+/// ```
 #[derive(Clone, Debug)]
 pub struct MediaStreamClassifierRegistry {
     /// Typed provider Registry owning synchronized runtime state.

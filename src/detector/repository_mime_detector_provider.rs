@@ -26,6 +26,7 @@ use crate::RepositoryMimeDetector;
 pub struct RepositoryMimeDetectorProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
+    /// Creates a repository-backed detector from the supplied configuration.
     #[inline]
     fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         Ok(Arc::new(RepositoryMimeDetector::from_mime_config(config.clone())))

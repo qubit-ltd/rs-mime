@@ -8,6 +8,17 @@ use crate::MimeRepository;
 use crate::MimeResult;
 
 /// Process-local runtime owning shared MIME configuration and repository.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeDetector;
+/// use qubit_mime::detector::MimeRuntime;
+/// let runtime = MimeRuntime::builtin()?;
+/// let detector = runtime.create_detector()?;
+/// assert_eq!(detector.detect_by_filename("document.pdf")?, Some("application/pdf".to_owned()));
+/// # Ok::<(), qubit_mime::MimeError>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct MimeRuntime {
     context: MimeDetectorContext,
@@ -41,6 +52,7 @@ impl MimeRuntime {
 }
 
 impl Default for MimeRuntime {
+    /// Creates a runtime containing the built-in providers and repository.
     fn default() -> Self {
         Self::builtin().expect("built-in MIME runtime should initialize")
     }

@@ -24,10 +24,13 @@ use crate::MimeError;
 pub struct MediaStreamClassifierSpec;
 
 impl ServiceSpec for MediaStreamClassifierSpec {
+    /// Configuration accepted by this service specification.
     type Config = MimeConfig;
+    /// Error returned while creating this service.
     type Error = MimeError;
 }
 
 impl SyncServiceSpec for MediaStreamClassifierSpec {
+    /// Shared classifier service produced by providers.
     type Output = Arc<dyn MediaStreamClassifier>;
 }

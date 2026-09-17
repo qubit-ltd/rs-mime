@@ -31,6 +31,14 @@ static GLOBAL_MIME_DETECTOR_REGISTRY: LazyLock<MimeDetectorRegistry> = LazyLock:
 /// Clones observe the same underlying provider catalog and default selection.
 /// Use [`Self::global`] when App startup registrations must be visible to
 /// independently developed downstream libraries.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeDetectorRegistry;
+/// let registry = MimeDetectorRegistry::builtin();
+/// assert!(!registry.provider_ids().is_empty());
+/// ```
 #[derive(Clone, Debug)]
 pub struct MimeDetectorRegistry {
     /// Typed provider Registry owning synchronized runtime state.
