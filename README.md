@@ -10,6 +10,11 @@
 MIME type detection utilities for Rust services based on filename glob rules
 and content magic rules.
 
+See the [English user guide](doc/user_guide.md) for the complete upload,
+filesystem, provider, troubleshooting, and operational-limits walkthrough.
+The [Chinese README](README.zh_CN.md) and [Chinese user guide](doc/user_guide.zh_CN.md)
+cover the same public behavior.
+
 ## Overview
 
 Qubit MIME is a repository-backed MIME type detector for Rust. It uses the
@@ -19,10 +24,9 @@ relationships.
 
 The public surface is organized into three layers:
 
-- `MimeDetector`: the top-level detector trait. Use it when code should work
-  with any detector implementation. `detect_resource` accepts a
-  provider-neutral `qubit_fs::FileResource`; local-path entry points remain
-  available for native command detectors.
+- `MimeDetector`: the top-level detector trait. Use `detect_file` for a local
+  path, `detect_path` for the synchronous filesystem facade, or
+  `detect_async_path` for an asynchronous facade.
 - `detector`: detector implementations and shared detector logic,
   including `MimeDetectorCore`, `MimeDetectorBackend`,
   `RepositoryMimeDetector`, and `FileCommandMimeDetector`.
@@ -233,7 +237,7 @@ Selection and creation are intentionally separate. `resolve_selected(selection)`
 `resolve()` return `ResolvingServiceProvider<MimeDetectorSpec>` and
 report only `ProviderResolutionError`. The returned provider then supports
 both `create_configured(&MimeConfig)` and `create()`, whose failures are
-represented by `ProviderCreationError`.
+represented by `ProviderFailure<MimeError>`.
 `MimeConfig::mime_detector_selection()` remains one optional source of an
 explicit selection; the Registry does not require it.
 
@@ -245,7 +249,7 @@ an isolated Registry useful for tests and scoped applications.
 
 SPI types remain owned by `qubit-spi` and are not re-exported by `qubit-mime`.
 Third-party providers implement both `ServiceProvider<MimeDetectorSpec>` and
-`ProviderDefinition<MimeDetectorSpec>` and return their descriptor themselves.
+`ProviderMetadata` and `ServiceProvider<MimeDetectorSpec>` and return their descriptor themselves.
 
 Built-in detector selectors:
 
@@ -295,11 +299,12 @@ use qubit_mime::{
     MimeDetector,
     MimeDetectorRegistry,
     MimeDetectorSpec,
+    MimeError,
     RepositoryMimeDetector,
 };
-use qubit_spi::error::ProviderCreationError;
+use qubit_spi::error::ProviderFailure;
 use qubit_spi::{
-    ProviderDefinition,
+    ProviderMetadata,
     ProviderDescriptor,
     ProviderId,
     ProviderSelection,
@@ -312,14 +317,14 @@ impl ServiceProvider<MimeDetectorSpec> for AppMimeDetectorProvider {
     fn create_configured(
         &self,
         config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderCreationError> {
+    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         Ok(Arc::new(RepositoryMimeDetector::from_mime_config(
             config.clone(),
         )))
     }
 }
 
-impl ProviderDefinition<MimeDetectorSpec> for AppMimeDetectorProvider {
+impl ProviderMetadata for AppMimeDetectorProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor::new(
             ProviderId::new("app-detector").expect("static ID is valid"),
@@ -375,9 +380,9 @@ Registry selection and service creation use separate SPI error types:
 
 | Error | Stage | Meaning |
 |-------|-------|---------|
-| `RegistrationError` | Registration | A provider ID or alias conflicts with an existing provider |
+| `RegistryMutationError` | Registration | A provider ID or alias conflicts with an existing provider |
 | `ProviderResolutionError` | Resolution | The explicit/default selection yields no provider candidates |
-| `ProviderCreationError` | Creation | Selected candidates fail or fallback policy stops traversal |
+| `ProviderFailure<MimeError>` | Creation | Selected candidates fail or fallback policy stops traversal |
 
 ### Configuration keys
 
@@ -393,7 +398,7 @@ mapping values are split on `;` as `extension:video-mime,audio-mime`.
 | Media stream classifier | `mime.media.stream.classifier.default` | `QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT` | `ffprobe` |
 | Media stream staging limit | `mime.media.stream.max.staging.size` | `QUBIT_MEDIA_STREAM_MAX_STAGING_SIZE` | `67108864` |
 | Command output limit | `mime.command.output.max.bytes` | `QUBIT_MIME_COMMAND_OUTPUT_MAX_BYTES` | `65536` |
-| Precise detection enabled | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` |
+| Precise detection enabled | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `false` |
 | Precise detection patterns | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` |
 | Ambiguous MIME mapping | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` |
 | Maximum detector buffer size | `mime.max.buffer.size` | `QUBIT_MIME_MAX_BUFFER_SIZE` | `16777216` |
@@ -731,7 +736,7 @@ fn main() -> Result<(), MimeError> {
 | `MimeDetectorRegistry::register_shared(provider)` | Register an already shared self-described provider |
 | `MimeDetectorRegistry::resolve_selected(selection)` | Resolve an explicit selection without creating a detector |
 | `MimeDetectorRegistry::resolve()` | Resolve the Registry default without requiring MIME config |
-| `ResolvingServiceProvider::create(config)` | Create a detector with explicit service config |
+| `ResolvingServiceProvider::create_configured(&config)` | Create a detector with explicit service config |
 | `ResolvingServiceProvider::create()` | Create a detector with default service config |
 | `MimeDetectorRegistry::provider_ids()` | List canonical provider IDs in registration order |
 | `MimeDetectorProvider` | Factory trait for pluggable detector implementations |
@@ -894,7 +899,7 @@ Otherwise, content magic is evaluated and merged with filename candidates.
 
 ## Temporary File Lifecycle
 
-Version 0.16 depends on `qubit-fs` 0.2 and uses `qubit-local-files` 0.3 for
+Version 0.16 depends on `qubit-fs` 0.2 and uses `qubit-local-files` 0.4 for
 local staging. Detectors inspect
 and clean temporary files without publishing them, so the explicit-base
 `persist_at` API is not part of the MIME detection workflow.
