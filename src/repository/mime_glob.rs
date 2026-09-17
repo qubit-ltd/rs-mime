@@ -14,6 +14,15 @@ use crate::MimeError;
 use crate::MimeResult;
 
 /// Filename glob rule associated with a MIME type.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeGlob;
+/// let glob = MimeGlob::new("*.pdf", MimeGlob::DEFAULT_WEIGHT, false)?;
+/// assert!(glob.matches("report.pdf"));
+/// # Ok::<(), qubit_mime::MimeError>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct MimeGlob {
     weight: u16,

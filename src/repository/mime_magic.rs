@@ -12,6 +12,16 @@ use crate::MimeMagicMatcher;
 use crate::MimeResult;
 
 /// A priority-ranked set of magic matchers for one MIME type.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::{MagicValueType, MimeMagic, MimeMagicMatcher};
+/// let matcher = MimeMagicMatcher::new(MagicValueType::String, 0, 3, b"%PDF".to_vec(), None, vec![])?;
+/// let magic = MimeMagic::new(MimeMagic::DEFAULT_PRIORITY, vec![matcher])?;
+/// assert!(magic.matches(b"%PDF-1.7"));
+/// # Ok::<(), qubit_mime::MimeError>(())
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MimeMagic {
     priority: u16,

@@ -62,6 +62,14 @@ use crate::MimeResult;
 
 /// Runtime configuration for MIME detectors.
 ///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeConfig;
+/// let config = MimeConfig::default();
+/// assert!(config.max_buffer_size() > 0);
+/// ```
+///
 /// # Supported keys
 ///
 /// Logical keys and environment-style keys are both accepted by
@@ -120,6 +128,7 @@ static VALUE_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
         .build()
 });
 
+/// Read policy shared by duration-valued configuration keys.
 static DURATION_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
     ReadPolicy::builder()
         .conversion_policy(

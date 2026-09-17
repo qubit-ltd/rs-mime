@@ -14,11 +14,14 @@ use super::internal::magic_entry::MagicEntry;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MagicIndex {
+    /// Magic entries ordered by their source priority.
     pub(crate) entries: Vec<MagicEntry>,
+    /// Largest byte offset needed by any indexed matcher.
     pub(crate) max_test_bytes: usize,
 }
 
 impl MagicIndex {
+    /// Adds one MIME magic rule and updates the required input size.
     pub(crate) fn add(&mut self, mime_index: usize, magic: &MimeMagic) {
         self.max_test_bytes = self.max_test_bytes.max(magic.max_test_bytes());
         self.entries.push(MagicEntry {
@@ -28,6 +31,7 @@ impl MagicIndex {
         });
     }
 
+    /// Returns MIME indexes whose magic rules match the input bytes.
     pub(crate) fn matches(&self, bytes: &[u8]) -> Vec<usize> {
         let Some(best_priority) = self
             .entries

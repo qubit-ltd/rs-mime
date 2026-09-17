@@ -126,6 +126,7 @@ impl<T> MimeDetector for T
 where
     T: MimeDetectorBackend,
 {
+    /// Delegates content-requirement discovery to the backend.
     fn content_requirement(&self) -> ContentRequirement {
         MimeDetectorBackend::content_requirement(self)
     }
@@ -156,6 +157,7 @@ where
             .transpose()
     }
 
+    /// Detects from the supplied bounded prefix through the backend core.
     fn detect_prefix(
         &self,
         content: &[u8],

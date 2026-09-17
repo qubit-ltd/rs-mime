@@ -33,14 +33,17 @@ impl OwnedRepositoryMimeDetector {
 }
 
 impl StreamBasedMimeDetector for OwnedRepositoryMimeDetector {
+    /// Returns the shared detector core.
     fn core(&self) -> &MimeDetectorCore {
         &self.core
     }
 
+    /// Returns the largest content prefix required by the repository.
     fn max_test_bytes(&self) -> usize {
         self.repository.max_test_bytes()
     }
 
+    /// Returns repository candidates for a filename.
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         self.repository
             .detect_by_filename(filename)
@@ -49,6 +52,7 @@ impl StreamBasedMimeDetector for OwnedRepositoryMimeDetector {
             .collect()
     }
 
+    /// Returns repository candidates for content bytes.
     fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         Ok(self
             .repository

@@ -10,6 +10,13 @@
 use std::path::Path;
 
 /// Source available for precise MIME refinement.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::DetectionSource;
+/// assert!(matches!(DetectionSource::None, DetectionSource::None));
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub enum DetectionSource<'a> {
     /// No readable source is available.

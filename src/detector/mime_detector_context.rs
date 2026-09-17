@@ -13,6 +13,16 @@ use crate::MimeConfig;
 use crate::MimeRepository;
 
 /// Immutable context shared by detector adapters.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+/// use qubit_mime::{MimeConfig, MimeRepository};
+/// use qubit_mime::detector::MimeDetectorContext;
+/// let context = MimeDetectorContext::new(Arc::new(MimeConfig::default()), Arc::new(MimeRepository::empty()));
+/// assert!(context.config().max_buffer_size() > 0);
+/// ```
 #[derive(Debug, Clone)]
 pub struct MimeDetectorContext {
     config: Arc<MimeConfig>,

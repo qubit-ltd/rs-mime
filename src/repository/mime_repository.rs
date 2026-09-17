@@ -32,12 +32,24 @@ use crate::MimeResult;
 use crate::MimeType;
 use crate::MimeTypeBuilder;
 
+/// Embedded freedesktop MIME database.
 const BUNDLED_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
 
+/// Lazily parsed embedded repository.
 static BUNDLED_REPOSITORY: OnceLock<MimeRepository> = OnceLock::new();
+/// Lazily initialized shared handle to the embedded repository.
 static BUNDLED_SHARED_REPOSITORY: OnceLock<Arc<MimeRepository>> = OnceLock::new();
 
 /// A repository of MIME types and detection indexes.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeRepository;
+/// let repository = MimeRepository::empty();
+/// assert!(repository.all().is_empty());
+/// # Ok::<(), qubit_mime::MimeError>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct MimeRepository {
     mime_types: Vec<MimeType>,
@@ -190,6 +202,7 @@ impl MimeRepository {
             .collect()
     }
 
+    /// Resolves an alias to its canonical name, preserving unknown input.
     fn canonical_name_or_input(&self, name: &str) -> String {
         let normalized = normalize_mime_name(name);
         self.name_map

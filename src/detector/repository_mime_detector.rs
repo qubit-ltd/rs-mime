@@ -20,6 +20,15 @@ use crate::MimeResult;
 use crate::StreamBasedMimeDetector;
 
 /// MIME detector backed by a [`MimeRepository`].
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::{MimeDetector, RepositoryMimeDetector};
+/// let detector = RepositoryMimeDetector::new()?;
+/// assert_eq!(detector.detect_by_filename("document.pdf")?, Some("application/pdf".to_owned()));
+/// # Ok::<(), qubit_mime::MimeError>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct RepositoryMimeDetector<'a> {
     /// The shared detector core.
@@ -54,6 +63,7 @@ impl RepositoryMimeDetector<'static> {
 }
 
 impl Default for RepositoryMimeDetector<'static> {
+    /// Creates a detector backed by the embedded repository.
     fn default() -> Self {
         Self::new().expect("embedded MIME repository should parse")
     }

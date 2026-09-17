@@ -12,6 +12,15 @@ use crate::MimeError;
 use crate::MimeResult;
 
 /// A single MIME magic matcher, optionally with nested sub-matchers.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::{MagicValueType, MimeMagicMatcher};
+/// let matcher = MimeMagicMatcher::new(MagicValueType::Byte, 0, 0, vec![0x89], None, vec![])?;
+/// assert!(matcher.matches(&[0x89, 0x50]));
+/// # Ok::<(), qubit_mime::MimeError>(())
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MimeMagicMatcher {
     value_type: MagicValueType,

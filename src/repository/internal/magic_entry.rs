@@ -11,7 +11,10 @@ use super::super::MimeMagic;
 
 #[derive(Debug, Clone)]
 pub(crate) struct MagicEntry {
+    /// Source priority of the magic rule.
     pub(crate) priority: u16,
+    /// Index of the MIME type owning the rule.
     pub(crate) mime_index: usize,
+    /// Parsed magic rule.
     pub(crate) magic: MimeMagic,
 }

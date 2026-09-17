@@ -22,6 +22,14 @@ use crate::MimeError;
 use crate::MimeResult;
 
 /// Shared detector core for configuration and merge/refinement logic.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::{MimeConfig, MimeDetectorCore};
+/// let core = MimeDetectorCore::new(MimeConfig::default());
+/// assert!(core.max_buffer_size() > 0);
+/// ```
 #[derive(Debug, Clone)]
 pub struct MimeDetectorCore {
     /// MIME detector configuration.
