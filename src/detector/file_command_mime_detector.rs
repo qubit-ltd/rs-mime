@@ -59,11 +59,7 @@ impl FileCommandMimeDetector<'static> {
     /// # Returns
     /// File command detector.
     pub fn from_mime_config(config: MimeConfig) -> Self {
-        Self::with_repository_runner_and_config(
-            default_repository(),
-            Self::default_command_runner(&config),
-            config,
-        )
+        Self::with_repository_runner_and_config(default_repository(), Self::default_command_runner(&config), config)
     }
 }
 
@@ -84,11 +80,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// File command detector borrowing `repository`.
     pub fn with_repository(repository: &'a MimeRepository) -> Self {
         let config = MimeConfig::default();
-        Self::with_repository_runner_and_config(
-            repository,
-            Self::default_command_runner(&config),
-            config,
-        )
+        Self::with_repository_runner_and_config(repository, Self::default_command_runner(&config), config)
     }
 
     /// Creates a detector using an explicit repository and command runner.
@@ -100,10 +92,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// File command detector borrowing `repository` and owning the supplied
     /// runner.
-    pub fn with_repository_and_runner(
-        repository: &'a MimeRepository,
-        command_runner: CommandRunner,
-    ) -> Self {
+    pub fn with_repository_and_runner(repository: &'a MimeRepository, command_runner: CommandRunner) -> Self {
         Self::with_repository_runner_and_config(repository, command_runner, MimeConfig::default())
     }
 
@@ -208,11 +197,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Errors
     /// Returns [`MimeError::Command`](crate::MimeError::Command) when command
     /// execution fails.
-    pub fn detect_file(
-        &self,
-        file: &Path,
-        policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>> {
+    pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }
 
@@ -254,9 +239,7 @@ impl<'a> FileCommandMimeDetector<'a> {
                 &Self::default_command_runner(&config).disable_logging(true),
                 Self::command_for_path(Path::new(".")),
             )
-            .is_ok_and(|output| {
-                output.exit_code == Some(0) && require_complete_stdout(&output).is_ok()
-            })
+            .is_ok_and(|output| output.exit_code == Some(0) && require_complete_stdout(&output).is_ok())
     }
 
     /// Gets filename candidates from the repository.
@@ -313,8 +296,8 @@ impl<'a> FileCommandMimeDetector<'a> {
                 format!("file exited with code {:?}", output.exit_code),
             ));
         }
-        let text = require_complete_stdout(&output)
-            .map_err(|reason| MimeError::detector_backend(Self::COMMAND, reason))?;
+        let text =
+            require_complete_stdout(&output).map_err(|reason| MimeError::detector_backend(Self::COMMAND, reason))?;
         let result = text.trim();
         if result.is_empty() {
             Ok(Vec::new())
@@ -330,8 +313,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// Runner used by the default detector.
     fn default_command_runner(config: &MimeConfig) -> CommandRunner {
-        CommandRunner::new(config.command_timeout())
-            .bounded_output(config.command_output_max_bytes())
+        CommandRunner::new(config.command_timeout()).bounded_output(config.command_output_max_bytes())
     }
 
     /// Builds the structured `file` command for one path.

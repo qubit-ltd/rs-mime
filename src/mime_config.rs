@@ -110,8 +110,7 @@ pub struct MimeConfig {
 }
 
 /// Default MIME configuration.
-static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> =
-    LazyLock::new(|| RwLock::new(MimeConfig::load()));
+static DEFAULT_MIME_CONFIG: LazyLock<RwLock<MimeConfig>> = LazyLock::new(|| RwLock::new(MimeConfig::load()));
 
 /// Value read policy.
 static VALUE_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
@@ -173,8 +172,7 @@ static MAPPING_READ_POLICY: LazyLock<ReadPolicy> = LazyLock::new(|| {
 static DEFAULT_PRECISE_DETECTION_PATTERNS: &[&str] = &["webm", "ogg"];
 
 /// Built-in ambiguous MIME mapping entries.
-static DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES: &[&str] =
-    &["webm:video/webm,audio/webm", "ogg:video/ogg,audio/ogg"];
+static DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES: &[&str] = &["webm:video/webm,audio/webm", "ogg:video/ogg,audio/ogg"];
 
 impl MimeConfig {
     /// Loads configuration from environment variables and defaults.
@@ -267,17 +265,11 @@ impl MimeConfig {
             DEFAULT_MEDIA_STREAM_CLASSIFIER.to_owned(),
         )?;
         let media_stream_max_staging_size = value_config.get_any_interpolated_or(
-            [
-                CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE,
-                ENV_MEDIA_STREAM_MAX_STAGING_SIZE,
-            ],
+            [CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE, ENV_MEDIA_STREAM_MAX_STAGING_SIZE],
             DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
         )?;
         let command_output_max_bytes: u64 = value_config.get_any_interpolated_or(
-            [
-                CONFIG_COMMAND_OUTPUT_MAX_BYTES,
-                ENV_COMMAND_OUTPUT_MAX_BYTES,
-            ],
+            [CONFIG_COMMAND_OUTPUT_MAX_BYTES, ENV_COMMAND_OUTPUT_MAX_BYTES],
             DEFAULT_COMMAND_OUTPUT_MAX_BYTES as u64,
         )?;
         #[cfg(target_pointer_width = "32")]
@@ -289,10 +281,8 @@ impl MimeConfig {
             })?;
         #[cfg(target_pointer_width = "64")]
         let command_output_max_bytes = command_output_max_bytes as usize;
-        let command_timeout = duration_config.get_any_interpolated_or(
-            [CONFIG_COMMAND_TIMEOUT, ENV_COMMAND_TIMEOUT],
-            DEFAULT_COMMAND_TIMEOUT,
-        )?;
+        let command_timeout = duration_config
+            .get_any_interpolated_or([CONFIG_COMMAND_TIMEOUT, ENV_COMMAND_TIMEOUT], DEFAULT_COMMAND_TIMEOUT)?;
         let enable_precise_detection = value_config.get_any_interpolated_or(
             [
                 CONFIG_MIME_ENABLE_PRECISE_DETECTION,
@@ -319,20 +309,16 @@ impl MimeConfig {
             DEFAULT_MIME_MAX_BUFFER_SIZE as u64,
         )?;
         #[cfg(target_pointer_width = "32")]
-        let max_buffer_size =
-            usize::try_from(max_buffer_size).map_err(|_| MimeError::InvalidClassifierInput {
-                reason: format!(
-                    "MIME maximum buffer size {max_buffer_size} exceeds this platform's usize range"
-                ),
-            })?;
+        let max_buffer_size = usize::try_from(max_buffer_size).map_err(|_| MimeError::InvalidClassifierInput {
+            reason: format!("MIME maximum buffer size {max_buffer_size} exceeds this platform's usize range"),
+        })?;
         #[cfg(target_pointer_width = "64")]
         let max_buffer_size = max_buffer_size as usize;
         let mime_detector_selection = create_detector_selection(
             &mime_detector_default,
             normalize_detector_names(mime_detector_fallbacks),
         )?;
-        let media_stream_classifier_selection =
-            create_classifier_selection(&media_stream_classifier_default)?;
+        let media_stream_classifier_selection = create_classifier_selection(&media_stream_classifier_default)?;
         Ok(Self {
             mime_detector_selection,
             media_stream_classifier_selection,
@@ -357,8 +343,7 @@ impl MimeConfig {
     /// or classifier-name error when a configured provider selector is
     /// invalid.
     pub fn from_env() -> MimeResult<Self> {
-        let config =
-            Config::from_env_options(EnvConfigOptions::builder().prefix("QUBIT_").build())?;
+        let config = Config::from_env_options(EnvConfigOptions::builder().prefix("QUBIT_").build())?;
         Self::from_config(&config)
     }
 
@@ -485,15 +470,10 @@ impl MimeConfig {
     /// Configuration populated entirely from crate constants.
     fn builtin_default() -> Self {
         Self {
-            mime_detector_selection: create_detector_selection(
-                DEFAULT_MIME_DETECTOR,
-                fallback_defaults(),
-            )
-            .expect("built-in MIME detector selection should be valid"),
-            media_stream_classifier_selection: create_classifier_selection(
-                DEFAULT_MEDIA_STREAM_CLASSIFIER,
-            )
-            .expect("built-in media stream classifier selection should be valid"),
+            mime_detector_selection: create_detector_selection(DEFAULT_MIME_DETECTOR, fallback_defaults())
+                .expect("built-in MIME detector selection should be valid"),
+            media_stream_classifier_selection: create_classifier_selection(DEFAULT_MEDIA_STREAM_CLASSIFIER)
+                .expect("built-in media stream classifier selection should be valid"),
             media_stream_max_staging_size: DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
             command_output_max_bytes: DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
             command_timeout: DEFAULT_COMMAND_TIMEOUT,
@@ -530,10 +510,7 @@ impl MimeConfig {
 /// # Errors
 ///
 /// Returns a detector-name error when any configured selector is invalid.
-fn create_detector_selection(
-    primary: &str,
-    fallbacks: Vec<String>,
-) -> MimeResult<ProviderSelection> {
+fn create_detector_selection(primary: &str, fallbacks: Vec<String>) -> MimeResult<ProviderSelection> {
     let primary = primary.trim();
     if primary.is_empty() || primary.eq_ignore_ascii_case("auto") {
         return Ok(ProviderSelection::auto());
@@ -673,21 +650,17 @@ fn normalize_patterns(patterns: Vec<String>) -> HashSet<String> {
 fn build_ambiguous_mime_mapping(entries: Vec<String>) -> MimeResult<HashMap<String, [String; 2]>> {
     let mut mapping = HashMap::new();
     for entry in entries {
-        let (extension, mime_types) =
-            entry
-                .split_once(':')
-                .ok_or_else(|| MimeError::InvalidConfigurationValue {
-                    key: CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
-                    value: entry.clone(),
-                    reason: "expected ext:video,audio".to_owned(),
-                })?;
+        let (extension, mime_types) = entry
+            .split_once(':')
+            .ok_or_else(|| MimeError::InvalidConfigurationValue {
+                key: CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+                value: entry.clone(),
+                reason: "expected ext:video,audio".to_owned(),
+            })?;
         let mut mime_types = mime_types.split(',').map(str::trim);
         let video_type = mime_types.next().unwrap_or_default().to_owned();
         let audio_type = mime_types.next().unwrap_or_default().to_owned();
-        if extension.trim().is_empty()
-            || video_type.is_empty()
-            || audio_type.is_empty()
-            || mime_types.next().is_some()
+        if extension.trim().is_empty() || video_type.is_empty() || audio_type.is_empty() || mime_types.next().is_some()
         {
             return Err(MimeError::InvalidConfigurationValue {
                 key: CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
@@ -696,10 +669,7 @@ fn build_ambiguous_mime_mapping(entries: Vec<String>) -> MimeResult<HashMap<Stri
             });
         }
         mapping.insert(
-            extension
-                .trim()
-                .trim_start_matches('.')
-                .to_ascii_lowercase(),
+            extension.trim().trim_start_matches('.').to_ascii_lowercase(),
             [video_type, audio_type],
         );
     }

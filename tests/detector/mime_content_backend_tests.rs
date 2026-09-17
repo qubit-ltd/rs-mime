@@ -32,14 +32,8 @@ fn test_detector_adapter_uses_backend_prefix_and_restores_position() {
     );
     let mut reader = Cursor::new(b"skip%PDF-1.7\n".to_vec());
     reader.set_position(4);
-    let candidates = adapter
-        .detect_reader(&mut reader)
-        .expect("detect PDF prefix");
-    assert!(
-        candidates
-            .iter()
-            .any(|candidate| candidate == "application/pdf")
-    );
+    let candidates = adapter.detect_reader(&mut reader).expect("detect PDF prefix");
+    assert!(candidates.iter().any(|candidate| candidate == "application/pdf"));
     assert_eq!(reader.position(), 4);
 }
 
@@ -69,9 +63,7 @@ fn test_content_reader_obeys_prefix_and_complete_requirements() {
         reader.set_position(4);
         let backend = LengthBackend(requirement);
         assert_eq!(
-            backend
-                .detect_reader(&mut reader)
-                .expect("read selected content"),
+            backend.detect_reader(&mut reader).expect("read selected content"),
             vec![expected]
         );
         assert_eq!(reader.position(), 4);
@@ -86,9 +78,7 @@ fn test_adapter_limits_input_and_restores_reader_position() {
     let mut reader = Cursor::new(b"xxhello ignored trailer".to_vec());
     reader.set_position(2);
     assert_eq!(
-        adapter
-            .detect_reader(&mut reader)
-            .expect("prefix must be classified"),
+        adapter.detect_reader(&mut reader).expect("prefix must be classified"),
         ["text/plain"]
     );
     assert_eq!(reader.position(), 2);

@@ -85,11 +85,7 @@ fn test_default_uses_disabled_logging_runner() {
         classifier.command_runner().configured_max_stderr_bytes(),
         Some(DEFAULT_COMMAND_OUTPUT_MAX_BYTES),
     );
-    assert!(
-        classifier
-            .command_runner()
-            .is_output_truncation_failure_enabled()
-    );
+    assert!(classifier.command_runner().is_output_truncation_failure_enabled());
 }
 
 #[test]
@@ -122,19 +118,9 @@ fn test_from_mime_config_limits_ffprobe_output() {
         Some(Duration::from_secs(31)),
         classifier.command_runner().configured_timeout()
     );
-    assert_eq!(
-        Some(1024),
-        classifier.command_runner().configured_max_stdout_bytes()
-    );
-    assert_eq!(
-        Some(1024),
-        classifier.command_runner().configured_max_stderr_bytes()
-    );
-    assert!(
-        classifier
-            .command_runner()
-            .is_output_truncation_failure_enabled()
-    );
+    assert_eq!(Some(1024), classifier.command_runner().configured_max_stdout_bytes());
+    assert_eq!(Some(1024), classifier.command_runner().configured_max_stderr_bytes());
+    assert!(classifier.command_runner().is_output_truncation_failure_enabled());
 }
 
 #[test]
@@ -163,19 +149,9 @@ fn test_from_mime_config_limits_ffprobe_output_and_stage_size() {
         MimeConfig::from_config(&config).expect("MIME config should parse"),
     );
 
-    assert_eq!(
-        Some(1024),
-        classifier.command_runner().configured_max_stdout_bytes()
-    );
-    assert_eq!(
-        Some(1024),
-        classifier.command_runner().configured_max_stderr_bytes()
-    );
-    assert!(
-        classifier
-            .command_runner()
-            .is_output_truncation_failure_enabled()
-    );
+    assert_eq!(Some(1024), classifier.command_runner().configured_max_stdout_bytes());
+    assert_eq!(Some(1024), classifier.command_runner().configured_max_stderr_bytes());
+    assert!(classifier.command_runner().is_output_truncation_failure_enabled());
 }
 
 #[test]
@@ -196,11 +172,8 @@ fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
         .expect("Host filesystem should open")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
-    let script_path = temp_dir
-        .path()
-        .join(FfprobeCommandMediaStreamClassifier::COMMAND);
-    std::fs::write(&script_path, "#!/bin/sh\nprintf 'video\\naudio\\n'\n")
-        .expect("fake ffprobe should be written");
+    let script_path = temp_dir.path().join(FfprobeCommandMediaStreamClassifier::COMMAND);
+    std::fs::write(&script_path, "#!/bin/sh\nprintf 'video\\naudio\\n'\n").expect("fake ffprobe should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake ffprobe metadata should be readable")
         .permissions();
@@ -256,11 +229,7 @@ fn test_classify_file_propagates_ffprobe_start_error() {
         .expect_err("missing ffprobe executable should report command error");
 
     assert!(error.to_string().contains("ffprobe"));
-    assert!(
-        !error
-            .to_string()
-            .contains(private_path.to_string_lossy().as_ref())
-    );
+    assert!(!error.to_string().contains(private_path.to_string_lossy().as_ref()));
     assert!(!format!("{error:?}").contains(private_path.to_string_lossy().as_ref()));
 }
 
@@ -271,9 +240,7 @@ fn test_classify_file_maps_unexpected_ffprobe_exit_to_none() {
         .expect("Host filesystem should open")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
-    let script_path = temp_dir
-        .path()
-        .join(FfprobeCommandMediaStreamClassifier::COMMAND);
+    let script_path = temp_dir.path().join(FfprobeCommandMediaStreamClassifier::COMMAND);
     std::fs::write(&script_path, "#!/bin/sh\nexit 7\n").expect("fake ffprobe should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake ffprobe metadata should be readable")
@@ -301,9 +268,7 @@ fn test_classify_file_passes_path_through_ffprobe_input_option() {
         .expect("Host filesystem should open")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
-    let script_path = temp_dir
-        .path()
-        .join(FfprobeCommandMediaStreamClassifier::COMMAND);
+    let script_path = temp_dir.path().join(FfprobeCommandMediaStreamClassifier::COMMAND);
     std::fs::write(
         &script_path,
         r#"#!/bin/sh
@@ -346,11 +311,8 @@ fn test_classify_file_rejects_invalid_utf8_stdout() {
         .expect("Host filesystem should open")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
-    let script_path = temp_dir
-        .path()
-        .join(FfprobeCommandMediaStreamClassifier::COMMAND);
-    std::fs::write(&script_path, "#!/bin/sh\nprintf '\\377'\n")
-        .expect("fake ffprobe should be written");
+    let script_path = temp_dir.path().join(FfprobeCommandMediaStreamClassifier::COMMAND);
+    std::fs::write(&script_path, "#!/bin/sh\nprintf '\\377'\n").expect("fake ffprobe should be written");
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake ffprobe metadata should be readable")
         .permissions();
@@ -386,22 +348,17 @@ fn test_command_contract_rejects_truncation_and_uses_actual_exit_status() {
         .expect("fixture directory created");
     let script = directory.path().join("ffprobe");
     std::fs::write(&script, "#!/bin/sh\nprintf 'video\\naudio\\n'\n").expect("script written");
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-        .expect("script executable");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("script executable");
     let _guard = PathEnvGuard::prepend(directory.path());
     let runner = CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true);
-    let classifier = FfprobeCommandMediaStreamClassifier::new().with_command_runner(
-        runner
-            .clone()
-            .max_stdout_bytes(6)
-            .fail_on_output_truncation(false),
-    );
+    let classifier = FfprobeCommandMediaStreamClassifier::new()
+        .with_command_runner(runner.clone().max_stdout_bytes(6).fail_on_output_truncation(false));
     assert!(matches!(
         classifier.classify_by_local_file(std::path::Path::new("input")),
         Err(MimeError::ClassifierBackend { .. })
     ));
-    let classifier = FfprobeCommandMediaStreamClassifier::new()
-        .with_command_runner(runner.clone().success_exit_codes(&[7]));
+    let classifier =
+        FfprobeCommandMediaStreamClassifier::new().with_command_runner(runner.clone().success_exit_codes(&[7]));
     assert_eq!(
         classifier
             .classify_by_local_file(std::path::Path::new("input"))
@@ -410,16 +367,10 @@ fn test_command_contract_rejects_truncation_and_uses_actual_exit_status() {
     );
     // Replace the inode instead of truncating a recently executed script.
     let replacement = directory.path().join("ffprobe-next");
-    std::fs::write(
-        &replacement,
-        "#!/bin/sh\nprintf 'video\\naudio\\n'\nexit 7\n",
-    )
-    .expect("nonzero fixture written");
-    std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o755))
-        .expect("replacement executable");
+    std::fs::write(&replacement, "#!/bin/sh\nprintf 'video\\naudio\\n'\nexit 7\n").expect("nonzero fixture written");
+    std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o755)).expect("replacement executable");
     std::fs::rename(&replacement, &script).expect("nonzero fixture installed");
-    let classifier = FfprobeCommandMediaStreamClassifier::new()
-        .with_command_runner(runner.success_exit_codes(&[0, 7]));
+    let classifier = FfprobeCommandMediaStreamClassifier::new().with_command_runner(runner.success_exit_codes(&[0, 7]));
     assert_eq!(
         classifier
             .classify_by_local_file(std::path::Path::new("input"))

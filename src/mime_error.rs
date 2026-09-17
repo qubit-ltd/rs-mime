@@ -274,12 +274,7 @@ impl MimeError {
     ///
     /// # Returns
     /// A [`MimeError::InvalidXmlAttribute`](crate::MimeError::InvalidXmlAttribute) value.
-    pub(crate) fn invalid_attr(
-        element: &str,
-        attribute: &str,
-        value: &str,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn invalid_attr(element: &str, attribute: &str, value: &str, reason: impl Into<String>) -> Self {
         Self::InvalidXmlAttribute {
             element: element.to_owned(),
             attribute: attribute.to_owned(),
@@ -312,9 +307,7 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher) value.
     pub(crate) fn invalid_matcher(reason: impl Into<String>) -> Self {
-        Self::InvalidMagicMatcher {
-            reason: reason.into(),
-        }
+        Self::InvalidMagicMatcher { reason: reason.into() }
     }
 
     /// Builds an invalid classifier input error.
@@ -325,9 +318,7 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) value.
     pub(crate) fn invalid_classifier_input(reason: impl Into<String>) -> Self {
-        Self::InvalidClassifierInput {
-            reason: reason.into(),
-        }
+        Self::InvalidClassifierInput { reason: reason.into() }
     }
 
     /// Builds a detector backend error.

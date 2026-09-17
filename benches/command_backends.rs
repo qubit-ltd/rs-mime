@@ -53,8 +53,7 @@ fn measure(operation: &(dyn Fn() -> bool + Sync), workers: usize) -> (u128, u128
         let mut samples = Vec::with_capacity(200);
         let mut failures = 0;
         for handle in handles {
-            let (worker_samples, worker_failures) =
-                handle.join().expect("benchmark worker must not panic");
+            let (worker_samples, worker_failures) = handle.join().expect("benchmark worker must not panic");
             samples.extend(worker_samples);
             failures += worker_failures;
         }
@@ -97,10 +96,7 @@ fn arguments(program: &str, path: &Path) -> Vec<std::ffi::OsString> {
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/real_files");
     let config = MimeConfig::default();
-    for (program, fixture, expected) in [
-        ("file", "test.txt", "text/plain"),
-        ("ffprobe", "test.mp3", "audio"),
-    ] {
+    for (program, fixture, expected) in [("file", "test.txt", "text/plain"), ("ffprobe", "test.mp3", "audio")] {
         let path = root.join(fixture);
         assert!(path.is_file(), "benchmark fixture must exist");
         let args = arguments(program, &path);
@@ -122,12 +118,10 @@ fn main() {
             .bounded_output(config.command_output_max_bytes())
             .disable_logging(true);
         let file = FileCommandMimeDetector::default().with_command_runner(runner.clone());
-        let ffprobe =
-            FfprobeCommandMediaStreamClassifier::new().with_command_runner(runner.clone());
+        let ffprobe = FfprobeCommandMediaStreamClassifier::new().with_command_runner(runner.clone());
         if program == "file" {
             assert_eq!(
-                file.detect_file_by_content(&path)
-                    .expect("text fixture must classify"),
+                file.detect_file_by_content(&path).expect("text fixture must classify"),
                 Some("text/plain".to_owned())
             );
         } else {
@@ -161,9 +155,7 @@ fn main() {
             for workers in [1, 4] {
                 for round in 1..=3 {
                     let (p50, p95, throughput, failures) = measure(operation, workers);
-                    println!(
-                        "{program},{mode},{workers},{round},200,{p50},{p95},{throughput:.3},{failures}"
-                    );
+                    println!("{program},{mode},{workers},{round},200,{p50},{p95},{throughput:.3},{failures}");
                     assert_eq!(
                         failures, 0,
                         "failed operations must not count as a successful benchmark"

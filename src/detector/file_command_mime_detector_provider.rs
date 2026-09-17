@@ -26,21 +26,14 @@ use crate::MimeError;
 pub struct FileCommandMimeDetectorProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
-    fn create_configured(
-        &self,
-        config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         if !FileCommandMimeDetector::is_available() {
-            return Err(ProviderFailure::unavailable(
-                MimeError::DetectorUnavailable {
-                    name: "file".to_owned(),
-                    reason: "`file` command is not available".to_owned(),
-                },
-            ));
+            return Err(ProviderFailure::unavailable(MimeError::DetectorUnavailable {
+                name: "file".to_owned(),
+                reason: "`file` command is not available".to_owned(),
+            }));
         }
-        Ok(Arc::new(FileCommandMimeDetector::from_mime_config(
-            config.clone(),
-        )))
+        Ok(Arc::new(FileCommandMimeDetector::from_mime_config(config.clone())))
     }
 }
 

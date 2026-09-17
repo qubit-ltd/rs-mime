@@ -48,11 +48,7 @@ impl MimeDetector for StaticEntryPointMimeDetector {
         Ok(Some("application/x-static-reader".to_owned()))
     }
 
-    fn detect_file(
-        &self,
-        _file: &Path,
-        _policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>> {
+    fn detect_file(&self, _file: &Path, _policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         Ok(Some("application/x-static-file".to_owned()))
     }
 }

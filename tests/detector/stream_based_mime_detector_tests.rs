@@ -103,9 +103,7 @@ impl Seek for ReadErrorAfterPositionChange {
                 self.position = position;
                 Ok(position)
             }
-            SeekFrom::Current(_) | SeekFrom::End(_) => {
-                Err(Error::other("unsupported seek operation"))
-            }
+            SeekFrom::Current(_) | SeekFrom::End(_) => Err(Error::other("unsupported seek operation")),
         }
     }
 }
@@ -126,10 +124,7 @@ impl PrefixDetector {
 
     /// Creates a detector with an explicit prefix size.
     fn with_core_and_max(core: MimeDetectorCore, max_test_bytes: usize) -> Self {
-        Self {
-            core,
-            max_test_bytes,
-        }
+        Self { core, max_test_bytes }
     }
 }
 
@@ -209,8 +204,7 @@ fn test_detect_file_uses_stream_based_defaults() {
         .expect("Host filesystem should open")
         .create_temp_file_with_options(&LocalTempFileOptions::new())
         .expect("temporary file should be created");
-    std::io::Write::write_all(&mut file, b"hello world")
-        .expect("temporary file should be writable");
+    std::io::Write::write_all(&mut file, b"hello world").expect("temporary file should be writable");
 
     let detected = detector
         .detect_file(file.path(), MimeDetectionPolicy::VerifyContent)
@@ -222,8 +216,7 @@ fn test_detect_file_uses_stream_based_defaults() {
 #[test]
 fn test_stream_based_backend_max_bytes_and_file_open_error_are_covered() {
     let detector = PrefixDetector::new();
-    let missing_path =
-        std::env::temp_dir().join(format!("qubit-mime-missing-{}", std::process::id()));
+    let missing_path = std::env::temp_dir().join(format!("qubit-mime-missing-{}", std::process::id()));
 
     assert_eq!(5, MimeDetectorBackend::max_test_bytes(&detector));
     assert!(
@@ -260,8 +253,7 @@ fn test_detect_reader_rejects_prefix_buffer_larger_than_configured_limit() {
         .set(CONFIG_MIME_MAX_BUFFER_SIZE, 4_u64)
         .expect("maximum buffer size should be configurable");
     let detector = PrefixDetector::with_core(MimeDetectorCore::new(
-        MimeConfig::from_config(&config)
-            .expect("MIME config should parse with a custom maximum buffer size"),
+        MimeConfig::from_config(&config).expect("MIME config should parse with a custom maximum buffer size"),
     ));
     let mut reader = Cursor::new(b"hello world".to_vec());
 
@@ -271,10 +263,7 @@ fn test_detect_reader_rejects_prefix_buffer_larger_than_configured_limit() {
 
     assert!(matches!(
         error,
-        MimeError::BufferLimitExceeded {
-            requested: 5,
-            limit: 4
-        }
+        MimeError::BufferLimitExceeded { requested: 5, limit: 4 }
     ));
     assert_eq!(0, reader.position());
 }
@@ -287,8 +276,7 @@ fn test_detect_reader_reports_prefix_buffer_allocation_failure() {
         .expect("maximum buffer size should be configurable");
     let detector = PrefixDetector::with_core_and_max(
         MimeDetectorCore::new(
-            MimeConfig::from_config(&config)
-                .expect("maximum buffer size should fit the target platform"),
+            MimeConfig::from_config(&config).expect("maximum buffer size should fit the target platform"),
         ),
         usize::MAX,
     );
