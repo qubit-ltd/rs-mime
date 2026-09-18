@@ -8,8 +8,11 @@
 //! Backend contract for MIME detector implementations.
 
 use std::fmt::Debug;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 
+use qubit_fs::AsyncFileSystem;
 use qubit_fs::FileSystem;
 use qubit_fs::Path as FsPath;
 use qubit_fs::read::ReadOptions;
@@ -119,6 +122,19 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
             .into_bytes();
         let candidates = self.guess_from_content(&content)?;
         Ok((candidates, Some(content)))
+    }
+
+    /// Guesses MIME candidates through an asynchronous provider-neutral path.
+    ///
+    /// Complete-content backends must override this hook when they can inspect
+    /// a provider resource without materializing an unbounded buffer.
+    fn guess_from_async_provider_path<'a>(
+        &'a self,
+        _file_system: &'a AsyncFileSystem,
+        _path: &'a FsPath,
+        _max_bytes: usize,
+    ) -> Pin<Box<dyn Future<Output = MimeResult<(Vec<String>, Option<Vec<u8>>)>> + Send + 'a>> {
+        Box::pin(async { Err(crate::MimeError::CompleteContentRequired) })
     }
 }
 
@@ -261,6 +277,43 @@ where
             .map_or(DetectionSource::None, DetectionSource::Prefix);
         self.core()
             .select_result(&from_filename, &from_content, filename, policy, source)
+    }
+
+    /// Detects a MIME type through an asynchronous provider-neutral filesystem
+    /// path.
+    fn detect_async_path<'a>(
+        &'a self,
+        file_system: &'a AsyncFileSystem,
+        path: &'a FsPath,
+        max_bytes: usize,
+        policy: MimeDetectionPolicy,
+    ) -> Pin<Box<dyn Future<Output = MimeResult<Option<String>>> + Send + 'a>> {
+        Box::pin(async move {
+            let limit = self.max_buffer_size();
+            if max_bytes > limit {
+                return Err(crate::MimeError::BufferLimitExceeded {
+                    requested: max_bytes,
+                    limit,
+                });
+            }
+            let filename = path.file_name();
+            let from_filename = filename
+                .map(|value| self.guess_from_filename(value))
+                .unwrap_or_default();
+            if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+                return self
+                    .core()
+                    .select_result(&from_filename, &[], filename, policy, DetectionSource::None);
+            }
+            let (from_content, content) = self
+                .guess_from_async_provider_path(file_system, path, max_bytes)
+                .await?;
+            let source = content
+                .as_deref()
+                .map_or(DetectionSource::None, DetectionSource::Prefix);
+            self.core()
+                .select_result(&from_filename, &from_content, filename, policy, source)
+        })
     }
 }
 
