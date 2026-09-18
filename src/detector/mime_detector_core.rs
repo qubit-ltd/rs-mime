@@ -133,6 +133,9 @@ impl MimeDetectorCore {
         policy: MimeDetectionPolicy,
         source: DetectionSource<'_>,
     ) -> MimeResult<Option<String>> {
+        if policy == MimeDetectionPolicy::VerifyContent && from_content.is_empty() {
+            return Ok(None);
+        }
         let result = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
             from_filename.first().cloned()
         } else {
