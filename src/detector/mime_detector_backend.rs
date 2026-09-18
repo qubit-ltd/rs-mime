@@ -28,6 +28,9 @@ use crate::MimeDetectorCore;
 use crate::MimeResult;
 use crate::StreamBasedMimeDetector;
 
+type AsyncProviderPathResult<'a> =
+    Pin<Box<dyn Future<Output = MimeResult<(Vec<String>, Option<Vec<u8>>)>> + Send + 'a>>;
+
 /// Core implementation contract for MIME detectors.
 pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// Describes how much content the backend needs for detection.
@@ -133,7 +136,7 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
         _file_system: &'a AsyncFileSystem,
         _path: &'a FsPath,
         _max_bytes: usize,
-    ) -> Pin<Box<dyn Future<Output = MimeResult<(Vec<String>, Option<Vec<u8>>)>> + Send + 'a>> {
+    ) -> AsyncProviderPathResult<'a> {
         Box::pin(async { Err(crate::MimeError::CompleteContentRequired) })
     }
 }
