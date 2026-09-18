@@ -288,3 +288,18 @@ fn create_precise_config(
         .expect("ambiguous MIME mapping should be configurable");
     MimeConfig::from_config(&config).expect("precise MIME config should parse")
 }
+
+#[test]
+fn verify_content_with_empty_candidates_returns_none() {
+    let core = MimeDetectorCore::new(MimeConfig::default());
+    let result = core
+        .select_result(
+            &["text/plain".to_owned()],
+            &[],
+            Some("note.txt"),
+            MimeDetectionPolicy::VerifyContent,
+            DetectionSource::None,
+        )
+        .expect("empty content candidates should be a valid result");
+    assert_eq!(None, result);
+}

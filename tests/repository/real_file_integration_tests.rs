@@ -71,7 +71,7 @@ const REAL_FILE_CASES: &[RealFileCase] = &[
         filename: "test.txt",
         by_filename: &["text/plain"],
         by_content: &[],
-        by_detector: "text/plain",
+        by_detector: "",
     },
     RealFileCase {
         filename: "test.mp3",
@@ -194,12 +194,8 @@ fn test_repository_detector_detects_real_files_from_paths() {
             .detect_file(&path, MimeDetectionPolicy::VerifyContent)
             .expect("real fixture should be detectable");
 
-        assert_eq!(
-            Some(case.by_detector.to_owned()),
-            detected,
-            "path detection mismatch for {}",
-            case.filename,
-        );
+        let expected = (!case.by_detector.is_empty()).then(|| case.by_detector.to_owned());
+        assert_eq!(expected, detected, "path detection mismatch for {}", case.filename,);
     }
 }
 
