@@ -3,7 +3,7 @@
 [中文用户手册](user_guide.zh_CN.md) · [README](../README.md) ·
 [API documentation](https://docs.rs/qubit-mime)
 
-This guide targets Rust applications using `qubit-mime` 0.16 to inspect
+This guide targets Rust applications using `qubit-mime` 0.18 to inspect
 uploaded files, filesystem resources, or media streams. It explains the
 supported detection paths and the operational boundaries that callers must
 handle.
@@ -71,7 +71,7 @@ Add the crate to `Cargo.toml`:
 
 ```toml
 [dependencies]
-qubit-mime = "0.16"
+qubit-mime = "0.18"
 ```
 
 `RepositoryMimeDetector::new()` uses the embedded repository and needs no
@@ -127,6 +127,25 @@ For tests or scoped applications, use `MimeDetectorRegistry::builtin()` or a
 separate registry. Application providers implement `ProviderMetadata` and
 `ServiceProvider<MimeDetectorSpec>`; `examples/custom_provider.rs` shows the
 complete registration and resolution path.
+
+Link-time provider discovery is opt-in. An application can enable it with:
+
+```toml
+[dependencies]
+qubit-mime = { version = "0.18", features = ["inventory"] }
+qubit-magika = { version = "0.15", features = ["inventory"] }
+```
+
+Reference the provider crate in application code (`use qubit_magika as _;`) so
+its submission is linked. `MimeDetectorRegistry::builtin()` then discovers the
+submitted `magika` provider, while its default remains `repository`. The
+classifier registry likewise discovers linked submissions and retains
+`ffprobe` as its default. Provider crates submit factories through
+`qubit_spi::submit_sync_provider!` using the detector or classifier inventory
+`Entry` exposed under `qubit_mime::detector::mime_detector_inventory` or
+`qubit_mime::classifier::media_stream_classifier_inventory`. Duplicate submitted
+selectors cause inventory construction to fail. With the feature disabled,
+register providers explicitly as shown above.
 
 For richer inspection, use `MimeRepository` directly to access `MimeType`
 metadata, aliases, comments, filename extensions, magic rules, and super-type
