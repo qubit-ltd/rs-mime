@@ -57,6 +57,12 @@ impl MimeDetectorRegistry {
     /// A runtime-mutable Registry containing `repository` and `file`.
     #[must_use]
     pub fn builtin() -> Self {
+        #[cfg(feature = "inventory")]
+        let registry = Self {
+            providers: super::mime_detector_inventory::build_registry()
+                .expect("submitted MIME detector providers should register"),
+        };
+        #[cfg(not(feature = "inventory"))]
         let registry = Self::default();
         registry
             .register(RepositoryMimeDetectorProvider)

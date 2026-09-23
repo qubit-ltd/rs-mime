@@ -18,7 +18,7 @@ MIME 类型。它适合文件上传路由和媒体检查场景：默认使用内
 
 ```toml
 [dependencies]
-qubit-mime = "0.16"
+qubit-mime = "0.18"
 ```
 
 本 crate 要求 Rust 1.94 或更高版本。默认的 `repository` 检测器使用 crate 内置的
@@ -100,6 +100,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `ServiceProvider<MimeDetectorSpec>`。进程级 Registry 可通过
 `MimeDetectorRegistry::global()` 获取；`builtin()` 返回适合测试或局部应用的隔离
 Registry。
+
+启用可选的 `inventory` feature 后，已链接的 Provider crate 可以通过
+`qubit_spi::submit_sync_provider!` 分别向
+`qubit_mime::detector::mime_detector_inventory::Entry` 和
+`qubit_mime::classifier::media_stream_classifier_inventory::Entry` 提交检测器和分类器。
+两个 `builtin()` Registry 会发现这些 Provider，同时保留 `repository` 和 `ffprobe`
+默认选择。重复 selector 会使 inventory 构建失败；未启用此 feature 时仍需显式注册。
 
 常用配置键包括 `mime.detector.default`、`mime.detector.fallbacks`、
 `mime.max.buffer.size`、`mime.command.timeout` 和 `mime.command.output.max.bytes`。

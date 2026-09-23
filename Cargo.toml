@@ -1,6 +1,6 @@
 [package]
 name = "qubit-mime"
-version = "0.17.0"
+version = "0.18.0"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Haixing Hu <starfish.hu@gmail.com>"]
@@ -29,6 +29,9 @@ include = [
 name = "qubit_mime"
 doctest = true
 
+[features]
+inventory = ["qubit-spi/inventory"]
+
 [dependencies]
 regex = "^1.13"
 roxmltree = "^0.21"
@@ -41,7 +44,7 @@ qubit-command = "0.10"
 qubit-config = "0.14.3"
 qubit-datatype = { version = "0.14", default-features = false, features = ["converter"] }
 qubit-local-files = "0.4"
-qubit-spi = { version = "0.12" }
+qubit-spi = { version = "0.13" }
 
 [dev-dependencies]
 qubit-fs-local = "0.9"

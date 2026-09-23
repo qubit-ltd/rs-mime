@@ -21,7 +21,7 @@ and [Chinese user guide](doc/user_guide.zh_CN.md) cover the same public behavior
 
 ```toml
 [dependencies]
-qubit-mime = "0.16"
+qubit-mime = "0.18"
 ```
 
 The crate requires Rust 1.94 or later. The default `repository` detector uses
@@ -111,6 +111,14 @@ Applications can register providers implementing `ProviderMetadata` and
 `ServiceProvider<MimeDetectorSpec>`. The process-wide registry is available
 through `MimeDetectorRegistry::global()`; `builtin()` creates an isolated
 registry suitable for tests or scoped applications.
+
+With the opt-in `inventory` feature, linked provider crates can submit detector
+factories to `qubit_mime::detector::mime_detector_inventory::Entry` and classifier
+factories to `qubit_mime::classifier::media_stream_classifier_inventory::Entry`
+using `qubit_spi::submit_sync_provider!`. Both `builtin()` registries discover
+those providers while keeping `repository` and `ffprobe` as their defaults.
+Duplicate submitted selectors fail inventory construction. Without this feature,
+providers continue to require explicit registration.
 
 Important configuration keys include `mime.detector.default`,
 `mime.detector.fallbacks`, `mime.max.buffer.size`,

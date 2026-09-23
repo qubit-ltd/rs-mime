@@ -56,6 +56,12 @@ impl MediaStreamClassifierRegistry {
     /// A runtime-mutable Registry containing the FFprobe provider.
     #[must_use]
     pub fn builtin() -> Self {
+        #[cfg(feature = "inventory")]
+        let registry = Self {
+            providers: super::media_stream_classifier_inventory::build_registry()
+                .expect("submitted media stream classifier providers should register"),
+        };
+        #[cfg(not(feature = "inventory"))]
         let registry = Self::default();
         registry
             .register(FfprobeCommandMediaStreamClassifierProvider)
