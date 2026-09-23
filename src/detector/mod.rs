@@ -20,6 +20,8 @@ pub mod mime_detector_adapter;
 pub(crate) mod mime_detector_backend;
 pub(crate) mod mime_detector_context;
 pub(crate) mod mime_detector_core;
+#[cfg(feature = "inventory")]
+pub mod mime_detector_inventory;
 pub(crate) mod mime_detector_provider;
 pub(crate) mod mime_detector_registry;
 pub(crate) mod mime_detector_spec;
