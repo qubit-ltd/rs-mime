@@ -3,7 +3,7 @@
 [English user guide](user_guide.md) · [README](../README.zh_CN.md) ·
 [API 文档](https://docs.rs/qubit-mime)
 
-本手册面向使用 `qubit-mime` 0.16 检查上传文件、文件系统资源或媒体流的 Rust 应用。
+本手册面向使用 `qubit-mime` 0.18 检查上传文件、文件系统资源或媒体流的 Rust 应用。
 内容覆盖可用的检测入口，以及调用方需要自行处理的运行边界。
 
 ## 手册目标与读者
@@ -64,7 +64,7 @@ fn main() -> qubit_mime::MimeResult<()> {
 
 ```toml
 [dependencies]
-qubit-mime = "0.16"
+qubit-mime = "0.18"
 ```
 
 `RepositoryMimeDetector::new()` 使用内置仓库，不需要外部命令。若要显式选择 Provider，
@@ -113,6 +113,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 应用可以使用 `MimeDetectorRegistry::builtin()` 或其他独立 Registry。应用自定义 Provider
 需要实现 `ProviderMetadata` 和 `ServiceProvider<MimeDetectorSpec>`，完整的注册与解析流程
 见 `examples/custom_provider.rs`。
+
+需要在链接时发现 Provider，可以启用可选的 `inventory` feature：
+
+```toml
+[dependencies]
+qubit-mime = { version = "0.18", features = ["inventory"] }
+qubit-magika = { version = "0.15", features = ["inventory"] }
+```
+
+应用代码还需引用 Provider crate（`use qubit_magika as _;`），使提交项参与链接。
+此时 `MimeDetectorRegistry::builtin()` 能发现 `magika`，但默认仍选 `repository`；
+分类器 Registry 也会发现已链接的提交项，并保留 `ffprobe` 作为默认选择。Provider
+crate 通过 `qubit_spi::submit_sync_provider!` 向
+`qubit_mime::detector::mime_detector_inventory` 或
+`qubit_mime::classifier::media_stream_classifier_inventory` 下的 `Entry` 提交工厂。
+重复的 selector 会导致 inventory 构建失败。未启用该 feature 时，仍按上文显式注册。
 
 需要更丰富的元数据时，直接使用 `MimeRepository` 访问 `MimeType` 的元数据、别名、注释、
 文件扩展名、magic 规则和父类型关系。对于媒体扩展名有歧义的情况，可以配置媒体流
