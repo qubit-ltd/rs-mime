@@ -1,3 +1,11 @@
+// =============================================================================
+//    Copyright (c) 2025 - 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
+
 use qubit_mime::CONFIG_COMMAND_OUTPUT_MAX_BYTES;
 use qubit_mime::CONFIG_COMMAND_TIMEOUT;
 use qubit_mime::CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE;
