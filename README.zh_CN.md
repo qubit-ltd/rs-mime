@@ -18,7 +18,7 @@ MIME 类型。它适合文件上传路由和媒体检查场景：默认使用内
 
 ```toml
 [dependencies]
-qubit-mime = "0.18"
+qubit-mime = "0.19"
 ```
 
 本 crate 要求 Rust 1.94 或更高版本。默认的 `repository` 检测器使用 crate 内置的
