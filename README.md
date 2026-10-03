@@ -21,7 +21,7 @@ and [Chinese user guide](doc/user_guide.zh_CN.md) cover the same public behavior
 
 ```toml
 [dependencies]
-qubit-mime = "0.18"
+qubit-mime = "0.19"
 ```
 
 The crate requires Rust 1.94 or later. The default `repository` detector uses
