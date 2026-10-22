@@ -64,7 +64,7 @@ fn main() -> qubit_mime::MimeResult<()> {
 
 ```toml
 [dependencies]
-qubit-mime = "0.18"
+qubit-mime = "0.20"
 ```
 
 `RepositoryMimeDetector::new()` 使用内置仓库，不需要外部命令。若要显式选择 Provider，
@@ -118,8 +118,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```toml
 [dependencies]
-qubit-mime = { version = "0.18", features = ["inventory"] }
-qubit-magika = { version = "0.15", features = ["inventory"] }
+qubit-mime = { version = "0.20", features = ["inventory"] }
+qubit-magika = { version = "0.17", features = ["inventory"] }
 ```
 
 应用代码还需引用 Provider crate（`use qubit_magika as _;`），使提交项参与链接。

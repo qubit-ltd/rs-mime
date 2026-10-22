@@ -71,7 +71,7 @@ Add the crate to `Cargo.toml`:
 
 ```toml
 [dependencies]
-qubit-mime = "0.18"
+qubit-mime = "0.20"
 ```
 
 `RepositoryMimeDetector::new()` uses the embedded repository and needs no
@@ -132,8 +132,8 @@ Link-time provider discovery is opt-in. An application can enable it with:
 
 ```toml
 [dependencies]
-qubit-mime = { version = "0.18", features = ["inventory"] }
-qubit-magika = { version = "0.15", features = ["inventory"] }
+qubit-mime = { version = "0.20", features = ["inventory"] }
+qubit-magika = { version = "0.17", features = ["inventory"] }
 ```
 
 Reference the provider crate in application code (`use qubit_magika as _;`) so
