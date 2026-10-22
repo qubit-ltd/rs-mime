@@ -10,10 +10,9 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::io::Read;
-use std::io::Write;
 use std::path::Path;
 
-use qubit_io::Streams;
+use qubit_io::Output;
 
 use crate::MimeError;
 use crate::MimeResult;
@@ -80,16 +79,40 @@ pub(crate) fn with_temp_reader<T>(
 /// Returns [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) when
 /// the stream exceeds `max_staging_size`, or
 /// [`MimeError::Io`](crate::MimeError::Io) for I/O failures.
-fn copy_to_temp_file(reader: &mut dyn Read, writer: &mut dyn Write, max_staging_size: u64) -> MimeResult<()> {
-    Streams::copy_to_end_limited(reader, writer, max_staging_size)
-        .map(|_| ())
-        .map_err(|error| {
-            if error.kind() == ErrorKind::InvalidData {
-                MimeError::invalid_classifier_input(format!(
-                    "media stream input exceeds staging limit of {max_staging_size} bytes"
-                ))
-            } else {
-                error.into()
+fn copy_to_temp_file(
+    reader: &mut dyn Read,
+    writer: &mut dyn Output<Item = u8>,
+    max_staging_size: u64,
+) -> MimeResult<()> {
+    let mut buffer = [0_u8; 8 * 1024];
+    let mut copied = 0_u64;
+    loop {
+        let remaining = max_staging_size - copied;
+        let read_limit = usize::try_from(remaining)
+            .unwrap_or(usize::MAX)
+            .min(buffer.len());
+        if read_limit == 0 {
+            let mut probe = [0_u8; 1];
+            match reader.read(&mut probe) {
+                Ok(0) => return Ok(()),
+                Ok(_) => {
+                    return Err(MimeError::invalid_classifier_input(format!(
+                        "media stream input exceeds staging limit of {max_staging_size} bytes"
+                    )));
+                }
+                Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error.into()),
             }
-        })
+        }
+        let count = match reader.read(&mut buffer[..read_limit]) {
+            Ok(count) => count,
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if count == 0 {
+            return Ok(());
+        }
+        Output::write_fully(writer, &buffer[..count])?;
+        copied += count as u64;
+    }
 }

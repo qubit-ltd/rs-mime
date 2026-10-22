@@ -8,9 +8,9 @@
 //! Runtime-created detectors retain their repository while inspecting local
 //! staging.
 
-use std::io::Write;
 use std::sync::Arc;
 
+use qubit_io::Output;
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::options::LocalTempFileOptions;
 use qubit_mime::DEFAULT_COMMAND_TIMEOUT;
@@ -47,13 +47,16 @@ fn test_runtime_detector_retains_custom_repository_for_local_file() {
     drop(cloned);
     drop(runtime);
     drop(repository);
-    assert!(weak.upgrade().is_some(), "detector should retain its repository");
+    assert!(
+        weak.upgrade().is_some(),
+        "detector should retain its repository"
+    );
 
     let filesystem = LocalFileSystem::host().expect("local filesystem");
     let mut temporary = filesystem
         .create_temp_file_with_options(&LocalTempFileOptions::new().with_suffix(".qreport"))
         .expect("temporary report");
-    temporary.write_all(b"report body").expect("report content");
+    Output::write_fully(&mut temporary, b"report body").expect("report content");
     temporary.close();
     assert_eq!(detector.max_buffer_size(), expected_limit);
     assert_eq!(
@@ -65,7 +68,10 @@ fn test_runtime_detector_retains_custom_repository_for_local_file() {
     );
     temporary.cleanup().expect("explicit report cleanup");
     drop(detector);
-    assert!(weak.upgrade().is_none(), "repository should release with the detector");
+    assert!(
+        weak.upgrade().is_none(),
+        "repository should release with the detector"
+    );
 }
 
 /// Built-in and default runtime construction both produce a working detector.
@@ -89,7 +95,10 @@ fn test_builtin_runtime_detects_content_without_registration() {
 #[test]
 fn test_runtime_creates_detectors_using_its_repository_and_configuration() {
     let runtime = MimeRuntime::builtin().expect("built-in repository must initialize");
-    assert_eq!(runtime.context().config().command_timeout(), DEFAULT_COMMAND_TIMEOUT);
+    assert_eq!(
+        runtime.context().config().command_timeout(),
+        DEFAULT_COMMAND_TIMEOUT
+    );
     assert!(
         !runtime
             .context()
@@ -97,7 +106,9 @@ fn test_runtime_creates_detectors_using_its_repository_and_configuration() {
             .detect_by_filename("report.pdf")
             .is_empty()
     );
-    let detector = runtime.create_detector().expect("runtime detector must initialize");
+    let detector = runtime
+        .create_detector()
+        .expect("runtime detector must initialize");
     drop(runtime);
     assert_eq!(
         detector

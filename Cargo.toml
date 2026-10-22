@@ -37,17 +37,23 @@ regex = "^1.13"
 roxmltree = "^0.21"
 thiserror = "^2.0"
 
-qubit-io = "0.17"
-qubit-fs = { version = "0.2", default-features = false, features = ["async"] }
+qubit-io = { path = "../rs-io", version = "0.19" }
+
+qubit-fs = { path = "../rs-fs", version = "0.2", default-features = false, features = ["async"] }
+
 qubit-codec-misc = "0.7"
-qubit-command = "0.10"
-qubit-config = "0.14.3"
-qubit-datatype = { version = "0.14", default-features = false, features = ["converter"] }
-qubit-local-files = "0.4"
+qubit-command = { path = "../rs-command", version = "0.10" }
+qubit-config = { path = "../rs-config", version = "0.14" }
+
+qubit-datatype = { path = "../rs-datatype", version = "0.14", default-features = false, features = ["converter"] }
+
+qubit-local-files = { path = "../rs-local-files", version = "0.5" }
+
 qubit-spi = { version = "0.13" }
 
 [dev-dependencies]
-qubit-fs-local = "0.10"
+qubit-fs-local = { path = "../rs-fs-local", version = "0.10" }
+
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
