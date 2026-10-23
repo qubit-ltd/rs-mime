@@ -1,6 +1,6 @@
 [package]
 name = "qubit-mime"
-version = "0.20.0"
+version = "0.21.0"
 edition = "2024"
 rust-version = "1.94"
 authors = ["Haixing Hu <starfish.hu@gmail.com>"]
@@ -39,17 +39,17 @@ thiserror = "^2.0"
 
 qubit-io = { path = "../rs-io", version = "0.19" }
 
-qubit-fs = { path = "../rs-fs", version = "0.2", default-features = false, features = ["async"] }
+qubit-fs = { path = "../rs-fs", version = "0.3", default-features = false, features = ["async"] }
 
 qubit-codec-misc = "0.7"
-qubit-command = "0.10"
+qubit-command = "0.11"
 qubit-config = "0.15"
 qubit-datatype = { version = "0.15", default-features = false, features = ["converter"] }
-qubit-local-files = "0.4"
+qubit-local-files = "0.5"
 qubit-spi = { version = "0.13" }
 
 [dev-dependencies]
-qubit-fs-local = { path = "../rs-fs-local", version = "0.10" }
+qubit-fs-local = { path = "../rs-fs-local", version = "0.11" }
 
 
 [lints.rust]
