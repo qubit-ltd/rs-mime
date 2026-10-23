@@ -10,50 +10,51 @@
 
 use std::sync::Arc;
 
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetector;
 use qubit_mime::MimeDetectorSpec;
+use qubit_mime::MimeError;
 use qubit_spi::ProviderDescriptor;
 use qubit_spi::ProviderMetadata;
 use qubit_spi::ServiceProvider;
 use qubit_spi::error::ProviderFailure;
 use qubit_spi::provider_descriptor;
 
-struct First;
-struct Second;
-impl ProviderMetadata for First {
+struct FirstDuplicateSelectorProvider;
+
+struct SecondDuplicateSelectorProvider;
+
+impl ProviderMetadata for FirstDuplicateSelectorProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         provider_descriptor!("duplicate-selector")
     }
 }
-impl ProviderMetadata for Second {
+impl ProviderMetadata for SecondDuplicateSelectorProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         provider_descriptor!("duplicate-selector")
     }
 }
-impl ServiceProvider<MimeDetectorSpec> for First {
-    fn create_configured(
-        &self,
-        _: &qubit_mime::MimeConfig,
-    ) -> Result<Arc<dyn qubit_mime::MimeDetector>, ProviderFailure<qubit_mime::MimeError>> {
+impl ServiceProvider<MimeDetectorSpec> for FirstDuplicateSelectorProvider {
+    fn create_configured(&self, _: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         unimplemented!()
     }
 }
-impl ServiceProvider<MimeDetectorSpec> for Second {
-    fn create_configured(
-        &self,
-        _: &qubit_mime::MimeConfig,
-    ) -> Result<Arc<dyn qubit_mime::MimeDetector>, ProviderFailure<qubit_mime::MimeError>> {
+
+impl ServiceProvider<MimeDetectorSpec> for SecondDuplicateSelectorProvider {
+    fn create_configured(&self, _: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         unimplemented!()
     }
+}
+
+qubit_spi::submit_sync_provider! {
+    inventory_entry = qubit_mime::detector::mime_detector_inventory::Entry;
+    spec = MimeDetectorSpec;
+    provider = FirstDuplicateSelectorProvider;
 }
 qubit_spi::submit_sync_provider! {
     inventory_entry = qubit_mime::detector::mime_detector_inventory::Entry;
     spec = MimeDetectorSpec;
-    provider = First;
-}
-qubit_spi::submit_sync_provider! {
-    inventory_entry = qubit_mime::detector::mime_detector_inventory::Entry;
-    spec = MimeDetectorSpec;
-    provider = Second;
+    provider = SecondDuplicateSelectorProvider;
 }
 
 #[test]

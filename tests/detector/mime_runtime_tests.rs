@@ -47,10 +47,7 @@ fn test_runtime_detector_retains_custom_repository_for_local_file() {
     drop(cloned);
     drop(runtime);
     drop(repository);
-    assert!(
-        weak.upgrade().is_some(),
-        "detector should retain its repository"
-    );
+    assert!(weak.upgrade().is_some(), "detector should retain its repository");
 
     let filesystem = LocalFileSystem::host().expect("local filesystem");
     let mut temporary = filesystem
@@ -68,10 +65,7 @@ fn test_runtime_detector_retains_custom_repository_for_local_file() {
     );
     temporary.cleanup().expect("explicit report cleanup");
     drop(detector);
-    assert!(
-        weak.upgrade().is_none(),
-        "repository should release with the detector"
-    );
+    assert!(weak.upgrade().is_none(), "repository should release with the detector");
 }
 
 /// Built-in and default runtime construction both produce a working detector.
@@ -95,10 +89,7 @@ fn test_builtin_runtime_detects_content_without_registration() {
 #[test]
 fn test_runtime_creates_detectors_using_its_repository_and_configuration() {
     let runtime = MimeRuntime::builtin().expect("built-in repository must initialize");
-    assert_eq!(
-        runtime.context().config().command_timeout(),
-        DEFAULT_COMMAND_TIMEOUT
-    );
+    assert_eq!(runtime.context().config().command_timeout(), DEFAULT_COMMAND_TIMEOUT);
     assert!(
         !runtime
             .context()
@@ -106,9 +97,7 @@ fn test_runtime_creates_detectors_using_its_repository_and_configuration() {
             .detect_by_filename("report.pdf")
             .is_empty()
     );
-    let detector = runtime
-        .create_detector()
-        .expect("runtime detector must initialize");
+    let detector = runtime.create_detector().expect("runtime detector must initialize");
     drop(runtime);
     assert_eq!(
         detector

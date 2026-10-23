@@ -33,24 +33,57 @@ pub struct MimeRuntime {
 }
 
 impl MimeRuntime {
-    /// Creates a runtime with explicit configuration and repository.
+    /// Creates a runtime that shares the supplied repository handle.
+    ///
+    /// The configuration is moved into a shared handle so detectors created by
+    /// this runtime use the same immutable settings.
+    ///
+    /// # Parameters
+    ///
+    /// - `config`: detection settings used by detectors created by this
+    ///   runtime.
+    /// - `repository`: shared MIME repository used for detection.
+    ///
+    /// # Returns
+    ///
+    /// A runtime retaining the configuration and repository for later detector
+    /// creation.
     pub fn new(config: MimeConfig, repository: Arc<MimeRepository>) -> Self {
         Self {
             context: MimeDetectorContext::new(Arc::new(config), repository),
         }
     }
 
-    /// Creates a runtime using built-in configuration and repository.
+    /// Creates a runtime using the default configuration and bundled
+    /// repository.
+    ///
+    /// # Returns
+    ///
+    /// A runtime backed by the crate's bundled MIME data.
     pub fn builtin() -> MimeResult<Self> {
         Ok(Self::new(MimeConfig::default(), MimeRepository::bundled_shared()))
     }
 
-    /// Returns runtime context.
+    /// Returns the immutable configuration and repository shared by this
+    /// runtime.
+    ///
+    /// # Returns
+    ///
+    /// A reference to this runtime's context. The reference is valid for the
+    /// lifetime of the borrow and does not clone the shared handles.
     pub fn context(&self) -> &MimeDetectorContext {
         &self.context
     }
 
-    /// Creates the built-in repository detector.
+    /// Creates a detector using this runtime's configuration and repository.
+    ///
+    /// The detector receives a clone of the configuration value and a clone of
+    /// the repository's `Arc`, so the repository remains alive independently of
+    /// this runtime.
+    ///
+    /// # Returns
+    ///
+    /// A shared handle to a repository-backed MIME detector.
     pub fn create_detector(&self) -> MimeResult<Arc<dyn MimeDetector>> {
         Ok(Arc::new(OwnedRepositoryMimeDetector::new(
             self.context.config().clone(),

@@ -15,7 +15,8 @@ use std::path::Path;
 ///
 /// ```
 /// use qubit_mime::DetectionSource;
-/// assert!(matches!(DetectionSource::None, DetectionSource::None));
+/// let source = DetectionSource::Content(b"sample");
+/// assert!(matches!(source, DetectionSource::Content(bytes) if bytes == b"sample"));
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub enum DetectionSource<'a> {

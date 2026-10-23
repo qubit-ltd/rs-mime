@@ -20,6 +20,25 @@ use crate::MimeError;
 ///
 /// The configuration is [`MimeConfig`], and created services implement the
 /// [`MimeDetector`] trait object.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+///
+/// use qubit_mime::MimeConfig;
+/// use qubit_mime::MimeDetector;
+/// use qubit_mime::MimeDetectorSpec;
+/// use qubit_mime::MimeError;
+/// use qubit_spi::ServiceSpec;
+/// use qubit_spi::SyncServiceSpec;
+///
+/// fn assert_config<T: ServiceSpec<Config = MimeConfig, Error = MimeError>>() {}
+/// fn assert_output<T: SyncServiceSpec<Output = Arc<dyn MimeDetector>>>() {}
+///
+/// assert_config::<MimeDetectorSpec>();
+/// assert_output::<MimeDetectorSpec>();
+/// ```
 #[derive(Debug)]
 pub struct MimeDetectorSpec;
 

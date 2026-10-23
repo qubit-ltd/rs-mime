@@ -6,6 +6,8 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
 use qubit_command::CommandRunner;
@@ -20,6 +22,8 @@ use qubit_mime::CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE;
 use qubit_mime::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
 use qubit_mime::DEFAULT_COMMAND_TIMEOUT;
 use qubit_mime::FfprobeCommandMediaStreamClassifier;
+#[cfg(unix)]
+use qubit_mime::FileBasedMediaStreamClassifier;
 #[cfg(unix)]
 use qubit_mime::MediaStreamClassifier;
 use qubit_mime::MediaStreamType;
@@ -177,7 +181,6 @@ fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake ffprobe metadata should be readable")
         .permissions();
-    use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
@@ -339,9 +342,6 @@ fn test_classify_file_rejects_invalid_utf8_stdout() {
 #[test]
 #[cfg(unix)]
 fn test_command_contract_rejects_truncation_and_uses_actual_exit_status() {
-    use std::os::unix::fs::PermissionsExt;
-
-    use qubit_mime::FileBasedMediaStreamClassifier;
     let directory = LocalFileSystem::host()
         .expect("host filesystem available")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())

@@ -9,6 +9,7 @@
 
 use super::super::MimeGlob;
 
+/// Stores a parsed glob rule with the index of its owning MIME type.
 #[derive(Debug, Clone)]
 pub(crate) struct GlobEntry {
     /// Parsed glob rule.

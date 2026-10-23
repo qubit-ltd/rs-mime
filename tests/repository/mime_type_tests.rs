@@ -20,7 +20,7 @@ fn test_get_preferred_extension_prefers_simple_extension_over_complex_extension(
         .glob(complex)
         .glob(simple)
         .build()
-        .unwrap();
+        .expect("MIME type should be valid");
 
     assert_eq!(Some("pdf"), mime_type.preferred_extension());
 }
@@ -34,7 +34,7 @@ fn test_get_all_extensions_sorts_by_weight_descending() {
         .glob(low)
         .glob(high)
         .build()
-        .unwrap();
+        .expect("MIME type should be valid");
 
     assert_eq!(vec!["high", "low"], mime_type.all_extensions());
 }
@@ -44,11 +44,11 @@ fn test_description_falls_back_to_default_and_english_entries() {
     let default_type = MimeType::builder("text/default")
         .description("", "Default description")
         .build()
-        .unwrap();
+        .expect("MIME type should be valid");
     let english_type = MimeType::builder("text/english")
         .description("en", "English description")
         .build()
-        .unwrap();
+        .expect("MIME type should be valid");
 
     assert_eq!(Some("Default description"), default_type.description());
     assert_eq!(Some("English description"), english_type.description());
@@ -64,7 +64,7 @@ fn test_metadata_getters_filename_matching_and_supertype_content_matching() {
         .glob(literal)
         .super_type("application/base")
         .build()
-        .unwrap();
+        .expect("MIME type should be valid");
 
     assert_eq!("application/example", mime_type.name());
     assert_eq!(None, mime_type.description());
@@ -92,7 +92,7 @@ fn test_metadata_getters_filename_matching_and_supertype_content_matching() {
 </mime-info>
 "#,
     )
-    .expect("repository should parse");
+    .expect("MIME repository should parse");
     let child = repository.get("application/child").expect("child type should exist");
 
     assert!(child.matches_content(&repository, b"BASE data"));

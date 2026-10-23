@@ -19,11 +19,41 @@ use crate::MimeResult;
 
 /// Core implementation contract for classifiers that only operate on local
 /// files.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+///
+/// use qubit_mime::FileBasedMediaStreamClassifier;
+/// use qubit_mime::MediaStreamType;
+/// use qubit_mime::MimeResult;
+///
+/// #[derive(Debug)]
+/// struct AudioClassifier;
+///
+/// impl FileBasedMediaStreamClassifier for AudioClassifier {
+///     fn classify_by_local_file(&self, _file: &Path) -> MimeResult<MediaStreamType> {
+///         Ok(MediaStreamType::AudioOnly)
+///     }
+/// }
+///
+/// let classifier = AudioClassifier;
+/// let result = FileBasedMediaStreamClassifier::classify_by_local_file(
+///     &classifier,
+///     Path::new("sample.media"),
+/// )?;
+/// assert_eq!(result, MediaStreamType::AudioOnly);
+/// # Ok::<(), qubit_mime::MimeError>(())
+/// ```
 pub trait FileBasedMediaStreamClassifier: Debug + Send + Sync {
     /// Gets the maximum bytes staged from reader/content input.
     ///
     /// # Returns
-    /// Maximum accepted stream size before staging is rejected.
+    /// Maximum accepted stream size before staging is rejected. The default is
+    /// [`DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE`].
+    #[must_use]
+    #[inline]
     fn max_staging_size(&self) -> u64 {
         DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE
     }

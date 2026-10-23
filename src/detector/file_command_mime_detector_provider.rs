@@ -22,6 +22,17 @@ use crate::MimeDetector;
 use crate::MimeError;
 
 /// Provider for the built-in system `file` command detector.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::FileCommandMimeDetectorProvider;
+/// use qubit_spi::ProviderMetadata;
+///
+/// let provider = FileCommandMimeDetectorProvider;
+/// let descriptor = provider.descriptor();
+/// assert_eq!(descriptor.id().as_str(), "file");
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FileCommandMimeDetectorProvider;
 
@@ -30,6 +41,16 @@ impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
     ///
     /// Returns an unavailable provider failure when the command cannot be
     /// executed in the current environment.
+    ///
+    /// # Parameters
+    /// - `config`: Configuration used to create the detector.
+    ///
+    /// # Returns
+    /// A shared MIME detector configured to use the system `file` command.
+    ///
+    /// # Errors
+    /// Returns an unavailable provider failure if the system `file` command
+    /// cannot be executed in the current environment.
     fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         if !FileCommandMimeDetector::is_available() {
             return Err(ProviderFailure::unavailable(MimeError::DetectorUnavailable {

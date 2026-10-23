@@ -17,6 +17,16 @@ use crate::MimeResult;
 use crate::StreamBasedMimeDetector;
 
 /// Core implementation contract for detectors that only inspect local files.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::{FileBasedMimeDetector, FileCommandMimeDetector};
+///
+/// let detector = FileCommandMimeDetector::new();
+/// let candidates = detector.guess_from_filename("document.pdf");
+/// assert!(!candidates.is_empty());
+/// ```
 pub trait FileBasedMimeDetector: Debug + Send + Sync {
     /// Gets the shared detector core.
     ///
@@ -57,33 +67,31 @@ where
     T: FileBasedMimeDetector,
 {
     /// Gets the shared detector core.
+    #[inline]
     fn core(&self) -> &MimeDetectorCore {
         FileBasedMimeDetector::core(self)
     }
 
     /// Gets the maximum content prefix length needed by this detector.
+    #[inline]
     fn max_test_bytes(&self) -> usize {
         FileBasedMimeDetector::max_test_bytes(self)
     }
 
     /// Guesses MIME type names from filename rules.
+    #[inline]
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         FileBasedMimeDetector::guess_from_filename(self, filename)
     }
 
     /// Stages content to a temporary local file before inspection.
     fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
-        with_temp_file(content, |path| {
-            FileBasedMimeDetector::guess_from_local_file(self, path)
-        })
+        with_temp_file(content, |path| FileBasedMimeDetector::guess_from_local_file(self, path))
     }
 
     /// Delegates local-file inspection to the file-based hook.
     fn guess_from_file_stream(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        Ok((
-            FileBasedMimeDetector::guess_from_local_file(self, file)?,
-            Vec::new(),
-        ))
+        Ok((FileBasedMimeDetector::guess_from_local_file(self, file)?, Vec::new()))
     }
 }
 
@@ -99,10 +107,7 @@ where
 /// # Errors
 /// Returns [`MimeError::Io`](crate::MimeError::Io) when the temporary file
 /// cannot be written.
-pub(crate) fn with_temp_file<T>(
-    content: &[u8],
-    detect: impl FnOnce(&Path) -> MimeResult<T>,
-) -> MimeResult<T> {
+pub(crate) fn with_temp_file<T>(content: &[u8], detect: impl FnOnce(&Path) -> MimeResult<T>) -> MimeResult<T> {
     crate::temp_staging::with_temp_file(
         "MimeDetectorTemp-",
         |file| Output::write_fully(file, content).map_err(Into::into),

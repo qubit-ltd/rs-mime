@@ -6,6 +6,8 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Minimal execution facts required by MIME business policy.
+use std::str;
+
 use qubit_command::CommandOutput;
 
 /// Owned stdout and actual exit status, independent of runner success policy.
@@ -21,6 +23,7 @@ pub(crate) struct MimeCommandOutput {
 }
 impl MimeCommandOutput {
     /// Moves command output into the private projection without copying stdout.
+    #[must_use]
     pub(super) fn from_output(output: CommandOutput) -> Self {
         let exit_code = output.exit_code();
         let stdout_truncated = output.stdout_truncated();
@@ -46,5 +49,5 @@ pub(crate) fn require_complete_stdout(output: &MimeCommandOutput) -> Result<&str
     if !output.stdout_complete {
         return Err("stdout is incomplete");
     }
-    std::str::from_utf8(&output.stdout).map_err(|_| "stdout is not valid UTF-8")
+    str::from_utf8(&output.stdout).map_err(|_| "stdout is not valid UTF-8")
 }

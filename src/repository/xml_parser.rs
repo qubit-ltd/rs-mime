@@ -10,6 +10,14 @@
 use std::borrow::Cow;
 
 /// Removes an optional XML doctype declaration before parsing MIME data.
+///
+/// The declaration is removed through the first unquoted `]>` after its
+/// opening marker. Input without a complete declaration is returned unchanged.
+///
+/// # Returns
+/// The original XML borrowed when no complete declaration is found, or an
+/// owned string with the declaration removed.
+#[must_use]
 pub(crate) fn strip_doctype(xml: &str) -> Cow<'_, str> {
     let Some(start) = xml.find("<!DOCTYPE") else {
         return Cow::Borrowed(xml);

@@ -9,5 +9,8 @@
 
 use crate::MimeError;
 
-/// A convenient alias for results returned by MIME-related functions.
+/// The result type used by MIME-related functions.
+///
+/// # Type Parameters
+/// - `T`: The value returned when the operation succeeds.
 pub type MimeResult<T> = Result<T, MimeError>;

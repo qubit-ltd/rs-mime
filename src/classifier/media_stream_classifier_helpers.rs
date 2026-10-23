@@ -45,7 +45,9 @@ pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
 /// # Parameters
 /// - `reader`: Stream whose content should be staged.
 /// - `max_staging_size`: Maximum accepted stream size in bytes.
-/// - `classify`: Callback receiving the temporary local file path.
+/// - `classify`: Callback receiving the temporary local file path. The path is
+///   valid only while the callback runs; the temporary file is cleaned up
+///   afterward.
 ///
 /// # Returns
 /// The callback result.
@@ -88,9 +90,7 @@ fn copy_to_temp_file(
     let mut copied = 0_u64;
     loop {
         let remaining = max_staging_size - copied;
-        let read_limit = usize::try_from(remaining)
-            .unwrap_or(usize::MAX)
-            .min(buffer.len());
+        let read_limit = usize::try_from(remaining).unwrap_or(usize::MAX).min(buffer.len());
         if read_limit == 0 {
             let mut probe = [0_u8; 1];
             match reader.read(&mut probe) {

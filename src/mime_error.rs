@@ -23,6 +23,7 @@ use thiserror::Error;
 /// let error = MimeError::EmptyMagicMatchers;
 /// assert!(error.to_string().contains("magic"));
 /// ```
+#[must_use]
 #[derive(Debug, Error)]
 pub enum MimeError {
     /// The detector requires the complete resource rather than a prefix.
@@ -272,6 +273,22 @@ pub enum MimeError {
 }
 
 impl MimeError {
+    /// Builds a detector backend error.
+    ///
+    /// # Parameters
+    /// - `backend`: Detector backend identifier.
+    /// - `reason`: Why the backend failed.
+    ///
+    /// # Returns
+    /// A [`MimeError::DetectorBackend`](crate::MimeError::DetectorBackend)
+    /// value.
+    pub fn detector_backend(backend: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::DetectorBackend {
+            backend: backend.into(),
+            reason: reason.into(),
+        }
+    }
+
     /// Builds an invalid XML attribute error.
     ///
     /// # Parameters
@@ -327,21 +344,5 @@ impl MimeError {
     /// A [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) value.
     pub(crate) fn invalid_classifier_input(reason: impl Into<String>) -> Self {
         Self::InvalidClassifierInput { reason: reason.into() }
-    }
-
-    /// Builds a detector backend error.
-    ///
-    /// # Parameters
-    /// - `backend`: Detector backend identifier.
-    /// - `reason`: Why the backend failed.
-    ///
-    /// # Returns
-    /// A [`MimeError::DetectorBackend`](crate::MimeError::DetectorBackend)
-    /// value.
-    pub fn detector_backend(backend: impl Into<String>, reason: impl Into<String>) -> Self {
-        Self::DetectorBackend {
-            backend: backend.into(),
-            reason: reason.into(),
-        }
     }
 }

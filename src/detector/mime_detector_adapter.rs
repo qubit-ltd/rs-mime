@@ -30,11 +30,23 @@ pub struct MimeDetectorAdapter<B> {
 
 impl<B> MimeDetectorAdapter<B> {
     /// Wraps a detector backend.
+    ///
+    /// # Returns
+    ///
+    /// An adapter that exposes `backend` through the content backend contract.
+    #[must_use]
+    #[inline]
     pub fn new(backend: B) -> Self {
         Self { backend }
     }
 
     /// Returns the wrapped backend.
+    ///
+    /// # Returns
+    ///
+    /// A shared reference to the backend owned by this adapter.
+    #[must_use]
+    #[inline]
     pub fn backend(&self) -> &B {
         &self.backend
     }

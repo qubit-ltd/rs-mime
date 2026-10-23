@@ -56,6 +56,7 @@ impl FileCommandMimeDetector<'static> {
     ///
     /// # Returns
     /// File command detector.
+    #[must_use]
     pub fn new() -> Self {
         Self::with_repository(default_repository())
     }
@@ -67,6 +68,7 @@ impl FileCommandMimeDetector<'static> {
     ///
     /// # Returns
     /// File command detector.
+    #[must_use]
     pub fn from_mime_config(config: MimeConfig) -> Self {
         Self::with_repository_runner_and_config(default_repository(), Self::default_command_runner(&config), config)
     }
@@ -87,6 +89,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// File command detector borrowing `repository`.
+    #[must_use]
     pub fn with_repository(repository: &'a MimeRepository) -> Self {
         let config = MimeConfig::default();
         Self::with_repository_runner_and_config(repository, Self::default_command_runner(&config), config)
@@ -101,6 +104,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// File command detector borrowing `repository` and owning the supplied
     /// runner.
+    #[must_use]
     pub fn with_repository_and_runner(repository: &'a MimeRepository, command_runner: CommandRunner) -> Self {
         Self::with_repository_runner_and_config(repository, command_runner, MimeConfig::default())
     }
@@ -115,6 +119,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// # Returns
     /// File command detector borrowing `repository` and owning the supplied
     /// runner.
+    #[must_use]
     pub fn with_repository_runner_and_config(
         repository: &'a MimeRepository,
         command_runner: CommandRunner,
@@ -131,6 +136,8 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// Shared detector core.
+    #[must_use]
+    #[inline]
     pub fn core(&self) -> &MimeDetectorCore {
         &self.core
     }
@@ -139,6 +146,8 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// Mutable shared detector core.
+    #[must_use]
+    #[inline]
     pub fn core_mut(&mut self) -> &mut MimeDetectorCore {
         &mut self.core
     }
@@ -147,6 +156,8 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// Repository reference.
+    #[must_use]
+    #[inline]
     pub fn repository(&self) -> &'a MimeRepository {
         self.repository
     }
@@ -155,6 +166,8 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// Runner used for `file` command executions.
+    #[must_use]
+    #[inline]
     pub fn command_runner(&self) -> &CommandRunner {
         &self.command_runner
     }
@@ -163,6 +176,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Parameters
     /// - `command_runner`: New runner configuration.
+    #[inline]
     pub fn set_command_runner(&mut self, command_runner: CommandRunner) {
         self.command_runner = command_runner;
     }
@@ -174,6 +188,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// The updated detector.
+    #[must_use]
     pub fn with_command_runner(mut self, command_runner: CommandRunner) -> Self {
         self.command_runner = command_runner;
         self

@@ -44,6 +44,7 @@ impl TestMediaStreamClassifierProvider {
     /// # Returns
     ///
     /// A self-described classifier provider.
+    #[must_use]
     #[inline]
     pub(crate) const fn new(id: &'static str, priority: i32, behavior: TestProviderBehavior) -> Self {
         Self { id, priority, behavior }

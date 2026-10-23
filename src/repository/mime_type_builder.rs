@@ -8,6 +8,7 @@
 //! Builder for MIME type metadata.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::MimeError;
 use crate::MimeGlob;
@@ -43,6 +44,7 @@ impl MimeTypeBuilder {
     ///
     /// # Returns
     /// A new builder.
+    #[must_use]
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_owned(),
@@ -63,6 +65,7 @@ impl MimeTypeBuilder {
     ///
     /// # Returns
     /// The updated builder.
+    #[must_use]
     pub fn description(mut self, language: &str, description: &str) -> Self {
         self.descriptions.insert(language.to_owned(), description.to_owned());
         self
@@ -75,6 +78,7 @@ impl MimeTypeBuilder {
     ///
     /// # Returns
     /// The updated builder.
+    #[must_use]
     pub fn alias(mut self, alias: &str) -> Self {
         self.aliases.push(alias.to_owned());
         self
@@ -87,6 +91,7 @@ impl MimeTypeBuilder {
     ///
     /// # Returns
     /// The updated builder.
+    #[must_use]
     pub fn glob(mut self, glob: MimeGlob) -> Self {
         self.globs.push(glob);
         self
@@ -99,6 +104,7 @@ impl MimeTypeBuilder {
     ///
     /// # Returns
     /// The updated builder.
+    #[must_use]
     pub fn magic(mut self, magic: MimeMagic) -> Self {
         self.magics.push(magic);
         self
@@ -111,6 +117,7 @@ impl MimeTypeBuilder {
     ///
     /// # Returns
     /// The updated builder.
+    #[must_use]
     pub fn super_type(mut self, super_type: &str) -> Self {
         self.super_types.push(super_type.to_owned());
         self
@@ -154,6 +161,7 @@ fn validate_mime_name(name: &str) -> MimeResult<()> {
 }
 
 /// Returns whether a byte is valid inside a MIME token.
+#[inline]
 fn is_mime_token_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric()
         || matches!(
@@ -164,7 +172,7 @@ fn is_mime_token_byte(byte: u8) -> bool {
 
 /// Validates and deduplicates canonical names and aliases.
 fn validate_and_deduplicate_names(names: Vec<String>) -> MimeResult<Vec<String>> {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     let mut result = Vec::new();
     for name in names {
         validate_mime_name(&name)?;
@@ -178,7 +186,7 @@ fn validate_and_deduplicate_names(names: Vec<String>) -> MimeResult<Vec<String>>
 
 /// Removes duplicate glob patterns while preserving their first occurrence.
 fn deduplicate_globs(globs: Vec<MimeGlob>) -> Vec<MimeGlob> {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     globs
         .into_iter()
         .filter(|glob| seen.insert((glob.pattern().to_owned(), glob.weight(), glob.case_sensitive())))

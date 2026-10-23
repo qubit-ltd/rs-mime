@@ -153,11 +153,13 @@ impl MimeDetectorRegistry {
     }
 
     /// Seals this registry against further mutation.
+    #[inline]
     pub fn seal(&self) {
         self.providers.seal();
     }
 
     /// Returns whether this registry is sealed.
+    #[inline]
     #[must_use]
     pub fn is_sealed(&self) -> bool {
         self.providers.is_sealed()

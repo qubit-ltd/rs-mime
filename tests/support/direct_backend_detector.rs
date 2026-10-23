@@ -23,6 +23,7 @@ impl DirectBackendDetector {
     /// # Returns
     ///
     /// A backend fixture recognizing `hello` and `.txt` inputs.
+    #[must_use]
     #[inline]
     pub(crate) fn new() -> Self {
         Self {

@@ -22,6 +22,14 @@ pub(crate) struct MagicIndex {
 
 impl MagicIndex {
     /// Adds one MIME magic rule and updates the required input size.
+    ///
+    /// Entries are retained in insertion order so equal-priority MIME results
+    /// follow repository order.
+    ///
+    /// # Parameters
+    /// - `mime_index`: Position of the MIME type owning `magic` in the
+    ///   repository's MIME type list.
+    /// - `magic`: Rule to clone into the index.
     pub(crate) fn add(&mut self, mime_index: usize, magic: &MimeMagic) {
         self.max_test_bytes = self.max_test_bytes.max(magic.max_test_bytes());
         self.entries.push(MagicEntry {
@@ -32,6 +40,17 @@ impl MagicIndex {
     }
 
     /// Returns MIME indexes whose magic rules match the input bytes.
+    ///
+    /// Only entries at the highest matching priority are returned. A MIME
+    /// index appears once even when multiple rules for that MIME type match;
+    /// distinct results retain the order of their first matching entry.
+    ///
+    /// # Parameters
+    /// - `bytes`: Content prefix available for evaluating the indexed rules.
+    ///
+    /// # Returns
+    /// Distinct MIME indexes at the highest matching priority, or an empty
+    /// vector when no rule matches.
     pub(crate) fn matches(&self, bytes: &[u8]) -> Vec<usize> {
         let Some(best_priority) = self
             .entries

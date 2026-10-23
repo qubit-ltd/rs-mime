@@ -21,12 +21,40 @@ use crate::MimeDetector;
 use crate::MimeError;
 use crate::RepositoryMimeDetector;
 
-/// Provider for the built-in repository-backed detector.
+/// Creates detectors backed by the built-in MIME repository.
+///
+/// Register this provider when constructing a custom MIME detector registry.
+/// The built-in registry already includes it.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeDetectorRegistry;
+/// use qubit_mime::RepositoryMimeDetectorProvider;
+///
+/// let registry = MimeDetectorRegistry::default();
+/// registry
+///     .register(RepositoryMimeDetectorProvider)
+///     .expect("the empty registry should accept the provider");
+/// assert_eq!("repository", registry.provider_ids()[0].as_str());
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RepositoryMimeDetectorProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
     /// Creates a repository-backed detector from the supplied configuration.
+    ///
+    /// # Parameters
+    ///
+    /// * `config` - Configuration cloned into the new detector.
+    ///
+    /// # Returns
+    ///
+    /// A shared detector using the built-in MIME repository.
+    ///
+    /// # Errors
+    ///
+    /// This provider does not currently return an error.
     #[inline]
     fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         Ok(Arc::new(RepositoryMimeDetector::from_mime_config(config.clone())))

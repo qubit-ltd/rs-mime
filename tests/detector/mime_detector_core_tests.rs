@@ -290,7 +290,7 @@ fn create_precise_config(
 }
 
 #[test]
-fn verify_content_with_empty_candidates_returns_none() {
+fn test_verify_content_with_empty_candidates_returns_none() {
     let core = MimeDetectorCore::new(MimeConfig::default());
     let result = core
         .select_result(

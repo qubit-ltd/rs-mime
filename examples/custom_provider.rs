@@ -14,6 +14,8 @@ use qubit_mime::MimeDetector;
 use qubit_mime::MimeDetectorRegistry;
 use qubit_mime::MimeDetectorSpec;
 use qubit_mime::MimeError;
+use qubit_mime::MimeResult;
+use qubit_mime::RepositoryMimeDetector;
 use qubit_spi::ProviderDescriptor;
 use qubit_spi::ProviderId;
 use qubit_spi::ProviderMetadata;
@@ -26,7 +28,7 @@ struct UploadProvider;
 
 impl ServiceProvider<MimeDetectorSpec> for UploadProvider {
     fn create_configured(&self, _config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
-        let detector = qubit_mime::RepositoryMimeDetector::new().map_err(ProviderFailure::initialization_failed)?;
+        let detector = RepositoryMimeDetector::new().map_err(ProviderFailure::initialization_failed)?;
         Ok(Arc::new(detector))
     }
 }
@@ -37,7 +39,7 @@ impl ProviderMetadata for UploadProvider {
     }
 }
 
-fn main() -> qubit_mime::MimeResult<()> {
+fn main() -> MimeResult<()> {
     let registry = MimeDetectorRegistry::default();
     registry
         .register(UploadProvider)

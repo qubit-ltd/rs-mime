@@ -26,12 +26,14 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     ///
     /// # Returns
     /// Shared detector configuration and merge/refinement behavior.
+    #[must_use]
     fn core(&self) -> &MimeDetectorCore;
 
     /// Gets the maximum number of bytes needed for content inspection.
     ///
     /// # Returns
     /// Content prefix length to read from files and readers.
+    #[must_use]
     fn max_test_bytes(&self) -> usize;
 
     /// Guesses MIME type names from a filename.

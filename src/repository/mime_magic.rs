@@ -45,6 +45,11 @@ impl MimeMagic {
     ///
     /// # Returns
     /// A new [`MimeMagic`].
+    ///
+    /// # Errors
+    /// Returns [`MimeError::InvalidMagicPriority`] when `priority` exceeds
+    /// [`MAX_PRIORITY`](Self::MAX_PRIORITY), or
+    /// [`MimeError::EmptyMagicMatchers`] when `matchers` is empty.
     pub fn new(priority: u16, matchers: Vec<MimeMagicMatcher>) -> MimeResult<Self> {
         if priority > Self::MAX_PRIORITY {
             return Err(MimeError::InvalidMagicPriority { priority });
@@ -59,6 +64,8 @@ impl MimeMagic {
     ///
     /// # Returns
     /// Magic priority used for conflict resolution.
+    #[must_use]
+    #[inline]
     pub fn priority(&self) -> u16 {
         self.priority
     }
@@ -67,6 +74,8 @@ impl MimeMagic {
     ///
     /// # Returns
     /// Root matchers for this magic rule.
+    #[must_use]
+    #[inline]
     pub fn matchers(&self) -> &[MimeMagicMatcher] {
         &self.matchers
     }
@@ -75,6 +84,8 @@ impl MimeMagic {
     ///
     /// # Returns
     /// Highest byte count needed by any root matcher.
+    #[must_use]
+    #[inline]
     pub fn max_test_bytes(&self) -> usize {
         self.matchers
             .iter()
@@ -90,6 +101,8 @@ impl MimeMagic {
     ///
     /// # Returns
     /// `true` when any root matcher matches.
+    #[must_use]
+    #[inline]
     pub fn matches(&self, bytes: &[u8]) -> bool {
         self.matchers.iter().any(|matcher| matcher.matches(bytes))
     }

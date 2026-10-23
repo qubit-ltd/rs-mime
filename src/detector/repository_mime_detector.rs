@@ -30,6 +30,7 @@ use crate::StreamBasedMimeDetector;
 /// # Ok::<(), qubit_mime::MimeError>(())
 /// ```
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct RepositoryMimeDetector<'a> {
     /// The shared detector core.
     core: MimeDetectorCore,
@@ -100,6 +101,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Shared detector core.
+    #[inline]
     pub fn core(&self) -> &MimeDetectorCore {
         &self.core
     }
@@ -108,6 +110,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Mutable shared detector core.
+    #[inline]
     pub fn core_mut(&mut self) -> &mut MimeDetectorCore {
         &mut self.core
     }
@@ -116,6 +119,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Repository used by this detector.
+    #[inline]
     pub fn repository(&self) -> &'a MimeRepository {
         self.repository
     }
@@ -127,6 +131,10 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// First MIME type matched by filename, or `None`.
+    ///
+    /// # Errors
+    /// Propagates errors returned by the configured MIME detection backend.
+    #[inline]
     pub fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_by_filename(self, filename)
     }
@@ -138,6 +146,11 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// First MIME type matched by magic, or `None`.
+    ///
+    /// # Errors
+    /// Propagates errors returned while inspecting content or refining a
+    /// detected MIME type.
+    #[inline]
     pub fn detect_by_content(&self, bytes: &[u8]) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_by_content(self, bytes)
     }
@@ -151,6 +164,11 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
+    ///
+    /// # Errors
+    /// Propagates errors returned while inspecting content or refining a
+    /// detected MIME type.
+    #[inline]
     pub fn detect_bytes(
         &self,
         bytes: &[u8],
@@ -174,6 +192,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking
     /// fails.
+    #[inline]
     pub fn detect_reader(
         &self,
         reader: &mut dyn ReadSeek,
@@ -195,6 +214,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be
     /// opened or read.
+    #[inline]
     pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }

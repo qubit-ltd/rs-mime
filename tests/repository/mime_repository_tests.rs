@@ -10,6 +10,7 @@
 use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeError;
 use qubit_mime::MimeRepository;
+use qubit_mime::MimeType;
 
 #[test]
 fn test_bundled_repository_is_shared_and_usable() {
@@ -19,8 +20,6 @@ fn test_bundled_repository_is_shared_and_usable() {
     assert!(std::ptr::eq(first, second));
     assert!(first.get("application/pdf").is_some());
 }
-use qubit_mime::MimeType;
-
 #[test]
 fn test_from_xml_rejects_alias_collision() {
     let error = MimeRepository::from_xml(

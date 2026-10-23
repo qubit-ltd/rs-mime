@@ -13,7 +13,11 @@
 ///
 /// ```
 /// use qubit_mime::ContentRequirement;
-/// assert_eq!(ContentRequirement::Prefix(512), ContentRequirement::Prefix(512));
+/// let requirement = ContentRequirement::Prefix(512);
+/// match requirement {
+///     ContentRequirement::Prefix(limit) => assert_eq!(limit, 512),
+///     ContentRequirement::Complete => panic!("expected a prefix requirement"),
+/// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentRequirement {

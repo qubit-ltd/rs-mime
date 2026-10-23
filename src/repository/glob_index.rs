@@ -159,6 +159,7 @@ fn extension_pattern(pattern: &str) -> Option<&str> {
 }
 
 /// Returns whether a pattern contains no glob metacharacters.
+#[must_use]
 fn is_literal_pattern(pattern: &str) -> bool {
     !pattern
         .chars()

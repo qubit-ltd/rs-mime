@@ -6,6 +6,8 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -122,7 +124,6 @@ fn test_detect_file_by_content_propagates_runner_timeout() {
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake file command metadata should be readable")
         .permissions();
-    use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
@@ -155,7 +156,6 @@ fn test_detect_file_by_content_reads_file_command_stdout() {
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake file command metadata should be readable")
         .permissions();
-    use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
@@ -211,7 +211,6 @@ fn test_detect_file_by_content_ends_file_option_parsing_before_path() {
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake file command metadata should be readable")
         .permissions();
-    use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
@@ -241,7 +240,6 @@ fn test_detect_file_by_content_returns_none_for_empty_stdout() {
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake file command metadata should be readable")
         .permissions();
-    use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
@@ -271,7 +269,6 @@ fn test_detect_file_by_content_rejects_invalid_utf8_stdout() {
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake file command metadata should be readable")
         .permissions();
-    use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
@@ -373,7 +370,6 @@ fn create_precise_config() -> MimeConfig {
 #[test]
 #[cfg(unix)]
 fn test_file_command_contract_checks_truncation_and_actual_exit_status() {
-    use std::os::unix::fs::PermissionsExt;
     let directory = LocalFileSystem::host()
         .expect("host filesystem available")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())

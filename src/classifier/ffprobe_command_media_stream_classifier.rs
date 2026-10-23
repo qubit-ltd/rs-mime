@@ -75,6 +75,8 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// Runner used for `ffprobe` command executions.
+    #[must_use = "the command runner must be inspected or configured"]
+    #[inline]
     pub fn command_runner(&self) -> &CommandRunner {
         &self.command_runner
     }
@@ -83,16 +85,48 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// Maximum accepted stream size before staging is rejected.
+    #[must_use]
+    #[inline]
     pub fn max_staging_size(&self) -> u64 {
         self.max_staging_size
+    }
+
+    /// Gets the configured working directory.
+    ///
+    /// # Returns
+    /// Configured path when present, or `None` when FFprobe uses the process
+    /// working directory.
+    #[inline]
+    pub fn working_directory(&self) -> Option<&str> {
+        self.working_directory.as_deref()
     }
 
     /// Replaces the maximum bytes staged from reader/content input.
     ///
     /// # Parameters
     /// - `max_staging_size`: Maximum accepted stream size.
+    #[inline]
     pub fn set_max_staging_size(&mut self, max_staging_size: u64) {
         self.max_staging_size = max_staging_size;
+    }
+
+    /// Replaces the command runner used by this classifier.
+    ///
+    /// # Parameters
+    /// - `command_runner`: New runner configuration.
+    #[inline]
+    pub fn set_command_runner(&mut self, command_runner: CommandRunner) {
+        self.command_runner = command_runner;
+    }
+
+    /// Sets the working directory used to execute FFprobe, or clears the
+    /// override so the process working directory is used.
+    ///
+    /// # Parameters
+    /// - `working_directory`: Path override, or `None` to clear the override.
+    #[inline]
+    pub fn set_working_directory(&mut self, working_directory: Option<String>) {
+        self.working_directory = working_directory;
     }
 
     /// Replaces the maximum staging size and returns the updated classifier.
@@ -102,17 +136,10 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// The updated classifier.
+    #[inline]
     pub fn with_max_staging_size(mut self, max_staging_size: u64) -> Self {
         self.max_staging_size = max_staging_size;
         self
-    }
-
-    /// Replaces the command runner used by this classifier.
-    ///
-    /// # Parameters
-    /// - `command_runner`: New runner configuration.
-    pub fn set_command_runner(&mut self, command_runner: CommandRunner) {
-        self.command_runner = command_runner;
     }
 
     /// Replaces the command runner and returns the updated classifier.
@@ -122,25 +149,10 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// The updated classifier.
+    #[inline]
     pub fn with_command_runner(mut self, command_runner: CommandRunner) -> Self {
         self.command_runner = command_runner;
         self
-    }
-
-    /// Sets the working directory used to execute FFprobe.
-    ///
-    /// # Parameters
-    /// - `working_directory`: Optional working directory path.
-    pub fn set_working_directory(&mut self, working_directory: Option<String>) {
-        self.working_directory = working_directory;
-    }
-
-    /// Gets the configured working directory.
-    ///
-    /// # Returns
-    /// Stored working directory, or `None`.
-    pub fn working_directory(&self) -> Option<&str> {
-        self.working_directory.as_deref()
     }
 
     /// Classifies FFprobe `codec_type` output.
@@ -150,6 +162,8 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// Media stream classification.
+    #[must_use]
+    #[inline]
     pub fn classify_stream_listing(output: &str) -> MediaStreamType {
         let has_video = output.lines().any(|line| line.trim() == Self::VIDEO_STREAM);
         let has_audio = output.lines().any(|line| line.trim() == Self::AUDIO_STREAM);
@@ -170,6 +184,7 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// `true` when `ffprobe -version` executes successfully.
+    #[must_use]
     pub fn is_available() -> bool {
         let config = MimeConfig::default();
         SystemMimeCommandExecutor

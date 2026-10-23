@@ -52,9 +52,13 @@ static BUNDLED_SHARED_REPOSITORY: OnceLock<Arc<MimeRepository>> = OnceLock::new(
 /// ```
 #[derive(Debug, Clone)]
 pub struct MimeRepository {
+    /// MIME types in their source database order.
     mime_types: Vec<MimeType>,
+    /// Canonical names and aliases mapped to MIME type indexes.
     name_map: HashMap<String, usize>,
+    /// Optimized filename glob lookup structure.
     glob_index: GlobIndex,
+    /// Optimized content magic lookup structure and maximum read length.
     magic_index: MagicIndex,
 }
 
@@ -64,14 +68,16 @@ impl MimeRepository {
     /// The embedded XML is validated when first used and shared by all
     /// repository-backed integrations, avoiding independent copies of the
     /// same indexes in each detector.
+    ///
+    /// # Returns
+    /// A reference to the process-wide parsed repository.
+    ///
+    /// # Panics
+    /// Panics if the embedded MIME database is invalid.
+    #[must_use]
     pub fn bundled() -> &'static Self {
         BUNDLED_REPOSITORY
             .get_or_init(|| Self::from_xml(BUNDLED_DATABASE).expect("embedded freedesktop MIME database should parse"))
-    }
-
-    /// Returns a shared handle to the process-wide bundled repository.
-    pub(crate) fn bundled_shared() -> Arc<Self> {
-        Arc::clone(BUNDLED_SHARED_REPOSITORY.get_or_init(|| Arc::new(Self::bundled().clone())))
     }
 
     /// Parses a MIME repository from shared MIME-info XML.
@@ -114,6 +120,7 @@ impl MimeRepository {
     ///
     /// # Returns
     /// A repository with no MIME types.
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             mime_types: Vec::new(),
@@ -123,10 +130,21 @@ impl MimeRepository {
         }
     }
 
+    /// Returns a shared handle to the process-wide bundled repository.
+    ///
+    /// # Returns
+    /// An atomically reference-counted handle to the shared repository.
+    #[must_use]
+    pub(crate) fn bundled_shared() -> Arc<Self> {
+        Arc::clone(BUNDLED_SHARED_REPOSITORY.get_or_init(|| Arc::new(Self::bundled().clone())))
+    }
+
     /// Gets all MIME types in database order.
     ///
     /// # Returns
     /// Slice of all parsed MIME types.
+    #[must_use]
+    #[inline]
     pub fn all(&self) -> &[MimeType] {
         &self.mime_types
     }
@@ -148,11 +166,21 @@ impl MimeRepository {
     ///
     /// # Returns
     /// Buffer size sufficient for all content magic checks.
+    #[must_use]
+    #[inline]
     pub fn max_test_bytes(&self) -> usize {
         self.magic_index.max_test_bytes
     }
 
     /// Tests whether one MIME type is equal to or a descendant of another.
+    ///
+    /// # Parameters
+    /// - `child`: MIME type name or alias to test.
+    /// - `parent`: MIME type name or alias to compare against.
+    ///
+    /// # Returns
+    /// `true` when `child` is `parent` or inherits from it.
+    #[must_use]
     pub fn is_a(&self, child: &str, parent: &str) -> bool {
         let child = self.canonical_name_or_input(child);
         let parent = self.canonical_name_or_input(parent);
@@ -194,6 +222,7 @@ impl MimeRepository {
     /// # Returns
     /// Matching MIME types ordered by best glob weight and pattern length.
     /// Returns an empty vector when no glob matches.
+    #[must_use]
     pub fn detect_by_filename(&self, filename: &str) -> Vec<&MimeType> {
         self.glob_index
             .matches(filename)
@@ -203,6 +232,12 @@ impl MimeRepository {
     }
 
     /// Resolves an alias to its canonical name, preserving unknown input.
+    ///
+    /// # Parameters
+    /// - `name`: MIME type name or alias to resolve.
+    ///
+    /// # Returns
+    /// Canonical name when found, or the normalized input otherwise.
     fn canonical_name_or_input(&self, name: &str) -> String {
         let normalized = normalize_mime_name(name);
         self.name_map
@@ -220,6 +255,7 @@ impl MimeRepository {
     /// # Returns
     /// Matching MIME types ordered by highest magic priority. Returns an empty
     /// vector when no magic rule matches.
+    #[must_use]
     pub fn detect_by_content(&self, bytes: &[u8]) -> Vec<&MimeType> {
         self.magic_index
             .matches(bytes)
@@ -238,6 +274,7 @@ impl MimeRepository {
     /// # Returns
     /// A vector containing the selected MIME type, or an empty vector when no
     /// rule matches.
+    #[must_use]
     pub fn detect(&self, filename: &str, bytes: &[u8], policy: MimeDetectionPolicy) -> Vec<&MimeType> {
         let from_filename = self.detect_by_filename(filename);
         if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
@@ -251,6 +288,13 @@ impl MimeRepository {
     ///
     /// # Parameters
     /// - `mime_type`: MIME type to insert.
+    ///
+    /// # Returns
+    /// `Ok(())` after all repository indexes have been updated.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::DuplicateMimeName`](crate::MimeError::DuplicateMimeName)
+    /// when the canonical name or an alias is already indexed.
     fn add_mime_type(&mut self, mime_type: MimeType) -> MimeResult<()> {
         let mime_index = self.mime_types.len();
         for name in std::iter::once(mime_type.name()).chain(mime_type.aliases().iter().map(String::as_str)) {
@@ -292,6 +336,7 @@ impl MimeRepository {
     /// Updates the repository-wide maximum magic read length.
     ///
     /// # Parameters
+    /// - `mime_index`: Index assigned to `mime_type` in the repository.
     /// - `mime_type`: MIME type whose magic rules should be inspected.
     fn index_magics(&mut self, mime_index: usize, mime_type: &MimeType) {
         for magic in mime_type.magics() {

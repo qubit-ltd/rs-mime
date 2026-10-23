@@ -43,6 +43,8 @@ impl MimeType {
     ///
     /// # Returns
     /// A builder initialized with `name`.
+    #[must_use]
+    #[inline]
     pub fn builder(name: &str) -> MimeTypeBuilder {
         MimeTypeBuilder::new(name)
     }
@@ -81,6 +83,8 @@ impl MimeType {
     ///
     /// # Returns
     /// Canonical MIME type name.
+    #[must_use]
+    #[inline]
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -104,6 +108,8 @@ impl MimeType {
     ///
     /// # Returns
     /// Alias names for this MIME type.
+    #[must_use]
+    #[inline]
     pub fn aliases(&self) -> &[String] {
         &self.aliases
     }
@@ -112,6 +118,8 @@ impl MimeType {
     ///
     /// # Returns
     /// Glob rules associated with this MIME type.
+    #[must_use]
+    #[inline]
     pub fn globs(&self) -> &[MimeGlob] {
         &self.globs
     }
@@ -120,6 +128,8 @@ impl MimeType {
     ///
     /// # Returns
     /// Magic rules associated with this MIME type.
+    #[must_use]
+    #[inline]
     pub fn magics(&self) -> &[MimeMagic] {
         &self.magics
     }
@@ -128,6 +138,8 @@ impl MimeType {
     ///
     /// # Returns
     /// Super type names from `sub-class-of` XML entries.
+    #[must_use]
+    #[inline]
     pub fn super_types(&self) -> &[String] {
         &self.super_types
     }
@@ -150,6 +162,7 @@ impl MimeType {
     ///
     /// # Returns
     /// Extension strings without leading dots.
+    #[must_use]
     pub fn all_extensions(&self) -> Vec<&str> {
         let mut extensions: Vec<(&str, u16)> = self
             .globs
@@ -167,6 +180,7 @@ impl MimeType {
     ///
     /// # Returns
     /// `true` when any glob matches.
+    #[must_use]
     pub fn matches_filename(&self, filename: &str) -> bool {
         self.globs.iter().any(|glob| glob.matches(filename))
     }
@@ -179,6 +193,8 @@ impl MimeType {
     ///
     /// # Returns
     /// `true` when this type or a parent type has matching magic.
+    #[must_use]
+    #[inline]
     pub fn matches_content(&self, repository: &MimeRepository, bytes: &[u8]) -> bool {
         self.matched_magic(repository, bytes, 0).is_some()
     }

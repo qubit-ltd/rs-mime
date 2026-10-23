@@ -12,6 +12,6 @@ use qubit_mime::MediaStreamClassifierProvider;
 fn assert_provider<T: MediaStreamClassifierProvider>() {}
 
 #[test]
-fn ffprobe_provider_implements_the_marker_contract() {
+fn test_ffprobe_provider_implements_the_marker_contract() {
     assert_provider::<FfprobeCommandMediaStreamClassifierProvider>();
 }

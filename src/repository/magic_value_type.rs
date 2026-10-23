@@ -61,6 +61,8 @@ impl MagicValueType {
     ///
     /// # Returns
     /// Static type name used in XML.
+    #[must_use]
+    #[inline]
     pub fn name(self) -> &'static str {
         match self {
             Self::String => "string",
@@ -78,6 +80,7 @@ impl MagicValueType {
     ///
     /// # Returns
     /// `None` for string matchers; otherwise the required byte length.
+    #[inline]
     pub(crate) fn numeric_width(self) -> Option<usize> {
         match self {
             Self::String => None,
@@ -92,6 +95,8 @@ impl MagicValueType {
     /// # Returns
     /// `true` when the stored big-endian bytes must be reversed before
     /// matching.
+    #[must_use]
+    #[inline]
     pub(crate) fn uses_little_endian_order(self) -> bool {
         matches!(self, Self::Little16 | Self::Little32)
             || (cfg!(target_endian = "little") && matches!(self, Self::Host16 | Self::Host32))

@@ -356,6 +356,37 @@ impl MimeConfig {
         Self::from_config(&config)
     }
 
+    /// Creates the built-in MIME configuration.
+    ///
+    /// # Returns
+    /// Configuration populated entirely from crate constants.
+    fn builtin_default() -> Self {
+        Self {
+            mime_detector_selection: create_detector_selection(DEFAULT_MIME_DETECTOR, fallback_defaults())
+                .expect("built-in MIME detector selection should be valid"),
+            media_stream_classifier_selection: create_classifier_selection(DEFAULT_MEDIA_STREAM_CLASSIFIER)
+                .expect("built-in media stream classifier selection should be valid"),
+            media_stream_max_staging_size: DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
+            command_output_max_bytes: DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
+            command_timeout: DEFAULT_COMMAND_TIMEOUT,
+            enable_precise_detection: DEFAULT_ENABLE_PRECISE_DETECTION,
+            precise_detection_patterns: normalize_patterns(
+                DEFAULT_PRECISE_DETECTION_PATTERNS
+                    .iter()
+                    .map(|pattern| pattern.to_string())
+                    .collect(),
+            ),
+            ambiguous_mime_mapping: build_ambiguous_mime_mapping(
+                DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES
+                    .iter()
+                    .map(|entry| entry.to_string())
+                    .collect(),
+            )
+            .expect("built-in ambiguous MIME mapping should be valid"),
+            max_buffer_size: DEFAULT_MIME_MAX_BUFFER_SIZE,
+        }
+    }
+
     /// Replaces the global default MIME configuration.
     ///
     /// # Parameters
@@ -398,7 +429,7 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Automatic, named, or chained selection used by detector registries.
-    #[inline(always)]
+    #[inline]
     #[must_use]
     pub const fn mime_detector_selection(&self) -> &ProviderSelection {
         &self.mime_detector_selection
@@ -471,37 +502,6 @@ impl MimeConfig {
     /// Maximum number of bytes a detector may allocate for one read buffer.
     pub fn max_buffer_size(&self) -> usize {
         self.max_buffer_size
-    }
-
-    /// Creates the built-in MIME configuration.
-    ///
-    /// # Returns
-    /// Configuration populated entirely from crate constants.
-    fn builtin_default() -> Self {
-        Self {
-            mime_detector_selection: create_detector_selection(DEFAULT_MIME_DETECTOR, fallback_defaults())
-                .expect("built-in MIME detector selection should be valid"),
-            media_stream_classifier_selection: create_classifier_selection(DEFAULT_MEDIA_STREAM_CLASSIFIER)
-                .expect("built-in media stream classifier selection should be valid"),
-            media_stream_max_staging_size: DEFAULT_MEDIA_STREAM_MAX_STAGING_SIZE,
-            command_output_max_bytes: DEFAULT_COMMAND_OUTPUT_MAX_BYTES,
-            command_timeout: DEFAULT_COMMAND_TIMEOUT,
-            enable_precise_detection: DEFAULT_ENABLE_PRECISE_DETECTION,
-            precise_detection_patterns: normalize_patterns(
-                DEFAULT_PRECISE_DETECTION_PATTERNS
-                    .iter()
-                    .map(|pattern| pattern.to_string())
-                    .collect(),
-            ),
-            ambiguous_mime_mapping: build_ambiguous_mime_mapping(
-                DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES
-                    .iter()
-                    .map(|entry| entry.to_string())
-                    .collect(),
-            )
-            .expect("built-in ambiguous MIME mapping should be valid"),
-            max_buffer_size: DEFAULT_MIME_MAX_BUFFER_SIZE,
-        }
     }
 }
 

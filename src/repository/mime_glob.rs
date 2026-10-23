@@ -73,6 +73,8 @@ impl MimeGlob {
     ///
     /// # Returns
     /// Glob weight used for conflict resolution.
+    #[must_use]
+    #[inline]
     pub fn weight(&self) -> u16 {
         self.weight
     }
@@ -81,6 +83,8 @@ impl MimeGlob {
     ///
     /// # Returns
     /// `true` if filename case must match exactly.
+    #[must_use]
+    #[inline]
     pub fn case_sensitive(&self) -> bool {
         self.case_sensitive
     }
@@ -89,6 +93,8 @@ impl MimeGlob {
     ///
     /// # Returns
     /// Pattern text from the MIME database.
+    #[must_use]
+    #[inline]
     pub fn pattern(&self) -> &str {
         &self.pattern
     }
@@ -100,6 +106,8 @@ impl MimeGlob {
     ///
     /// # Returns
     /// `true` when the glob matches `filename`.
+    #[must_use]
+    #[inline]
     pub fn matches(&self, filename: &str) -> bool {
         !filename.is_empty() && !self.pattern.is_empty() && self.matcher.is_match(filename)
     }

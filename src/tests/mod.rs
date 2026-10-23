@@ -5,7 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Tests of crate-private staging contracts.
+//! Tests of crate-private command and staging contracts.
 
 mod temp_staging_tests;
 

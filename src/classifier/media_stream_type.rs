@@ -13,7 +13,12 @@
 ///
 /// ```
 /// use qubit_mime::MediaStreamType;
-/// assert_eq!(MediaStreamType::AudioOnly, MediaStreamType::AudioOnly);
+/// let stream_type = MediaStreamType::VideoWithAudio;
+/// let contains_audio = matches!(
+///     stream_type,
+///     MediaStreamType::AudioOnly | MediaStreamType::VideoWithAudio,
+/// );
+/// assert!(contains_audio);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MediaStreamType {

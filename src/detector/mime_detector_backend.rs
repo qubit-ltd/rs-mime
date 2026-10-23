@@ -28,6 +28,7 @@ use crate::MimeDetectorCore;
 use crate::MimeResult;
 use crate::StreamBasedMimeDetector;
 
+/// Future result returned by asynchronous provider-path inspection.
 type AsyncProviderPathResult<'a> =
     Pin<Box<dyn Future<Output = MimeResult<(Vec<String>, Option<Vec<u8>>)>> + Send + 'a>>;
 
@@ -40,6 +41,7 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     fn content_requirement(&self) -> ContentRequirement {
         ContentRequirement::Prefix(self.max_test_bytes())
     }
+
     /// Gets the shared detector core.
     ///
     /// # Returns
@@ -111,6 +113,18 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// this hook. Returning `None` as the content buffer tells the shared
     /// orchestration layer that refinement must not assume a prefix is an
     /// exact representation of the inspected resource.
+    ///
+    /// # Parameters
+    /// - `file_system`: Filesystem facade that owns `path`.
+    /// - `path`: Provider-neutral path to inspect.
+    /// - `max_bytes`: Maximum prefix length to read.
+    ///
+    /// # Returns
+    /// Candidate MIME type names and an optional inspected content prefix.
+    ///
+    /// # Errors
+    /// Returns an error when complete content is required or filesystem or
+    /// backend inspection fails.
     fn guess_from_provider_path(
         &self,
         file_system: &FileSystem,
@@ -131,6 +145,19 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     ///
     /// Complete-content backends must override this hook when they can inspect
     /// a provider resource without materializing an unbounded buffer.
+    ///
+    /// # Parameters
+    /// - `file_system`: Asynchronous filesystem facade that owns `path`.
+    /// - `path`: Provider-neutral path to inspect.
+    /// - `max_bytes`: Maximum prefix length to read.
+    ///
+    /// # Returns
+    /// A future containing candidate MIME type names and an optional inspected
+    /// content prefix.
+    ///
+    /// # Errors
+    /// The default implementation returns an error because it cannot inspect
+    /// complete-content backends safely.
     fn guess_from_async_provider_path<'a>(
         &'a self,
         _file_system: &'a AsyncFileSystem,
@@ -146,15 +173,32 @@ where
     T: MimeDetectorBackend,
 {
     /// Delegates content-requirement discovery to the backend.
+    ///
+    /// # Returns
+    /// The content amount required by the backend.
+    #[inline]
     fn content_requirement(&self) -> ContentRequirement {
         MimeDetectorBackend::content_requirement(self)
     }
     /// Gets the configured prefix-buffer limit from the shared detector core.
+    ///
+    /// # Returns
+    /// Maximum number of bytes that may be buffered for detection.
+    #[inline]
     fn max_buffer_size(&self) -> usize {
         self.core().max_buffer_size()
     }
 
     /// Detects a MIME type from filename candidates.
+    ///
+    /// # Parameters
+    /// - `filename`: File path or basename to inspect.
+    ///
+    /// # Returns
+    /// The selected MIME type, or `None` when no filename rule matches.
+    ///
+    /// # Errors
+    /// Returns an error when detector refinement fails.
     fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
         self.guess_from_filename(filename)
             .first()
@@ -166,6 +210,15 @@ where
     }
 
     /// Detects a MIME type from content candidates.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes to inspect.
+    ///
+    /// # Returns
+    /// The selected MIME type, or `None` when no content rule matches.
+    ///
+    /// # Errors
+    /// Returns an error when content inspection or detector refinement fails.
     fn detect_by_content(&self, content: &[u8]) -> MimeResult<Option<String>> {
         self.guess_from_content(content)?
             .first()
@@ -177,6 +230,17 @@ where
     }
 
     /// Detects from the supplied bounded prefix through the backend core.
+    ///
+    /// # Parameters
+    /// - `content`: Bounded content prefix to inspect.
+    /// - `filename`: Optional path or basename used for filename detection.
+    /// - `policy`: Strategy for resolving filename and content candidates.
+    ///
+    /// # Returns
+    /// The selected MIME type, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Returns an error when complete content is required or detection fails.
     fn detect_prefix(
         &self,
         content: &[u8],
@@ -190,6 +254,17 @@ where
     }
 
     /// Detects a MIME type from content bytes and an optional filename.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes to inspect.
+    /// - `filename`: Optional path or basename used for filename detection.
+    /// - `policy`: Strategy for resolving filename and content candidates.
+    ///
+    /// # Returns
+    /// The selected MIME type, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Returns an error when content inspection or detection fails.
     fn detect(
         &self,
         content: &[u8],
@@ -214,6 +289,17 @@ where
     }
 
     /// Detects a MIME type from a seekable reader.
+    ///
+    /// # Parameters
+    /// - `reader`: Reader to inspect; its original position is restored.
+    /// - `filename`: Optional path or basename used for filename detection.
+    /// - `policy`: Strategy for resolving filename and content candidates.
+    ///
+    /// # Returns
+    /// The selected MIME type, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Returns an error when reading, seeking, or detection fails.
     fn detect_reader(
         &self,
         reader: &mut dyn ReadSeek,
@@ -233,6 +319,16 @@ where
     }
 
     /// Detects a MIME type from a local file.
+    ///
+    /// # Parameters
+    /// - `file`: Local file path to inspect.
+    /// - `policy`: Strategy for resolving filename and content candidates.
+    ///
+    /// # Returns
+    /// The selected MIME type, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Returns an error when opening, reading, or detection fails.
     fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         let filename = file.to_string_lossy();
         let from_filename = self.guess_from_filename(&filename);
@@ -251,6 +347,19 @@ where
     }
 
     /// Detects a MIME type through a provider-neutral filesystem path.
+    ///
+    /// # Parameters
+    /// - `file_system`: Filesystem facade that owns `path`.
+    /// - `path`: Provider-neutral path to inspect.
+    /// - `max_bytes`: Maximum prefix length to read.
+    /// - `policy`: Strategy for resolving filename and content candidates.
+    ///
+    /// # Returns
+    /// The selected MIME type, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Returns an error when the buffer limit is exceeded or path inspection
+    /// fails.
     fn detect_path(
         &self,
         file_system: &FileSystem,
@@ -284,6 +393,20 @@ where
 
     /// Detects a MIME type through an asynchronous provider-neutral filesystem
     /// path.
+    ///
+    /// # Parameters
+    /// - `file_system`: Asynchronous filesystem facade that owns `path`.
+    /// - `path`: Provider-neutral path to inspect.
+    /// - `max_bytes`: Maximum prefix length to read.
+    /// - `policy`: Strategy for resolving filename and content candidates.
+    ///
+    /// # Returns
+    /// A future containing the selected MIME type, or `None` when no candidate
+    /// matches.
+    ///
+    /// # Errors
+    /// Returns an error when the buffer limit is exceeded or asynchronous path
+    /// inspection fails.
     fn detect_async_path<'a>(
         &'a self,
         file_system: &'a AsyncFileSystem,
@@ -325,31 +448,77 @@ where
     T: StreamBasedMimeDetector,
 {
     /// Gets the shared detector core.
+    ///
+    /// # Returns
+    /// Shared detector configuration and merge/refinement behavior.
+    #[inline]
     fn core(&self) -> &MimeDetectorCore {
         StreamBasedMimeDetector::core(self)
     }
 
     /// Gets the maximum content prefix length needed by this detector.
+    ///
+    /// # Returns
+    /// Content prefix length to read from files and readers.
+    #[inline]
     fn max_test_bytes(&self) -> usize {
         StreamBasedMimeDetector::max_test_bytes(self)
     }
 
     /// Guesses MIME type names from filename rules.
+    ///
+    /// # Parameters
+    /// - `filename`: File path or basename.
+    ///
+    /// # Returns
+    /// Candidate MIME type names ordered by backend confidence.
+    #[inline]
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         StreamBasedMimeDetector::guess_from_filename(self, filename)
     }
 
     /// Guesses MIME type names from content bytes.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes.
+    ///
+    /// # Returns
+    /// Candidate MIME type names ordered by backend confidence.
+    ///
+    /// # Errors
+    /// Returns an error when the backend cannot inspect the supplied content.
+    #[inline]
     fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         StreamBasedMimeDetector::guess_from_content_bytes(self, content)
     }
 
     /// Delegates reader inspection to the stream-based hook.
+    ///
+    /// # Parameters
+    /// - `reader`: Reader to inspect. The original position is restored.
+    ///
+    /// # Returns
+    /// Candidate MIME type names and the content prefix used for refinement.
+    ///
+    /// # Errors
+    /// Returns an error when reading, seeking, or backend inspection fails.
+    #[inline]
     fn guess_from_reader(&self, reader: &mut dyn ReadSeek) -> MimeResult<(Vec<String>, Vec<u8>)> {
         StreamBasedMimeDetector::guess_from_reader_stream(self, reader)
     }
 
     /// Delegates local-file inspection to the stream-based hook.
+    ///
+    /// # Parameters
+    /// - `file`: Local file path.
+    ///
+    /// # Returns
+    /// Candidate MIME type names and the content prefix used for refinement.
+    ///
+    /// # Errors
+    /// Returns an error when opening, reading, seeking, or backend inspection
+    /// fails.
+    #[inline]
     fn guess_from_file(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
         StreamBasedMimeDetector::guess_from_file_stream(self, file)
     }

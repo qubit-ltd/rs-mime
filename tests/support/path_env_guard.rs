@@ -13,6 +13,7 @@ use std::sync::MutexGuard;
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 /// Serializes process-wide `PATH` access and restores its original value.
+#[must_use = "the guard must remain alive to protect PATH"]
 pub(crate) struct PathEnvGuard {
     _guard: MutexGuard<'static, ()>,
     original_path: Option<String>,

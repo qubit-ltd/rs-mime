@@ -26,6 +26,21 @@ use crate::constants::DEFAULT_TEMP_NAME_MAX_ATTEMPTS;
 /// becomes `MimeError::Io`; simultaneous failures retain the primary error and
 /// typed cleanup context in `MimeError::TemporaryCleanup`. Panics still unwind
 /// through the temporary guard's best-effort Drop cleanup.
+///
+/// # Parameters
+/// - `prefix`: Prefix used to identify the temporary filename.
+/// - `stage`: Callback that writes the payload to the temporary file.
+/// - `inspect`: Callback that examines the closed temporary file by path.
+///
+/// # Returns
+/// The value returned by `inspect` when staging, inspection, and cleanup
+/// succeed.
+///
+/// # Errors
+/// Returns `MimeError::Io` when temporary-file creation or cleanup alone fails.
+/// Propagates the staging or inspection error when cleanup succeeds. If
+/// cleanup also fails, returns `MimeError::TemporaryCleanup` with the primary
+/// error and cleanup context.
 pub(crate) fn with_temp_file<T>(
     prefix: &str,
     stage: impl FnOnce(&mut LocalTempFile) -> MimeResult<()>,

@@ -22,6 +22,17 @@ use crate::MimeConfig;
 use crate::MimeError;
 
 /// Provider for the built-in FFprobe-backed media stream classifier.
+///
+/// # Examples
+///
+/// ```rust
+/// use qubit_mime::FfprobeCommandMediaStreamClassifierProvider;
+/// use qubit_spi::ProviderMetadata;
+///
+/// let provider = FfprobeCommandMediaStreamClassifierProvider;
+/// let descriptor = provider.descriptor();
+/// assert_eq!("ffprobe", descriptor.id().as_str());
+/// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FfprobeCommandMediaStreamClassifierProvider;
 

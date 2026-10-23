@@ -46,6 +46,7 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Shared detector core.
+    #[must_use]
     pub fn new(config: MimeConfig) -> Self {
         Self {
             config,
@@ -62,8 +63,28 @@ impl MimeDetectorCore {
     /// Shared detector core. Applications that need precise media refinement
     /// inject a classifier explicitly with
     /// [`Self::set_media_stream_classifier`].
+    #[must_use]
     pub fn from_mime_config(config: MimeConfig) -> Self {
         Self::new(config)
+    }
+
+    /// Gets the classifier used for precise media MIME refinement.
+    ///
+    /// # Returns
+    /// Configured classifier, or `None`.
+    #[inline]
+    pub fn media_stream_classifier(&self) -> Option<&dyn MediaStreamClassifier> {
+        self.media_stream_classifier.as_deref()
+    }
+
+    /// Gets the maximum byte buffer size allowed for detector read paths.
+    ///
+    /// # Returns
+    /// Maximum number of bytes this detector may allocate for one read buffer.
+    #[must_use]
+    #[inline]
+    pub fn max_buffer_size(&self) -> usize {
+        self.config.max_buffer_size()
     }
 
     /// Sets the classifier used for precise media MIME refinement.
@@ -73,22 +94,6 @@ impl MimeDetectorCore {
     ///   runtime media stream refinement.
     pub fn set_media_stream_classifier(&mut self, media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>) {
         self.media_stream_classifier = media_stream_classifier;
-    }
-
-    /// Gets the classifier used for precise media MIME refinement.
-    ///
-    /// # Returns
-    /// Configured classifier, or `None`.
-    pub fn media_stream_classifier(&self) -> Option<&dyn MediaStreamClassifier> {
-        self.media_stream_classifier.as_deref()
-    }
-
-    /// Gets the maximum byte buffer size allowed for detector read paths.
-    ///
-    /// # Returns
-    /// Maximum number of bytes this detector may allocate for one read buffer.
-    pub fn max_buffer_size(&self) -> usize {
-        self.config.max_buffer_size()
     }
 
     /// Merges filename and content candidates using the detector selection

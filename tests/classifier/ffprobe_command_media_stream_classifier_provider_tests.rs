@@ -10,7 +10,7 @@ use qubit_mime::FfprobeCommandMediaStreamClassifierProvider;
 use qubit_spi::ProviderMetadata;
 
 #[test]
-fn default_provider_has_the_ffprobe_identity() {
+fn test_default_provider_has_the_ffprobe_identity() {
     let provider = FfprobeCommandMediaStreamClassifierProvider;
 
     assert_eq!("ffprobe", provider.descriptor().id().as_str());

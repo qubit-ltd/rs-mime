@@ -15,7 +15,10 @@ use crate::MimeConfig;
 use crate::MimeRepository;
 use crate::MimeResult;
 
-/// MIME detector that keeps the repository alive through an `Arc` handle.
+/// MIME detector that shares a repository without copying its detection data.
+///
+/// The shared handle keeps repository rules available for the detector's
+/// lifetime, including filename matching, content matching, and read sizing.
 #[derive(Debug)]
 pub(crate) struct OwnedRepositoryMimeDetector {
     core: MimeDetectorCore,
@@ -23,7 +26,16 @@ pub(crate) struct OwnedRepositoryMimeDetector {
 }
 
 impl OwnedRepositoryMimeDetector {
-    /// Creates an owned repository detector.
+    /// Creates a detector using the supplied configuration and shared
+    /// repository.
+    ///
+    /// # Parameters
+    /// - `config`: Settings for candidate selection and content inspection.
+    /// - `repository`: Shared filename and content detection rules.
+    ///
+    /// # Returns
+    /// A detector that retains a shared reference to `repository`.
+    #[must_use]
     pub(crate) fn new(config: MimeConfig, repository: Arc<MimeRepository>) -> Self {
         Self {
             core: MimeDetectorCore::from_mime_config(config),
@@ -33,17 +45,26 @@ impl OwnedRepositoryMimeDetector {
 }
 
 impl StreamBasedMimeDetector for OwnedRepositoryMimeDetector {
-    /// Returns the shared detector core.
+    /// Returns configuration and candidate-selection behavior shared by
+    /// detectors.
+    #[inline]
     fn core(&self) -> &MimeDetectorCore {
         &self.core
     }
 
-    /// Returns the largest content prefix required by the repository.
+    /// Returns the largest content prefix needed by any repository rule.
+    #[inline]
     fn max_test_bytes(&self) -> usize {
         self.repository.max_test_bytes()
     }
 
-    /// Returns repository candidates for a filename.
+    /// Returns repository candidate names matched against a filename.
+    ///
+    /// # Parameters
+    /// - `filename`: Path or basename whose extension is matched.
+    ///
+    /// # Returns
+    /// Candidate MIME names in repository detection order.
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         self.repository
             .detect_by_filename(filename)
@@ -52,7 +73,16 @@ impl StreamBasedMimeDetector for OwnedRepositoryMimeDetector {
             .collect()
     }
 
-    /// Returns repository candidates for content bytes.
+    /// Returns repository candidate names matched against content bytes.
+    ///
+    /// # Parameters
+    /// - `content`: Bytes supplied to repository content detection.
+    ///
+    /// # Returns
+    /// Candidate MIME names in repository detection order.
+    ///
+    /// # Errors
+    /// Returns an error if repository content detection fails.
     fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         Ok(self
             .repository
