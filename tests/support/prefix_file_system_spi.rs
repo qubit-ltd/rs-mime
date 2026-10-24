@@ -34,6 +34,7 @@ use qubit_fs::spi::ProviderOperations;
 use qubit_fs::spi::ProviderProperties;
 use qubit_fs::spi::StatRequest;
 use qubit_fs::spi::StatResponse;
+use qubit_io::ByteInput;
 use qubit_io::Input;
 
 /// Provider fixture which serves one in-memory object and records stat calls.
@@ -138,7 +139,7 @@ impl FileSystemSpi for PrefixFileSystemSpi {
         let maximum = usize::try_from(length.unwrap_or(u64::MAX))
             .unwrap_or(usize::MAX)
             .min(self.content.len());
-        let reader: Box<dyn Input<Item = u8> + Send> = Box::new(PrefixReader {
+        let reader: Box<dyn ByteInput + Send> = Box::new(PrefixReader {
             inner: Cursor::new(self.content[..maximum].to_vec()),
             requested_read_bytes: Arc::clone(&self.requested_read_bytes),
         });
