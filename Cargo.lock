@@ -347,7 +347,6 @@ dependencies = [
 name = "qubit-mime"
 version = "0.21.0"
 dependencies = [
- "qubit-budget",
  "qubit-codec-misc",
  "qubit-command",
  "qubit-config",
