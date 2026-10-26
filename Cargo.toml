@@ -41,7 +41,7 @@ qubit-io = "0.19"
 
 qubit-fs = { path = "../rs-fs", version = "0.3", default-features = false, features = ["async"] }
 
-qubit-codec-misc = { path = "../rs-codec-misc", version = "0.8" }
+qubit-codec-misc = { version = "^0.8" }
 qubit-command = { path = "../rs-command", version = "0.11" }
 qubit-config = { path = "../rs-config", version = "0.15" }
 qubit-datatype = { path = "../rs-datatype", version = "0.15", default-features = false, features = ["converter"] }
