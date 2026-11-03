@@ -464,6 +464,16 @@ impl MimeConfig {
         self.command_output_max_bytes
     }
 
+    /// Gets the derived total output budget for one native command.
+    ///
+    /// The budget allows stdout and stderr to each retain up to four times
+    /// the configured per-stream limit, with saturating arithmetic.
+    pub(crate) fn command_total_output_max_bytes(&self) -> u64 {
+        u64::try_from(self.command_output_max_bytes)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(4)
+    }
+
     /// Gets the command timeout for native MIME detection.
     ///
     /// # Returns

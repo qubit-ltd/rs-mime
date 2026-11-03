@@ -183,7 +183,16 @@ must not exceed `max_buffer_size`. A prefix backend can inspect large resources
 without loading the entire resource. A backend whose `ContentRequirement` is
 `Complete` cannot use a prefix entry point. Native command detection may stage
 input and is subject to command timeout, retained output, and media staging
-limits.
+limits. The default `file` and `ffprobe` runners also enforce a total
+stdout-plus-stderr budget equal to four times
+`MimeConfig::command_output_max_bytes()`. A zero per-stream limit therefore
+produces a zero total budget, and any output can stop the command early with
+`OutputLimitExceeded`; partial capture remains available on the command error.
+This policy belongs to these `qubit-mime` defaults and does not change the
+default behavior of `rs-command` or an injected runner. Applications that
+inject a `CommandRunner` can preserve an unlimited total budget with
+`without_total_output_limit()` or choose a larger explicit budget with
+`max_total_output_bytes(...)`.
 
 Treat MIME detection as one input to a broader upload policy. Do not use the
 returned MIME name alone as permission to open, execute, or trust content.

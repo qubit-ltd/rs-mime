@@ -14,13 +14,70 @@ use qubit_command::Command;
 use qubit_command::CommandError;
 use qubit_command::CommandErrorKind;
 use qubit_command::CommandRunner;
+use qubit_config::Config;
 
+use crate::CONFIG_COMMAND_OUTPUT_MAX_BYTES;
 use crate::FfprobeCommandMediaStreamClassifier;
 use crate::FileCommandMimeDetector;
 use crate::MediaStreamType;
+use crate::MimeConfig;
 use crate::MimeError;
 use crate::command_execution::MimeCommandExecutor;
 use crate::command_execution::MimeCommandOutput;
+
+#[test]
+fn test_default_command_backends_configure_derived_total_output_budget() {
+    let config = MimeConfig::default();
+    let expected = config.command_total_output_max_bytes();
+    let ffprobe = FfprobeCommandMediaStreamClassifier::from_mime_config(config.clone());
+    let file = FileCommandMimeDetector::from_mime_config(config);
+    assert_eq!(
+        ffprobe.command_runner().configured_max_total_output_bytes(),
+        Some(expected)
+    );
+    assert_eq!(
+        file.command_runner().configured_max_total_output_bytes(),
+        Some(expected)
+    );
+
+    let mut zero_config = Config::new();
+    zero_config
+        .set(CONFIG_COMMAND_OUTPUT_MAX_BYTES, 0_u64)
+        .expect("zero output limit should be accepted");
+    let zero = MimeConfig::from_config(&zero_config).expect("zero output limit should parse");
+    assert_eq!(zero.command_total_output_max_bytes(), 0);
+
+    let mut maximum_config = Config::new();
+    maximum_config
+        .set(CONFIG_COMMAND_OUTPUT_MAX_BYTES, usize::MAX as u64)
+        .expect("platform maximum output limit should be accepted");
+    let maximum = MimeConfig::from_config(&maximum_config).expect("platform maximum should parse");
+    assert_eq!(
+        maximum.command_total_output_max_bytes(),
+        (usize::MAX as u64).saturating_mul(4)
+    );
+}
+
+#[test]
+fn test_injected_command_backend_runner_keeps_its_total_output_policy() {
+    let without_limit = CommandRunner::new(Duration::from_secs(3)).without_total_output_limit();
+    let ffprobe = FfprobeCommandMediaStreamClassifier::new().with_command_runner(without_limit.clone());
+    let file = FileCommandMimeDetector::default().with_command_runner(without_limit);
+    assert_eq!(ffprobe.command_runner().configured_max_total_output_bytes(), None);
+    assert_eq!(file.command_runner().configured_max_total_output_bytes(), None);
+
+    let explicit_budget = CommandRunner::new(Duration::from_secs(3)).max_total_output_bytes(u64::MAX);
+    let ffprobe = FfprobeCommandMediaStreamClassifier::new().with_command_runner(explicit_budget.clone());
+    let file = FileCommandMimeDetector::default().with_command_runner(explicit_budget);
+    assert_eq!(
+        ffprobe.command_runner().configured_max_total_output_bytes(),
+        Some(u64::MAX)
+    );
+    assert_eq!(
+        file.command_runner().configured_max_total_output_bytes(),
+        Some(u64::MAX)
+    );
+}
 
 /// Returns specified facts and checks that each backend preserves structured
 /// argv.

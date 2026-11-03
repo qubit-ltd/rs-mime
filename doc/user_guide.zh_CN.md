@@ -159,6 +159,12 @@ classifier；如果环境提供 `ffprobe`，再使用 `FfprobeCommandMediaStream
 `max_buffer_size`。前缀后端可以在不加载完整资源的情况下检查大文件；声明
 `ContentRequirement::Complete` 的后端不能使用前缀入口。Native command 检测可能需要
 暂存输入，并受命令超时、保留输出大小和媒体暂存大小限制。
+默认 `file` 和 `ffprobe` runner 还会限制 stdout 与 stderr 的总量，上限为
+`MimeConfig::command_output_max_bytes()` 的四倍。因此每流上限为零时，总预算也为零，
+任何输出都可能提前终止命令并返回 `OutputLimitExceeded`；命令错误仍保留部分捕获内容。
+此策略仅适用于 `qubit-mime` 的这些默认 runner，不会改变 `rs-command` 的全局默认值，也
+不会覆盖注入的 runner。注入 `CommandRunner` 的应用可以调用
+`without_total_output_limit()` 保持总量不受限，或通过 `max_total_output_bytes(...)` 指定更大预算。
 
 请把 MIME 检测结果作为上传策略的一项输入，不要仅凭返回的 MIME 名称就允许打开、执行
 或信任文件内容。

@@ -73,3 +73,18 @@ fn test_executor_preserves_actual_status_and_strict_failures() {
     };
     assert_eq!(error.kind(), CommandErrorKind::SpawnFailed);
 }
+
+#[test]
+fn test_executor_preserves_capture_when_total_output_budget_is_exceeded() {
+    let runner = CommandRunner::new(Duration::from_secs(10))
+        .disable_logging(true)
+        .max_total_output_bytes(8);
+    let error = match SystemMimeCommandExecutor.run(&runner, Command::new("rustc").arg("--version")) {
+        Err(error) => error,
+        Ok(_) => panic!("rustc version output must exceed the small total budget"),
+    };
+    assert_eq!(error.kind(), CommandErrorKind::OutputLimitExceeded);
+    assert!(error.output().is_none());
+    let captured = error.captured_output().expect("partial output must be retained");
+    assert!(!captured.stdout().is_empty());
+}
