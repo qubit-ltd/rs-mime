@@ -31,12 +31,11 @@ use crate::MimeMagicMatcher;
 use crate::MimeResult;
 use crate::MimeType;
 use crate::MimeTypeBuilder;
+use crate::candidate_selection::select_candidate;
 
 /// Embedded freedesktop MIME database.
 const BUNDLED_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
 
-/// Lazily parsed embedded repository.
-static BUNDLED_REPOSITORY: OnceLock<MimeRepository> = OnceLock::new();
 /// Lazily initialized shared handle to the embedded repository.
 static BUNDLED_SHARED_REPOSITORY: OnceLock<Arc<MimeRepository>> = OnceLock::new();
 
@@ -76,8 +75,7 @@ impl MimeRepository {
     /// Panics if the embedded MIME database is invalid.
     #[must_use]
     pub fn bundled() -> &'static Self {
-        BUNDLED_REPOSITORY
-            .get_or_init(|| Self::from_xml(BUNDLED_DATABASE).expect("embedded freedesktop MIME database should parse"))
+        Self::bundled_handle().as_ref()
     }
 
     /// Parses a MIME repository from shared MIME-info XML.
@@ -136,7 +134,14 @@ impl MimeRepository {
     /// An atomically reference-counted handle to the shared repository.
     #[must_use]
     pub(crate) fn bundled_shared() -> Arc<Self> {
-        Arc::clone(BUNDLED_SHARED_REPOSITORY.get_or_init(|| Arc::new(Self::bundled().clone())))
+        Arc::clone(Self::bundled_handle())
+    }
+
+    /// Gets the single shared handle used by both bundled accessors.
+    fn bundled_handle() -> &'static Arc<Self> {
+        BUNDLED_SHARED_REPOSITORY.get_or_init(|| {
+            Arc::new(Self::from_xml(BUNDLED_DATABASE).expect("embedded freedesktop MIME database should parse"))
+        })
     }
 
     /// Gets all MIME types in database order.
@@ -257,7 +262,10 @@ impl MimeRepository {
     ///
     /// # Returns
     /// A vector containing the selected MIME type, or an empty vector when no
-    /// rule matches.
+    /// rule matches. Under [`MimeDetectionPolicy::VerifyContent`], no content
+    /// match returns an empty vector instead of falling back to the filename.
+    /// Use [`MimeDetectionPolicy::ContentFirst`] for filename fallback after
+    /// content detection.
     #[must_use]
     pub fn detect(&self, filename: &str, bytes: &[u8], policy: MimeDetectionPolicy) -> Vec<&MimeType> {
         let from_filename = self.detect_by_filename(filename);
@@ -265,7 +273,10 @@ impl MimeRepository {
             return from_filename;
         }
         let from_content = self.detect_by_content(bytes);
-        merge_results(from_filename, from_content)
+        select_candidate(&from_filename, &from_content, policy, |a, b| a.name() == b.name())
+            .copied()
+            .into_iter()
+            .collect()
     }
 
     /// Adds a MIME type and updates lookup indexes.
@@ -733,29 +744,4 @@ fn parse_hex_bytes(value: &str) -> MimeResult<Vec<u8>> {
 /// Lowercase name for map lookup.
 fn normalize_mime_name(name: &str) -> String {
     name.to_lowercase()
-}
-
-/// Merges filename and content detection results.
-///
-/// # Parameters
-/// - `from_filename`: Candidates from filename globs.
-/// - `from_content`: Candidates from content magic.
-///
-/// # Returns
-/// A single selected MIME type, or an empty vector when neither source matched.
-fn merge_results<'a>(from_filename: Vec<&'a MimeType>, from_content: Vec<&'a MimeType>) -> Vec<&'a MimeType> {
-    if from_filename.is_empty() {
-        return from_content.into_iter().take(1).collect();
-    }
-    if from_content.is_empty() {
-        return from_filename.into_iter().take(1).collect();
-    }
-    if let Some(common) = from_filename
-        .iter()
-        .find(|mime_type| from_content.iter().any(|content| content.name() == mime_type.name()))
-    {
-        vec![*common]
-    } else {
-        from_content.into_iter().take(1).collect()
-    }
 }

@@ -98,6 +98,93 @@ fn test_merge_results_uses_detector_selection_strategy() {
 }
 
 #[test]
+fn test_candidate_policy_matrix() {
+    let core = MimeDetectorCore::default();
+    let filename = ["application/pdf".to_owned()];
+    let content = ["image/png".to_owned()];
+    let filename_many = ["application/pdf".to_owned(), "image/png".to_owned()];
+    let content_many = ["image/png".to_owned(), "text/plain".to_owned()];
+    let empty: [String; 0] = [];
+
+    for policy in [MimeDetectionPolicy::Freedesktop, MimeDetectionPolicy::ContentFirst] {
+        assert_eq!(
+            Some("application/pdf".to_owned()),
+            core.select_result(&filename, &empty, None, policy, DetectionSource::None)
+                .unwrap()
+        );
+        assert_eq!(
+            Some("image/png".to_owned()),
+            core.select_result(&empty, &content, None, policy, DetectionSource::None)
+                .unwrap()
+        );
+        assert_eq!(
+            Some("image/png".to_owned()),
+            core.select_result(&filename, &content, None, policy, DetectionSource::None)
+                .unwrap()
+        );
+        assert_eq!(
+            None,
+            core.select_result(&empty, &empty, None, policy, DetectionSource::None)
+                .unwrap()
+        );
+        assert_eq!(
+            Some("image/png".to_owned()),
+            core.select_result(&filename_many, &content_many, None, policy, DetectionSource::None)
+                .unwrap()
+        );
+        assert_eq!(
+            Some("image/png".to_owned()),
+            core.select_result(&filename, &content_many, None, policy, DetectionSource::None)
+                .unwrap()
+        );
+    }
+    assert_eq!(
+        None,
+        core.select_result(
+            &filename,
+            &empty,
+            None,
+            MimeDetectionPolicy::VerifyContent,
+            DetectionSource::None
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        Some("image/png".to_owned()),
+        core.select_result(
+            &filename,
+            &content,
+            None,
+            MimeDetectionPolicy::VerifyContent,
+            DetectionSource::None
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        core.select_result(
+            &filename,
+            &content,
+            None,
+            MimeDetectionPolicy::PreferFilename,
+            DetectionSource::None
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        Some("image/png".to_owned()),
+        core.select_result(
+            &filename_many,
+            &content_many,
+            None,
+            MimeDetectionPolicy::PreferFilename,
+            DetectionSource::None
+        )
+        .unwrap()
+    );
+}
+
+#[test]
 fn test_refine_detected_mime_type_uses_media_stream_classifier() {
     let mut detector = MimeDetectorCore::new(create_precise_config(true, "webm", "webm:video/webm,audio/webm"));
     detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {

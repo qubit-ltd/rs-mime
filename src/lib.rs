@@ -78,6 +78,7 @@ pub mod classifier;
 pub mod detector;
 pub mod repository;
 
+mod candidate_selection;
 mod command_execution;
 mod common_mime_types;
 mod constants;
