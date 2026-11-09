@@ -20,6 +20,7 @@ use crate::MimeConfig;
 use crate::MimeDetectionPolicy;
 use crate::MimeError;
 use crate::MimeResult;
+use crate::candidate_selection::select_candidate;
 
 /// Shared detector core for configuration and merge/refinement logic.
 ///
@@ -106,17 +107,10 @@ impl MimeDetectorCore {
     /// # Returns
     /// Selected MIME type name, or `None`.
     pub fn merge_results(&self, from_filename: &[String], from_content: &[String]) -> Option<String> {
-        if from_filename.is_empty() {
-            return from_content.first().cloned();
-        }
-        if from_content.is_empty() {
-            return from_filename.first().cloned();
-        }
-        from_filename
-            .iter()
-            .find(|candidate| from_content.contains(candidate))
-            .cloned()
-            .or_else(|| from_content.first().cloned())
+        select_candidate(from_filename, from_content, MimeDetectionPolicy::Freedesktop, |a, b| {
+            a == b
+        })
+        .cloned()
     }
 
     /// Selects a MIME type from filename/content candidates and refines it.
@@ -138,14 +132,7 @@ impl MimeDetectorCore {
         policy: MimeDetectionPolicy,
         source: DetectionSource<'_>,
     ) -> MimeResult<Option<String>> {
-        if policy == MimeDetectionPolicy::VerifyContent && from_content.is_empty() {
-            return Ok(None);
-        }
-        let result = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
-            from_filename.first().cloned()
-        } else {
-            self.merge_results(from_filename, from_content)
-        };
+        let result = select_candidate(from_filename, from_content, policy, |a, b| a == b).cloned();
         let Some(result) = result else {
             return Ok(None);
         };

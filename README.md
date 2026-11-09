@@ -52,8 +52,15 @@ fn main() -> qubit_mime::MimeResult<()> {
 `detect_by_filename` and `detect_by_content` can be used independently.
 `MimeDetectionPolicy::PreferFilename` accepts a definitive filename result
 without content verification; `VerifyContent` checks content even when the
-filename looks definitive. A successful detection returns `Some(mime)`;
-`None` means that no candidate matched.
+filename looks definitive and requires a content match. Use `ContentFirst` to
+keep the filename result as a fallback when content has no candidate. A
+successful detection returns `Some(mime)`; `None` means that no candidate
+matched.
+
+`detect_prefix` matches filename and content candidates without passing the
+prefix to a complete-media classifier. The default asynchronous Prefix path
+reads at most its configured byte limit; Complete-content backends must provide
+their own asynchronous path hook.
 
 ## What It Provides
 

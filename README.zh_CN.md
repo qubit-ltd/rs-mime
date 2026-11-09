@@ -47,7 +47,12 @@ fn main() -> qubit_mime::MimeResult<()> {
 
 需要时可以分别调用 `detect_by_filename` 和 `detect_by_content`。当文件名已有明确
 结果时，`MimeDetectionPolicy::PreferFilename` 不再检查内容；`VerifyContent` 仍会
-检查内容。检测成功返回 `Some(mime)`，返回 `None` 表示没有匹配候选。
+检查内容并要求内容匹配。若内容没有候选时仍需保留文件名结果作为 fallback，请使用
+`ContentFirst`。检测成功返回 `Some(mime)`，返回 `None` 表示没有匹配候选。
+
+`detect_prefix` 会匹配文件名和内容候选，但不会把前缀交给需要完整媒体内容的
+classifier。默认异步 Prefix 路径最多读取配置的字节数；需要完整内容的 backend
+必须自行提供异步路径 hook。
 
 ## 提供的能力
 

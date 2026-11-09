@@ -290,11 +290,11 @@ fn test_detect_uses_magic_when_verify_content_policy_is_enabled() {
 }
 
 #[test]
-fn test_detect_merges_filename_when_content_missing_or_common() {
+fn test_detect_verify_content_requires_content_candidate() {
     let repository = create_repository();
 
     assert_eq!(
-        vec!["application/pdf"],
+        Vec::<String>::new(),
         names(repository.detect(
             "document.pdf",
             b"nothing recognizable",
@@ -304,6 +304,20 @@ fn test_detect_merges_filename_when_content_missing_or_common() {
     assert_eq!(
         vec!["application/pdf"],
         names(repository.detect("document.pdf", b"%PDF-1.7\n", MimeDetectionPolicy::VerifyContent,))
+    );
+}
+
+#[test]
+fn test_detect_content_first_falls_back_to_filename_when_content_missing() {
+    let repository = create_repository();
+
+    assert_eq!(
+        vec!["application/pdf"],
+        names(repository.detect(
+            "document.pdf",
+            b"nothing recognizable",
+            MimeDetectionPolicy::ContentFirst,
+        ))
     );
 }
 

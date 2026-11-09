@@ -28,6 +28,8 @@ pub enum MimeDetectionPolicy {
     PreferFilename,
 
     /// Check content magic even when filename detection has a definitive
-    /// result.
+    /// result, and require a content match. No filename fallback is returned
+    /// when content detection finds no candidate; use [`Self::ContentFirst`]
+    /// to retain that fallback.
     VerifyContent,
 }

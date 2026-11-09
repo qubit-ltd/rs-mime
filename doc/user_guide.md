@@ -3,7 +3,7 @@
 [中文用户手册](user_guide.zh_CN.md) · [README](../README.md) ·
 [API documentation](https://docs.rs/qubit-mime)
 
-This guide targets Rust applications using `qubit-mime` 0.18 to inspect
+This guide targets Rust applications using `qubit-mime` 0.21 to inspect
 uploaded files, filesystem resources, or media streams. It explains the
 supported detection paths and the operational boundaries that callers must
 handle.
@@ -28,9 +28,12 @@ The public API has three useful layers:
 
 `MimeDetectionPolicy` controls combined detection. `PreferFilename` accepts a
 definitive filename result without checking content. `VerifyContent` checks
-content even when the filename is definitive. Other policies are available for
-applications that need different filename/content precedence; see the API
-documentation for their exact semantics.
+content even when the filename is definitive and returns `None` if content has
+no candidate. Use `ContentFirst` when content should win when available but the
+filename should remain a fallback. When migrating combined detection, choose the
+policy explicitly: `ContentFirst` keeps the filename fallback, while
+`VerifyContent` requires a content match. If neither source matches, the
+successful result is `None`; an error is reported separately.
 
 ## Scenario: Inspect an Upload
 
@@ -71,7 +74,7 @@ Add the crate to `Cargo.toml`:
 
 ```toml
 [dependencies]
-qubit-mime = "0.20"
+qubit-mime = "0.21"
 ```
 
 `RepositoryMimeDetector::new()` uses the embedded repository and needs no
@@ -132,8 +135,8 @@ Link-time provider discovery is opt-in. An application can enable it with:
 
 ```toml
 [dependencies]
-qubit-mime = { version = "0.20", features = ["inventory"] }
-qubit-magika = { version = "0.17", features = ["inventory"] }
+qubit-mime = { version = "0.21", features = ["inventory"] }
+qubit-magika = { version = "0.18", features = ["inventory"] }
 ```
 
 Reference the provider crate in application code (`use qubit_magika as _;`) so
@@ -179,9 +182,14 @@ provider-neutral path and filesystem facade before changing detection policy.
 ## Limitations and Best Practices
 
 `detect_path` and `detect_async_path` accept a `max_bytes` prefix bound that
-must not exceed `max_buffer_size`. A prefix backend can inspect large resources
-without loading the entire resource. A backend whose `ContentRequirement` is
-`Complete` cannot use a prefix entry point. Native command detection may stage
+must not exceed `max_buffer_size`. `ContentRequirement::Prefix` describes the
+input limit available to a backend; it does not perform full media
+classification, which remains the job of a media stream classifier. The async
+path entry point reads up to the requested prefix by default. A prefix backend
+can inspect large resources without loading the entire resource. A backend whose
+`ContentRequirement` is `Complete` cannot use a prefix entry point and must
+override `guess_from_async_provider_path` when it supports complete-resource
+inspection through an asynchronous provider path. Native command detection may stage
 input and is subject to command timeout, retained output, and media staging
 limits. The default `file` and `ffprobe` runners also enforce a total
 stdout-plus-stderr budget equal to four times

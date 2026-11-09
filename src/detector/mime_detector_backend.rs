@@ -160,11 +160,21 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// complete-content backends safely.
     fn guess_from_async_provider_path<'a>(
         &'a self,
-        _file_system: &'a AsyncFileSystem,
-        _path: &'a FsPath,
-        _max_bytes: usize,
+        file_system: &'a AsyncFileSystem,
+        path: &'a FsPath,
+        max_bytes: usize,
     ) -> AsyncProviderPathResult<'a> {
-        Box::pin(async { Err(crate::MimeError::CompleteContentRequired) })
+        Box::pin(async move {
+            if matches!(self.content_requirement(), ContentRequirement::Complete) {
+                return Err(crate::MimeError::CompleteContentRequired);
+            }
+            let content = file_system
+                .read_prefix(path, ReadOptions::default(), max_bytes)
+                .await?
+                .into_bytes();
+            let candidates = self.guess_from_content(&content)?;
+            Ok((candidates, Some(content)))
+        })
     }
 }
 
@@ -250,7 +260,21 @@ where
         if matches!(self.content_requirement(), ContentRequirement::Complete) {
             return Err(crate::MimeError::CompleteContentRequired);
         }
-        self.detect(content, filename, policy)
+        let from_filename = filename
+            .map(|filename| self.guess_from_filename(filename))
+            .unwrap_or_default();
+        let from_content = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+            Vec::new()
+        } else {
+            self.guess_from_content(content)?
+        };
+        self.core().select_result(
+            &from_filename,
+            &from_content,
+            filename,
+            policy,
+            DetectionSource::Prefix(content),
+        )
     }
 
     /// Detects a MIME type from content bytes and an optional filename.

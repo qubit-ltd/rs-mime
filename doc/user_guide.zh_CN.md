@@ -3,7 +3,7 @@
 [English user guide](user_guide.md) · [README](../README.zh_CN.md) ·
 [API 文档](https://docs.rs/qubit-mime)
 
-本手册面向使用 `qubit-mime` 0.18 检查上传文件、文件系统资源或媒体流的 Rust 应用。
+本手册面向使用 `qubit-mime` 0.21 检查上传文件、文件系统资源或媒体流的 Rust 应用。
 内容覆盖可用的检测入口，以及调用方需要自行处理的运行边界。
 
 ## 手册目标与读者
@@ -23,7 +23,10 @@
   fallback、命令、classifier 和缓冲区设置。
 
 组合检测由 `MimeDetectionPolicy` 控制。`PreferFilename` 在文件名已有明确结果时不
-再检查内容；`VerifyContent` 即使文件名明确也会检查内容。其他策略适用于不同的文件名
+再检查内容；`VerifyContent` 即使文件名明确也会检查内容，且内容没有候选时返回 `None`。
+如果希望内容优先，但仍保留文件名作为 fallback，请使用 `ContentFirst`。两种来源都没有
+匹配时，成功结果为 `None`；错误会单独返回。迁移旧的组合检测逻辑时应明确选择策略：
+`ContentFirst` 保留文件名 fallback，`VerifyContent` 则要求内容匹配。其他策略适用于不同的文件名
 与内容优先级需求，具体语义请参阅 API 文档。
 
 ## 贯穿场景：检查上传文件
@@ -64,7 +67,7 @@ fn main() -> qubit_mime::MimeResult<()> {
 
 ```toml
 [dependencies]
-qubit-mime = "0.20"
+qubit-mime = "0.21"
 ```
 
 `RepositoryMimeDetector::new()` 使用内置仓库，不需要外部命令。若要显式选择 Provider，
@@ -118,8 +121,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```toml
 [dependencies]
-qubit-mime = { version = "0.20", features = ["inventory"] }
-qubit-magika = { version = "0.17", features = ["inventory"] }
+qubit-mime = { version = "0.21", features = ["inventory"] }
+qubit-magika = { version = "0.18", features = ["inventory"] }
 ```
 
 应用代码还需引用 Provider crate（`use qubit_magika as _;`），使提交项参与链接。
@@ -156,8 +159,11 @@ classifier；如果环境提供 `ffprobe`，再使用 `FfprobeCommandMediaStream
 ## 限制与最佳实践
 
 `detect_path` 和 `detect_async_path` 的 `max_bytes` 是内容前缀上限，不能超过
-`max_buffer_size`。前缀后端可以在不加载完整资源的情况下检查大文件；声明
-`ContentRequirement::Complete` 的后端不能使用前缀入口。Native command 检测可能需要
+`max_buffer_size`。`ContentRequirement::Prefix` 表示后端可用的输入上限，并不执行完整的
+媒体分类；完整媒体分类仍由 media stream classifier 负责。异步路径入口默认读取请求的
+内容前缀。前缀后端可以在不加载完整资源的情况下检查大文件；声明
+`ContentRequirement::Complete` 后端不能使用前缀入口。自定义完整内容后端可以通过覆盖独立的
+`guess_from_async_provider_path` hook 检查异步 Provider 路径。Native command 检测可能需要
 暂存输入，并受命令超时、保留输出大小和媒体暂存大小限制。
 默认 `file` 和 `ffprobe` runner 还会限制 stdout 与 stderr 的总量，上限为
 `MimeConfig::command_output_max_bytes()` 的四倍。因此每流上限为零时，总预算也为零，
