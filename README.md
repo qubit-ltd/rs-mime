@@ -57,10 +57,12 @@ keep the filename result as a fallback when content has no candidate. A
 successful detection returns `Some(mime)`; `None` means that no candidate
 matched.
 
-`detect_prefix` matches filename and content candidates without passing the
-prefix to a complete-media classifier. The default asynchronous Prefix path
-reads at most its configured byte limit; Complete-content backends must provide
-their own asynchronous path hook.
+For built-in detectors and backends using the crate's blanket `MimeDetector`
+implementation, `detect_prefix` matches filename and content candidates
+without passing the prefix to a complete-media classifier. Types that implement
+`MimeDetector` directly define their own behavior. The default asynchronous
+Prefix path reads at most the requested byte limit; Complete-content backends
+must provide their own asynchronous path hook.
 
 ## What It Provides
 

@@ -50,9 +50,10 @@ fn main() -> qubit_mime::MimeResult<()> {
 检查内容并要求内容匹配。若内容没有候选时仍需保留文件名结果作为 fallback，请使用
 `ContentFirst`。检测成功返回 `Some(mime)`，返回 `None` 表示没有匹配候选。
 
-`detect_prefix` 会匹配文件名和内容候选，但不会把前缀交给需要完整媒体内容的
-classifier。默认异步 Prefix 路径最多读取配置的字节数；需要完整内容的 backend
-必须自行提供异步路径 hook。
+对于内置 detector 和通过本 crate blanket `MimeDetector` 实现接入的 backend，
+`detect_prefix` 会匹配文件名和内容候选，不会把前缀交给需要完整媒体内容的
+classifier。直接实现 `MimeDetector` 的类型自行决定其行为。默认异步 Prefix 路径最多读取
+请求的字节数；需要完整内容的 backend 必须自行提供异步路径 hook。
 
 ## 提供的能力
 

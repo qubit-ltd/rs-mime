@@ -159,9 +159,10 @@ classifier；如果环境提供 `ffprobe`，再使用 `FfprobeCommandMediaStream
 ## 限制与最佳实践
 
 `detect_path` 和 `detect_async_path` 的 `max_bytes` 是内容前缀上限，不能超过
-`max_buffer_size`。`ContentRequirement::Prefix` 表示后端可用的输入上限，并不执行完整的
-媒体分类；完整媒体分类仍由 media stream classifier 负责。异步路径入口默认读取请求的
-内容前缀。前缀后端可以在不加载完整资源的情况下检查大文件；声明
+`max_buffer_size`。`ContentRequirement::Prefix` 表示后端可用的输入上限。对于内置 detector
+和通过本 crate blanket `MimeDetector` 实现接入的 backend，前缀检测不会将该前缀传给完整媒体
+classifier；直接实现 `MimeDetector` 的类型自行决定其行为。异步路径入口默认读取请求的内容
+前缀。前缀后端可以在不加载完整资源的情况下检查大文件；声明
 `ContentRequirement::Complete` 后端不能使用前缀入口。自定义完整内容后端可以通过覆盖独立的
 `guess_from_async_provider_path` hook 检查异步 Provider 路径。Native command 检测可能需要
 暂存输入，并受命令超时、保留输出大小和媒体暂存大小限制。

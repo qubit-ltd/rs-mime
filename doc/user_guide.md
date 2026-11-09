@@ -183,10 +183,12 @@ provider-neutral path and filesystem facade before changing detection policy.
 
 `detect_path` and `detect_async_path` accept a `max_bytes` prefix bound that
 must not exceed `max_buffer_size`. `ContentRequirement::Prefix` describes the
-input limit available to a backend; it does not perform full media
-classification, which remains the job of a media stream classifier. The async
-path entry point reads up to the requested prefix by default. A prefix backend
-can inspect large resources without loading the entire resource. A backend whose
+input limit available to a backend. For built-in detectors and backends using
+the crate's blanket `MimeDetector` implementation, prefix detection does not
+pass that prefix to a complete-media classifier; direct `MimeDetector`
+implementations define their own behavior. The async path entry point reads up
+to the requested prefix by default. A prefix backend can inspect large resources
+without loading the entire resource. A backend whose
 `ContentRequirement` is `Complete` cannot use a prefix entry point and must
 override `guess_from_async_provider_path` when it supports complete-resource
 inspection through an asynchronous provider path. Native command detection may stage
