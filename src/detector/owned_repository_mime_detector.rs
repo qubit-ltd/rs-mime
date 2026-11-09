@@ -21,7 +21,9 @@ use crate::MimeResult;
 /// lifetime, including filename matching, content matching, and read sizing.
 #[derive(Debug)]
 pub(crate) struct OwnedRepositoryMimeDetector {
+    /// Shared selection and refinement behavior.
     core: MimeDetectorCore,
+    /// Repository retained for the detector's lifetime.
     repository: Arc<MimeRepository>,
 }
 

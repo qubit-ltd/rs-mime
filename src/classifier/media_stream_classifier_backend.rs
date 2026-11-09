@@ -88,12 +88,31 @@ where
     T: MediaStreamClassifierBackend,
 {
     /// Validates the local file and delegates to the backend hook.
+    ///
+    /// # Parameters
+    /// - `file`: Local media file to validate and classify.
+    ///
+    /// # Returns
+    /// Media stream classification.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::Io`](crate::MimeError::Io) when validation or
+    /// backend I/O fails, or another backend classification error.
     fn classify_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
         validate_readable_file(file)?;
         self.classify_by_local_file(file)
     }
 
     /// Delegates stream classification to the backend hook.
+    ///
+    /// # Parameters
+    /// - `reader`: Media stream passed to the backend hook.
+    ///
+    /// # Returns
+    /// Media stream classification.
+    ///
+    /// # Errors
+    /// Returns the error produced by the backend hook.
     #[inline]
     fn classify_reader(&self, reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
         self.classify_by_content(reader)

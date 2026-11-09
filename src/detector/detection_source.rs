@@ -11,6 +11,9 @@ use std::path::Path;
 
 /// Source available for precise MIME refinement.
 ///
+/// # Type Parameters
+/// - `'a`: Lifetime of the borrowed content or path carried by the source.
+///
 /// # Examples
 ///
 /// ```
@@ -23,9 +26,18 @@ pub enum DetectionSource<'a> {
     /// No readable source is available.
     None,
     /// In-memory content bytes are available.
-    Content(&'a [u8]),
+    Content(
+        /// Borrowed complete content bytes available for refinement.
+        &'a [u8],
+    ),
     /// A bounded prefix whose completeness is unknown.
-    Prefix(&'a [u8]),
+    Prefix(
+        /// Borrowed prefix bytes; the source may contain more data.
+        &'a [u8],
+    ),
     /// A local file path is available.
-    Path(&'a Path),
+    Path(
+        /// Borrowed path to the local file available for refinement.
+        &'a Path,
+    ),
 }

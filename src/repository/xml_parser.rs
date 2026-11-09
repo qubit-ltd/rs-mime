@@ -14,6 +14,9 @@ use std::borrow::Cow;
 /// The declaration is removed through the first unquoted `]>` after its
 /// opening marker. Input without a complete declaration is returned unchanged.
 ///
+/// # Parameters
+/// - `xml`: XML source that may contain a doctype declaration.
+///
 /// # Returns
 /// The original XML borrowed when no complete declaration is found, or an
 /// owned string with the declaration removed.

@@ -259,6 +259,9 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// Timeout comes from `config.command_timeout()`.
     ///
+    /// # Parameters
+    /// - `config`: MIME settings that supply the timeout and output limits.
+    ///
     /// # Returns
     /// Runner used by the default classifier.
     fn default_command_runner(config: &MimeConfig) -> CommandRunner {
@@ -297,11 +300,24 @@ impl Default for FfprobeCommandMediaStreamClassifier {
 
 impl FileBasedMediaStreamClassifier for FfprobeCommandMediaStreamClassifier {
     /// Gets the maximum bytes staged from reader/content input.
+    ///
+    /// # Returns
+    /// Maximum accepted stream size before staging is rejected.
     fn max_staging_size(&self) -> u64 {
         self.max_staging_size
     }
 
     /// Classifies a readable local media file using FFprobe.
+    ///
+    /// # Parameters
+    /// - `file`: Readable local media file to inspect.
+    ///
+    /// # Returns
+    /// Media stream classification.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::Command`](crate::MimeError::Command) when process
+    /// execution itself fails.
     fn classify_by_local_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
         self.classify_with_ffprobe(file)
     }

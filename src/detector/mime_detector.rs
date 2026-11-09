@@ -81,6 +81,10 @@ pub trait MimeDetector: Debug + Send + Sync {
 
     /// Detects through an asynchronous filesystem facade.
     ///
+    /// # Type Parameters
+    /// - `'a`: Shared lifetime of the detector, filesystem, and path borrowed
+    ///   by the returned future.
+    ///
     /// # Parameters
     /// - `file_system`: Asynchronous filesystem facade that owns `path`.
     /// - `path`: Provider-neutral path to inspect.
@@ -259,6 +263,11 @@ impl MimeDetector for Box<dyn MimeDetector> {
     }
 
     /// Delegates bounded-prefix detection to the boxed detector.
+    ///
+    /// # Parameters
+    /// - `content`: Bounded content prefix to inspect.
+    /// - `filename`: Optional path or basename for filename matching.
+    /// - `policy`: Strategy for resolving filename and content results.
     #[inline]
     fn detect_prefix(
         &self,
@@ -270,6 +279,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
     }
 
     /// Delegates asynchronous path detection to the boxed detector.
+    ///
+    /// # Parameters
+    /// - `file_system`: Asynchronous filesystem facade owning the path.
+    /// - `path`: Provider-neutral path to inspect.
+    /// - `max_bytes`: Maximum prefix length to read.
+    /// - `policy`: Strategy for resolving filename and content results.
     #[inline]
     fn detect_async_path<'a>(
         &'a self,
@@ -282,18 +297,29 @@ impl MimeDetector for Box<dyn MimeDetector> {
     }
 
     /// Delegates filename detection to the boxed detector.
+    ///
+    /// # Parameters
+    /// - `filename`: File path or basename to match.
     #[inline]
     fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_filename(filename)
     }
 
     /// Delegates content detection to the boxed detector.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes to inspect.
     #[inline]
     fn detect_by_content(&self, content: &[u8]) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_content(content)
     }
 
     /// Delegates combined detection to the boxed detector.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes to inspect.
+    /// - `filename`: Optional path or basename for filename matching.
+    /// - `policy`: Strategy for resolving filename and content results.
     #[inline]
     fn detect(
         &self,
@@ -311,6 +337,11 @@ impl MimeDetector for Box<dyn MimeDetector> {
     }
 
     /// Delegates reader detection to the boxed detector.
+    ///
+    /// # Parameters
+    /// - `reader`: Seekable stream to inspect without consuming its position.
+    /// - `filename`: Optional path or basename for filename matching.
+    /// - `policy`: Strategy for resolving filename and content results.
     #[inline]
     fn detect_reader(
         &self,
@@ -322,12 +353,22 @@ impl MimeDetector for Box<dyn MimeDetector> {
     }
 
     /// Delegates file detection to the boxed detector.
+    ///
+    /// # Parameters
+    /// - `file`: Local file path to inspect.
+    /// - `policy`: Strategy for resolving filename and content results.
     #[inline]
     fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         self.as_ref().detect_file(file, policy)
     }
 
     /// Delegates path detection to the boxed detector.
+    ///
+    /// # Parameters
+    /// - `file_system`: Filesystem facade that owns `path`.
+    /// - `path`: Provider-neutral path to inspect.
+    /// - `max_bytes`: Maximum prefix length to read.
+    /// - `policy`: Strategy for resolving filename and content results.
     #[inline]
     fn detect_path(
         &self,
@@ -348,6 +389,11 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     }
 
     /// Delegates bounded-prefix detection to the shared detector.
+    ///
+    /// # Parameters
+    /// - `content`: Bounded content prefix to inspect.
+    /// - `filename`: Optional path or basename for filename matching.
+    /// - `policy`: Strategy for resolving filename and content results.
     #[inline]
     fn detect_prefix(
         &self,
@@ -359,6 +405,12 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     }
 
     /// Delegates asynchronous path detection to the shared detector.
+    ///
+    /// # Parameters
+    /// - `file_system`: Asynchronous filesystem facade owning the path.
+    /// - `path`: Provider-neutral path to inspect.
+    /// - `max_bytes`: Maximum prefix length to read.
+    /// - `policy`: Strategy for resolving filename and content results.
     #[inline]
     fn detect_async_path<'a>(
         &'a self,
@@ -371,18 +423,29 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     }
 
     /// Delegates filename detection to the shared detector.
+    ///
+    /// # Parameters
+    /// - `filename`: File path or basename to match.
     #[inline]
     fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_filename(filename)
     }
 
     /// Delegates content detection to the shared detector.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes to inspect.
     #[inline]
     fn detect_by_content(&self, content: &[u8]) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_content(content)
     }
 
     /// Delegates combined detection to the shared detector.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes to inspect.
+    /// - `filename`: Optional path or basename for filename matching.
+    /// - `policy`: Strategy for resolving filename and content results.
     #[inline]
     fn detect(
         &self,
@@ -400,6 +463,11 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     }
 
     /// Delegates reader detection to the shared detector.
+    ///
+    /// # Parameters
+    /// - `reader`: Seekable stream to inspect without consuming its position.
+    /// - `filename`: Optional path or basename for filename matching.
+    /// - `policy`: Strategy for resolving filename and content results.
     #[inline]
     fn detect_reader(
         &self,
@@ -411,12 +479,22 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     }
 
     /// Delegates file detection to the shared detector.
+    ///
+    /// # Parameters
+    /// - `file`: Local file path to inspect.
+    /// - `policy`: Strategy for resolving filename and content results.
     #[inline]
     fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         self.as_ref().detect_file(file, policy)
     }
 
     /// Delegates path detection to the shared detector.
+    ///
+    /// # Parameters
+    /// - `file_system`: Filesystem facade that owns `path`.
+    /// - `path`: Provider-neutral path to inspect.
+    /// - `max_bytes`: Maximum prefix length to read.
+    /// - `policy`: Strategy for resolving filename and content results.
     #[inline]
     fn detect_path(
         &self,

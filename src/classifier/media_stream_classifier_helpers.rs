@@ -42,6 +42,9 @@ pub(crate) fn validate_readable_file(path: &Path) -> MimeResult<()> {
 
 /// Stages a reader into a temporary file and calls `classify`.
 ///
+/// # Type Parameters
+/// - `T`: Result type returned by the classifier callback.
+///
 /// # Parameters
 /// - `reader`: Stream whose content should be staged.
 /// - `max_staging_size`: Maximum accepted stream size in bytes.

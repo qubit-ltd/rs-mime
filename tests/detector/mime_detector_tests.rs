@@ -33,10 +33,10 @@ use qubit_fs::metadata::SymlinkPolicy;
 use qubit_fs::path::PathConstraints;
 use qubit_fs::path::PathSemantics;
 use qubit_fs::spi::AsyncFileSystemSpi;
-use qubit_fs::spi::ProviderOperations;
 use qubit_fs::spi::OpenReaderRequest;
 use qubit_fs::spi::OpenedAsyncReader;
 use qubit_fs::spi::ProviderOperation;
+use qubit_fs::spi::ProviderOperations;
 use qubit_fs::spi::ProviderProperties;
 use qubit_fs::spi::SpiFuture;
 use qubit_fs::spi::StatRequest;
@@ -624,8 +624,7 @@ fn test_repository_async_prefix_reads_pdf_from_local_temp_fixture() {
         run_ready(boxed.detect_async_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent))
             .expect("boxed repository async prefix detection should succeed"),
     );
-    let shared: Arc<dyn MimeDetector> =
-        Arc::new(RepositoryMimeDetector::new().expect("repository should load"));
+    let shared: Arc<dyn MimeDetector> = Arc::new(RepositoryMimeDetector::new().expect("repository should load"));
     assert_eq!(
         Some("application/pdf".to_owned()),
         run_ready(shared.detect_async_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent))

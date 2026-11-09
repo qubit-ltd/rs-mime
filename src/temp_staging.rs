@@ -27,6 +27,9 @@ use crate::constants::DEFAULT_TEMP_NAME_MAX_ATTEMPTS;
 /// typed cleanup context in `MimeError::TemporaryCleanup`. Panics still unwind
 /// through the temporary guard's best-effort Drop cleanup.
 ///
+/// # Type Parameters
+/// - `T`: Value returned by the inspection callback.
+///
 /// # Parameters
 /// - `prefix`: Prefix used to identify the temporary filename.
 /// - `stage`: Callback that writes the payload to the temporary file.

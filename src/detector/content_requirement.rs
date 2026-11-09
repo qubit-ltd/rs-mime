@@ -22,7 +22,10 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentRequirement {
     /// Inspect only the leading prefix of the stream.
-    Prefix(usize),
+    Prefix(
+        /// Maximum number of leading bytes required by the backend.
+        usize,
+    ),
     /// Inspect the complete stream.
     Complete,
 }

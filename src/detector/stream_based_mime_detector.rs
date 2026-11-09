@@ -107,6 +107,9 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
 
 /// Opens a local regular file for detector reads.
 ///
+/// # Parameters
+/// - `path`: Local path to validate and open for reading.
+///
 /// # Errors
 /// Returns an invalid-input error when `path` is not a regular file, or the
 /// operating-system error raised while reading metadata or opening the file.

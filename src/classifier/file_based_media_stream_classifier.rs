@@ -77,11 +77,30 @@ where
     T: FileBasedMediaStreamClassifier,
 {
     /// Delegates local-file classification to the file-based hook.
+    ///
+    /// # Parameters
+    /// - `file`: Readable local media file to classify.
+    ///
+    /// # Returns
+    /// Media stream classification.
+    ///
+    /// # Errors
+    /// Returns the error produced by the file-based classifier hook.
     fn classify_by_local_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
         FileBasedMediaStreamClassifier::classify_by_local_file(self, file)
     }
 
     /// Stages stream content to a temporary local file before classification.
+    ///
+    /// # Parameters
+    /// - `reader`: Media stream consumed while staging.
+    ///
+    /// # Returns
+    /// Media stream classification.
+    ///
+    /// # Errors
+    /// Returns an I/O or input error when staging fails, or the error produced
+    /// by the file-based classifier hook.
     fn classify_by_content(&self, reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
         with_temp_reader(reader, self.max_staging_size(), |path| {
             FileBasedMediaStreamClassifier::classify_by_local_file(self, path)

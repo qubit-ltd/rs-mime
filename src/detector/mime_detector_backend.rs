@@ -160,8 +160,11 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// content prefix.
     ///
     /// # Errors
-    /// The default implementation returns an error because it cannot inspect
-    /// complete-content backends safely.
+    /// The default implementation returns
+    /// [`MimeError::CompleteContentRequired`](crate::MimeError::CompleteContentRequired)
+    /// when the backend requires complete content. It also propagates errors
+    /// from reading the prefix and inspecting it with
+    /// [`Self::guess_from_content`].
     fn guess_from_async_provider_path<'a>(
         &'a self,
         file_system: &'a AsyncFileSystem,

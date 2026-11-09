@@ -339,7 +339,6 @@ impl MimeRepository {
         }
     }
 
-
     /// Resolves an alias to its canonical name, preserving unknown input.
     ///
     /// # Parameters

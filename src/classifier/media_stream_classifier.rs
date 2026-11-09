@@ -104,18 +104,45 @@ pub trait MediaStreamClassifier: Debug + Send + Sync {
 
 impl MediaStreamClassifier for Box<dyn MediaStreamClassifier> {
     /// Delegates content classification to the boxed classifier.
+    ///
+    /// # Parameters
+    /// - `content`: In-memory media payload passed to the wrapped classifier.
+    ///
+    /// # Returns
+    /// Media stream classification.
+    ///
+    /// # Errors
+    /// Returns the error produced by the wrapped classifier.
     #[inline]
     fn classify_content(&self, content: &[u8]) -> MimeResult<MediaStreamType> {
         self.as_ref().classify_content(content)
     }
 
     /// Delegates file classification to the boxed classifier.
+    ///
+    /// # Parameters
+    /// - `file`: Local media file passed to the wrapped classifier.
+    ///
+    /// # Returns
+    /// Media stream classification.
+    ///
+    /// # Errors
+    /// Returns the error produced by the wrapped classifier.
     #[inline]
     fn classify_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
         self.as_ref().classify_file(file)
     }
 
     /// Delegates stream classification to the boxed classifier.
+    ///
+    /// # Parameters
+    /// - `reader`: Media stream consumed by the wrapped classifier.
+    ///
+    /// # Returns
+    /// Media stream classification.
+    ///
+    /// # Errors
+    /// Returns the error produced by the wrapped classifier.
     #[inline]
     fn classify_reader(&self, reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
         self.as_ref().classify_reader(reader)
@@ -124,18 +151,45 @@ impl MediaStreamClassifier for Box<dyn MediaStreamClassifier> {
 
 impl MediaStreamClassifier for Arc<dyn MediaStreamClassifier> {
     /// Delegates content classification to the shared classifier.
+    ///
+    /// # Parameters
+    /// - `content`: In-memory media payload passed to the shared classifier.
+    ///
+    /// # Returns
+    /// Media stream classification.
+    ///
+    /// # Errors
+    /// Returns the error produced by the shared classifier.
     #[inline]
     fn classify_content(&self, content: &[u8]) -> MimeResult<MediaStreamType> {
         self.as_ref().classify_content(content)
     }
 
     /// Delegates file classification to the shared classifier.
+    ///
+    /// # Parameters
+    /// - `file`: Local media file passed to the shared classifier.
+    ///
+    /// # Returns
+    /// Media stream classification.
+    ///
+    /// # Errors
+    /// Returns the error produced by the shared classifier.
     #[inline]
     fn classify_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
         self.as_ref().classify_file(file)
     }
 
     /// Delegates stream classification to the shared classifier.
+    ///
+    /// # Parameters
+    /// - `reader`: Media stream consumed by the shared classifier.
+    ///
+    /// # Returns
+    /// Media stream classification.
+    ///
+    /// # Errors
+    /// Returns the error produced by the shared classifier.
     #[inline]
     fn classify_reader(&self, reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
         self.as_ref().classify_reader(reader)

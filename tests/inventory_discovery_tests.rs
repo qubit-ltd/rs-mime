@@ -10,8 +10,6 @@
 
 use std::sync::Arc;
 
-use qubit_mime::classifier::media_stream_classifier_inventory::Entry as MediaStreamClassifierInventoryEntry;
-use qubit_mime::detector::mime_detector_inventory::Entry as MimeDetectorInventoryEntry;
 use qubit_mime::MediaStreamClassifier;
 use qubit_mime::MediaStreamClassifierRegistry;
 use qubit_mime::MediaStreamClassifierSpec;
@@ -20,6 +18,8 @@ use qubit_mime::MimeDetector;
 use qubit_mime::MimeDetectorRegistry;
 use qubit_mime::MimeDetectorSpec;
 use qubit_mime::MimeError;
+use qubit_mime::classifier::media_stream_classifier_inventory::Entry as MediaStreamClassifierInventoryEntry;
+use qubit_mime::detector::mime_detector_inventory::Entry as MimeDetectorInventoryEntry;
 use qubit_spi::ProviderDescriptor;
 use qubit_spi::ProviderMetadata;
 use qubit_spi::ProviderSelection;
@@ -35,10 +35,7 @@ impl ProviderMetadata for ExternalDetector {
     }
 }
 impl ServiceProvider<MimeDetectorSpec> for ExternalDetector {
-    fn create_configured(
-        &self,
-        _config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    fn create_configured(&self, _config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         unimplemented!("discovery does not create the detector")
     }
 }

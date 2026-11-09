@@ -28,11 +28,17 @@ use crate::MimeType;
 /// ```
 #[derive(Debug, Clone)]
 pub struct MimeTypeBuilder {
+    /// Canonical MIME type name being built.
     name: String,
+    /// Localized human-readable descriptions.
     descriptions: HashMap<String, String>,
+    /// Alias names associated with the MIME type.
     aliases: Vec<String>,
+    /// Filename glob rules associated with the MIME type.
     globs: Vec<MimeGlob>,
+    /// Content magic rules associated with the MIME type.
     magics: Vec<MimeMagic>,
+    /// Parent MIME type names associated with the MIME type.
     super_types: Vec<String>,
 }
 
@@ -127,6 +133,10 @@ impl MimeTypeBuilder {
     ///
     /// # Returns
     /// A [`MimeType`] containing the accumulated metadata.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::InvalidMimeName`](crate::MimeError::InvalidMimeName)
+    /// when the canonical name, an alias, or a super type is invalid.
     pub fn build(self) -> MimeResult<MimeType> {
         validate_mime_name(&self.name)?;
         let aliases = validate_and_deduplicate_names(self.aliases)?;
@@ -144,6 +154,17 @@ impl MimeTypeBuilder {
 }
 
 /// Validates a MIME type name against the token grammar.
+///
+/// # Parameters
+///
+/// * `name` - MIME type name to validate.
+///
+/// # Returns
+/// `Ok(())` if the name is valid.
+///
+/// # Errors
+/// Returns [`MimeError::InvalidMimeName`](crate::MimeError::InvalidMimeName)
+/// if the name does not follow the MIME type token grammar.
 fn validate_mime_name(name: &str) -> MimeResult<()> {
     let Some((kind, subtype)) = name.split_once('/') else {
         return Err(MimeError::InvalidMimeName {
@@ -161,6 +182,13 @@ fn validate_mime_name(name: &str) -> MimeResult<()> {
 }
 
 /// Returns whether a byte is valid inside a MIME token.
+///
+/// # Parameters
+///
+/// * `byte` - Byte to check.
+///
+/// # Returns
+/// `true` if the byte is permitted in a MIME token.
 #[inline]
 fn is_mime_token_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric()
@@ -171,6 +199,18 @@ fn is_mime_token_byte(byte: u8) -> bool {
 }
 
 /// Validates and deduplicates canonical names and aliases.
+///
+/// # Parameters
+///
+/// * `names` - MIME type names to validate and deduplicate.
+///
+/// # Returns
+/// The valid names with duplicates removed while preserving their first
+/// occurrence.
+///
+/// # Errors
+/// Returns [`MimeError::InvalidMimeName`](crate::MimeError::InvalidMimeName)
+/// if any name is invalid.
 fn validate_and_deduplicate_names(names: Vec<String>) -> MimeResult<Vec<String>> {
     let mut seen = HashSet::new();
     let mut result = Vec::new();
@@ -185,6 +225,14 @@ fn validate_and_deduplicate_names(names: Vec<String>) -> MimeResult<Vec<String>>
 }
 
 /// Removes duplicate glob patterns while preserving their first occurrence.
+///
+/// # Parameters
+///
+/// * `globs` - Glob rules to deduplicate.
+///
+/// # Returns
+/// The glob rules with duplicates removed while preserving their first
+/// occurrence.
 fn deduplicate_globs(globs: Vec<MimeGlob>) -> Vec<MimeGlob> {
     let mut seen = HashSet::new();
     globs

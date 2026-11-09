@@ -20,6 +20,21 @@ use super::MimeDetectorSpec;
 /// Implement [`ProviderDefinition<MimeDetectorSpec>`] for the concrete
 /// provider type. This marker keeps public registry bounds MIME-specific while
 /// ensuring every registrable detector supplies its own descriptor.
-pub trait MimeDetectorProvider: ProviderDefinition<MimeDetectorSpec> {}
+///
+/// # Examples
+///
+/// Use a built-in provider to satisfy a MIME-specific generic bound:
+///
+/// ```
+/// use qubit_mime::MimeDetectorProvider;
+/// use qubit_mime::RepositoryMimeDetectorProvider;
+///
+/// fn require_mime_detector_provider<P: MimeDetectorProvider>() {}
+///
+/// require_mime_detector_provider::<RepositoryMimeDetectorProvider>();
+/// ```
+pub trait MimeDetectorProvider: ProviderDefinition<MimeDetectorSpec> {
+    // empty
+}
 
 impl<T> MimeDetectorProvider for T where T: ProviderDefinition<MimeDetectorSpec> + ?Sized {}

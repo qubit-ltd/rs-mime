@@ -393,6 +393,10 @@ impl MimeConfig {
     ///
     /// # Parameters
     /// - `config`: Configuration to use for future default instances.
+    ///
+    /// # Returns
+    ///
+    /// This method returns `()` after replacing the global default.
     pub fn set_default(config: Self) {
         let mut guard = DEFAULT_MIME_CONFIG
             .write()
@@ -405,6 +409,10 @@ impl MimeConfig {
     /// # Parameters
     /// - `config`: Configuration object used to build the new default.
     ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the global default has been replaced.
+    ///
     /// # Errors
     /// Returns [`MimeError::Config`](crate::MimeError::Config) when a present
     /// configuration value cannot be converted to the expected type. Returns
@@ -416,6 +424,10 @@ impl MimeConfig {
     }
 
     /// Reloads the global default MIME configuration from process environment.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the global default has been replaced.
     ///
     /// # Errors
     /// Returns [`MimeError::Config`](crate::MimeError::Config) when the
@@ -527,10 +539,9 @@ impl MimeConfig {
 
 /// Builds the validated MIME detector selection from configured text.
 ///
-/// # Arguments
-///
-/// * `primary` - Configured primary selector or `auto` sentinel.
-/// * `fallbacks` - Normalized fallback selectors in configured order.
+/// # Parameters
+/// - `primary`: Configured primary selector or `auto` sentinel.
+/// - `fallbacks`: Normalized fallback selectors in configured order.
 ///
 /// # Returns
 ///
@@ -550,9 +561,8 @@ fn create_detector_selection(primary: &str, fallbacks: Vec<String>) -> MimeResul
 
 /// Builds the validated media stream classifier selection.
 ///
-/// # Arguments
-///
-/// * `configured` - Configured selector or `auto` sentinel.
+/// # Parameters
+/// - `configured`: Configured selector or `auto` sentinel.
 ///
 /// # Returns
 ///
@@ -571,9 +581,8 @@ fn create_classifier_selection(configured: &str) -> MimeResult<ProviderSelection
 
 /// Maps detector selection validation into the MIME error model.
 ///
-/// # Arguments
-///
-/// * `error` - Invalid selector or empty-chain error.
+/// # Parameters
+/// - `error`: Invalid selector or empty-chain error.
 ///
 /// # Returns
 ///
@@ -594,9 +603,8 @@ fn detector_selection_error(error: ProviderSelectionBuildError) -> MimeError {
 
 /// Maps classifier selection validation into the MIME error model.
 ///
-/// # Arguments
-///
-/// * `error` - Invalid selector error.
+/// # Parameters
+/// - `error`: Invalid selector error.
 ///
 /// # Returns
 ///

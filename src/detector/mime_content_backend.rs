@@ -54,9 +54,22 @@ pub trait MimeContentBackend: Debug + Send + Sync {
     ///
     /// A prefix requirement allows callers to bound stream reads; a complete
     /// requirement asks callers to provide all available content.
+    ///
+    /// # Returns
+    /// The required prefix length, or `Complete` when all available bytes are
+    /// needed.
     fn content_requirement(&self) -> ContentRequirement;
 
     /// Returns MIME candidates identified from the supplied content bytes.
+    ///
+    /// # Parameters
+    /// - `bytes`: Content bytes available for MIME detection.
+    ///
+    /// # Returns
+    /// MIME type names identified by this backend, ordered by preference.
+    ///
+    /// # Errors
+    /// Returns a backend error when the supplied bytes cannot be inspected.
     fn detect_bytes(&self, bytes: &[u8]) -> MimeResult<Vec<String>>;
 
     /// Reads the required content from a seekable reader and detects MIME
@@ -64,6 +77,16 @@ pub trait MimeContentBackend: Debug + Send + Sync {
     ///
     /// When the read succeeds, the reader is returned to its original position
     /// before detection. I/O errors are returned if reading or seeking fails.
+    ///
+    /// # Parameters
+    /// - `reader`: Seekable input whose position is restored after reading.
+    ///
+    /// # Returns
+    /// MIME type names identified from the required input bytes.
+    ///
+    /// # Errors
+    /// Returns an I/O error when reading or restoring the reader position
+    /// fails, or a backend error when detection fails.
     fn detect_reader(&self, reader: &mut dyn ReadSeek) -> MimeResult<Vec<String>> {
         let position = reader.stream_position()?;
         let mut bytes = Vec::new();

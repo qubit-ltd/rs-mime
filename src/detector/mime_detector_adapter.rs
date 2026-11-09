@@ -14,6 +14,10 @@ use crate::MimeResult;
 
 /// Adapter exposing an existing detector backend through the content contract.
 ///
+/// # Type Parameters
+///
+/// * `B` - Detector backend wrapped by this adapter.
+///
 /// # Examples
 ///
 /// ```
@@ -27,11 +31,16 @@ use crate::MimeResult;
 /// ```
 #[derive(Debug)]
 pub struct MimeDetectorAdapter<B> {
+    /// Detector backend wrapped by this adapter.
     backend: B,
 }
 
 impl<B> MimeDetectorAdapter<B> {
     /// Wraps a detector backend.
+    ///
+    /// # Parameters
+    ///
+    /// * `backend` - Detector backend to expose through the content contract.
     ///
     /// # Returns
     ///
@@ -64,6 +73,10 @@ where
     }
 
     /// Delegates content guessing to the wrapped backend.
+    ///
+    /// # Parameters
+    ///
+    /// * `bytes` - Content bytes to inspect.
     fn detect_bytes(&self, bytes: &[u8]) -> MimeResult<Vec<String>> {
         self.backend.guess_from_content(bytes)
     }

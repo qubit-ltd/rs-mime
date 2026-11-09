@@ -23,6 +23,12 @@ pub(crate) struct MimeCommandOutput {
 }
 impl MimeCommandOutput {
     /// Moves command output into the private projection without copying stdout.
+    ///
+    /// # Parameters
+    /// - `output`: Completed command output to project.
+    ///
+    /// # Returns
+    /// Owned status and stdout facts needed by MIME command policy.
     #[must_use]
     pub(super) fn from_output(output: CommandOutput) -> Self {
         let exit_code = output.exit_code();
@@ -42,6 +48,16 @@ impl MimeCommandOutput {
 ///
 /// Truncated, incomplete and invalid UTF-8 output is rejected without exposing
 /// captured bytes in diagnostic messages.
+///
+/// # Parameters
+/// - `output`: Captured command facts to validate and decode.
+///
+/// # Returns
+/// Borrowed UTF-8 stdout when it is complete and valid.
+///
+/// # Errors
+/// Returns a static description when stdout is truncated, incomplete, or not
+/// valid UTF-8.
 pub(crate) fn require_complete_stdout(output: &MimeCommandOutput) -> Result<&str, &'static str> {
     if output.stdout_truncated {
         return Err("stdout was truncated");

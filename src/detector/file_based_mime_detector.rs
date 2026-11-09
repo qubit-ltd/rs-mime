@@ -83,23 +83,35 @@ where
     }
 
     /// Guesses MIME type names from filename rules.
+    ///
+    /// # Parameters
+    /// - `filename`: File path or basename to match.
     #[inline]
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         FileBasedMimeDetector::guess_from_filename(self, filename)
     }
 
     /// Stages content to a temporary local file before inspection.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes staged for file-based inspection.
     fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         with_temp_file(content, |path| FileBasedMimeDetector::guess_from_local_file(self, path))
     }
 
     /// Delegates local-file inspection to the file-based hook.
+    ///
+    /// # Parameters
+    /// - `file`: Local file path passed to the file-based detector.
     fn guess_from_file_stream(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
         Ok((FileBasedMimeDetector::guess_from_local_file(self, file)?, Vec::new()))
     }
 }
 
 /// Stages content into a temporary file for file-based detectors.
+///
+/// # Type Parameters
+/// - `T`: Value returned by the detector callback.
 ///
 /// # Parameters
 /// - `content`: Content bytes to stage.

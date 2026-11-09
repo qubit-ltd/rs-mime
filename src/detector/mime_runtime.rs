@@ -29,6 +29,8 @@ use crate::MimeResult;
 /// ```
 #[derive(Debug, Clone)]
 pub struct MimeRuntime {
+    /// Configuration and repository shared by detectors created by this
+    /// runtime.
     context: MimeDetectorContext,
 }
 
@@ -61,6 +63,12 @@ impl MimeRuntime {
     /// # Returns
     ///
     /// A runtime backed by the crate's bundled MIME data.
+    ///
+    /// # Errors
+    ///
+    /// This implementation currently initializes only infallible built-in
+    /// values and returns `Ok`. The result type is retained for consistency
+    /// with detector creation APIs.
     pub fn builtin() -> MimeResult<Self> {
         Ok(Self::new(MimeConfig::default(), MimeRepository::bundled_shared()))
     }
@@ -86,6 +94,11 @@ impl MimeRuntime {
     /// # Returns
     ///
     /// A shared handle to a repository-backed MIME detector.
+    ///
+    /// # Errors
+    ///
+    /// This implementation currently constructs the repository-backed
+    /// detector infallibly and returns `Ok`.
     pub fn create_detector(&self) -> MimeResult<Arc<dyn MimeDetector>> {
         Ok(Arc::new(OwnedRepositoryMimeDetector::new(
             self.context.config().clone(),
@@ -96,6 +109,11 @@ impl MimeRuntime {
 
 impl Default for MimeRuntime {
     /// Creates a runtime containing the built-in providers and repository.
+    ///
+    /// # Returns
+    ///
+    /// A runtime initialized with the default MIME configuration and bundled
+    /// repository.
     fn default() -> Self {
         Self::builtin().expect("built-in MIME runtime should initialize")
     }

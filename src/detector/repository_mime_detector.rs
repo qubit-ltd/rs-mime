@@ -21,6 +21,10 @@ use crate::StreamBasedMimeDetector;
 
 /// MIME detector backed by a [`MimeRepository`].
 ///
+/// # Type Parameters
+///
+/// * `'a` - Lifetime for which the detector borrows its repository.
+///
 /// # Examples
 ///
 /// ```
@@ -276,11 +280,17 @@ impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
     }
 
     /// Guesses MIME type names from filename rules.
+    ///
+    /// # Parameters
+    /// - `filename`: File path or basename to match against repository rules.
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         RepositoryMimeDetector::guess_from_filename(self, filename)
     }
 
     /// Guesses MIME type names from content magic rules.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes to inspect against repository magic rules.
     fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         Ok(RepositoryMimeDetector::guess_from_content(self, content))
     }

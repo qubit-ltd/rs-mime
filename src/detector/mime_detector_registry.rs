@@ -99,10 +99,19 @@ impl MimeDetectorRegistry {
     ///
     /// * `provider` - Provider definition moved into shared Registry storage.
     ///
+    /// # Type Parameters
+    ///
+    /// * `P` - Owned provider definition registered in this Registry.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the provider is registered.
+    ///
     /// # Errors
     ///
     /// Returns [`RegistryMutationError`] when the provider ID or an alias is
-    /// already owned. The Registry remains unchanged on error.
+    /// already owned or when the Registry has been sealed. The Registry
+    /// remains unchanged on error.
     #[inline]
     pub fn register<P>(&self, provider: P) -> Result<(), RegistryMutationError>
     where
@@ -119,10 +128,15 @@ impl MimeDetectorRegistry {
     ///   Registry. Concrete owned providers normally use [`Self::register`]
     ///   through the domain-specific [`MimeDetectorProvider`] contract.
     ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the provider is registered.
+    ///
     /// # Errors
     ///
     /// Returns [`RegistryMutationError`] when the provider ID or an alias is
-    /// already owned. The Registry remains unchanged on error.
+    /// already owned or when the Registry has been sealed. The Registry
+    /// remains unchanged on error.
     #[inline]
     pub fn register_shared(
         &self,
@@ -147,6 +161,14 @@ impl MimeDetectorRegistry {
     /// # Parameters
     ///
     /// * `selection` - Validated selection and creation fallback policy.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the default selection is replaced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryMutationError`] when this Registry has been sealed.
     #[inline]
     pub fn set_default_selection(&self, selection: ProviderSelection) -> Result<(), RegistryMutationError> {
         self.providers.set_default_selection(selection)

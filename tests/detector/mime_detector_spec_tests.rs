@@ -15,7 +15,7 @@ use qubit_spi::ServiceSpec;
 use qubit_spi::SyncServiceSpec;
 
 #[test]
-fn specification_exposes_the_expected_contract_types() {
+fn test_mime_detector_spec_binds_config_and_detector_output_types() {
     fn assert_config<T: ServiceSpec<Config = MimeConfig>>() {}
     fn assert_output<T: SyncServiceSpec<Output = Arc<dyn MimeDetector>>>() {}
 

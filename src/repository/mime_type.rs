@@ -27,11 +27,17 @@ use crate::MimeTypeBuilder;
 /// ```
 #[derive(Debug, Clone)]
 pub struct MimeType {
+    /// Canonical lowercase `type/subtype` name.
     pub(crate) name: String,
+    /// Human-readable descriptions keyed by language tag.
     pub(crate) descriptions: HashMap<String, String>,
+    /// Alternative MIME names accepted during lookup.
     pub(crate) aliases: Vec<String>,
+    /// Filename glob rules associated with this type.
     pub(crate) globs: Vec<MimeGlob>,
+    /// Content signatures associated with this type.
     pub(crate) magics: Vec<MimeMagic>,
+    /// Parent MIME type names whose magic rules also apply.
     pub(crate) super_types: Vec<String>,
 }
 
@@ -201,6 +207,10 @@ impl MimeType {
 
     /// Gets the best matching magic rule for this type or its super types.
     ///
+    /// # Type Parameters
+    /// - `'a`: Shared lifetime for this MIME type, its repository, and the
+    ///   returned magic rule.
+    ///
     /// # Parameters
     /// - `repository`: Repository used to resolve super type names.
     /// - `bytes`: Content bytes to test.
@@ -219,6 +229,10 @@ impl MimeType {
     }
 
     /// Recursive implementation for matching this type and super types.
+    ///
+    /// # Type Parameters
+    /// - `'a`: Shared lifetime for this MIME type, its repository, and the
+    ///   returned magic rule.
     ///
     /// # Parameters
     /// - `repository`: Repository used to resolve super type names.
@@ -260,6 +274,12 @@ impl MimeType {
 
 impl PartialEq for MimeType {
     /// Compares MIME types by canonical name.
+    ///
+    /// # Parameters
+    /// - `other`: MIME type whose canonical name is compared with `self`.
+    ///
+    /// # Returns
+    /// `true` when both values have the same canonical name.
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
     }

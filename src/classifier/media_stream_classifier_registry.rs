@@ -115,6 +115,10 @@ impl MediaStreamClassifierRegistry {
 
     /// Registers an owned self-described classifier provider.
     ///
+    /// # Type Parameters
+    /// - `P`: Concrete provider type implementing the classifier provider
+    ///   contract.
+    ///
     /// # Parameters
     ///
     /// * `provider` - Provider definition moved into Registry storage.
@@ -207,8 +211,6 @@ impl MediaStreamClassifierRegistry {
     pub fn resolve(&self) -> Result<ResolvingServiceProvider<MediaStreamClassifierSpec>, ProviderResolutionError> {
         self.providers.resolve()
     }
-
-
 }
 
 impl Default for MediaStreamClassifierRegistry {

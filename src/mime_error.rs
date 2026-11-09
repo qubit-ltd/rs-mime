@@ -239,11 +239,19 @@ pub enum MimeError {
 
     /// The XML document could not be parsed.
     #[error("failed to parse MIME XML: {0}")]
-    Xml(#[from] XmlError),
+    Xml(
+        /// The XML parser error that prevented the document from loading.
+        #[from]
+        XmlError,
+    ),
 
     /// Detection from a path or reader failed due to I/O.
     #[error("I/O error while detecting MIME type: {0}")]
-    Io(#[from] std::io::Error),
+    Io(
+        /// The underlying I/O error.
+        #[from]
+        std::io::Error,
+    ),
 
     /// Staging or backend inspection failed and temporary cleanup also failed.
     ///
@@ -261,15 +269,27 @@ pub enum MimeError {
 
     /// Detection through a provider-neutral filesystem resource failed.
     #[error("filesystem error while detecting MIME type: {0}")]
-    FileSystem(#[from] FsError),
+    FileSystem(
+        /// The underlying filesystem error.
+        #[from]
+        FsError,
+    ),
 
     /// Detection using an external command failed.
     #[error("command error while detecting MIME type: {0}")]
-    Command(#[from] CommandError),
+    Command(
+        /// The underlying command error.
+        #[from]
+        CommandError,
+    ),
 
     /// Loading MIME configuration failed.
     #[error("configuration error while loading MIME settings: {0}")]
-    Config(#[from] ConfigError),
+    Config(
+        /// The underlying configuration error.
+        #[from]
+        ConfigError,
+    ),
 }
 
 impl MimeError {

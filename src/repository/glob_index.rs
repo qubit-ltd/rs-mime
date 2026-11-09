@@ -28,6 +28,10 @@ pub(crate) struct GlobIndex {
 
 impl GlobIndex {
     /// Adds one MIME glob to the appropriate lookup index.
+    ///
+    /// # Parameters
+    /// - `mime_index`: Repository position of the MIME type owning the glob.
+    /// - `glob`: Pattern and weight to add to the lookup index.
     pub(crate) fn add(&mut self, mime_index: usize, glob: &MimeGlob) {
         let entry = GlobEntry {
             glob: glob.clone(),
@@ -57,6 +61,17 @@ impl GlobIndex {
     }
 
     /// Returns the best matching entries for a filename.
+    ///
+    /// # Type Parameters
+    /// - `'a`: Lifetime shared by the index borrow and returned entries.
+    ///
+    /// # Parameters
+    /// - `filename`: Path or basename whose final filename component is
+    ///   matched.
+    ///
+    /// # Returns
+    /// Matching glob entries selected by precedence and deduplicated by MIME
+    /// index.
     #[must_use]
     pub(crate) fn matches<'a>(&'a self, filename: &str) -> Vec<&'a GlobEntry> {
         let basename = filename.rsplit(['/', '\\']).next().unwrap_or_default();
@@ -108,6 +123,13 @@ impl GlobIndex {
 }
 
 /// Selects entries with the highest glob weight and longest pattern.
+///
+/// # Parameters
+/// - `entries`: Matching glob entries to rank.
+///
+/// # Returns
+/// Entries tied for the highest weight and longest pattern, with duplicate MIME
+/// indexes removed.
 #[must_use]
 fn select_best(entries: Vec<&GlobEntry>) -> Vec<&GlobEntry> {
     let Some(best_weight) = entries.iter().map(|entry| entry.glob.weight()).max() else {
@@ -131,6 +153,12 @@ fn select_best(entries: Vec<&GlobEntry>) -> Vec<&GlobEntry> {
 }
 
 /// Removes duplicate MIME indexes while preserving match order.
+///
+/// # Parameters
+/// - `entries`: Candidate entries in match order.
+///
+/// # Returns
+/// The first entry for each MIME index, retaining input order.
 #[must_use]
 fn deduplicate_by_mime(entries: Vec<&GlobEntry>) -> Vec<&GlobEntry> {
     let mut seen = HashSet::new();
@@ -141,6 +169,12 @@ fn deduplicate_by_mime(entries: Vec<&GlobEntry>) -> Vec<&GlobEntry> {
 }
 
 /// Returns non-empty suffixes after each dot in a filename.
+///
+/// # Parameters
+/// - `filename`: ASCII-folded filename to inspect.
+///
+/// # Returns
+/// Each non-empty suffix after a dot, in filename order.
 fn extension_suffixes(filename: &str) -> impl Iterator<Item = &str> {
     filename
         .match_indices('.')
@@ -149,6 +183,13 @@ fn extension_suffixes(filename: &str) -> impl Iterator<Item = &str> {
 }
 
 /// Extracts a valid extension from a `*.extension` glob pattern.
+///
+/// # Parameters
+/// - `pattern`: Glob pattern to inspect.
+///
+/// # Returns
+/// The extension when the pattern is a simple extension glob, or `None` when
+/// it contains unsupported glob syntax.
 fn extension_pattern(pattern: &str) -> Option<&str> {
     let extension = pattern.strip_prefix("*.")?;
     if extension.is_empty()
@@ -163,6 +204,12 @@ fn extension_pattern(pattern: &str) -> Option<&str> {
 }
 
 /// Returns whether a pattern contains no glob metacharacters.
+///
+/// # Parameters
+/// - `pattern`: Glob pattern to inspect.
+///
+/// # Returns
+/// `true` when the pattern consists only of literal characters.
 #[must_use]
 fn is_literal_pattern(pattern: &str) -> bool {
     !pattern

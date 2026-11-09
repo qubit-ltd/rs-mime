@@ -20,5 +20,16 @@ pub(crate) trait MimeCommandExecutor {
     /// Returns actual status and stdout, including clean unexpected exits.
     /// Preparation, process, I/O, timeout, cancellation and truncation failures
     /// remain CommandError values instead of becoming business successes.
+    ///
+    /// # Parameters
+    /// - `runner`: Managed command runner that owns process execution.
+    /// - `command`: Structured command to execute.
+    ///
+    /// # Returns
+    /// Captured MIME command output with the actual exit status.
+    ///
+    /// # Errors
+    /// Returns preparation, process, I/O, timeout, cancellation, or truncation
+    /// failures as `CommandError` values.
     fn run(&self, runner: &CommandRunner, command: Command) -> Result<MimeCommandOutput, CommandError>;
 }

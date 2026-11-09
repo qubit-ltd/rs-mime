@@ -33,6 +33,9 @@ use crate::command_execution::require_complete_stdout;
 
 /// MIME detector backed by `file --mime-type --brief`.
 ///
+/// # Type Parameters
+/// - `'a`: Lifetime of the borrowed MIME repository.
+///
 /// # Examples
 ///
 /// ```
@@ -166,7 +169,6 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// Runner used for `file` command executions.
-    #[must_use]
     #[inline]
     pub fn command_runner(&self) -> &CommandRunner {
         &self.command_runner
@@ -334,6 +336,10 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// Timeout comes from `config.command_timeout()`.
     ///
+    /// # Parameters
+    /// - `config`: MIME settings that provide command timeout and output
+    ///   limits.
+    ///
     /// # Returns
     /// Runner used by the default detector.
     fn default_command_runner(config: &MimeConfig) -> CommandRunner {
@@ -377,11 +383,17 @@ impl<'a> FileBasedMimeDetector for FileCommandMimeDetector<'a> {
     }
 
     /// Guesses MIME type names from filename rules.
+    ///
+    /// # Parameters
+    /// - `filename`: File path or basename to match.
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         FileCommandMimeDetector::guess_from_filename(self, filename)
     }
 
     /// Guesses MIME type names from a local file using the file command.
+    ///
+    /// # Parameters
+    /// - `file`: Local file path passed to the `file` command.
     fn guess_from_local_file(&self, file: &Path) -> MimeResult<Vec<String>> {
         self.guess_from_file_command(file)
     }

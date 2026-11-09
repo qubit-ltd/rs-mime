@@ -19,6 +19,17 @@ pub(crate) struct SystemMimeCommandExecutor;
 impl MimeCommandExecutor for SystemMimeCommandExecutor {
     /// Preserves execution errors and restores output only for clean unexpected
     /// exits.
+    ///
+    /// # Parameters
+    /// - `runner`: Managed command runner that owns process execution.
+    /// - `command`: Structured command to execute.
+    ///
+    /// # Returns
+    /// Captured output for successful execution or a clean unexpected exit.
+    ///
+    /// # Errors
+    /// Returns execution and cleanup failures that cannot be safely represented
+    /// as command output.
     fn run(&self, runner: &CommandRunner, command: Command) -> Result<MimeCommandOutput, CommandError> {
         match runner.run(command) {
             Ok(output) => Ok(MimeCommandOutput::from_output(output)),
