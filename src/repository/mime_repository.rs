@@ -231,22 +231,6 @@ impl MimeRepository {
             .collect()
     }
 
-    /// Resolves an alias to its canonical name, preserving unknown input.
-    ///
-    /// # Parameters
-    /// - `name`: MIME type name or alias to resolve.
-    ///
-    /// # Returns
-    /// Canonical name when found, or the normalized input otherwise.
-    fn canonical_name_or_input(&self, name: &str) -> String {
-        let normalized = normalize_mime_name(name);
-        self.name_map
-            .get(&normalized)
-            .and_then(|index| self.mime_types.get(*index))
-            .map(|mime_type| mime_type.name().to_owned())
-            .unwrap_or(normalized)
-    }
-
     /// Detects MIME types from content bytes.
     ///
     /// # Parameters
@@ -342,6 +326,23 @@ impl MimeRepository {
         for magic in mime_type.magics() {
             self.magic_index.add(mime_index, magic);
         }
+    }
+
+
+    /// Resolves an alias to its canonical name, preserving unknown input.
+    ///
+    /// # Parameters
+    /// - `name`: MIME type name or alias to resolve.
+    ///
+    /// # Returns
+    /// Canonical name when found, or the normalized input otherwise.
+    fn canonical_name_or_input(&self, name: &str) -> String {
+        let normalized = normalize_mime_name(name);
+        self.name_map
+            .get(&normalized)
+            .and_then(|index| self.mime_types.get(*index))
+            .map(|mime_type| mime_type.name().to_owned())
+            .unwrap_or(normalized)
     }
 }
 

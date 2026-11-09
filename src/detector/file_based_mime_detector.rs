@@ -21,7 +21,8 @@ use crate::StreamBasedMimeDetector;
 /// # Examples
 ///
 /// ```
-/// use qubit_mime::{FileBasedMimeDetector, FileCommandMimeDetector};
+/// use qubit_mime::FileBasedMimeDetector;
+/// use qubit_mime::FileCommandMimeDetector;
 ///
 /// let detector = FileCommandMimeDetector::new();
 /// let candidates = detector.guess_from_filename("document.pdf");
@@ -32,12 +33,14 @@ pub trait FileBasedMimeDetector: Debug + Send + Sync {
     ///
     /// # Returns
     /// Shared detector configuration and merge/refinement behavior.
+    #[must_use]
     fn core(&self) -> &MimeDetectorCore;
 
     /// Gets the maximum number of bytes needed for content inspection.
     ///
     /// # Returns
     /// Content prefix length to stage for byte and reader inputs.
+    #[must_use]
     fn max_test_bytes(&self) -> usize;
 
     /// Guesses MIME type names from a filename.
@@ -47,6 +50,7 @@ pub trait FileBasedMimeDetector: Debug + Send + Sync {
     ///
     /// # Returns
     /// Candidate MIME type names ordered by backend confidence.
+    #[must_use]
     fn guess_from_filename(&self, filename: &str) -> Vec<String>;
 
     /// Guesses MIME type names from one local file.

@@ -52,6 +52,7 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// A classifier using the current process working directory.
+    #[must_use]
     pub fn new() -> Self {
         Self::from_mime_config(MimeConfig::default())
     }
@@ -63,6 +64,7 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// A classifier using the current process working directory.
+    #[must_use]
     pub fn from_mime_config(config: MimeConfig) -> Self {
         Self {
             working_directory: None,
@@ -137,6 +139,7 @@ impl FfprobeCommandMediaStreamClassifier {
     /// # Returns
     /// The updated classifier.
     #[inline]
+    #[must_use]
     pub fn with_max_staging_size(mut self, max_staging_size: u64) -> Self {
         self.max_staging_size = max_staging_size;
         self
@@ -150,6 +153,7 @@ impl FfprobeCommandMediaStreamClassifier {
     /// # Returns
     /// The updated classifier.
     #[inline]
+    #[must_use]
     pub fn with_command_runner(mut self, command_runner: CommandRunner) -> Self {
         self.command_runner = command_runner;
         self

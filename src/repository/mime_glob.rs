@@ -25,9 +25,13 @@ use crate::MimeResult;
 /// ```
 #[derive(Debug, Clone)]
 pub struct MimeGlob {
+    /// Weight used to rank matches against other filename globs.
     weight: u16,
+    /// Whether matching preserves the configured case distinction.
     case_sensitive: bool,
+    /// Original freedesktop-style glob pattern.
     pattern: String,
+    /// Compiled whole-filename matcher generated from `pattern`.
     matcher: Regex,
 }
 
@@ -120,6 +124,7 @@ impl MimeGlob {
 ///
 /// # Returns
 /// Regex text anchored at both ends.
+#[must_use]
 fn glob_to_regex(pattern: &str) -> String {
     let chars: Vec<char> = pattern.chars().collect();
     let mut regex = String::from("^");

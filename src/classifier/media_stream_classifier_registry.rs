@@ -85,6 +85,34 @@ impl MediaStreamClassifierRegistry {
         &GLOBAL_MEDIA_STREAM_CLASSIFIER_REGISTRY
     }
 
+    /// Returns the selection used by future default resolutions.
+    ///
+    /// # Returns
+    ///
+    /// An owned snapshot independent from [`crate::MimeConfig`].
+    #[inline]
+    #[must_use]
+    pub fn default_selection(&self) -> ProviderSelection {
+        self.providers.default_selection()
+    }
+
+    /// Returns whether this registry is sealed.
+    #[must_use]
+    pub fn is_sealed(&self) -> bool {
+        self.providers.is_sealed()
+    }
+
+    /// Lists canonical provider IDs in registration order.
+    ///
+    /// # Returns
+    ///
+    /// An owned provider-ID snapshot unaffected by later registrations.
+    #[inline]
+    #[must_use]
+    pub fn provider_ids(&self) -> Vec<ProviderId> {
+        self.providers.provider_ids()
+    }
+
     /// Registers an owned self-described classifier provider.
     ///
     /// # Parameters
@@ -124,17 +152,6 @@ impl MediaStreamClassifierRegistry {
         self.providers.register_shared(provider)
     }
 
-    /// Returns the selection used by future default resolutions.
-    ///
-    /// # Returns
-    ///
-    /// An owned snapshot independent from [`crate::MimeConfig`].
-    #[inline]
-    #[must_use]
-    pub fn default_selection(&self) -> ProviderSelection {
-        self.providers.default_selection()
-    }
-
     /// Replaces the selection used by future default resolutions.
     ///
     /// # Parameters
@@ -148,12 +165,6 @@ impl MediaStreamClassifierRegistry {
     /// Seals this registry against further mutation.
     pub fn seal(&self) {
         self.providers.seal();
-    }
-
-    /// Returns whether this registry is sealed.
-    #[must_use]
-    pub fn is_sealed(&self) -> bool {
-        self.providers.is_sealed()
     }
 
     /// Resolves an explicit selection into a composing service provider.
@@ -197,16 +208,7 @@ impl MediaStreamClassifierRegistry {
         self.providers.resolve()
     }
 
-    /// Lists canonical provider IDs in registration order.
-    ///
-    /// # Returns
-    ///
-    /// An owned provider-ID snapshot unaffected by later registrations.
-    #[inline]
-    #[must_use]
-    pub fn provider_ids(&self) -> Vec<ProviderId> {
-        self.providers.provider_ids()
-    }
+
 }
 
 impl Default for MediaStreamClassifierRegistry {

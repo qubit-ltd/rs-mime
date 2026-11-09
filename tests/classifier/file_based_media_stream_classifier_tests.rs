@@ -32,10 +32,14 @@ fn test_file_based_media_stream_classifier_stages_content_to_temp_file() {
 
     assert_eq!(
         MediaStreamType::VideoWithAudio,
-        classifier.classify_content(b"media").unwrap()
+        classifier
+            .classify_content(b"media")
+            .expect("staged content should be classified")
     );
     assert_eq!(
         MediaStreamType::VideoWithAudio,
-        classifier.classify_file(Path::new("Cargo.toml")).unwrap()
+        classifier
+            .classify_file(Path::new("Cargo.toml"))
+            .expect("existing file should be classified")
     );
 }

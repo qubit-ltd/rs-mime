@@ -38,6 +38,7 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     ///
     /// # Returns
     /// A prefix bounded by [`Self::max_test_bytes`] unless overridden.
+    #[must_use]
     fn content_requirement(&self) -> ContentRequirement {
         ContentRequirement::Prefix(self.max_test_bytes())
     }
@@ -46,12 +47,14 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     ///
     /// # Returns
     /// Shared detector configuration and merge/refinement behavior.
+    #[must_use]
     fn core(&self) -> &MimeDetectorCore;
 
     /// Gets the maximum number of bytes needed for content inspection.
     ///
     /// # Returns
     /// Content prefix length to read from files and readers.
+    #[must_use]
     fn max_test_bytes(&self) -> usize;
 
     /// Guesses MIME type names from a filename.
@@ -61,6 +64,7 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     ///
     /// # Returns
     /// Candidate MIME type names ordered by backend confidence.
+    #[must_use]
     fn guess_from_filename(&self, filename: &str) -> Vec<String>;
 
     /// Guesses MIME type names from content bytes.

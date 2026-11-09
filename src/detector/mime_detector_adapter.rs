@@ -17,7 +17,9 @@ use crate::MimeResult;
 /// # Examples
 ///
 /// ```
-/// use qubit_mime::{MimeContentBackend, MimeDetectorAdapter, RepositoryMimeDetector};
+/// use qubit_mime::MimeContentBackend;
+/// use qubit_mime::MimeDetectorAdapter;
+/// use qubit_mime::RepositoryMimeDetector;
 /// let backend = RepositoryMimeDetector::new()?;
 /// let adapter = MimeDetectorAdapter::new(backend);
 /// assert!(!adapter.detect_bytes(b"%PDF-1.7")?.is_empty());

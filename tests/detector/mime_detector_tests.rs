@@ -27,6 +27,7 @@ use qubit_fs::metadata::SymlinkPolicy;
 use qubit_fs::path::PathConstraints;
 use qubit_fs::path::PathSemantics;
 use qubit_fs::spi::AsyncFileSystemSpi;
+use qubit_fs::spi::ProviderOperations;
 use qubit_fs::spi::ProviderProperties;
 use qubit_fs::spi::SpiFuture;
 use qubit_fs::spi::StatRequest;
@@ -69,7 +70,7 @@ impl EmptyAsyncFileSystemSpi {
                     "mime-detector-test",
                     PathSemantics::Hierarchical,
                 ),
-                qubit_fs::spi::ProviderOperations::new(),
+                ProviderOperations::new(),
                 FileSystemCapabilities::new(),
                 FileSystemLimits::unknown(),
                 PathConstraints::absolute(),
@@ -645,13 +646,13 @@ fn test_detect_path_uses_guaranteed_prefix_range() {
     let mut content = vec![0_u8; 1024 * 1024];
     content[..9].copy_from_slice(b"%PDF-1.7\n");
     let spi = PrefixFileSystemSpi::object_key(content).with_guaranteed_range();
-    let filesystem = FileSystem::from_spi(spi.clone()).unwrap();
-    let detector = RepositoryMimeDetector::new().unwrap();
-    let path = FsPath::parse_literal("large/report.bin").unwrap();
+    let filesystem = FileSystem::from_spi(spi.clone()).expect("prefix filesystem should be created");
+    let detector = RepositoryMimeDetector::new().expect("default repository should load");
+    let path = FsPath::parse_literal("large/report.bin").expect("object-key path should parse");
     assert_eq!(
         detector
             .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent)
-            .unwrap(),
+            .expect("guaranteed prefix detection should succeed"),
         Some("application/pdf".to_owned())
     );
     assert_eq!(spi.range_length(), Some(16));
@@ -664,11 +665,11 @@ fn test_detect_path_uses_guaranteed_prefix_range() {
 #[test]
 fn test_detect_path_rejects_buffer_limit_before_provider_open() {
     let spi = PrefixFileSystemSpi::hierarchical(b"%PDF-1.7\n".to_vec()).with_guaranteed_range();
-    let filesystem = FileSystem::from_spi(spi.clone()).unwrap();
+    let filesystem = FileSystem::from_spi(spi.clone()).expect("prefix filesystem should be created");
     let error = StaticEntryPointMimeDetector
         .detect_path(
             &filesystem,
-            &FsPath::parse("/payload").unwrap(),
+            &FsPath::parse("/payload").expect("test path should be valid"),
             1,
             MimeDetectionPolicy::VerifyContent,
         )

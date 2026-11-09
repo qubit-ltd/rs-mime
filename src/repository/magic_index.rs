@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use super::MimeMagic;
 use super::internal::magic_entry::MagicEntry;
 
+/// Indexes content magic rules and tracks their maximum required input size.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MagicIndex {
     /// Magic entries ordered by their source priority.
@@ -51,6 +52,7 @@ impl MagicIndex {
     /// # Returns
     /// Distinct MIME indexes at the highest matching priority, or an empty
     /// vector when no rule matches.
+    #[must_use]
     pub(crate) fn matches(&self, bytes: &[u8]) -> Vec<usize> {
         let Some(best_priority) = self
             .entries

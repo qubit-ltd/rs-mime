@@ -16,6 +16,17 @@ use super::MediaStreamClassifierSpec;
 /// Implement [`ProviderDefinition<MediaStreamClassifierSpec>`] for the
 /// concrete provider type. This marker ensures every registrable classifier
 /// supplies both creation behavior and registration metadata.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::FfprobeCommandMediaStreamClassifierProvider;
+/// use qubit_mime::MediaStreamClassifierProvider;
+///
+/// fn assert_provider<T: MediaStreamClassifierProvider>() {}
+///
+/// assert_provider::<FfprobeCommandMediaStreamClassifierProvider>();
+/// ```
 pub trait MediaStreamClassifierProvider: ProviderDefinition<MediaStreamClassifierSpec> {
     // empty
 }

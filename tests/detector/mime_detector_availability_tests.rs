@@ -6,16 +6,15 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use qubit_mime::MimeDetectorAvailability;
+use qubit_mime::MimeError;
 
 #[test]
-fn test_mime_detector_availability_reports_state_and_reason() {
-    assert!(MimeDetectorAvailability::Available.is_available());
-
-    let unavailable = MimeDetectorAvailability::Unavailable {
+fn test_mime_detector_unavailable_error_reports_name_and_reason() {
+    let unavailable = MimeError::DetectorUnavailable {
+        name: "file".to_owned(),
         reason: "missing command".to_owned(),
     };
 
-    assert!(!unavailable.is_available());
-    assert!(format!("{unavailable:?}").contains("missing command"));
+    assert!(unavailable.to_string().contains("file"));
+    assert!(unavailable.to_string().contains("missing command"));
 }

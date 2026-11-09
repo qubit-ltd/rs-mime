@@ -23,11 +23,17 @@ use crate::MimeResult;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MimeMagicMatcher {
+    /// Representation used to interpret the expected value bytes.
     value_type: MagicValueType,
+    /// Inclusive first byte offset tested by this matcher.
     offset_begin: usize,
+    /// Inclusive last byte offset tested by this matcher.
     offset_end: usize,
+    /// Expected bytes, stored big-endian for numeric value types.
     value: Vec<u8>,
+    /// Optional bit mask aligned with `value` byte for byte.
     mask: Option<Vec<u8>>,
+    /// Nested alternatives evaluated only after this matcher succeeds.
     sub_matchers: Vec<MimeMagicMatcher>,
 }
 

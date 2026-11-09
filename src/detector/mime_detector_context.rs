@@ -19,7 +19,8 @@ use crate::MimeRepository;
 /// ```
 /// use std::sync::Arc;
 /// use qubit_mime::detector::MimeDetectorContext;
-/// use qubit_mime::{MimeConfig, MimeRepository};
+/// use qubit_mime::MimeConfig;
+/// use qubit_mime::MimeRepository;
 /// let context = MimeDetectorContext::new(
 ///     Arc::new(MimeConfig::default()),
 ///     Arc::new(MimeRepository::empty()),
@@ -78,6 +79,7 @@ impl MimeDetectorContext {
     ///
     /// # Returns
     /// An owned handle to the same repository allocation.
+    #[must_use]
     #[inline]
     pub(crate) fn repository_arc(&self) -> Arc<MimeRepository> {
         Arc::clone(&self.repository)

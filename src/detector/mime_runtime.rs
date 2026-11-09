@@ -48,6 +48,7 @@ impl MimeRuntime {
     ///
     /// A runtime retaining the configuration and repository for later detector
     /// creation.
+    #[must_use]
     pub fn new(config: MimeConfig, repository: Arc<MimeRepository>) -> Self {
         Self {
             context: MimeDetectorContext::new(Arc::new(config), repository),
@@ -71,6 +72,7 @@ impl MimeRuntime {
     ///
     /// A reference to this runtime's context. The reference is valid for the
     /// lifetime of the borrow and does not clone the shared handles.
+    #[must_use]
     pub fn context(&self) -> &MimeDetectorContext {
         &self.context
     }

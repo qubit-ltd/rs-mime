@@ -29,7 +29,9 @@ use crate::MimeResult;
 /// # Examples
 ///
 /// ```
-/// use qubit_mime::{MimeDetectionPolicy, MimeDetector, RepositoryMimeDetector};
+/// use qubit_mime::MimeDetectionPolicy;
+/// use qubit_mime::MimeDetector;
+/// use qubit_mime::RepositoryMimeDetector;
 ///
 /// let detector = RepositoryMimeDetector::new()?;
 /// let mime = detector.detect_by_filename("document.pdf")?;

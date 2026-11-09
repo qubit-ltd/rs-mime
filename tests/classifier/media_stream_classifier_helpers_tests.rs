@@ -40,7 +40,9 @@ fn test_media_stream_classifier_helpers_validate_public_file_entrypoint() {
 
     assert_eq!(
         MediaStreamType::VideoOnly,
-        backend.classify_file(Path::new("Cargo.toml")).unwrap()
+        backend
+            .classify_file(Path::new("Cargo.toml"))
+            .expect("existing file should be classified")
     );
     assert!(matches!(
         backend.classify_file(Path::new(".")),

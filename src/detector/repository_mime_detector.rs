@@ -24,7 +24,8 @@ use crate::StreamBasedMimeDetector;
 /// # Examples
 ///
 /// ```
-/// use qubit_mime::{MimeDetector, RepositoryMimeDetector};
+/// use qubit_mime::MimeDetector;
+/// use qubit_mime::RepositoryMimeDetector;
 /// let detector = RepositoryMimeDetector::new()?;
 /// assert_eq!(detector.detect_by_filename("document.pdf")?, Some("application/pdf".to_owned()));
 /// # Ok::<(), qubit_mime::MimeError>(())
@@ -101,6 +102,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Shared detector core.
+    #[must_use]
     #[inline]
     pub fn core(&self) -> &MimeDetectorCore {
         &self.core
@@ -110,6 +112,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Mutable shared detector core.
+    #[must_use]
     #[inline]
     pub fn core_mut(&mut self) -> &mut MimeDetectorCore {
         &mut self.core
@@ -119,6 +122,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Repository used by this detector.
+    #[must_use]
     #[inline]
     pub fn repository(&self) -> &'a MimeRepository {
         self.repository
@@ -226,6 +230,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Candidate MIME type names.
+    #[must_use]
     pub fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         self.repository
             .detect_by_filename(filename)
@@ -241,6 +246,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// Candidate MIME type names.
+    #[must_use]
     pub fn guess_from_content(&self, bytes: &[u8]) -> Vec<String> {
         self.repository
             .detect_by_content(bytes)

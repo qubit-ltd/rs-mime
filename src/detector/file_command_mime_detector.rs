@@ -166,6 +166,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// Runner used for `file` command executions.
+    #[must_use]
     #[inline]
     pub fn command_runner(&self) -> &CommandRunner {
         &self.command_runner

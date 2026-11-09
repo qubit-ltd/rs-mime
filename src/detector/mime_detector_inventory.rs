@@ -7,7 +7,9 @@
 // =============================================================================
 //! Link-time MIME detector provider inventory.
 
-qubit_spi::declare_sync_provider_inventory! {
+use qubit_spi::declare_sync_provider_inventory;
+
+declare_sync_provider_inventory! {
     pub mod providers {
         spec = crate::detector::MimeDetectorSpec;
     }

@@ -24,7 +24,9 @@ use crate::MimeResult;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MimeMagic {
+    /// Priority used to resolve matches between MIME magic rules.
     priority: u16,
+    /// Root matchers evaluated as alternatives for this rule.
     matchers: Vec<MimeMagicMatcher>,
 }
 

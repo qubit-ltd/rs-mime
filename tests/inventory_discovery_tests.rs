@@ -10,16 +10,23 @@
 
 use std::sync::Arc;
 
+use qubit_mime::classifier::media_stream_classifier_inventory::Entry as MediaStreamClassifierInventoryEntry;
+use qubit_mime::detector::mime_detector_inventory::Entry as MimeDetectorInventoryEntry;
+use qubit_mime::MediaStreamClassifier;
 use qubit_mime::MediaStreamClassifierRegistry;
 use qubit_mime::MediaStreamClassifierSpec;
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetector;
 use qubit_mime::MimeDetectorRegistry;
 use qubit_mime::MimeDetectorSpec;
+use qubit_mime::MimeError;
 use qubit_spi::ProviderDescriptor;
 use qubit_spi::ProviderMetadata;
 use qubit_spi::ProviderSelection;
 use qubit_spi::ServiceProvider;
 use qubit_spi::error::ProviderFailure;
 use qubit_spi::provider_descriptor;
+use qubit_spi::submit_sync_provider;
 
 struct ExternalDetector;
 impl ProviderMetadata for ExternalDetector {
@@ -30,8 +37,8 @@ impl ProviderMetadata for ExternalDetector {
 impl ServiceProvider<MimeDetectorSpec> for ExternalDetector {
     fn create_configured(
         &self,
-        _config: &qubit_mime::MimeConfig,
-    ) -> Result<Arc<dyn qubit_mime::MimeDetector>, ProviderFailure<qubit_mime::MimeError>> {
+        _config: &MimeConfig,
+    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         unimplemented!("discovery does not create the detector")
     }
 }
@@ -45,19 +52,19 @@ impl ProviderMetadata for ExternalClassifier {
 impl ServiceProvider<MediaStreamClassifierSpec> for ExternalClassifier {
     fn create_configured(
         &self,
-        _config: &qubit_mime::MimeConfig,
-    ) -> Result<Arc<dyn qubit_mime::MediaStreamClassifier>, ProviderFailure<qubit_mime::MimeError>> {
+        _config: &MimeConfig,
+    ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderFailure<MimeError>> {
         unimplemented!("discovery does not create the classifier")
     }
 }
 
-qubit_spi::submit_sync_provider! {
-    inventory_entry = qubit_mime::detector::mime_detector_inventory::Entry;
+submit_sync_provider! {
+    inventory_entry = MimeDetectorInventoryEntry;
     spec = MimeDetectorSpec;
     provider = ExternalDetector;
 }
-qubit_spi::submit_sync_provider! {
-    inventory_entry = qubit_mime::classifier::media_stream_classifier_inventory::Entry;
+submit_sync_provider! {
+    inventory_entry = MediaStreamClassifierInventoryEntry;
     spec = MediaStreamClassifierSpec;
     provider = ExternalClassifier;
 }

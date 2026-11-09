@@ -40,9 +40,16 @@ fn test_media_stream_classifier_backend_blanket_impl_validates_files() {
 
     assert_eq!(
         MediaStreamType::VideoOnly,
-        backend.classify_file(Path::new("Cargo.toml")).unwrap()
+        backend
+            .classify_file(Path::new("Cargo.toml"))
+            .expect("existing file should be classified")
     );
-    assert_eq!(MediaStreamType::AudioOnly, backend.classify_content(b"audio").unwrap());
+    assert_eq!(
+        MediaStreamType::AudioOnly,
+        backend
+            .classify_content(b"audio")
+            .expect("audio content should be classified")
+    );
     assert!(matches!(
         backend.classify_file(Path::new(".")),
         Err(MimeError::InvalidClassifierInput { .. })

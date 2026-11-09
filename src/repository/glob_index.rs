@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use super::MimeGlob;
 use super::internal::glob_entry::GlobEntry;
 
+/// Indexes MIME glob patterns for filename candidate lookup.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct GlobIndex {
     /// Literal patterns indexed by their complete filename.
@@ -56,6 +57,7 @@ impl GlobIndex {
     }
 
     /// Returns the best matching entries for a filename.
+    #[must_use]
     pub(crate) fn matches<'a>(&'a self, filename: &str) -> Vec<&'a GlobEntry> {
         let basename = filename.rsplit(['/', '\\']).next().unwrap_or_default();
         if basename.is_empty() {
@@ -106,6 +108,7 @@ impl GlobIndex {
 }
 
 /// Selects entries with the highest glob weight and longest pattern.
+#[must_use]
 fn select_best(entries: Vec<&GlobEntry>) -> Vec<&GlobEntry> {
     let Some(best_weight) = entries.iter().map(|entry| entry.glob.weight()).max() else {
         return Vec::new();
@@ -128,6 +131,7 @@ fn select_best(entries: Vec<&GlobEntry>) -> Vec<&GlobEntry> {
 }
 
 /// Removes duplicate MIME indexes while preserving match order.
+#[must_use]
 fn deduplicate_by_mime(entries: Vec<&GlobEntry>) -> Vec<&GlobEntry> {
     let mut seen = HashSet::new();
     entries

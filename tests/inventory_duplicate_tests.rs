@@ -10,6 +10,8 @@
 
 use std::sync::Arc;
 
+use qubit_mime::detector::mime_detector_inventory::Entry as MimeDetectorInventoryEntry;
+use qubit_mime::detector::mime_detector_inventory::build_registry as build_mime_detector_registry;
 use qubit_mime::MimeConfig;
 use qubit_mime::MimeDetector;
 use qubit_mime::MimeDetectorSpec;
@@ -19,6 +21,7 @@ use qubit_spi::ProviderMetadata;
 use qubit_spi::ServiceProvider;
 use qubit_spi::error::ProviderFailure;
 use qubit_spi::provider_descriptor;
+use qubit_spi::submit_sync_provider;
 
 struct FirstDuplicateSelectorProvider;
 
@@ -46,20 +49,20 @@ impl ServiceProvider<MimeDetectorSpec> for SecondDuplicateSelectorProvider {
     }
 }
 
-qubit_spi::submit_sync_provider! {
-    inventory_entry = qubit_mime::detector::mime_detector_inventory::Entry;
+submit_sync_provider! {
+    inventory_entry = MimeDetectorInventoryEntry;
     spec = MimeDetectorSpec;
     provider = FirstDuplicateSelectorProvider;
 }
-qubit_spi::submit_sync_provider! {
-    inventory_entry = qubit_mime::detector::mime_detector_inventory::Entry;
+submit_sync_provider! {
+    inventory_entry = MimeDetectorInventoryEntry;
     spec = MimeDetectorSpec;
     provider = SecondDuplicateSelectorProvider;
 }
 
 #[test]
 fn test_duplicate_selector_reports_submitted_source() {
-    let error = qubit_mime::detector::mime_detector_inventory::build_registry()
+    let error = build_mime_detector_registry()
         .expect_err("duplicate selector must fail inventory construction");
     let message = error.to_string();
     assert!(message.contains("duplicate-selector"), "{message}");

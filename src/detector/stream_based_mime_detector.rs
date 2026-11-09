@@ -21,6 +21,20 @@ use crate::MimeError;
 use crate::MimeResult;
 
 /// Core implementation contract for detectors that can inspect content bytes.
+///
+/// Implement this trait to inspect content streams through a MIME detector.
+/// Values are supplied by the detector implementation or by the caller that
+/// constructs it.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::StreamBasedMimeDetector;
+///
+/// fn filename_candidates(detector: &dyn StreamBasedMimeDetector) -> Vec<String> {
+///     detector.guess_from_filename("image.png")
+/// }
+/// ```
 pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     /// Gets the shared detector core.
     ///
@@ -43,6 +57,7 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     ///
     /// # Returns
     /// Candidate MIME type names ordered by backend confidence.
+    #[must_use]
     fn guess_from_filename(&self, filename: &str) -> Vec<String>;
 
     /// Guesses MIME type names from content bytes.

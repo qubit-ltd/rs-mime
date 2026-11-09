@@ -26,7 +26,8 @@ use crate::MimeResult;
 /// # Examples
 ///
 /// ```
-/// use qubit_mime::{MimeConfig, MimeDetectorCore};
+/// use qubit_mime::MimeConfig;
+/// use qubit_mime::MimeDetectorCore;
 /// let core = MimeDetectorCore::new(MimeConfig::default());
 /// assert!(core.max_buffer_size() > 0);
 /// ```
@@ -72,6 +73,7 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Configured classifier, or `None`.
+    #[must_use]
     #[inline]
     pub fn media_stream_classifier(&self) -> Option<&dyn MediaStreamClassifier> {
         self.media_stream_classifier.as_deref()

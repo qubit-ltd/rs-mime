@@ -9,6 +9,7 @@
 
 use super::super::MimeMagic;
 
+/// Stores a parsed content magic rule and its index metadata.
 #[derive(Debug, Clone)]
 pub(crate) struct MagicEntry {
     /// Source priority of the magic rule.

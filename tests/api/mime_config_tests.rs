@@ -482,6 +482,7 @@ fn test_reload_default_from_env_uses_config_from_env() {
         ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION,
         ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS,
         ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING,
+        ENV_COMMAND_TIMEOUT,
     ]);
 
     unsafe {

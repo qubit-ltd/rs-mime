@@ -6,6 +6,8 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::sync::Arc;
 
@@ -66,8 +68,6 @@ fn test_ffprobe_provider_reports_unavailable_when_command_is_missing() {
 #[test]
 #[cfg(unix)]
 fn test_ffprobe_provider_creates_classifier_when_command_is_available() {
-    use std::os::unix::fs::PermissionsExt;
-
     let temp_dir = LocalFileSystem::host()
         .expect("Host filesystem should open")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())

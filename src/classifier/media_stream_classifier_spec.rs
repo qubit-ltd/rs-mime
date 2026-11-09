@@ -20,6 +20,17 @@ use crate::MimeError;
 ///
 /// The configuration is [`MimeConfig`], and created services implement the
 /// [`MediaStreamClassifier`] trait object.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MediaStreamClassifierRegistry;
+/// use qubit_mime::MediaStreamClassifierSpec;
+///
+/// let _spec = MediaStreamClassifierSpec;
+/// let registry = MediaStreamClassifierRegistry::builtin();
+/// assert!(registry.resolve().is_ok());
+/// ```
 #[derive(Debug)]
 pub struct MediaStreamClassifierSpec;
 

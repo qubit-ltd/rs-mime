@@ -248,7 +248,6 @@ fn test_classify_file_maps_unexpected_ffprobe_exit_to_none() {
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake ffprobe metadata should be readable")
         .permissions();
-    use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
@@ -289,7 +288,6 @@ printf 'video\n'
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake ffprobe metadata should be readable")
         .permissions();
-    use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());
@@ -319,7 +317,6 @@ fn test_classify_file_rejects_invalid_utf8_stdout() {
     let mut permissions = std::fs::metadata(&script_path)
         .expect("fake ffprobe metadata should be readable")
         .permissions();
-    use std::os::unix::fs::PermissionsExt;
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
     let _path_guard = PathEnvGuard::prepend(temp_dir.path());

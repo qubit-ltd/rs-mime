@@ -21,7 +21,9 @@ use crate::MimeResult;
 /// # Examples
 ///
 /// ```
-/// use qubit_mime::{ContentRequirement, MimeContentBackend, MimeResult};
+/// use qubit_mime::ContentRequirement;
+/// use qubit_mime::MimeContentBackend;
+/// use qubit_mime::MimeResult;
 ///
 /// #[derive(Debug)]
 /// struct PdfBackend;

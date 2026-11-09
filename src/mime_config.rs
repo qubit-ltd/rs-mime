@@ -188,6 +188,7 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Configuration used by default detector instances.
+    #[must_use]
     pub fn load() -> Self {
         match Self::from_env() {
             Ok(config) => config,
@@ -360,6 +361,7 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Configuration populated entirely from crate constants.
+    #[must_use]
     fn builtin_default() -> Self {
         Self {
             mime_detector_selection: create_detector_selection(DEFAULT_MIME_DETECTOR, fallback_defaults())
@@ -451,6 +453,7 @@ impl MimeConfig {
     /// # Returns
     /// Maximum number of bytes copied to a temporary file for one classifier
     /// input.
+    #[must_use]
     pub fn media_stream_max_staging_size(&self) -> u64 {
         self.media_stream_max_staging_size
     }
@@ -460,24 +463,16 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Per-stream retained output byte limit applied to `file` and `ffprobe`.
+    #[must_use]
     pub fn command_output_max_bytes(&self) -> usize {
         self.command_output_max_bytes
-    }
-
-    /// Gets the derived total output budget for one native command.
-    ///
-    /// The budget allows stdout and stderr to each retain up to four times
-    /// the configured per-stream limit, with saturating arithmetic.
-    pub(crate) fn command_total_output_max_bytes(&self) -> u64 {
-        u64::try_from(self.command_output_max_bytes)
-            .unwrap_or(u64::MAX)
-            .saturating_mul(4)
     }
 
     /// Gets the command timeout for native MIME detection.
     ///
     /// # Returns
     /// Timeout used by command-backed MIME detectors and classifiers.
+    #[must_use]
     pub fn command_timeout(&self) -> Duration {
         self.command_timeout
     }
@@ -486,6 +481,7 @@ impl MimeConfig {
     ///
     /// # Returns
     /// `true` when ambiguous media MIME types may be refined.
+    #[must_use]
     pub fn enable_precise_detection(&self) -> bool {
         self.enable_precise_detection
     }
@@ -494,6 +490,7 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Lowercase extension names without leading dots.
+    #[must_use]
     pub fn precise_detection_patterns(&self) -> &HashSet<String> {
         &self.precise_detection_patterns
     }
@@ -502,6 +499,7 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Mapping from extension to `[video_mime, audio_mime]`.
+    #[must_use]
     pub fn ambiguous_mime_mapping(&self) -> &HashMap<String, [String; 2]> {
         &self.ambiguous_mime_mapping
     }
@@ -510,8 +508,20 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Maximum number of bytes a detector may allocate for one read buffer.
+    #[must_use]
     pub fn max_buffer_size(&self) -> usize {
         self.max_buffer_size
+    }
+
+    /// Gets the derived total output budget for one native command.
+    ///
+    /// The budget allows stdout and stderr to each retain up to four times
+    /// the configured per-stream limit, with saturating arithmetic.
+    #[must_use]
+    pub(crate) fn command_total_output_max_bytes(&self) -> u64 {
+        u64::try_from(self.command_output_max_bytes)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(4)
     }
 }
 
@@ -619,6 +629,7 @@ impl Default for MimeConfig {
 ///
 /// # Returns
 /// Default fallback detector names.
+#[must_use]
 fn fallback_defaults() -> Vec<String> {
     DEFAULT_MIME_DETECTOR_FALLBACKS
         .split(',')
@@ -635,6 +646,7 @@ fn fallback_defaults() -> Vec<String> {
 ///
 /// # Returns
 /// Trimmed detector names with empty values removed.
+#[must_use]
 fn normalize_detector_names(names: Vec<String>) -> Vec<String> {
     names
         .into_iter()
@@ -650,6 +662,7 @@ fn normalize_detector_names(names: Vec<String>) -> Vec<String> {
 ///
 /// # Returns
 /// Lowercase extension set without leading dots.
+#[must_use]
 fn normalize_patterns(patterns: Vec<String>) -> HashSet<String> {
     patterns
         .into_iter()
