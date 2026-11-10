@@ -233,6 +233,65 @@ fn test_select_result_honors_prefer_filename_and_refines_content_result() {
 }
 
 #[test]
+fn test_select_result_prefer_filename_skips_classifier_for_content_and_path_sources() {
+    let mut detector = MimeDetectorCore::new(create_precise_config(true, "webm", "webm:video/webm,audio/webm"));
+    detector.set_media_stream_classifier(Some(Arc::new(FailingClassifier)));
+    let filename = ["video/webm".to_owned()];
+
+    for source in [
+        DetectionSource::Content(b"webm"),
+        DetectionSource::Path(Path::new("movie.webm")),
+        DetectionSource::Prefix(b"webm"),
+        DetectionSource::None,
+    ] {
+        assert_eq!(
+            Some("video/webm".to_owned()),
+            detector
+                .select_result(
+                    &filename,
+                    &[],
+                    Some("movie.webm"),
+                    MimeDetectionPolicy::PreferFilename,
+                    source
+                )
+                .expect("PreferFilename should preserve its unique filename candidate without classification")
+        );
+    }
+}
+
+#[test]
+fn test_select_reader_result_prefer_filename_skips_classifier_and_verify_content_propagates_it() {
+    let mut detector = MimeDetectorCore::new(create_precise_config(true, "webm", "webm:video/webm,audio/webm"));
+    detector.set_media_stream_classifier(Some(Arc::new(FailingClassifier)));
+    let filename = ["video/webm".to_owned()];
+    let mut reader = Cursor::new(b"webm".to_vec());
+
+    assert_eq!(
+        Some("video/webm".to_owned()),
+        detector
+            .select_reader_result(
+                &filename,
+                &[],
+                Some("movie.webm"),
+                MimeDetectionPolicy::PreferFilename,
+                &mut reader,
+            )
+            .expect("PreferFilename should skip reader classification")
+    );
+
+    let error = detector
+        .select_reader_result(
+            &filename,
+            &["video/webm".to_owned()],
+            Some("movie.webm"),
+            MimeDetectionPolicy::VerifyContent,
+            &mut reader,
+        )
+        .expect_err("VerifyContent must run and propagate classifier errors");
+    assert!(matches!(error, MimeError::InvalidClassifierInput { .. }));
+}
+
+#[test]
 fn test_refine_detected_mime_type_handles_disabled_missing_and_failing_cases() {
     let mut detector = MimeDetectorCore::new(create_precise_config(
         true,

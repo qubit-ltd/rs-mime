@@ -138,6 +138,9 @@ impl MimeDetectorCore {
         let Some(result) = result else {
             return Ok(None);
         };
+        if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+            return Ok(Some(result));
+        }
         self.refine_detected_mime_type(&result, filename, source).map(Some)
     }
 
@@ -228,11 +231,12 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Refined MIME type name, or the original type if refinement is disabled
-    /// or the classifier fails.
+    /// or not applicable.
     ///
     /// # Errors
-    /// Returns [`MimeError::Io`] when the reader position cannot be obtained or
-    /// restored.
+    /// Propagates errors returned by the configured media stream classifier.
+    /// Returns [`MimeError::Io`] when the reader position cannot be obtained,
+    /// moved to the start for classification, or restored after classification.
     fn refine_detected_mime_type_from_reader(
         &self,
         detected_mime_type: &str,

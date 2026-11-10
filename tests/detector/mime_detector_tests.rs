@@ -774,6 +774,86 @@ fn test_prefix_paths_skip_classifier_but_complete_content_uses_it() {
 }
 
 #[test]
+fn test_prefer_filename_preserves_unique_webm_candidate_without_classification() {
+    let mut config = Config::default();
+    config
+        .set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)
+        .expect("config setting");
+    config
+        .set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, "webm")
+        .expect("config setting");
+    config
+        .set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, "webm:video/webm,audio/webm")
+        .expect("config setting");
+    let mut detector = RepositoryMimeDetector::from_mime_config(
+        MimeConfig::from_config(&config).expect("precise config should parse"),
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    detector
+        .core_mut()
+        .set_media_stream_classifier(Some(Arc::new(CountedClassifier(Arc::clone(&calls)))));
+
+    assert_eq!(
+        Some("video/webm".to_owned()),
+        detector
+            .detect(b"contents", Some("movie.webm"), MimeDetectionPolicy::PreferFilename)
+            .expect("bytes detection should preserve unique filename candidate")
+    );
+    assert_eq!(0, calls.load(Ordering::Relaxed));
+
+    let mut reader = std::io::Cursor::new(b"contents".to_vec());
+    assert_eq!(
+        Some("video/webm".to_owned()),
+        detector
+            .detect_reader(&mut reader, Some("movie.webm"), MimeDetectionPolicy::PreferFilename)
+            .expect("reader detection should preserve unique filename candidate")
+    );
+    assert_eq!(0, calls.load(Ordering::Relaxed));
+
+    let mut file = LocalFileSystem::host()
+        .expect("Host filesystem should open")
+        .create_temp_file_with_options(&LocalTempFileOptions::new().with_suffix(".webm"))
+        .expect("temp file should be created");
+    Output::write_fully(&mut file, b"contents").expect("temp file should be writable");
+    assert_eq!(
+        Some("video/webm".to_owned()),
+        detector
+            .detect_file(file.path(), MimeDetectionPolicy::PreferFilename)
+            .expect("file detection should preserve unique filename candidate")
+    );
+    assert_eq!(0, calls.load(Ordering::Relaxed));
+
+    let sync_spi = PrefixFileSystemSpi::hierarchical(b"contents".to_vec());
+    let sync_fs = FileSystem::from_spi(sync_spi).expect("sync filesystem fixture");
+    let sync_path = FsPath::parse("/movie.webm").expect("sync path");
+    assert_eq!(
+        Some("video/webm".to_owned()),
+        detector
+            .detect_path(&sync_fs, &sync_path, 16, MimeDetectionPolicy::PreferFilename)
+            .expect("sync provider detection should preserve unique filename candidate")
+    );
+    assert_eq!(0, calls.load(Ordering::Relaxed));
+
+    let async_spi = PrefixAsyncFileSystemSpi::new(b"contents");
+    let async_fs = AsyncFileSystem::from_spi(async_spi).expect("async filesystem fixture");
+    let async_path = FsPath::parse("/movie.webm").expect("async path");
+    assert_eq!(
+        Some("video/webm".to_owned()),
+        run_ready(detector.detect_async_path(&async_fs, &async_path, 16, MimeDetectionPolicy::PreferFilename))
+            .expect("async provider detection should preserve unique filename candidate")
+    );
+    assert_eq!(0, calls.load(Ordering::Relaxed));
+
+    assert_eq!(
+        Some("video/webm".to_owned()),
+        detector
+            .detect_prefix(b"contents", Some("movie.webm"), MimeDetectionPolicy::PreferFilename)
+            .expect("prefix detection should preserve unique filename candidate")
+    );
+    assert_eq!(0, calls.load(Ordering::Relaxed));
+}
+
+#[test]
 fn test_mime_detector_backend_prefer_filename_skips_reader_and_file_content() {
     let detector = DirectBackendDetector::new();
     let mut reader = std::io::Cursor::new(b"xxxxx".to_vec());
