@@ -73,20 +73,43 @@ qubit-mime = "0.21"
 `RepositoryMimeDetector::new()` 使用内置仓库，不需要外部命令。若要显式选择 Provider，
 请创建 `Config`，将其解析为 `MimeConfig`，再解析 Provider 并创建检测器：
 
-```rust
-use qubit_config::Config;
-use qubit_mime::{
-    CONFIG_MIME_DETECTOR_DEFAULT, CONFIG_MIME_DETECTOR_FALLBACKS, MimeConfig,
-    MimeDetectorRegistry,
-};
-use qubit_spi::ServiceProvider;
+下面的示例使用 `Config`；实现应用自定义 Provider 时还会用到 `ServiceProvider`。完整的 Provider 配置应声明以下直接依赖：
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+```toml
+[dependencies]
+qubit-mime = "0.21"
+qubit-config = "0.15"
+qubit-spi = "0.14"
+```
+
+<!-- mime-doc-example:provider-configuration -->
+```rust
+use std::sync::Arc;
+
+use qubit_config::Config;
+use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
+use qubit_mime::CONFIG_MIME_DETECTOR_FALLBACKS;
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeDetectorRegistry;
+use qubit_mime::MimeDetectorSpec;
+use qubit_mime::MimeError;
+use qubit_spi::ServiceProvider;
+use qubit_spi::error::ProviderFailure;
+
+fn create_configured<P: ServiceProvider<MimeDetectorSpec>>(
+    provider: &P,
+    config: &MimeConfig,
+) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    provider.create_configured(config)
+}
+
+fn configured_detector() -> Result<(), Box<dyn std::error::Error>> {
     let mut source = Config::new();
     source.set(CONFIG_MIME_DETECTOR_DEFAULT, "file")?;
     source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
-    let config = MimeConfig::from_config(&source)?;
 
+    let config = MimeConfig::from_config(&source)?;
     let registry = MimeDetectorRegistry::builtin();
     let provider = registry.resolve_selected(config.mime_detector_selection())?;
     let _detector = provider.create_configured(&config)?;
@@ -97,6 +120,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 `file` Provider 在检查内容时要求系统中存在 `file` 可执行文件。当它不可用且选择策略
 允许 fallback 时，`repository` 可以继续提供检测服务。
 
+精确媒体检测默认关闭。使用时必须同时将 `mime.enable.precise.detection` 设为 `true`，并向
+检测器 core 显式注入 `MediaStreamClassifier`。仅打开配置不会自动创建或安装 `ffprobe`
+classifier。
+
 ## 核心工作流
 
 根据输入类型选择最简单的入口：
@@ -104,13 +131,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - `detect_by_filename("photo.JPG")` 检查文件名 glob。
 - `detect_by_content(bytes)` 检查内容 magic 规则。
 - `RepositoryMimeDetector` 的 `detect_bytes(bytes, Some(filename), policy)` 组合两种结果。
-- `detect_reader(reader, filename, policy)` 检查可 seek reader，并恢复 reader 的原始位置。
+- `detect_reader(reader, filename, policy)` 按整份资源检查可 seek reader，并恢复 reader 的原始位置。
 - `detect_file(path, policy)` 读取本地文件。
 - `MimeDetector::detect_path` 和 `detect_async_path` 通过同步或异步文件系统 facade 读取。
 
-默认的 `MimeContentBackend::detect_reader` 从 reader 当前位置读取。`Prefix(n)` 最多读取 n
-字节，提前遇到 EOF 时停止；`Complete` 在默认 16 MiB 缓冲预算（或覆盖后的预算）内读到 EOF，
-并额外探测一个字节以检查超限。两者都会恢复起始位置；读取和恢复都失败时，恢复错误优先。
+顶层 `MimeDetector::detect_reader` 将 reader 视为整份资源：即使调用者当前游标不在开头，检测也从
+逻辑字节零开始，结束后恢复原始位置。默认的 `MimeContentBackend::detect_reader` 契约不同，只从
+当前位置读取。`Prefix(n)` 最多读取 n 字节，提前遇到 EOF 时停止；`Complete` 在默认 16 MiB
+缓冲预算（或覆盖后的预算）内读到 EOF，并额外探测一个字节以检查超限。内容 backend 的两种模式
+都会恢复各自的起始位置；读取和恢复都失败时，恢复错误优先。
 
 这些入口对应不同 backend 契约。默认 `MimeDetectorBackend` reader hook 只读取其前缀；backend
 声明 `Complete` 时会返回 `CompleteContentRequired`。需要完整资源的 backend 必须覆盖

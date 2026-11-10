@@ -82,20 +82,43 @@ qubit-mime = "0.21"
 external command. To select a provider explicitly, create a `Config`, parse it
 into `MimeConfig`, resolve a provider, and then create the detector:
 
-```rust
-use qubit_config::Config;
-use qubit_mime::{
-    CONFIG_MIME_DETECTOR_DEFAULT, CONFIG_MIME_DETECTOR_FALLBACKS, MimeConfig,
-    MimeDetectorRegistry,
-};
-use qubit_spi::ServiceProvider;
+The example below uses `Config`; implementing application providers also uses `ServiceProvider`. Declare these direct dependencies for the complete provider setup:
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+```toml
+[dependencies]
+qubit-mime = "0.21"
+qubit-config = "0.15"
+qubit-spi = "0.14"
+```
+
+<!-- mime-doc-example:provider-configuration -->
+```rust
+use std::sync::Arc;
+
+use qubit_config::Config;
+use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
+use qubit_mime::CONFIG_MIME_DETECTOR_FALLBACKS;
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeDetectorRegistry;
+use qubit_mime::MimeDetectorSpec;
+use qubit_mime::MimeError;
+use qubit_spi::ServiceProvider;
+use qubit_spi::error::ProviderFailure;
+
+fn create_configured<P: ServiceProvider<MimeDetectorSpec>>(
+    provider: &P,
+    config: &MimeConfig,
+) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    provider.create_configured(config)
+}
+
+fn configured_detector() -> Result<(), Box<dyn std::error::Error>> {
     let mut source = Config::new();
     source.set(CONFIG_MIME_DETECTOR_DEFAULT, "file")?;
     source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
-    let config = MimeConfig::from_config(&source)?;
 
+    let config = MimeConfig::from_config(&source)?;
     let registry = MimeDetectorRegistry::builtin();
     let provider = registry.resolve_selected(config.mime_detector_selection())?;
     let _detector = provider.create_configured(&config)?;
@@ -106,6 +129,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 The `file` provider requires the system `file` executable when content must be
 inspected. The `repository` fallback remains usable when that provider is not
 available and the selection policy permits fallback.
+
+Precise media detection is opt-in: set `mime.enable.precise.detection` to
+`true` and explicitly inject a `MediaStreamClassifier` into the detector core.
+Enabling the setting alone does not create or install an `ffprobe` classifier.
 
 ## Core Workflow
 
@@ -121,12 +148,15 @@ Use the simplest entry point that matches the input:
 - `MimeDetector::detect_path` and `detect_async_path` read through the
   synchronous or asynchronous filesystem facade.
 
-The default `MimeContentBackend::detect_reader` reads from the reader's current
-position. `Prefix(n)` reads at most `n` bytes and stops early at EOF. `Complete`
-reads through EOF within the default 16 MiB buffer budget, or an overridden
-budget, and probes one extra byte to detect overflow. Both restore the starting
-position; if reading and restoration both fail, the restoration error takes
-precedence.
+The top-level `MimeDetector::detect_reader` treats the reader as a whole
+resource: detection starts at logical byte zero even when the caller's cursor
+is elsewhere, then restores the original position. The default
+`MimeContentBackend::detect_reader` has a different contract and reads only
+from the current position. `Prefix(n)` reads at most `n` bytes and stops early
+at EOF. `Complete` reads through EOF within the default 16 MiB buffer budget,
+or an overridden budget, and probes one extra byte to detect overflow. Both
+content-backend modes restore their starting position; if reading and
+restoration both fail, the restoration error takes precedence.
 
 These are separate backend contracts. The default `MimeDetectorBackend`
 reader hook reads only its prefix and returns `CompleteContentRequired` when the

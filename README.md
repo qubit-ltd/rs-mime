@@ -105,15 +105,38 @@ output.
 `MimeDetectorRegistry::builtin()` exposes the built-in `repository` provider
 and the `file` provider. Provider resolution and detector creation are separate:
 
-```rust
-use qubit_config::Config;
-use qubit_mime::{
-    CONFIG_MIME_DETECTOR_DEFAULT, CONFIG_MIME_DETECTOR_FALLBACKS, MimeConfig,
-    MimeDetectorRegistry,
-};
-use qubit_spi::ServiceProvider;
+The example below uses `Config`; applications that also implement custom providers use `ServiceProvider`. Declare these direct dependencies for that provider setup:
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+```toml
+[dependencies]
+qubit-mime = "0.21"
+qubit-config = "0.15"
+qubit-spi = "0.14"
+```
+
+<!-- mime-doc-example:provider-configuration -->
+```rust
+use std::sync::Arc;
+
+use qubit_config::Config;
+use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
+use qubit_mime::CONFIG_MIME_DETECTOR_FALLBACKS;
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeDetectorRegistry;
+use qubit_mime::MimeDetectorSpec;
+use qubit_mime::MimeError;
+use qubit_spi::ServiceProvider;
+use qubit_spi::error::ProviderFailure;
+
+fn create_configured<P: ServiceProvider<MimeDetectorSpec>>(
+    provider: &P,
+    config: &MimeConfig,
+) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    provider.create_configured(config)
+}
+
+fn configured_detector() -> Result<(), Box<dyn std::error::Error>> {
     let mut source = Config::new();
     source.set(CONFIG_MIME_DETECTOR_DEFAULT, "file")?;
     source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
@@ -121,12 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = MimeConfig::from_config(&source)?;
     let registry = MimeDetectorRegistry::builtin();
     let provider = registry.resolve_selected(config.mime_detector_selection())?;
-    let detector = provider.create_configured(&config)?;
-
-    assert_eq!(
-        detector.detect_by_filename("image.png")?.as_deref(),
-        Some("image/png"),
-    );
+    let _detector = provider.create_configured(&config)?;
     Ok(())
 }
 ```

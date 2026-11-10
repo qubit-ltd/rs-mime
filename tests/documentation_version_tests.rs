@@ -31,6 +31,48 @@ fn read(path: impl AsRef<Path>) -> String {
     fs::read_to_string(path.as_ref()).unwrap_or_else(|error| panic!("cannot read {}: {error}", path.as_ref().display()))
 }
 
+fn documented_example<'a>(contents: &'a str, marker: &str) -> &'a str {
+    let marked = contents
+        .split_once(marker)
+        .unwrap_or_else(|| panic!("missing documentation example marker {marker}"))
+        .1;
+    let code = marked
+        .strip_prefix("\n```rust\n")
+        .unwrap_or_else(|| panic!("{marker} must immediately precede a Rust code block"));
+    code.split_once("\n```")
+        .unwrap_or_else(|| panic!("{marker} Rust code block is not closed"))
+        .0
+}
+
+#[test]
+fn test_provider_configuration_examples_match_compilable_consumer() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let marker = "<!-- mime-doc-example:provider-configuration -->";
+    let documents = [
+        "README.md",
+        "README.zh_CN.md",
+        "doc/user_guide.md",
+        "doc/user_guide.zh_CN.md",
+    ]
+    .map(|path| read(root.join(path)));
+    let examples = documents
+        .iter()
+        .map(|document| documented_example(document, marker))
+        .collect::<Vec<_>>();
+
+    for example in examples.iter().skip(1) {
+        assert_eq!(*example, examples[0], "provider configuration examples drifted");
+    }
+
+    let fixture = read(root.join("tests/fixtures/documentation_consumer/src/main.rs"));
+    assert!(fixture.ends_with("fn main() {}\n"));
+    let fixture_code = fixture.replace("#[allow(dead_code)]\n", "");
+    assert!(
+        fixture_code.contains(examples[0]),
+        "consumer fixture is out of sync with documentation"
+    );
+}
+
 #[test]
 fn test_user_guides_match_current_package_versions() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

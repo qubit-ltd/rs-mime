@@ -86,15 +86,38 @@ Provider 依赖对应的可执行文件，也可能因命令不可用、超时�
 `MimeDetectorRegistry::builtin()` 提供内置的 `repository` 和 `file` Provider。Provider
 解析与检测器创建分为两个步骤：
 
-```rust
-use qubit_config::Config;
-use qubit_mime::{
-    CONFIG_MIME_DETECTOR_DEFAULT, CONFIG_MIME_DETECTOR_FALLBACKS, MimeConfig,
-    MimeDetectorRegistry,
-};
-use qubit_spi::ServiceProvider;
+下面的示例使用 `Config`；如果应用还要实现自定义 Provider，则会用到 `ServiceProvider`。请为这类 Provider 配置声明以下直接依赖：
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+```toml
+[dependencies]
+qubit-mime = "0.21"
+qubit-config = "0.15"
+qubit-spi = "0.14"
+```
+
+<!-- mime-doc-example:provider-configuration -->
+```rust
+use std::sync::Arc;
+
+use qubit_config::Config;
+use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
+use qubit_mime::CONFIG_MIME_DETECTOR_FALLBACKS;
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetector;
+use qubit_mime::MimeDetectorRegistry;
+use qubit_mime::MimeDetectorSpec;
+use qubit_mime::MimeError;
+use qubit_spi::ServiceProvider;
+use qubit_spi::error::ProviderFailure;
+
+fn create_configured<P: ServiceProvider<MimeDetectorSpec>>(
+    provider: &P,
+    config: &MimeConfig,
+) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    provider.create_configured(config)
+}
+
+fn configured_detector() -> Result<(), Box<dyn std::error::Error>> {
     let mut source = Config::new();
     source.set(CONFIG_MIME_DETECTOR_DEFAULT, "file")?;
     source.set(CONFIG_MIME_DETECTOR_FALLBACKS, "repository")?;
@@ -102,12 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = MimeConfig::from_config(&source)?;
     let registry = MimeDetectorRegistry::builtin();
     let provider = registry.resolve_selected(config.mime_detector_selection())?;
-    let detector = provider.create_configured(&config)?;
-
-    assert_eq!(
-        detector.detect_by_filename("image.png")?.as_deref(),
-        Some("image/png"),
-    );
+    let _detector = provider.create_configured(&config)?;
     Ok(())
 }
 ```

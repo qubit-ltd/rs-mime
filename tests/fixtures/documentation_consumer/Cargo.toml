@@ -1,0 +1,12 @@
+[package]
+name = "mime-documentation-consumer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+
+[dependencies]
+qubit-mime = { path = "../../..", version = "0.21" }
+qubit-config = { path = "../../../../rs-config", version = "0.15" }
+qubit-spi = "0.14"
+
+[workspace]
