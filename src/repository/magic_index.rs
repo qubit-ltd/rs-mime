@@ -54,20 +54,29 @@ impl MagicIndex {
     /// vector when no rule matches.
     #[must_use]
     pub(crate) fn matches(&self, bytes: &[u8]) -> Vec<usize> {
-        let Some(best_priority) = self
-            .entries
-            .iter()
-            .filter(|entry| entry.magic.matches(bytes))
-            .map(|entry| entry.priority)
-            .max()
-        else {
-            return Vec::new();
-        };
+        let mut best_priority = None;
+        let mut results = Vec::new();
         let mut seen = HashSet::new();
-        self.entries
-            .iter()
-            .filter(|entry| entry.priority == best_priority && entry.magic.matches(bytes))
-            .filter_map(|entry| seen.insert(entry.mime_index).then_some(entry.mime_index))
-            .collect()
+        for entry in &self.entries {
+            if best_priority.is_some_and(|priority| entry.priority < priority) {
+                continue;
+            }
+            if !entry.magic.matches(bytes) {
+                continue;
+            }
+            match best_priority {
+                Some(priority) if entry.priority > priority => {
+                    best_priority = Some(entry.priority);
+                    results.clear();
+                    seen.clear();
+                }
+                None => best_priority = Some(entry.priority),
+                _ => {}
+            }
+            if seen.insert(entry.mime_index) {
+                results.push(entry.mime_index);
+            }
+        }
+        results
     }
 }

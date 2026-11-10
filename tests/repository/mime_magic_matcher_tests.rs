@@ -84,6 +84,36 @@ fn test_matches_little32_integer() {
 }
 
 #[test]
+fn test_numeric_matchers_preserve_masks_byte_order_and_bounds() {
+    let little = MimeMagicMatcher::new(
+        MagicValueType::Little32,
+        1,
+        3,
+        0x12345670u32.to_be_bytes().to_vec(),
+        Some(0xfffffff0u32.to_be_bytes().to_vec()),
+        vec![],
+    )
+    .expect("numeric matcher should be valid");
+    assert!(little.matches(&[0, 0x7f, 0x56, 0x34, 0x12]));
+    assert!(!little.matches(&[0x7f, 0x56, 0x34, 0x12]));
+    assert!(!little.matches(&[0, 0x6f, 0x56, 0x34, 0x12]));
+
+    let big = MimeMagicMatcher::new(
+        MagicValueType::Big16,
+        0,
+        2,
+        0x1230u16.to_be_bytes().to_vec(),
+        Some(0xfff0u16.to_be_bytes().to_vec()),
+        vec![],
+    )
+    .expect("numeric matcher should be valid");
+    assert!(big.matches(&[0x12, 0x3f]));
+    assert!(big.matches(&[0, 0x12, 0x3f]));
+    assert!(big.matches(&[0, 0, 0x12, 0x3f]));
+    assert!(!big.matches(&[0x12]));
+}
+
+#[test]
 fn test_matches_requires_one_submatcher_when_children_exist() {
     let child = MimeMagicMatcher::new(MagicValueType::String, 4, 4, b"child".to_vec(), None, vec![])
         .expect("child matcher should be valid");

@@ -65,3 +65,7 @@ path = "tests/mod_tests.rs"
 [[bench]]
 name = "command_backends"
 harness = false
+
+[[bench]]
+name = "repository_matching"
+harness = false

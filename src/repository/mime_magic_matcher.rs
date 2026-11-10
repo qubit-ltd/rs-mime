@@ -171,19 +171,16 @@ impl MimeMagicMatcher {
             | MagicValueType::Big16
             | MagicValueType::Big32
             | MagicValueType::Little16
-            | MagicValueType::Little32 => {
-                let value = ordered_numeric_bytes(self.value_type, &self.value);
-                let mask = self
-                    .mask
-                    .as_deref()
-                    .map(|mask| ordered_numeric_bytes(self.value_type, mask));
-                self.matches_bytes(bytes, &value, mask.as_deref())
-            }
+            | MagicValueType::Little32 => self.matches_numeric(bytes),
         };
         if !parent_matches {
             return false;
         }
-        self.sub_matchers.is_empty() || self.sub_matchers.iter().any(|sub_matcher| sub_matcher.matches(bytes))
+        self.sub_matchers.is_empty()
+            || self
+                .sub_matchers
+                .iter()
+                .any(|sub_matcher| sub_matcher.matches(bytes))
     }
 
     /// Tests raw value bytes over this matcher's offset range.
@@ -206,6 +203,35 @@ impl MimeMagicMatcher {
             return false;
         }
         (self.offset_begin..=end).any(|offset| value_matches_at(bytes, offset, value, mask))
+    }
+
+    /// Tests a numeric value directly in the input's byte order without
+    /// allocating reordered value or mask buffers.
+    #[must_use]
+    fn matches_numeric(&self, bytes: &[u8]) -> bool {
+        if bytes.len() < self.value.len() || self.offset_begin >= bytes.len() {
+            return false;
+        }
+        let last_possible = bytes.len() - self.value.len();
+        let end = self.offset_end.min(last_possible);
+        if self.offset_begin > end {
+            return false;
+        }
+        let little_endian = self.value_type.uses_little_endian_order();
+        (self.offset_begin..=end).any(|offset| {
+            self.value.iter().enumerate().all(|(index, value_byte)| {
+                let input_index = if little_endian {
+                    self.value.len() - index - 1
+                } else {
+                    index
+                };
+                let actual = bytes[offset + input_index];
+                match self.mask.as_deref() {
+                    Some(mask) => (actual & mask[index]) == (*value_byte & mask[index]),
+                    None => actual == *value_byte,
+                }
+            })
+        })
     }
 }
 
@@ -238,7 +264,9 @@ fn validate_offsets(offset_begin: usize, offset_end: usize) -> MimeResult<()> {
 /// when a numeric value has the wrong width.
 fn validate_value_width(value_type: MagicValueType, value: &[u8]) -> MimeResult<()> {
     if value.is_empty() {
-        return Err(MimeError::invalid_matcher("magic matcher value must not be empty"));
+        return Err(MimeError::invalid_matcher(
+            "magic matcher value must not be empty",
+        ));
     }
     if let Some(width) = value_type.numeric_width()
         && value.len() != width
@@ -271,23 +299,6 @@ fn validate_mask_width(value: &[u8], mask: Option<&[u8]>) -> MimeResult<()> {
     Ok(())
 }
 
-/// Orders numeric bytes for matching.
-///
-/// # Parameters
-/// - `value_type`: Numeric matcher type.
-/// - `bytes`: Big-endian bytes stored in the matcher.
-///
-/// # Returns
-/// Bytes in the order expected in the input file.
-#[must_use]
-fn ordered_numeric_bytes(value_type: MagicValueType, bytes: &[u8]) -> Vec<u8> {
-    if value_type.uses_little_endian_order() {
-        bytes.iter().rev().copied().collect()
-    } else {
-        bytes.to_vec()
-    }
-}
-
 /// Tests whether value bytes match at a specific offset.
 ///
 /// # Parameters
@@ -302,11 +313,15 @@ fn ordered_numeric_bytes(value_type: MagicValueType, bytes: &[u8]) -> Vec<u8> {
 #[inline]
 fn value_matches_at(bytes: &[u8], offset: usize, value: &[u8], mask: Option<&[u8]>) -> bool {
     match mask {
-        Some(mask) => value
-            .iter()
-            .zip(mask.iter())
-            .enumerate()
-            .all(|(index, (value_byte, mask_byte))| (bytes[offset + index] & mask_byte) == (*value_byte & mask_byte)),
+        Some(mask) => {
+            value
+                .iter()
+                .zip(mask.iter())
+                .enumerate()
+                .all(|(index, (value_byte, mask_byte))| {
+                    (bytes[offset + index] & mask_byte) == (*value_byte & mask_byte)
+                })
+        }
         None => value
             .iter()
             .enumerate()
