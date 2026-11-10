@@ -70,3 +70,19 @@ fn test_matches_supports_question_negated_and_literal_class_edges() {
     assert_eq!(50, question.weight());
     assert!(!question.case_sensitive());
 }
+
+#[test]
+fn test_new_reports_invalid_glob_patterns_as_invalid_xml_attributes() {
+    for pattern in ["[]", "[!]", "[z-a]"] {
+        let error = MimeGlob::new(pattern, 50, false).expect_err("invalid glob should return an error");
+        assert!(matches!(
+            error,
+            MimeError::InvalidXmlAttribute {
+                ref element,
+                ref attribute,
+                ref value,
+                ref reason,
+            } if element == "glob" && attribute == "pattern" && value == pattern && !reason.is_empty()
+        ));
+    }
+}

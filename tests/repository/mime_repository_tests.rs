@@ -549,3 +549,39 @@ fn test_detect_by_filename_and_content_preserve_ties() {
     assert_eq!(2, repository.detect_by_filename("file.tie").len());
     assert_eq!(2, repository.detect_by_content(b"TIE").len());
 }
+
+#[test]
+fn test_from_xml_reports_invalid_and_oversized_globs_without_panicking() {
+    let namespace = "http://www.freedesktop.org/standards/shared-mime-info";
+    let invalid_patterns = ["[]", "[!]", "[z-a]"];
+    for pattern in invalid_patterns {
+        let xml = format!(
+            r#"<mime-info xmlns="{namespace}"><mime-type type="application/x-test"><glob pattern="{pattern}"/></mime-type></mime-info>"#
+        );
+        let error = MimeRepository::from_xml(&xml).expect_err("invalid glob XML should return an error");
+        assert!(matches!(
+            error,
+            MimeError::InvalidXmlAttribute {
+                ref element,
+                ref attribute,
+                ref value,
+                ref reason,
+            } if element == "glob" && attribute == "pattern" && value == pattern && !reason.is_empty()
+        ));
+    }
+
+    let oversized_pattern = "a".repeat(1_000_000);
+    let xml = format!(
+        r#"<mime-info xmlns="{namespace}"><mime-type type="application/x-test"><glob pattern="{oversized_pattern}"/></mime-type></mime-info>"#
+    );
+    let error = MimeRepository::from_xml(&xml).expect_err("oversized regex should return an error");
+    assert!(matches!(
+        error,
+        MimeError::InvalidXmlAttribute {
+            ref element,
+            ref attribute,
+            ref value,
+            ref reason,
+        } if element == "glob" && attribute == "pattern" && value == &oversized_pattern && !reason.is_empty()
+    ));
+}

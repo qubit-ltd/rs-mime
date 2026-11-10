@@ -55,7 +55,10 @@ impl MimeGlob {
     ///
     /// # Errors
     /// Returns [`MimeError::InvalidGlobWeight`](crate::MimeError::InvalidGlobWeight) when `weight` is greater than
-    /// [`MimeGlob::MAX_WEIGHT`].
+    /// [`MimeGlob::MAX_WEIGHT`], or
+    /// [`MimeError::InvalidXmlAttribute`](crate::MimeError::InvalidXmlAttribute)
+    /// when the pattern is invalid or its regular expression exceeds the
+    /// compiler's configured limits.
     pub fn new(pattern: &str, weight: u16, case_sensitive: bool) -> MimeResult<Self> {
         if weight > Self::MAX_WEIGHT {
             return Err(MimeError::InvalidGlobWeight { weight });
@@ -64,7 +67,7 @@ impl MimeGlob {
         let matcher = RegexBuilder::new(&regex)
             .case_insensitive(!case_sensitive)
             .build()
-            .expect("generated MIME glob regex should be valid");
+            .map_err(|error| MimeError::invalid_attr("glob", "pattern", pattern, error.to_string()))?;
         Ok(Self {
             weight,
             case_sensitive,
