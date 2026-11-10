@@ -184,10 +184,38 @@ static DEFAULT_PRECISE_DETECTION_PATTERNS: &[&str] = &["webm", "ogg"];
 static DEFAULT_AMBIGUOUS_MIME_MAPPING_ENTRIES: &[&str] = &["webm:video/webm,audio/webm", "ogg:video/ogg,audio/ogg"];
 
 impl MimeConfig {
-    /// Loads configuration from environment variables and defaults.
+    /// Loads configuration from environment variables, falling back as a
+    /// whole to built-in defaults if any environment value is invalid.
+    ///
+    /// The first call to [`MimeConfig::default`] initializes the process-wide
+    /// default from the environment through this method. That configuration
+    /// is then kept as a snapshot; changing environment variables does not
+    /// update it automatically. Use [`MimeConfig::reload_default_from_env`]
+    /// to explicitly reload it. A failed reload returns the error and leaves
+    /// the existing default unchanged.
+    ///
+    /// `load` intentionally does not report parsing errors. Applications that
+    /// need invalid configuration to fail startup should use
+    /// [`MimeConfig::from_env`] and propagate its `Result`, then optionally
+    /// install the parsed configuration with [`MimeConfig::set_default`]:
+    ///
+    /// ```rust
+    /// use qubit_mime::{MimeConfig, MimeResult};
+    ///
+    /// fn validate_startup() -> MimeResult<MimeConfig> {
+    ///     MimeConfig::from_env()
+    /// }
+    ///
+    /// fn install_startup_config() -> MimeResult<()> {
+    ///     let config = validate_startup()?;
+    ///     MimeConfig::set_default(config);
+    ///     Ok(())
+    /// }
+    /// ```
     ///
     /// # Returns
-    /// Configuration used by default detector instances.
+    /// Parsed environment configuration, or the complete built-in
+    /// configuration when any environment value is invalid.
     #[must_use]
     pub fn load() -> Self {
         match Self::from_env() {

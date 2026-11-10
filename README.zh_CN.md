@@ -145,6 +145,8 @@ Registry。
 常用配置键包括 `mime.detector.default`、`mime.detector.fallbacks`、
 `mime.max.buffer.size`、`mime.command.timeout` 和 `mime.command.output.max.bytes`。
 完整配置项请参阅 `MimeConfig` 和用户手册。
+任一环境值无效时，`MimeConfig::load()` 会回退到整套内置默认值。严格启动校验和显式重载方式
+见[环境配置说明](doc/user_guide.zh_CN.md#环境配置与整体回退)。
 
 加载 MIME repository 时，非法文件名 glob 会以结构化的
 `MimeError::InvalidXmlAttribute` 错误返回。

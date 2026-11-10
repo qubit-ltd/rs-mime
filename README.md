@@ -166,6 +166,9 @@ Important configuration keys include `mime.detector.default`,
 `mime.detector.fallbacks`, `mime.max.buffer.size`,
 `mime.command.timeout`, and `mime.command.output.max.bytes`. See
 `MimeConfig` and the user guide for the full configuration surface.
+`MimeConfig::load()` falls back to all built-in defaults if any environment value is invalid; see
+the [environment configuration guide](doc/user_guide.md#environment-configuration-and-fallback) for
+strict startup validation and explicit reload behavior.
 
 Invalid filename glob patterns are returned as structured
 `MimeError::InvalidXmlAttribute` errors when the MIME repository is loaded.

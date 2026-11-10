@@ -130,6 +130,25 @@ The `file` provider requires the system `file` executable when content must be
 inspected. The `repository` fallback remains usable when that provider is not
 available and the selection policy permits fallback.
 
+## Environment Configuration and Fallback
+
+`MimeConfig::load()` reads environment values and returns a configuration. The process-wide default's
+lazy initializer calls this method. If any value is invalid, it discards the entire environment
+configuration and uses all built-in defaults; it does not return the parsing error. For example, a
+valid `QUBIT_MIME_MAX_BUFFER_SIZE=33554432` is also ignored if
+`QUBIT_MIME_ENABLE_PRECISE_DETECTION=maybe` is invalid, so the buffer limit returns to its built-in
+default too. This whole-configuration fallback keeps default construction available, but can hide a
+mistyped setting.
+
+The process-wide default is initialized from the environment when it is first needed. Later changes
+to environment variables do not update that snapshot automatically. For strict startup validation,
+call `MimeConfig::from_env()?` and let the error stop startup. If the parsed value should become the
+process-wide default, call `MimeConfig::set_default(config)` only after parsing succeeds.
+`MimeConfig::reload_default_from_env()?` is the explicit reload path: it replaces the current
+default on success and returns an error while keeping the previous default on failure. Use
+`load()` when silent fallback is desired; use `from_env()` or explicit reload when configuration
+errors need to be visible.
+
 Precise media detection is opt-in: set `mime.enable.precise.detection` to
 `true` and explicitly inject a `MediaStreamClassifier` into the detector core.
 Enabling the setting alone does not create or install an `ffprobe` classifier.

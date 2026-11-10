@@ -120,6 +120,20 @@ fn configured_detector() -> Result<(), Box<dyn std::error::Error>> {
 `file` Provider 在检查内容时要求系统中存在 `file` 可执行文件。当它不可用且选择策略
 允许 fallback 时，`repository` 可以继续提供检测服务。
 
+## 环境配置与整体回退
+
+`MimeConfig::load()` 会读取环境变量并返回配置；进程级默认值的延迟初始化会调用这个方法。
+只要有一个值无效，就会丢弃整份环境配置，改用完整的内置默认值；这个方法不会返回解析错误。例如，虽然
+`QUBIT_MIME_MAX_BUFFER_SIZE=33554432` 有效，但若
+`QUBIT_MIME_ENABLE_PRECISE_DETECTION=maybe` 无法解析，缓冲区上限也会一并回到内置默认值。
+这种回退让默认配置仍可用，但也可能掩盖拼错或格式错误的设置。
+
+进程级默认值会在首次需要时从环境变量初始化。之后修改环境变量不会自动更新已有快照。
+如果应用要求启动时发现配置错误，应调用 `MimeConfig::from_env()?` 并向上传播错误。需要将
+解析后的配置设为进程级默认值时，应在解析成功后再调用 `MimeConfig::set_default(config)`。
+`MimeConfig::reload_default_from_env()?` 用于显式重载：成功时替换当前默认值；失败时返回错误，
+并保留原有默认值。需要静默回退时使用 `load()`；需要看到配置错误时使用 `from_env()` 或显式重载。
+
 精确媒体检测默认关闭。使用时必须同时将 `mime.enable.precise.detection` 设为 `true`，并向
 检测器 core 显式注入 `MediaStreamClassifier`。仅打开配置不会自动创建或安装 `ffprobe`
 classifier。
