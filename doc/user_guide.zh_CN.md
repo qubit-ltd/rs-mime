@@ -22,12 +22,12 @@
 - `MimeDetectorRegistry`：负责解析 Provider；`MimeConfig` 负责提供 Provider 选择、
   fallback、命令、classifier 和缓冲区设置。
 
-组合检测由 `MimeDetectionPolicy` 控制。`PreferFilename` 在文件名已有明确结果时不
-再检查内容；`VerifyContent` 即使文件名明确也会检查内容，且内容没有候选时返回 `None`。
-如果希望内容优先，但仍保留文件名作为 fallback，请使用 `ContentFirst`。两种来源都没有
-匹配时，成功结果为 `None`；错误会单独返回。迁移旧的组合检测逻辑时应明确选择策略：
-`ContentFirst` 保留文件名 fallback，`VerifyContent` 则要求内容匹配。其他策略适用于不同的文件名
-与内容优先级需求，具体语义请参阅 API 文档。
+组合检测由 `MimeDetectionPolicy` 控制。`PreferFilename` 在文件名只有一个明确结果时
+直接采用该结果，不运行内容检测或媒体分类；`VerifyContent` 即使文件名明确也会检查内容，
+且内容没有候选时返回 `None`。如果希望内容优先，但仍保留文件名作为 fallback，请使用
+`ContentFirst`。如果旧代码依赖对文件名候选进行媒体分类，内容必须匹配时改用
+`VerifyContent`，而文件名仍可作为 fallback 时改用 `ContentFirst`。两种来源都没有匹配时，
+成功结果为 `None`；错误会单独返回。
 
 ## 贯穿场景：检查上传文件
 
@@ -108,6 +108,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - `detect_file(path, policy)` 读取本地文件。
 - `MimeDetector::detect_path` 和 `detect_async_path` 通过同步或异步文件系统 facade 读取。
 
+默认的 `MimeContentBackend::detect_reader` 从 reader 当前位置检测到 EOF，然后恢复起始位置。
+默认缓冲预算为 16 MiB。实现可以覆盖 `max_reader_buffer_size`，也可以提供受控的
+`detect_reader`，通过随机访问处理更大的资源。adapter 的 Prefix 请求使用
+`MimeConfig::max_buffer_size()` 预算，并通过偏移零点对应调用者当前位置的视图转发完整 reader
+检测，因此下游通常从资源开头开始检测的 hook 只会看到当前位置至 EOF 的内容。检测和位置恢复
+都失败时，位置恢复错误优先；否则返回读取或检测错误。
+
 这些入口都返回 `MimeResult<Option<String>>`。应先处理外层错误，再解释可选的 MIME 名称。
 
 ## 进阶用法
@@ -146,6 +153,7 @@ classifier；如果环境提供 `ffprobe`，再使用 `FfprobeCommandMediaStream
 - `CompleteContentRequired`：后端要求完整资源；
 - `Command`、`DetectorUnavailable` 或 `DetectorBackend`：Native Provider 不可用或执行失败；
 - `Config` 或 `InvalidConfigurationValue`：配置无效。
+- `InvalidXmlAttribute`：文件名 glob 无法编译，包括超出 regex 编译大小限制的模式。
 
 切换 fallback 前应检查具体错误。成功返回 `None` 不表示运行失败，只表示没有匹配候选。
 

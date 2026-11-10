@@ -50,10 +50,13 @@ fn main() -> qubit_mime::MimeResult<()> {
 ```
 
 `detect_by_filename` and `detect_by_content` can be used independently.
-`MimeDetectionPolicy::PreferFilename` accepts a definitive filename result
-without content verification; `VerifyContent` checks content even when the
-filename looks definitive and requires a content match. Use `ContentFirst` to
-keep the filename result as a fallback when content has no candidate. A
+`MimeDetectionPolicy::PreferFilename` accepts a unique definitive filename
+result without running content detection or media classification;
+`VerifyContent` checks content even when the filename looks definitive and
+requires a content match. Use `ContentFirst` to keep the filename result as a
+fallback when content has no candidate. If an application previously relied on
+classification of a filename-selected media type, use `VerifyContent` when the
+content must match or `ContentFirst` when the filename remains a fallback. A
 successful detection returns `Some(mime)`; `None` means that no candidate
 matched.
 
@@ -79,6 +82,12 @@ must provide their own asynchronous path hook.
   `file --mime-type --brief` command for content detection.
 - Optional `FfprobeCommandMediaStreamClassifier` for refining ambiguous media
   streams such as audio-only and video-only WebM or Ogg inputs.
+
+The default `MimeContentBackend::detect_reader` reads from the reader's current
+position through EOF and restores that position afterward. Its default buffer
+budget is 16 MiB; a backend can override `max_reader_buffer_size` or provide a
+controlled reader hook for random-access resources larger than the budget. If
+reading and restoring both fail, the restore error is returned.
 
 The detector identifies MIME types; it does not establish that a file is safe
 to open or execute. Native command providers also depend on the corresponding
@@ -133,6 +142,9 @@ Important configuration keys include `mime.detector.default`,
 `mime.detector.fallbacks`, `mime.max.buffer.size`,
 `mime.command.timeout`, and `mime.command.output.max.bytes`. See
 `MimeConfig` and the user guide for the full configuration surface.
+
+Invalid filename glob patterns are returned as structured
+`MimeError::InvalidXmlAttribute` errors when the MIME repository is loaded.
 
 ## API and Further Reading
 

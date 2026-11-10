@@ -27,13 +27,14 @@ The public API has three useful layers:
   selection, fallback, command, classifier, and buffer settings.
 
 `MimeDetectionPolicy` controls combined detection. `PreferFilename` accepts a
-definitive filename result without checking content. `VerifyContent` checks
-content even when the filename is definitive and returns `None` if content has
-no candidate. Use `ContentFirst` when content should win when available but the
-filename should remain a fallback. When migrating combined detection, choose the
-policy explicitly: `ContentFirst` keeps the filename fallback, while
-`VerifyContent` requires a content match. If neither source matches, the
-successful result is `None`; an error is reported separately.
+unique definitive filename result without running content detection or media
+classification. `VerifyContent` checks content even when the filename is
+definitive and returns `None` if content has no candidate. Use `ContentFirst`
+when content should win when available but the filename should remain a
+fallback. When migrating code that relied on classification of a
+filename-selected media type, choose `VerifyContent` if the content must match
+or `ContentFirst` if the filename remains a fallback. If neither source
+matches, the successful result is `None`; an error is reported separately.
 
 ## Scenario: Inspect an Upload
 
@@ -120,6 +121,18 @@ Use the simplest entry point that matches the input:
 - `MimeDetector::detect_path` and `detect_async_path` read through the
   synchronous or asynchronous filesystem facade.
 
+The default `MimeContentBackend::detect_reader` examines bytes from the
+reader's current position through EOF, then restores the starting position.
+Its default buffer budget is 16 MiB. Implementations can override
+`max_reader_buffer_size` or implement a controlled `detect_reader` for
+random-access inspection of larger resources. The adapter uses the
+`MimeConfig::max_buffer_size()` budget for prefix requests and forwards complete
+reader detection through a view whose offset zero is the caller's current
+position. A downstream reader hook that normally treats offset zero as the
+whole resource therefore sees only the remaining content window through EOF.
+If detection and position restoration both fail, the restoration error takes
+precedence; otherwise a read or detection error is returned.
+
 All these results use `MimeResult<Option<String>>`. Handle the outer error
 before interpreting the optional MIME name.
 
@@ -167,6 +180,8 @@ Important `MimeError` cases include:
 - `Command`, `DetectorUnavailable`, or `DetectorBackend` for native provider
   availability and execution failures;
 - `Config` or `InvalidConfigurationValue` for invalid settings.
+- `InvalidXmlAttribute` when a filename glob cannot be compiled, including
+  patterns rejected by the regex size limit.
 
 Log or inspect the concrete error before switching to a fallback. A successful
 `None` is not an operational failure; it means that no candidate matched.

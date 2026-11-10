@@ -45,10 +45,12 @@ fn main() -> qubit_mime::MimeResult<()> {
 }
 ```
 
-需要时可以分别调用 `detect_by_filename` 和 `detect_by_content`。当文件名已有明确
-结果时，`MimeDetectionPolicy::PreferFilename` 不再检查内容；`VerifyContent` 仍会
-检查内容并要求内容匹配。若内容没有候选时仍需保留文件名结果作为 fallback，请使用
-`ContentFirst`。检测成功返回 `Some(mime)`，返回 `None` 表示没有匹配候选。
+需要时可以分别调用 `detect_by_filename` 和 `detect_by_content`。当文件名只有一个明确
+结果时，`MimeDetectionPolicy::PreferFilename` 不会运行内容检测或媒体分类；`VerifyContent`
+仍会检查内容并要求内容匹配。若内容没有候选时仍需保留文件名结果作为 fallback，请使用
+`ContentFirst`。如果应用以前依赖对文件名候选进行媒体分类，内容必须匹配时改用
+`VerifyContent`，而文件名仍可作为 fallback 时改用 `ContentFirst`。检测成功返回
+`Some(mime)`，返回 `None` 表示没有匹配候选。
 
 对于内置 detector 和通过本 crate blanket `MimeDetector` 实现接入的 backend，
 `detect_prefix` 会匹配文件名和内容候选，不会把前缀交给需要完整媒体内容的
@@ -67,6 +69,10 @@ classifier。直接实现 `MimeDetector` 的类型自行决定其行为。默认
 - 可选的 `FileCommandMimeDetector` 使用系统命令 `file --mime-type --brief` 检查内容。
 - 可选的 `FfprobeCommandMediaStreamClassifier` 可进一步区分 WebM、Ogg 等媒体流中的
   仅音频和仅视频结果。
+
+默认的 `MimeContentBackend::detect_reader` 从 reader 当前位置读取到 EOF，之后恢复该位置。
+默认缓冲预算为 16 MiB；backend 可以覆盖 `max_reader_buffer_size`，或实现受控 reader hook，
+以随机访问方式处理更大的资源。读取和位置恢复都失败时，返回位置恢复错误。
 
 检测器只负责判断 MIME 类型，不能证明文件可以安全打开或执行。Native command
 Provider 依赖对应的可执行文件，也可能因命令不可用、超时或输出无效而失败。
@@ -117,6 +123,9 @@ Registry。
 常用配置键包括 `mime.detector.default`、`mime.detector.fallbacks`、
 `mime.max.buffer.size`、`mime.command.timeout` 和 `mime.command.output.max.bytes`。
 完整配置项请参阅 `MimeConfig` 和用户手册。
+
+加载 MIME repository 时，非法文件名 glob 会以结构化的
+`MimeError::InvalidXmlAttribute` 错误返回。
 
 ## API 与延伸阅读
 
