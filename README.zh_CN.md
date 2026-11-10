@@ -70,9 +70,13 @@ classifier。直接实现 `MimeDetector` 的类型自行决定其行为。默认
 - 可选的 `FfprobeCommandMediaStreamClassifier` 可进一步区分 WebM、Ogg 等媒体流中的
   仅音频和仅视频结果。
 
-默认的 `MimeContentBackend::detect_reader` 从 reader 当前位置读取到 EOF，之后恢复该位置。
-默认缓冲预算为 16 MiB；backend 可以覆盖 `max_reader_buffer_size`，或实现受控 reader hook，
-以随机访问方式处理更大的资源。读取和位置恢复都失败时，返回位置恢复错误。
+默认的 `MimeContentBackend::detect_reader` 从 reader 当前位置读取。`Prefix(n)` 最多读取
+n 字节，若提前遇到 EOF 则停止；`Complete` 在默认 16 MiB 预算（或覆盖后的预算）内读到
+EOF，并额外探测一个字节以检查是否超限。两者都会恢复起始位置；恢复错误优先。默认
+`MimeDetectorBackend` reader hook 只支持其前缀，遇到 `Complete` 会返回
+`CompleteContentRequired`，因此完整内容 backend 必须覆盖该 hook。adapter 委托给 backend
+reader hook；自定义随机访问覆盖仍可使用。无文件名时，若同一 MIME 对应的多个映射具有不同
+MIME 对，细化会保留原 MIME；可传入匹配的文件名或消除映射冲突来指定细化对。
 
 检测器只负责判断 MIME 类型，不能证明文件可以安全打开或执行。Native command
 Provider 依赖对应的可执行文件，也可能因命令不可用、超时或输出无效而失败。

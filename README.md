@@ -83,11 +83,17 @@ must provide their own asynchronous path hook.
 - Optional `FfprobeCommandMediaStreamClassifier` for refining ambiguous media
   streams such as audio-only and video-only WebM or Ogg inputs.
 
-The default `MimeContentBackend::detect_reader` reads from the reader's current
-position through EOF and restores that position afterward. Its default buffer
-budget is 16 MiB; a backend can override `max_reader_buffer_size` or provide a
-controlled reader hook for random-access resources larger than the budget. If
-reading and restoring both fail, the restore error is returned.
+The default `MimeContentBackend::detect_reader` reads from the current position.
+`Prefix(n)` reads at most `n` bytes and stops early at EOF. `Complete` reads to
+EOF within its default 16 MiB budget (or an overridden budget), then probes one
+extra byte to detect overflow. Both restore the starting position; a restore
+error takes precedence. The `MimeDetectorBackend` default reader hook only
+supports its prefix and returns `CompleteContentRequired` for `Complete`, so a
+complete-content backend must override that hook. The adapter delegates to the
+backend reader hook; custom random-access overrides remain supported. When
+multiple no-filename mappings associate one MIME type with different pairs,
+refinement preserves the original MIME type; pass a matching filename or remove
+the mapping conflict to select a pair.
 
 The detector identifies MIME types; it does not establish that a file is safe
 to open or execute. Native command providers also depend on the corresponding

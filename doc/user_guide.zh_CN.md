@@ -108,12 +108,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - `detect_file(path, policy)` 读取本地文件。
 - `MimeDetector::detect_path` 和 `detect_async_path` 通过同步或异步文件系统 facade 读取。
 
-默认的 `MimeContentBackend::detect_reader` 从 reader 当前位置检测到 EOF，然后恢复起始位置。
-默认缓冲预算为 16 MiB。实现可以覆盖 `max_reader_buffer_size`，也可以提供受控的
-`detect_reader`，通过随机访问处理更大的资源。adapter 的 Prefix 请求使用
-`MimeConfig::max_buffer_size()` 预算，并通过偏移零点对应调用者当前位置的视图转发完整 reader
-检测，因此下游通常从资源开头开始检测的 hook 只会看到当前位置至 EOF 的内容。检测和位置恢复
-都失败时，位置恢复错误优先；否则返回读取或检测错误。
+默认的 `MimeContentBackend::detect_reader` 从 reader 当前位置读取。`Prefix(n)` 最多读取 n
+字节，提前遇到 EOF 时停止；`Complete` 在默认 16 MiB 缓冲预算（或覆盖后的预算）内读到 EOF，
+并额外探测一个字节以检查超限。两者都会恢复起始位置；读取和恢复都失败时，恢复错误优先。
+
+这些入口对应不同 backend 契约。默认 `MimeDetectorBackend` reader hook 只读取其前缀；backend
+声明 `Complete` 时会返回 `CompleteContentRequired`。需要完整资源的 backend 必须覆盖
+`guess_from_reader`，自行实现有界读取和位置恢复；若本地文件需要特殊处理，还应覆盖
+`guess_from_file`。`MimeDetectorAdapter` 通过偏移零点对应调用者当前位置的视图委托给该 reader
+hook；自定义随机访问覆盖仍可使用。adapter 的 Prefix 请求使用
+`MimeConfig::max_buffer_size()` 预算。无文件名且同一 MIME 的精确检测映射对应不同 MIME 对时，
+细化会保留原 MIME，且不会调用 classifier。传入匹配文件名或消除映射冲突即可指定细化对。
 
 这些入口都返回 `MimeResult<Option<String>>`。应先处理外层错误，再解释可选的 MIME 名称。
 

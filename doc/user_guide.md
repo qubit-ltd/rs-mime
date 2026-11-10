@@ -121,17 +121,25 @@ Use the simplest entry point that matches the input:
 - `MimeDetector::detect_path` and `detect_async_path` read through the
   synchronous or asynchronous filesystem facade.
 
-The default `MimeContentBackend::detect_reader` examines bytes from the
-reader's current position through EOF, then restores the starting position.
-Its default buffer budget is 16 MiB. Implementations can override
-`max_reader_buffer_size` or implement a controlled `detect_reader` for
-random-access inspection of larger resources. The adapter uses the
-`MimeConfig::max_buffer_size()` budget for prefix requests and forwards complete
-reader detection through a view whose offset zero is the caller's current
-position. A downstream reader hook that normally treats offset zero as the
-whole resource therefore sees only the remaining content window through EOF.
-If detection and position restoration both fail, the restoration error takes
-precedence; otherwise a read or detection error is returned.
+The default `MimeContentBackend::detect_reader` reads from the reader's current
+position. `Prefix(n)` reads at most `n` bytes and stops early at EOF. `Complete`
+reads through EOF within the default 16 MiB buffer budget, or an overridden
+budget, and probes one extra byte to detect overflow. Both restore the starting
+position; if reading and restoration both fail, the restoration error takes
+precedence.
+
+These are separate backend contracts. The default `MimeDetectorBackend`
+reader hook reads only its prefix and returns `CompleteContentRequired` when the
+backend declares `Complete`. A backend requiring the whole resource must
+override `guess_from_reader`, implement bounded reading and position
+restoration, and override `guess_from_file` when local file handling needs
+special behavior. `MimeDetectorAdapter` delegates to that reader hook through
+a view whose offset zero is the caller's current position; a custom
+random-access override remains supported. The adapter uses
+`MimeConfig::max_buffer_size()` for prefix requests. If no filename is supplied
+and matching precise-detection mappings associate a MIME type with different
+pairs, refinement preserves the original MIME type without classification.
+Pass a matching filename or remove the conflicting mapping to choose a pair.
 
 All these results use `MimeResult<Option<String>>`. Handle the outer error
 before interpreting the optional MIME name.
