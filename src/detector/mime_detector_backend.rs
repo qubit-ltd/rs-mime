@@ -9,6 +9,7 @@
 
 use std::fmt::Debug;
 use std::future::Future;
+use std::io::SeekFrom;
 use std::path::Path;
 use std::pin::Pin;
 
@@ -327,10 +328,12 @@ where
         )
     }
 
-    /// Detects a MIME type from a seekable reader.
+    /// Detects a MIME type from a seekable reader, treating byte zero as the
+    /// start of the resource and restoring the reader's original position.
     ///
     /// # Parameters
-    /// - `reader`: Reader to inspect; its original position is restored.
+    /// - `reader`: Reader to inspect from byte zero; its original position is
+    ///   restored.
     /// - `filename`: Optional path or basename used for filename detection.
     /// - `policy`: Strategy for resolving filename and content candidates.
     ///
@@ -348,13 +351,30 @@ where
         let from_filename = filename
             .map(|filename| self.guess_from_filename(filename))
             .unwrap_or_default();
-        let (from_content, _content) = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
-            (Vec::new(), Vec::new())
-        } else {
-            self.guess_from_reader(reader)?
-        };
-        self.core()
-            .select_reader_result(&from_filename, &from_content, filename, policy, reader)
+        if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+            return self
+                .core()
+                .select_reader_result(&from_filename, &[], filename, policy, reader);
+        }
+
+        let original_position = reader.stream_position()?;
+        if let Err(error) = reader.seek(SeekFrom::Start(0)) {
+            return match reader.seek(SeekFrom::Start(original_position)) {
+                Ok(_) => Err(crate::MimeError::Io(error)),
+                Err(restore_error) => Err(crate::MimeError::Io(restore_error)),
+            };
+        }
+        let detection_result = (|| {
+            let (from_content, _content) = self.guess_from_reader(reader)?;
+            self.core()
+                .select_reader_result(&from_filename, &from_content, filename, policy, reader)
+        })();
+        let restore_result = reader.seek(SeekFrom::Start(original_position));
+        match (detection_result, restore_result) {
+            (_, Err(error)) => Err(crate::MimeError::Io(error)),
+            (Ok(result), Ok(_)) => Ok(result),
+            (Err(error), Ok(_)) => Err(error),
+        }
     }
 
     /// Detects a MIME type from a local file.

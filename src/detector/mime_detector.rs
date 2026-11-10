@@ -178,10 +178,12 @@ pub trait MimeDetector: Debug + Send + Sync {
     fn max_buffer_size(&self) -> usize;
 
     /// Detects a MIME type from a seekable reader without consuming its
-    /// position.
+    /// position. Detection treats byte zero as the start of the resource,
+    /// regardless of the reader's initial position.
     ///
     /// # Parameters
-    /// - `reader`: Reader to inspect. The original stream position is restored.
+    /// - `reader`: Reader to inspect from byte zero. The original stream
+    ///   position is restored.
     /// - `filename`: Optional path or basename used for filename detection.
     /// - `policy`: Strategy for resolving filename and content results.
     ///

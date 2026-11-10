@@ -6,11 +6,18 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::path::Path;
+use std::sync::Arc;
 
+use qubit_config::Config;
 use qubit_io::Output;
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::options::LocalTempFileOptions;
+use qubit_mime::MediaStreamClassifier;
+use qubit_mime::MediaStreamType;
 use qubit_mime::MimeConfig;
 use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeDetector;
@@ -29,6 +36,94 @@ struct FailingBackend {
     core: MimeDetectorCore,
 }
 
+#[derive(Debug)]
+struct ReaderScopeBackend {
+    core: MimeDetectorCore,
+}
+
+#[derive(Debug)]
+struct WholeResourceClassifier;
+
+struct SeekFailReader {
+    inner: std::io::Cursor<Vec<u8>>,
+    failed_positions: Vec<u64>,
+}
+
+struct ReadFailReader {
+    position: u64,
+}
+
+#[derive(Debug)]
+struct FailingWholeResourceClassifier;
+
+impl Read for SeekFailReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buffer)
+    }
+}
+
+impl Seek for SeekFailReader {
+    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+        if let SeekFrom::Start(position) = from
+            && self.failed_positions.contains(&position)
+        {
+            return Err(std::io::Error::other(format!("seek to {position} failed")));
+        }
+        self.inner.seek(from)
+    }
+}
+
+impl Read for ReadFailReader {
+    fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.position += 1;
+        Err(std::io::Error::other("read failed"))
+    }
+}
+
+impl Seek for ReadFailReader {
+    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+        match from {
+            SeekFrom::Start(position) => {
+                self.position = position;
+                Ok(position)
+            }
+            SeekFrom::Current(0) => Ok(self.position),
+            SeekFrom::Current(_) | SeekFrom::End(_) => Err(std::io::Error::other("unsupported seek")),
+        }
+    }
+}
+
+impl MediaStreamClassifier for WholeResourceClassifier {
+    fn classify_file(&self, _file: &Path) -> Result<MediaStreamType, MimeError> {
+        Ok(MediaStreamType::AudioOnly)
+    }
+
+    fn classify_reader(&self, reader: &mut dyn Read) -> Result<MediaStreamType, MimeError> {
+        let mut first_byte = [0_u8; 1];
+        reader.read_exact(&mut first_byte)?;
+        if first_byte[0] != b'w' {
+            return Err(MimeError::InvalidClassifierInput {
+                reason: "classifier did not receive the whole resource".to_owned(),
+            });
+        }
+        Ok(MediaStreamType::AudioOnly)
+    }
+}
+
+impl MediaStreamClassifier for FailingWholeResourceClassifier {
+    fn classify_file(&self, _file: &Path) -> Result<MediaStreamType, MimeError> {
+        Err(MimeError::InvalidClassifierInput {
+            reason: "forced classifier failure".to_owned(),
+        })
+    }
+
+    fn classify_reader(&self, _reader: &mut dyn Read) -> Result<MediaStreamType, MimeError> {
+        Err(MimeError::InvalidClassifierInput {
+            reason: "forced classifier failure".to_owned(),
+        })
+    }
+}
+
 impl FailingBackend {
     /// Creates a backend that fails every content inspection.
     fn new() -> Self {
@@ -43,6 +138,27 @@ impl Backend {
         Self {
             core: MimeDetectorCore::from_mime_config(MimeConfig::default()),
         }
+    }
+}
+
+impl ReaderScopeBackend {
+    fn new() -> Self {
+        let mut config = Config::new();
+        config
+            .set(qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)
+            .expect("precise detection should be configurable");
+        config
+            .set(qubit_mime::CONFIG_MIME_PRECISE_DETECTION_PATTERNS, "webm")
+            .expect("precise detection patterns should be configurable");
+        config
+            .set(
+                qubit_mime::CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+                "webm:video/webm,audio/webm",
+            )
+            .expect("ambiguous MIME mapping should be configurable");
+        let mut core = MimeDetectorCore::new(MimeConfig::from_config(&config).expect("config should parse"));
+        core.set_media_stream_classifier(Some(Arc::new(WholeResourceClassifier)));
+        Self { core }
     }
 }
 
@@ -88,6 +204,176 @@ impl MimeDetectorBackend for FailingBackend {
     fn guess_from_content(&self, _content: &[u8]) -> MimeResult<Vec<String>> {
         Err(MimeError::detector_backend("failing", "forced failure"))
     }
+}
+
+impl MimeDetectorBackend for ReaderScopeBackend {
+    fn core(&self) -> &MimeDetectorCore {
+        &self.core
+    }
+
+    fn max_test_bytes(&self) -> usize {
+        4
+    }
+
+    fn guess_from_filename(&self, _filename: &str) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+        Ok(content
+            .starts_with(b"webm")
+            .then(|| "video/webm".to_owned())
+            .into_iter()
+            .collect())
+    }
+}
+
+#[test]
+fn test_top_level_reader_detection_uses_whole_resource_for_backend_and_classifier() {
+    let backend = ReaderScopeBackend::new();
+    let mut reader = std::io::Cursor::new(b"webmTAIL".to_vec());
+    reader.set_position(4);
+
+    let detected = backend
+        .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+        .expect("whole-resource reader detection should succeed");
+
+    assert_eq!(Some("audio/webm".to_owned()), detected);
+    assert_eq!(4, reader.position(), "detection should restore the input position");
+}
+
+#[test]
+fn test_top_level_reader_detection_restores_position_after_backend_error() {
+    let backend = FailingBackend::new();
+    let mut reader = std::io::Cursor::new(b"content".to_vec());
+    reader.set_position(4);
+
+    assert!(matches!(
+        backend.detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent),
+        Err(MimeError::DetectorBackend { .. })
+    ));
+    assert_eq!(4, reader.position());
+}
+
+#[test]
+fn test_top_level_reader_detection_restores_position_after_read_error() {
+    let backend = Backend::new();
+    let mut reader = ReadFailReader { position: 4 };
+
+    let error = backend
+        .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+        .expect_err("reader failure should be reported");
+
+    assert!(matches!(error, MimeError::Io(ref error) if error.to_string() == "read failed"));
+    assert_eq!(4, reader.position);
+}
+
+#[test]
+fn test_top_level_reader_detection_reports_empty_and_eof_windows() {
+    let backend = Backend::new();
+    let mut empty = std::io::Cursor::new(Vec::new());
+    assert_eq!(
+        None,
+        backend
+            .detect_reader(&mut empty, None, MimeDetectionPolicy::VerifyContent)
+            .expect("empty input should be a valid detection result")
+    );
+    assert_eq!(0, empty.position());
+
+    let mut at_eof = std::io::Cursor::new(b"%PDF-1.7".to_vec());
+    at_eof.set_position(8);
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        backend
+            .detect_reader(&mut at_eof, None, MimeDetectionPolicy::VerifyContent)
+            .expect("EOF cursor should still detect the whole resource")
+    );
+    assert_eq!(8, at_eof.position());
+}
+
+#[test]
+fn test_top_level_reader_detection_restores_after_classifier_error() {
+    let mut backend = ReaderScopeBackend::new();
+    backend
+        .core
+        .set_media_stream_classifier(Some(Arc::new(FailingWholeResourceClassifier)));
+    let mut reader = std::io::Cursor::new(b"webmTAIL".to_vec());
+    reader.set_position(4);
+
+    let error = backend
+        .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+        .expect_err("classifier failure should be propagated");
+
+    assert!(matches!(error, MimeError::InvalidClassifierInput { .. }));
+    assert_eq!(4, reader.position());
+}
+
+#[test]
+fn test_top_level_reader_restore_error_precedes_successful_detection() {
+    let backend = Backend::new();
+    let mut reader = SeekFailReader {
+        inner: std::io::Cursor::new(b"%PDF-1.7".to_vec()),
+        failed_positions: vec![4],
+    };
+    reader.inner.set_position(4);
+
+    let error = backend
+        .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+        .expect_err("restoring after successful detection should fail");
+
+    assert!(matches!(error, MimeError::Io(ref error) if error.to_string() == "seek to 4 failed"));
+}
+
+#[test]
+fn test_top_level_reader_restore_error_precedes_classifier_error() {
+    let mut backend = ReaderScopeBackend::new();
+    backend
+        .core
+        .set_media_stream_classifier(Some(Arc::new(FailingWholeResourceClassifier)));
+    let mut reader = SeekFailReader {
+        inner: std::io::Cursor::new(b"webmTAIL".to_vec()),
+        failed_positions: vec![4],
+    };
+    reader.inner.set_position(4);
+
+    let error = backend
+        .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+        .expect_err("restore error should take precedence over classifier failure");
+
+    assert!(matches!(error, MimeError::Io(ref error) if error.to_string() == "seek to 4 failed"));
+}
+
+#[test]
+fn test_top_level_reader_detection_restores_after_initial_seek_error() {
+    let backend = Backend::new();
+    let mut reader = SeekFailReader {
+        inner: std::io::Cursor::new(b"content".to_vec()),
+        failed_positions: vec![0],
+    };
+    reader.inner.set_position(4);
+
+    let error = backend
+        .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+        .expect_err("initial seek to the resource start should fail");
+
+    assert!(matches!(error, MimeError::Io(ref error) if error.to_string() == "seek to 0 failed"));
+    assert_eq!(4, reader.inner.position());
+}
+
+#[test]
+fn test_top_level_reader_restore_error_takes_precedence_over_initial_seek_error() {
+    let backend = Backend::new();
+    let mut reader = SeekFailReader {
+        inner: std::io::Cursor::new(b"content".to_vec()),
+        failed_positions: vec![0, 4],
+    };
+    reader.inner.set_position(4);
+
+    let error = backend
+        .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
+        .expect_err("both initial seek and restoration should fail");
+
+    assert!(matches!(error, MimeError::Io(ref error) if error.to_string() == "seek to 4 failed"));
 }
 
 #[test]
