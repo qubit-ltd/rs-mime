@@ -88,8 +88,16 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// Candidate MIME type names and the content prefix used for refinement.
     ///
     /// # Errors
-    /// Returns an error when reading, seeking, or backend inspection fails.
+    /// Returns [`MimeError::CompleteContentRequired`](crate::MimeError::CompleteContentRequired)
+    /// when this backend requires complete content, because the default hook
+    /// only reads the declared prefix. It also returns an error when reading,
+    /// seeking, or backend inspection fails. Backends requiring complete input
+    /// must override this hook and define their own bounded reading and
+    /// position-restoration behavior.
     fn guess_from_reader(&self, reader: &mut dyn ReadSeek) -> MimeResult<(Vec<String>, Vec<u8>)> {
+        if matches!(self.content_requirement(), ContentRequirement::Complete) {
+            return Err(crate::MimeError::CompleteContentRequired);
+        }
         let content = read_prefix(reader, self.max_test_bytes(), self.core().max_buffer_size())?;
         let candidates = self.guess_from_content(&content)?;
         Ok((candidates, content))

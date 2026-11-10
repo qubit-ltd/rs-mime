@@ -449,3 +449,71 @@ fn test_verify_content_with_empty_candidates_returns_none() {
         .expect("empty content candidates should be a valid result");
     assert_eq!(None, result);
 }
+
+#[test]
+fn test_refine_without_filename_preserves_mime_for_conflicting_mappings() {
+    for mapping in [
+        "webm:video/webm,audio/webm;alt:video/webm,audio/ogg",
+        "alt:video/webm,audio/ogg;webm:video/webm,audio/webm",
+    ] {
+        let mut detector = MimeDetectorCore::new(create_precise_config(true, "webm,alt", mapping));
+        detector.set_media_stream_classifier(Some(Arc::new(FailingClassifier)));
+        assert_eq!(
+            "video/webm",
+            detector
+                .refine_detected_mime_type("video/webm", None, DetectionSource::Content(b"data"))
+                .expect("ambiguous mappings must skip classification")
+        );
+    }
+}
+
+#[test]
+fn test_refine_mapping_keeps_unique_pairs_and_filename_resolution() {
+    let classifier = || {
+        Arc::new(StaticClassifier {
+            stream_type: MediaStreamType::AudioOnly,
+            expected_first_byte: None,
+        }) as Arc<dyn MediaStreamClassifier>
+    };
+
+    let mut unique = MimeDetectorCore::new(create_precise_config(true, "webm", "webm:video/webm,audio/webm"));
+    unique.set_media_stream_classifier(Some(classifier()));
+    assert_eq!(
+        "audio/webm",
+        unique
+            .refine_detected_mime_type("video/webm", None, DetectionSource::Content(b"data"))
+            .expect("a unique pair should still refine")
+    );
+
+    let mut same_pair = MimeDetectorCore::new(create_precise_config(
+        true,
+        "webm,alt",
+        "webm:video/webm,audio/webm;alt:video/webm,audio/webm",
+    ));
+    same_pair.set_media_stream_classifier(Some(classifier()));
+    assert_eq!(
+        "audio/webm",
+        same_pair
+            .refine_detected_mime_type("video/webm", None, DetectionSource::Content(b"data"))
+            .expect("duplicate keys with the same pair should refine")
+    );
+
+    let mut explicit = MimeDetectorCore::new(create_precise_config(
+        true,
+        "webm,alt",
+        "webm:video/webm,audio/webm;alt:video/webm,audio/ogg",
+    ));
+    explicit.set_media_stream_classifier(Some(classifier()));
+    assert_eq!(
+        "audio/webm",
+        explicit
+            .refine_detected_mime_type("video/webm", Some("sample.webm"), DetectionSource::Content(b"data"),)
+            .unwrap()
+    );
+    assert_eq!(
+        "audio/ogg",
+        explicit
+            .refine_detected_mime_type("video/webm", Some("sample.alt"), DetectionSource::Content(b"data"),)
+            .unwrap()
+    );
+}

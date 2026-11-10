@@ -8,6 +8,9 @@
 
 use std::path::Path;
 
+use qubit_io::Output;
+use qubit_local_files::LocalFileSystem;
+use qubit_local_files::options::LocalTempFileOptions;
 use qubit_mime::MimeConfig;
 use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeDetector;
@@ -139,4 +142,104 @@ fn test_mime_detector_backend_propagates_content_errors() {
         combined_error,
         MimeError::DetectorBackend { ref backend, .. } if backend == "failing"
     ));
+}
+
+#[derive(Debug)]
+struct CompleteDefaultBackend(Backend);
+
+impl MimeDetectorBackend for CompleteDefaultBackend {
+    fn core(&self) -> &MimeDetectorCore {
+        self.0.core()
+    }
+    fn max_test_bytes(&self) -> usize {
+        5
+    }
+    fn content_requirement(&self) -> qubit_mime::ContentRequirement {
+        qubit_mime::ContentRequirement::Complete
+    }
+    fn guess_from_filename(&self, filename: &str) -> Vec<String> {
+        self.0.guess_from_filename(filename)
+    }
+    fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+        self.0.guess_from_content(content)
+    }
+}
+
+#[derive(Debug)]
+struct CountedReader {
+    cursor: std::io::Cursor<Vec<u8>>,
+    reads: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
+impl std::io::Read for CountedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.reads.set(self.reads.get() + 1);
+        std::io::Read::read(&mut self.cursor, buffer)
+    }
+}
+impl std::io::Seek for CountedReader {
+    fn seek(&mut self, from: std::io::SeekFrom) -> std::io::Result<u64> {
+        std::io::Seek::seek(&mut self.cursor, from)
+    }
+}
+
+#[test]
+fn test_default_complete_reader_hook_rejects_without_reading() {
+    let backend = CompleteDefaultBackend(Backend::new());
+    let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut reader = CountedReader {
+        cursor: std::io::Cursor::new(b"%PDF-more-than-five-bytes".to_vec()),
+        reads: std::rc::Rc::clone(&reads),
+    };
+    assert!(matches!(
+        backend.guess_from_reader(&mut reader),
+        Err(MimeError::CompleteContentRequired)
+    ));
+    assert_eq!(0, reads.get());
+    assert_eq!(0, std::io::Seek::stream_position(&mut reader).unwrap());
+
+    let adapter = qubit_mime::MimeDetectorAdapter::new(CompleteDefaultBackend(Backend::new()));
+    let mut reader = std::io::Cursor::new(b"%PDF-more-than-five-bytes".to_vec());
+    assert!(matches!(
+        qubit_mime::MimeContentBackend::detect_reader(&adapter, &mut reader),
+        Err(MimeError::CompleteContentRequired)
+    ));
+    assert_eq!(0, reader.position());
+
+    let mut file = LocalFileSystem::host()
+        .expect("host filesystem should open")
+        .create_temp_file_with_options(&LocalTempFileOptions::new().with_suffix(".pdf"))
+        .expect("temporary PDF should be created");
+    Output::write_fully(&mut file, b"%PDF-1.7\n").expect("temporary PDF should be writable");
+    assert!(matches!(
+        backend.guess_from_file(file.path()),
+        Err(MimeError::CompleteContentRequired)
+    ));
+}
+
+#[test]
+fn test_complete_reader_detection_propagates_error_and_preserves_filename_fast_path() {
+    let backend = CompleteDefaultBackend(Backend::new());
+    let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut reader = CountedReader {
+        cursor: std::io::Cursor::new(b"%PDF-more-than-five-bytes".to_vec()),
+        reads: std::rc::Rc::clone(&reads),
+    };
+    reader.cursor.set_position(4);
+
+    assert!(matches!(
+        backend.detect_reader(&mut reader, Some("note.txt"), MimeDetectionPolicy::VerifyContent),
+        Err(MimeError::CompleteContentRequired)
+    ));
+    assert_eq!(0, reads.get(), "Complete rejection must not read the input");
+    assert_eq!(4, std::io::Seek::stream_position(&mut reader).unwrap());
+
+    assert_eq!(
+        Some("text/plain".to_owned()),
+        backend
+            .detect_reader(&mut reader, Some("note.txt"), MimeDetectionPolicy::PreferFilename)
+            .expect("PreferFilename should return the unique filename candidate")
+    );
+    assert_eq!(0, reads.get(), "PreferFilename must skip content reading");
+    assert_eq!(4, std::io::Seek::stream_position(&mut reader).unwrap());
 }

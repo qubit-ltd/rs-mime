@@ -574,3 +574,61 @@ fn test_adapter_limits_input_and_restores_reader_position() {
             .is_empty()
     );
 }
+
+#[derive(Debug)]
+struct InterruptedReader {
+    cursor: Cursor<Vec<u8>>,
+    call: usize,
+    interrupt_calls: Vec<usize>,
+    max_chunk: usize,
+}
+
+impl Read for InterruptedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.call += 1;
+        if self.interrupt_calls.contains(&self.call) {
+            return Err(Error::from(std::io::ErrorKind::Interrupted));
+        }
+        let size = buffer.len().min(self.max_chunk);
+        self.cursor.read(&mut buffer[..size])
+    }
+}
+
+impl Seek for InterruptedReader {
+    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+        self.cursor.seek(from)
+    }
+}
+
+fn interrupted_reader(bytes: &[u8], interrupt_calls: &[usize], max_chunk: usize) -> InterruptedReader {
+    InterruptedReader {
+        cursor: Cursor::new(bytes.to_vec()),
+        call: 0,
+        interrupt_calls: interrupt_calls.to_vec(),
+        max_chunk,
+    }
+}
+
+#[test]
+fn test_reader_retries_interrupted_reads_and_boundary_probe() {
+    let prefix = LimitedLengthBackend(ContentRequirement::Prefix(3), 3);
+    let mut first_read = interrupted_reader(b"abc-tail", &[1], 3);
+    assert_eq!(prefix.detect_reader(&mut first_read).unwrap(), ["3"]);
+    assert_eq!(first_read.cursor.position(), 0);
+
+    let mut middle_read = interrupted_reader(b"abc-tail", &[2], 1);
+    assert_eq!(prefix.detect_reader(&mut middle_read).unwrap(), ["3"]);
+    assert_eq!(middle_read.cursor.position(), 0);
+
+    let complete = LimitedLengthBackend(ContentRequirement::Complete, 3);
+    let mut complete_read = interrupted_reader(b"abc", &[1, 3], 3);
+    assert_eq!(complete.detect_reader(&mut complete_read).unwrap(), ["3"]);
+    assert_eq!(complete_read.cursor.position(), 0);
+
+    let mut oversized = interrupted_reader(b"abcd", &[2], 3);
+    assert!(matches!(
+        complete.detect_reader(&mut oversized),
+        Err(qubit_mime::MimeError::BufferLimitExceeded { requested: 4, limit: 3 })
+    ));
+    assert_eq!(oversized.cursor.position(), 0);
+}

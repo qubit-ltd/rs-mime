@@ -118,6 +118,20 @@ pub trait MimeContentBackend: Debug + Send + Sync {
     }
 }
 
+/// Retries a read when the reader reports a temporary interruption.
+///
+/// # Parameters
+/// - `reader`: Seekable input to read from.
+/// - `buffer`: Destination for the bytes read.
+fn read_retry_interrupted(reader: &mut dyn ReadSeek, buffer: &mut [u8]) -> std::io::Result<usize> {
+    loop {
+        match reader.read(buffer) {
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => return result,
+        }
+    }
+}
+
 /// Reads the required prefix or complete content within the supplied buffer
 /// budget.
 ///
@@ -151,7 +165,7 @@ fn read_required(reader: &mut dyn ReadSeek, requirement: ContentRequirement, bud
     let mut chunk = [0_u8; 8192];
     while bytes.len() < target {
         let chunk_size = chunk.len().min(target - bytes.len());
-        let count = reader.read(&mut chunk[..chunk_size])?;
+        let count = read_retry_interrupted(reader, &mut chunk[..chunk_size])?;
         if count == 0 {
             return Ok(bytes);
         }
@@ -165,7 +179,7 @@ fn read_required(reader: &mut dyn ReadSeek, requirement: ContentRequirement, bud
     }
     if requirement == ContentRequirement::Complete {
         let mut probe = [0_u8; 1];
-        if reader.read(&mut probe)? != 0 {
+        if read_retry_interrupted(reader, &mut probe)? != 0 {
             return Err(MimeError::BufferLimitExceeded {
                 requested: budget.saturating_add(1),
                 limit: budget,

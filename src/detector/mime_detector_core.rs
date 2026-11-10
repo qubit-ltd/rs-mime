@@ -332,17 +332,24 @@ impl MimeDetectorCore {
     /// - `detected_mime_type`: Initial MIME type name.
     ///
     /// # Returns
-    /// Mapping key when the MIME type is part of an ambiguous mapping.
+    /// Mapping key when the MIME type is part of an unambiguous set of
+    /// matching pairs. Returns `None` when matching extensions map the MIME
+    /// type to different pairs, so detection preserves the original MIME type.
     fn precise_detection_mapping_key_by_mime_type(&self, detected_mime_type: &str) -> Option<String> {
-        self.config
+        let mut matches = self
+            .config
             .ambiguous_mime_mapping()
             .iter()
-            .find(|(_, possible_mime_types)| {
+            .filter(|(_, possible_mime_types)| {
                 possible_mime_types
                     .iter()
                     .any(|mime_type| mime_type == detected_mime_type)
-            })
-            .map(|(extension, _)| extension.clone())
+            });
+        let (extension, pair) = matches.next()?;
+        if matches.any(|(_, other_pair)| other_pair != pair) {
+            return None;
+        }
+        Some(extension.clone())
     }
 }
 
