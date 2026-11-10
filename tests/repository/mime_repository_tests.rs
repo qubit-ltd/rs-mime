@@ -34,6 +34,22 @@ fn test_from_xml_rejects_alias_collision() {
 }
 
 #[test]
+fn test_from_xml_matches_literal_open_bracket_glob() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-literal-bracket"><glob pattern="[[]"/></mime-type>
+</mime-info>"#,
+    )
+    .expect("repository with literal bracket glob should parse");
+
+    assert_eq!(
+        vec!["application/x-literal-bracket"],
+        names(repository.detect_by_filename("["))
+    );
+    assert!(repository.detect_by_filename("other").is_empty());
+}
+
+#[test]
 fn test_from_xml_requires_shared_mime_info_namespace() {
     let error = MimeRepository::from_xml("<mime-info><mime-type type=\"text/plain\"/></mime-info>").unwrap_err();
     assert!(matches!(error, MimeError::InvalidXmlElement { .. }));

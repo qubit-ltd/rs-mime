@@ -403,3 +403,45 @@ fn test_file_command_contract_checks_truncation_and_actual_exit_status() {
         Err(MimeError::DetectorBackend { .. })
     ));
 }
+
+#[test]
+#[cfg(unix)]
+fn test_detect_file_rejects_successful_command_error_text() {
+    let directory = LocalFileSystem::host()
+        .expect("host filesystem available")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
+        .expect("fixture directory created");
+    let script = directory.path().join("file");
+    std::fs::write(&script, "#!/bin/sh\nprintf 'cannot open private-media\\n'\nexit 0\n")
+        .expect("fake utility written");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("script executable");
+    let _guard = PathEnvGuard::prepend(directory.path());
+    let detector = FileCommandMimeDetector::new()
+        .with_command_runner(CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true));
+    let error = detector
+        .detect_file(
+            std::path::Path::new("private-media"),
+            MimeDetectionPolicy::VerifyContent,
+        )
+        .expect_err("successful utility error text must be rejected");
+    assert!(matches!(error, MimeError::DetectorBackend { ref backend, ref reason }
+        if backend == "file" && reason == "file returned an invalid MIME type"
+            && !reason.contains("private-media")));
+    assert!(!format!("{error:?}").contains("private-media"));
+}
+
+#[test]
+fn test_detect_file_reports_missing_input_with_host_file_utility() {
+    if !FileCommandMimeDetector::is_available() {
+        eprintln!("skipping: host file utility is unavailable");
+        return;
+    }
+    let detector = FileCommandMimeDetector::new();
+    let error = detector
+        .detect_file_by_content(std::path::Path::new("qubit-mime-input-that-does-not-exist"))
+        .expect_err("host file utility should reject a missing input");
+    assert!(matches!(
+        error,
+        MimeError::DetectorBackend { .. } | MimeError::Command(_)
+    ));
+}

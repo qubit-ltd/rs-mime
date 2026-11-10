@@ -117,7 +117,7 @@ fn test_command_backend_policy_matrix() {
             false,
             true,
             Some(MediaStreamType::VideoWithAudio),
-            true,
+            false,
         ),
         (Some(0), b"video\n".as_slice(), true, true, None, false),
         (Some(0), b"video\n".as_slice(), false, false, None, false),
@@ -170,6 +170,56 @@ fn test_command_backend_policy_matrix() {
     }
 }
 
+#[test]
+fn test_file_backend_accepts_only_one_mime_name_or_empty_output() {
+    let path = Path::new("-private-media");
+    let file = FileCommandMimeDetector::default();
+    for (bytes, expected) in [
+        (b"application/pdf\n".as_slice(), Some("application/pdf")),
+        (
+            b"application/x-custom+json".as_slice(),
+            Some("application/x-custom+json"),
+        ),
+        (b"inode/directory".as_slice(), Some("inode/directory")),
+        (b"".as_slice(), None),
+    ] {
+        let executor = FakeExecutor {
+            code: Some(0),
+            bytes: bytes.to_vec(),
+            truncated: false,
+            complete: true,
+        };
+        assert_eq!(
+            expected.map(str::to_owned).into_iter().collect::<Vec<_>>(),
+            file.guess_with_executor(path, &executor)
+                .expect("valid MIME output should parse")
+        );
+    }
+    for bytes in [
+        b"cannot open private-media".as_slice(),
+        b"video".as_slice(),
+        b"video\naudio\n".as_slice(),
+        b"text/plain; charset=utf-8".as_slice(),
+        b"/plain".as_slice(),
+        b"text/".as_slice(),
+        b"text/plain/extra".as_slice(),
+        "text/中文".as_bytes(),
+    ] {
+        let executor = FakeExecutor {
+            code: Some(0),
+            bytes: bytes.to_vec(),
+            truncated: false,
+            complete: true,
+        };
+        let error = file
+            .guess_with_executor(path, &executor)
+            .expect_err("invalid MIME output must fail");
+        assert!(matches!(error, MimeError::DetectorBackend { ref backend, ref reason }
+            if backend == "file" && reason == "file returned an invalid MIME type"
+                && !reason.contains("private-media") && !reason.contains(std::str::from_utf8(bytes).unwrap_or(""))));
+    }
+}
+
 /// Produces a real spawn failure without exposing any CommandError constructor.
 struct FailingExecutor;
 impl MimeCommandExecutor for FailingExecutor {
@@ -201,9 +251,14 @@ impl MimeCommandExecutor for PathAssertionExecutor {
             Some(self.expected_path.as_os_str()),
             "command input should be fixed to its process-cwd absolute path"
         );
+        let stdout: &[u8] = if command.program() == "file" {
+            b"video/mp4\n"
+        } else {
+            b"video\n"
+        };
         Ok(MimeCommandOutput {
             exit_code: Some(0),
-            stdout: b"video\n".to_vec(),
+            stdout: stdout.to_vec(),
             stdout_truncated: false,
             stdout_complete: true,
         })
@@ -236,7 +291,7 @@ fn test_command_boundaries_absolute_paths_with_special_names_and_working_directo
                 .expect("ffprobe command should preserve the absolute input path")
         );
         assert_eq!(
-            vec!["video"],
+            vec!["video/mp4"],
             file.guess_with_executor(path, &executor)
                 .expect("file command should preserve the absolute input path")
         );

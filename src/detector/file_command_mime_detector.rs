@@ -351,8 +351,13 @@ impl<'a> FileCommandMimeDetector<'a> {
         let result = text.trim();
         if result.is_empty() {
             Ok(Vec::new())
-        } else {
+        } else if is_mime_name(result) {
             Ok(vec![result.to_owned()])
+        } else {
+            Err(MimeError::detector_backend(
+                Self::COMMAND,
+                "file returned an invalid MIME type",
+            ))
         }
     }
 
@@ -386,6 +391,26 @@ impl<'a> FileCommandMimeDetector<'a> {
             .arg("--")
             .sensitive_arg_os(path)
     }
+}
+
+/// Returns whether `value` is a single MIME type name using ASCII token syntax.
+///
+/// # Parameters
+/// - `value`: The trimmed output produced by the `file` command.
+///
+/// # Returns
+/// `true` if `value` contains exactly one non-empty `type/subtype` token pair.
+fn is_mime_name(value: &str) -> bool {
+    let Some((kind, subtype)) = value.split_once('/') else {
+        return false;
+    };
+    let token = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+    };
+    token(kind) && token(subtype)
 }
 
 impl Default for FileCommandMimeDetector<'static> {

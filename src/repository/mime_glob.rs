@@ -170,11 +170,22 @@ fn append_character_class(chars: &[char], start: usize, regex: &mut String) -> u
         regex.push('^');
         content_start += 1;
     }
-    for ch in chars.iter().take(end).skip(content_start) {
-        if *ch == '\\' {
+    let mut index = content_start;
+    while index < end {
+        let ch = chars[index];
+        // Regex character classes support set intersection, symmetric
+        // difference, and difference operators. Escape their punctuation so
+        // each source glob character remains literal. A single hyphen still
+        // denotes a glob range; only the regex `--` operator is escaped.
+        if matches!(ch, '[' | '\\' | '&' | '~' | '^') {
             regex.push('\\');
+            regex.push(ch);
+        } else if ch == '-' && (chars.get(index + 1) == Some(&'-') || chars.get(index.wrapping_sub(1)) == Some(&'-')) {
+            regex.push_str("\\-");
+        } else {
+            regex.push(ch);
         }
-        regex.push(*ch);
+        index += 1;
     }
     regex.push(']');
     end

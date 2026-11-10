@@ -93,3 +93,20 @@ fn test_new_reports_invalid_glob_patterns_as_invalid_xml_attributes() {
         ));
     }
 }
+
+#[test]
+fn test_character_class_regex_set_operators_are_literal() {
+    for (pattern, matching) in [
+        ("[[]", vec!["["]),
+        ("[a&&b]", vec!["a", "&", "b"]),
+        ("[a~~b]", vec!["a", "~", "b"]),
+        ("[a--b]", vec!["a", "-", "b"]),
+        ("[^a]", vec!["^", "a"]),
+    ] {
+        let glob = MimeGlob::new(pattern, 50, true).expect("literal class must compile");
+        for name in matching {
+            assert!(glob.matches(name), "{pattern}: {name}");
+        }
+        assert!(!glob.matches("c"), "{pattern} must reject c");
+    }
+}
