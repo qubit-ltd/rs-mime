@@ -14,6 +14,7 @@ pub(crate) mod magic_value_type;
 pub(crate) mod mime_glob;
 pub(crate) mod mime_magic;
 pub(crate) mod mime_magic_matcher;
+pub(crate) mod mime_relations;
 pub(crate) mod mime_repository;
 pub(crate) mod mime_type;
 pub(crate) mod mime_type_builder;

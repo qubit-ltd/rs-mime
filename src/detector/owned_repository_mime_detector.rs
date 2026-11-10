@@ -39,8 +39,10 @@ impl OwnedRepositoryMimeDetector {
     /// A detector that retains a shared reference to `repository`.
     #[must_use]
     pub(crate) fn new(config: MimeConfig, repository: Arc<MimeRepository>) -> Self {
+        let mut core = MimeDetectorCore::from_mime_config(config);
+        core.set_mime_relations(repository.relations());
         Self {
-            core: MimeDetectorCore::from_mime_config(config),
+            core,
             repository,
         }
     }

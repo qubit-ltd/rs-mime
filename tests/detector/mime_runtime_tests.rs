@@ -16,6 +16,7 @@ use qubit_local_files::options::LocalTempFileOptions;
 use qubit_mime::DEFAULT_COMMAND_TIMEOUT;
 use qubit_mime::MimeConfig;
 use qubit_mime::MimeDetectionPolicy;
+use qubit_mime::MimeDetector;
 use qubit_mime::MimeRepository;
 use qubit_mime::detector::MimeRuntime;
 
@@ -104,5 +105,31 @@ fn test_runtime_creates_detectors_using_its_repository_and_configuration() {
             .detect_by_filename("report.pdf")
             .expect("retained repository must remain usable"),
         Some("application/pdf".to_owned())
+    );
+}
+
+#[test]
+fn test_runtime_detector_uses_only_its_custom_repository_relations() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+<mime-type type="application/x-runtime-child">
+  <glob pattern="*.rpt"/>
+  <sub-class-of type="application/x-runtime-parent"/>
+</mime-type>
+<mime-type type="application/x-runtime-sibling"><glob pattern="*.rpt"/></mime-type>
+<mime-type type="application/x-runtime-parent">
+  <magic priority="80"><match type="string" value="RUNTIME" offset="0"/></magic>
+</mime-type>
+</mime-info>"#,
+    )
+    .expect("custom runtime repository should parse");
+    let runtime = MimeRuntime::new(MimeConfig::default(), Arc::new(repository));
+    let detector = runtime.create_detector().expect("runtime detector");
+
+    assert_eq!(
+        Some("application/x-runtime-child".to_owned()),
+        detector
+            .detect(b"RUNTIME", Some("summary.rpt"), MimeDetectionPolicy::Freedesktop)
+            .expect("runtime detection should succeed")
     );
 }

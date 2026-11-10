@@ -17,7 +17,11 @@
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MimeDetectionPolicy {
-    /// Follow freedesktop shared-mime-info precedence rules.
+    /// Follow freedesktop shared-mime-info precedence rules. When filename
+    /// and content results differ, a filename MIME type that inherits from the
+    /// content MIME type is preferred. Repository-backed detectors use their
+    /// own alias and inheritance data; standalone detector cores use the
+    /// bundled database for this comparison.
     #[default]
     Freedesktop,
 

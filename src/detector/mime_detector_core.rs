@@ -20,7 +20,9 @@ use crate::MimeConfig;
 use crate::MimeDetectionPolicy;
 use crate::MimeError;
 use crate::MimeResult;
+use crate::MimeRepository;
 use crate::candidate_selection::select_candidate;
+use crate::repository::mime_relations::MimeRelations;
 
 /// Shared detector core for configuration and merge/refinement logic.
 ///
@@ -38,6 +40,8 @@ pub struct MimeDetectorCore {
     config: MimeConfig,
     /// Media stream classifier.
     media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>,
+    /// Repository relation context, injected by repository-backed detectors.
+    mime_relations: Option<Arc<MimeRelations>>,
 }
 
 impl MimeDetectorCore {
@@ -53,6 +57,7 @@ impl MimeDetectorCore {
         Self {
             config,
             media_stream_classifier: None,
+            mime_relations: None,
         }
     }
 
@@ -99,6 +104,11 @@ impl MimeDetectorCore {
         self.media_stream_classifier = media_stream_classifier;
     }
 
+    /// Installs the relations for the repository this core uses.
+    pub(crate) fn set_mime_relations(&mut self, mime_relations: Arc<MimeRelations>) {
+        self.mime_relations = Some(mime_relations);
+    }
+
     /// Merges filename and content candidates using the detector selection
     /// strategy.
     ///
@@ -109,10 +119,8 @@ impl MimeDetectorCore {
     /// # Returns
     /// Selected MIME type name, or `None`.
     pub fn merge_results(&self, from_filename: &[String], from_content: &[String]) -> Option<String> {
-        select_candidate(from_filename, from_content, MimeDetectionPolicy::Freedesktop, |a, b| {
-            a == b
-        })
-        .cloned()
+        self.select_candidates(from_filename, from_content, MimeDetectionPolicy::Freedesktop)
+            .cloned()
     }
 
     /// Selects a MIME type from filename/content candidates and refines it.
@@ -134,7 +142,7 @@ impl MimeDetectorCore {
         policy: MimeDetectionPolicy,
         source: DetectionSource<'_>,
     ) -> MimeResult<Option<String>> {
-        let result = select_candidate(from_filename, from_content, policy, |a, b| a == b).cloned();
+        let result = self.select_candidates(from_filename, from_content, policy).cloned();
         let Some(result) = result else {
             return Ok(None);
         };
@@ -142,6 +150,29 @@ impl MimeDetectorCore {
             return Ok(Some(result));
         }
         self.refine_detected_mime_type(&result, filename, source).map(Some)
+    }
+
+    /// Selects candidates using the policy's equality or inheritance rule.
+    fn select_candidates<'a>(
+        &self,
+        from_filename: &'a [String],
+        from_content: &'a [String],
+        policy: MimeDetectionPolicy,
+    ) -> Option<&'a String> {
+        let relations = (policy == MimeDetectionPolicy::Freedesktop).then(|| self.mime_relations());
+        select_candidate(from_filename, from_content, policy, |filename, content| {
+            relations
+                .as_ref()
+                .map_or(filename == content, |relations| relations.is_a(filename, content))
+        })
+    }
+
+    /// Gets the configured repository relations or lazily initializes bundled
+    /// relations for a standalone core's Freedesktop merge.
+    fn mime_relations(&self) -> Arc<MimeRelations> {
+        self.mime_relations
+            .clone()
+            .unwrap_or_else(|| MimeRepository::bundled_shared().relations())
     }
 
     /// Selects and refines a MIME type using a seekable reader.

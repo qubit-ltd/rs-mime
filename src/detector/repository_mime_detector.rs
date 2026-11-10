@@ -96,8 +96,10 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// # Returns
     /// A detector borrowing `repository`.
     pub fn with_repository_and_config(repository: &'a MimeRepository, config: MimeConfig) -> Self {
+        let mut core = MimeDetectorCore::from_mime_config(config);
+        core.set_mime_relations(repository.relations());
         Self {
-            core: MimeDetectorCore::from_mime_config(config),
+            core,
             repository,
         }
     }

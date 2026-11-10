@@ -24,6 +24,8 @@ use qubit_mime::MimeConfig;
 use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeDetectorCore;
 use qubit_mime::MimeError;
+use qubit_mime::MimeRepository;
+use qubit_mime::RepositoryMimeDetector;
 
 #[derive(Debug)]
 struct StaticClassifier {
@@ -94,6 +96,108 @@ fn test_merge_results_uses_detector_selection_strategy() {
     assert_eq!(
         Some("application/pdf".to_owned()),
         detector.merge_results(&["image/jpeg".to_owned()], &["application/pdf".to_owned()])
+    );
+}
+
+#[test]
+fn test_repository_detector_core_uses_its_repository_relations() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+<mime-type type="application/x-child"/>
+<mime-type type="application/x-alias-child">
+  <alias type="application/x-child-alias"/>
+  <sub-class-of type="application/x-parent-alias"/>
+</mime-type>
+<mime-type type="application/x-parent"><alias type="application/x-parent-alias"/></mime-type>
+</mime-info>"#,
+    )
+    .expect("custom repository should parse");
+    let detector = RepositoryMimeDetector::with_repository(&repository);
+
+    assert_eq!(
+        Some("application/x-child-alias".to_owned()),
+        detector.core().merge_results(
+            &["application/x-child-alias".to_owned()],
+            &["application/x-parent".to_owned()]
+        )
+    );
+    assert_eq!(
+        Some("application/x-alias-child".to_owned()),
+        detector.core().merge_results(
+            &["application/x-parent".to_owned()],
+            &["application/x-alias-child".to_owned()]
+        ),
+        "inheritance must not be checked from content child to filename parent"
+    );
+    assert_eq!(
+        Some("application/x-parent".to_owned()),
+        detector.core().merge_results(
+            &["application/x-unrelated".to_owned()],
+            &["application/x-parent".to_owned()]
+        ),
+        "unknown names do not gain inferred inheritance"
+    );
+
+    let empty_repository = MimeRepository::empty();
+    let empty_detector = RepositoryMimeDetector::with_repository(&empty_repository);
+    assert_eq!(
+        Some("application/zip".to_owned()),
+        empty_detector.core().merge_results(
+            &["application/epub+zip".to_owned()],
+            &["application/zip".to_owned()]
+        ),
+        "a custom empty repository must not borrow bundled relationships"
+    );
+
+    let filename = ["application/x-child-alias".to_owned()];
+    let content = ["application/x-parent".to_owned()];
+    assert_eq!(
+        Some("application/x-child-alias".to_owned()),
+        detector
+            .core()
+            .select_result(
+                &filename,
+                &content,
+                None,
+                MimeDetectionPolicy::Freedesktop,
+                DetectionSource::None,
+            )
+            .expect("Freedesktop selection should succeed")
+    );
+    for policy in [MimeDetectionPolicy::ContentFirst, MimeDetectionPolicy::VerifyContent] {
+        assert_eq!(
+            Some("application/x-parent".to_owned()),
+            detector
+                .core()
+                .select_result(&filename, &content, None, policy, DetectionSource::None)
+                .expect("non-Freedesktop selection should succeed")
+        );
+    }
+    assert_eq!(
+        Some("application/x-child-alias".to_owned()),
+        detector
+            .core()
+            .select_result(
+                &filename,
+                &content,
+                None,
+                MimeDetectionPolicy::PreferFilename,
+                DetectionSource::None,
+            )
+            .expect("PreferFilename selection should succeed")
+    );
+    assert_eq!(
+        None,
+        detector
+            .core()
+            .select_result(
+                &filename,
+                &[],
+                None,
+                MimeDetectionPolicy::VerifyContent,
+                DetectionSource::None,
+            )
+            .expect("VerifyContent selection should succeed")
     );
 }
 

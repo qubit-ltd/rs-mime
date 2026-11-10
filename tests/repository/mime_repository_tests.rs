@@ -221,6 +221,29 @@ fn test_is_a_composes_explicit_and_implicit_text_inheritance() {
 }
 
 #[test]
+fn test_freedesktop_detect_prefers_filename_subtype_of_content_type() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+<mime-type type="application/x-report"><glob pattern="*.rel"/><sub-class-of type="application/x-report-parent"/></mime-type>
+<mime-type type="application/x-other-report"><glob pattern="*.rel"/></mime-type>
+<mime-type type="application/x-report-parent">
+  <magic priority="80"><match type="string" value="REPORT" offset="0"/></magic>
+</mime-type>
+</mime-info>"#,
+    )
+    .expect("custom MIME repository should parse");
+
+    assert_eq!(
+        vec!["application/x-report"],
+        names(repository.detect("sample.rel", b"REPORT", MimeDetectionPolicy::Freedesktop))
+    );
+    assert_eq!(
+        vec!["application/x-report-parent"],
+        names(repository.detect("sample.rel", b"REPORT", MimeDetectionPolicy::ContentFirst))
+    );
+}
+
+#[test]
 fn test_glob_index_matches_newline_wildcards() {
     let repository = MimeRepository::from_xml(
         r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">

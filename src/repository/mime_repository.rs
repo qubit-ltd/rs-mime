@@ -21,6 +21,7 @@ use roxmltree::Node;
 
 use super::glob_index::GlobIndex;
 use super::magic_index::MagicIndex;
+use super::mime_relations::MimeRelations;
 use super::xml_parser::strip_doctype;
 use crate::MagicValueType;
 use crate::MimeDetectionPolicy;
@@ -59,6 +60,8 @@ pub struct MimeRepository {
     glob_index: GlobIndex,
     /// Optimized content magic lookup structure and maximum read length.
     magic_index: MagicIndex,
+    /// Immutable MIME relation snapshot shared by detector cores.
+    relations: Arc<MimeRelations>,
 }
 
 impl MimeRepository {
@@ -105,6 +108,7 @@ impl MimeRepository {
                 repository.add_mime_type(parse_mime_type(child)?)?;
             }
         }
+        repository.relations = Arc::new(MimeRelations::from_mime_types(&repository.mime_types));
         if root.tag_name().namespace() != Some("http://www.freedesktop.org/standards/shared-mime-info") {
             return Err(MimeError::invalid_element(
                 root.tag_name().name(),
@@ -125,6 +129,7 @@ impl MimeRepository {
             name_map: HashMap::new(),
             glob_index: GlobIndex::default(),
             magic_index: MagicIndex::default(),
+            relations: Arc::new(MimeRelations::default()),
         }
     }
 
@@ -187,35 +192,13 @@ impl MimeRepository {
     /// `true` when `child` is `parent` or inherits from it.
     #[must_use]
     pub fn is_a(&self, child: &str, parent: &str) -> bool {
-        let child = self.canonical_name_or_input(child);
-        let parent = self.canonical_name_or_input(parent);
-        if child == parent {
-            return true;
-        }
-        if parent == "application/octet-stream" && self.get(&child).is_some() {
-            return true;
-        }
-        let mut pending = vec![child];
-        let mut visited = std::collections::HashSet::new();
-        while let Some(name) = pending.pop() {
-            if !visited.insert(name.clone()) {
-                continue;
-            }
-            if name.starts_with("text/") && parent == "text/plain" {
-                return true;
-            }
-            let Some(mime_type) = self.get(&name) else {
-                continue;
-            };
-            for super_type in mime_type.super_types() {
-                let canonical = self.canonical_name_or_input(super_type);
-                if canonical == parent {
-                    return true;
-                }
-                pending.push(canonical);
-            }
-        }
-        false
+        self.relations.is_a(child, parent)
+    }
+
+    /// Returns the immutable relation context used by MIME candidate merging.
+    #[must_use]
+    pub(crate) fn relations(&self) -> Arc<MimeRelations> {
+        Arc::clone(&self.relations)
     }
 
     /// Detects MIME types from a filename.
@@ -273,7 +256,13 @@ impl MimeRepository {
             return from_filename;
         }
         let from_content = self.detect_by_content(bytes);
-        select_candidate(&from_filename, &from_content, policy, |a, b| a.name() == b.name())
+        select_candidate(&from_filename, &from_content, policy, |a, b| {
+            if policy == MimeDetectionPolicy::Freedesktop {
+                self.is_a(a.name(), b.name())
+            } else {
+                a.name() == b.name()
+            }
+        })
             .copied()
             .into_iter()
             .collect()
@@ -339,21 +328,6 @@ impl MimeRepository {
         }
     }
 
-    /// Resolves an alias to its canonical name, preserving unknown input.
-    ///
-    /// # Parameters
-    /// - `name`: MIME type name or alias to resolve.
-    ///
-    /// # Returns
-    /// Canonical name when found, or the normalized input otherwise.
-    fn canonical_name_or_input(&self, name: &str) -> String {
-        let normalized = normalize_mime_name(name);
-        self.name_map
-            .get(&normalized)
-            .and_then(|index| self.mime_types.get(*index))
-            .map(|mime_type| mime_type.name().to_owned())
-            .unwrap_or(normalized)
-    }
 }
 
 /// Parses one `mime-type` element.
