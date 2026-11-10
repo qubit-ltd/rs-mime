@@ -6,7 +6,6 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Exercises MIME policy using execution facts without modifying PATH.
-use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 
@@ -90,7 +89,8 @@ struct FakeExecutor {
 impl MimeCommandExecutor for FakeExecutor {
     fn run(&self, _: &CommandRunner, command: Command) -> Result<MimeCommandOutput, CommandError> {
         let args: Vec<_> = command.arguments().collect();
-        assert_eq!(args.last().copied(), Some(OsStr::new("-private-media")));
+        let expected_path = std::path::absolute(Path::new("-private-media")).expect("cwd should be available");
+        assert_eq!(args.last().copied(), Some(expected_path.as_os_str()));
         let separator = if command.program() == "file" { "--" } else { "-i" };
         assert_eq!(args[args.len() - 2], separator);
         Ok(MimeCommandOutput {
@@ -177,6 +177,135 @@ impl MimeCommandExecutor for FailingExecutor {
         Err(runner
             .run(Command::new("__qubit_mime_missing_backend_test__"))
             .expect_err("missing executable must fail"))
+    }
+}
+
+struct ProbeBudgetExecutor {
+    timeout: Duration,
+    output_limit: u64,
+    total_output_limit: u64,
+    command: &'static str,
+    exit_code: Option<i32>,
+    stdout_truncated: bool,
+    stdout_complete: bool,
+}
+
+struct PathAssertionExecutor {
+    expected_path: std::path::PathBuf,
+}
+
+impl MimeCommandExecutor for PathAssertionExecutor {
+    fn run(&self, _: &CommandRunner, command: Command) -> Result<MimeCommandOutput, CommandError> {
+        assert_eq!(
+            command.arguments().last(),
+            Some(self.expected_path.as_os_str()),
+            "command input should be fixed to its process-cwd absolute path"
+        );
+        Ok(MimeCommandOutput {
+            exit_code: Some(0),
+            stdout: b"video\n".to_vec(),
+            stdout_truncated: false,
+            stdout_complete: true,
+        })
+    }
+}
+
+#[test]
+fn test_command_boundaries_absolute_paths_with_special_names_and_working_directory() {
+    let ffprobe = FfprobeCommandMediaStreamClassifier::new();
+    let repository = crate::repository::MimeRepository::empty();
+    let file = FileCommandMimeDetector::with_repository_and_runner(
+        &repository,
+        CommandRunner::new(Duration::from_secs(1)).working_directory("child-working-directory"),
+    );
+
+    for path in [
+        Path::new("-"),
+        Path::new("目录 with space/media.bin"),
+        Path::new("first/media.bin"),
+        Path::new("second/media.bin"),
+    ] {
+        let expected_path = std::path::absolute(path).expect("cwd should be available");
+        let executor = PathAssertionExecutor {
+            expected_path: expected_path.clone(),
+        };
+        assert_eq!(
+            MediaStreamType::VideoOnly,
+            ffprobe
+                .classify_with_executor(path, &executor)
+                .expect("ffprobe command should preserve the absolute input path")
+        );
+        assert_eq!(
+            vec!["video"],
+            file.guess_with_executor(path, &executor)
+                .expect("file command should preserve the absolute input path")
+        );
+    }
+}
+
+impl MimeCommandExecutor for ProbeBudgetExecutor {
+    fn run(&self, runner: &CommandRunner, command: Command) -> Result<MimeCommandOutput, CommandError> {
+        assert_eq!(Some(self.timeout), runner.configured_timeout());
+        assert_eq!(Some(self.output_limit as usize), runner.configured_max_stdout_bytes());
+        assert_eq!(Some(self.output_limit as usize), runner.configured_max_stderr_bytes());
+        assert_eq!(
+            Some(self.total_output_limit),
+            runner.configured_max_total_output_bytes()
+        );
+        assert!(runner.is_logging_disabled());
+        assert_eq!(self.command, command.program());
+        Ok(MimeCommandOutput {
+            exit_code: self.exit_code,
+            stdout: b"available\n".to_vec(),
+            stdout_truncated: self.stdout_truncated,
+            stdout_complete: self.stdout_complete,
+        })
+    }
+}
+
+#[test]
+fn test_availability_probes_use_supplied_timeout_and_output_budgets() {
+    let timeout = Duration::from_millis(17);
+    let output_limit = 3_u64;
+    let mut source = Config::new();
+    source
+        .set(crate::CONFIG_COMMAND_TIMEOUT, "17ms")
+        .expect("custom timeout should be accepted");
+    source
+        .set(CONFIG_COMMAND_OUTPUT_MAX_BYTES, output_limit)
+        .expect("custom output limit should be accepted");
+    let config = MimeConfig::from_config(&source).expect("custom config should parse");
+    let executor = |command, exit_code, stdout_truncated, stdout_complete| ProbeBudgetExecutor {
+        timeout,
+        output_limit,
+        total_output_limit: config.command_total_output_max_bytes(),
+        command,
+        exit_code,
+        stdout_truncated,
+        stdout_complete,
+    };
+
+    for (exit_code, truncated, complete, expected) in [
+        (Some(0), false, true, true),
+        (Some(7), false, true, false),
+        (Some(0), true, true, false),
+        (Some(0), false, false, false),
+        (None, false, true, false),
+    ] {
+        assert_eq!(
+            expected,
+            FfprobeCommandMediaStreamClassifier::is_available_with_executor(
+                &config,
+                &executor("ffprobe", exit_code, truncated, complete)
+            )
+        );
+        assert_eq!(
+            expected,
+            FileCommandMimeDetector::is_available_with_executor(
+                &config,
+                &executor("file", exit_code, truncated, complete)
+            )
+        );
     }
 }
 

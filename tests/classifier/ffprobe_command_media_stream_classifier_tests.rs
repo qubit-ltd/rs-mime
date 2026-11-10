@@ -278,7 +278,7 @@ fn test_classify_file_passes_path_through_ffprobe_input_option() {
 [ "$3" = "-show_entries" ] && [ "$4" = "stream=codec_type" ] && \
 [ "$5" = "-of" ] && [ "$6" = "csv=p=0" ] && [ "$7" = "-i" ] || exit 9
 case "$8" in
---qubit-ffprobe-leading-dash-*) ;;
+"$PWD"/--qubit-ffprobe-leading-dash-*) ;;
 *) exit 9 ;;
 esac
 printf 'video\n'

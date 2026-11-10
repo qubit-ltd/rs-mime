@@ -56,7 +56,7 @@ impl ServiceProvider<MediaStreamClassifierSpec> for FfprobeCommandMediaStreamCla
         &self,
         config: &MimeConfig,
     ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderFailure<MimeError>> {
-        if !FfprobeCommandMediaStreamClassifier::is_available() {
+        if !FfprobeCommandMediaStreamClassifier::is_available_with_config(config) {
             return Err(ProviderFailure::unavailable(MimeError::ClassifierUnavailable {
                 name: "ffprobe".to_owned(),
                 reason: "`ffprobe` command is not available".to_owned(),

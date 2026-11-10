@@ -191,9 +191,32 @@ impl FfprobeCommandMediaStreamClassifier {
     #[must_use]
     pub fn is_available() -> bool {
         let config = MimeConfig::default();
-        SystemMimeCommandExecutor
+        Self::is_available_with_config(&config)
+    }
+
+    /// Checks availability using the supplied MIME command budgets.
+    ///
+    /// # Parameters
+    /// - `config`: MIME command budgets used for the probe.
+    ///
+    /// # Returns
+    /// `true` when the `ffprobe` availability probe succeeds.
+    pub(crate) fn is_available_with_config(config: &MimeConfig) -> bool {
+        Self::is_available_with_executor(config, &SystemMimeCommandExecutor)
+    }
+
+    /// Runs the availability probe through an injectable command executor.
+    ///
+    /// # Parameters
+    /// - `config`: MIME command budgets used for the probe.
+    /// - `executor`: Command executor that runs the availability probe.
+    ///
+    /// # Returns
+    /// `true` when the probe succeeds and its output is complete.
+    pub(crate) fn is_available_with_executor(config: &MimeConfig, executor: &dyn MimeCommandExecutor) -> bool {
+        executor
             .run(
-                &Self::default_command_runner(&config),
+                &Self::default_command_runner(config),
                 Command::new(Self::COMMAND).arg("-version"),
             )
             .is_ok_and(|output| output.exit_code == Some(0) && require_complete_stdout(&output).is_ok())
@@ -234,7 +257,8 @@ impl FfprobeCommandMediaStreamClassifier {
         path: &Path,
         executor: &dyn MimeCommandExecutor,
     ) -> MimeResult<MediaStreamType> {
-        let mut command = Self::command_for_path(path);
+        let absolute_path = std::path::absolute(path)?;
+        let mut command = Self::command_for_path(&absolute_path);
         if let Some(working_directory) = &self.working_directory {
             command = command.working_directory(working_directory);
         }

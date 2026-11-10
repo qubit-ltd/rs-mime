@@ -52,7 +52,7 @@ impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
     /// Returns an unavailable provider failure if the system `file` command
     /// cannot be executed in the current environment.
     fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
-        if !FileCommandMimeDetector::is_available() {
+        if !FileCommandMimeDetector::is_available_with_config(config) {
             return Err(ProviderFailure::unavailable(MimeError::DetectorUnavailable {
                 name: "file".to_owned(),
                 reason: "`file` command is not available".to_owned(),

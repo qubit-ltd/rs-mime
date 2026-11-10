@@ -204,7 +204,7 @@ fn test_detect_file_by_content_ends_file_option_parsing_before_path() {
     std::fs::write(
         &script_path,
         "#!/bin/sh\n\
-         [ \"$1\" = \"--mime-type\" ] && [ \"$2\" = \"--brief\" ] && \\\n         [ \"$3\" = \"--\" ] && [ \"$4\" = \"--leading-dash\" ] || exit 9\n\
+         [ \"$1\" = \"--mime-type\" ] && [ \"$2\" = \"--brief\" ] && \\\n         [ \"$3\" = \"--\" ] && [ \"$4\" = \"$PWD/--leading-dash\" ] || exit 9\n\
          printf 'text/plain\\n'\n",
     )
     .expect("fake file command should be written");

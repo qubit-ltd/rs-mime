@@ -7,8 +7,18 @@
 // =============================================================================
 
 #[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
 use std::process::Command;
 
+#[cfg(unix)]
+use qubit_config::Config;
+#[cfg(unix)]
+use qubit_local_files::LocalFileSystem;
+#[cfg(unix)]
+use qubit_local_files::options::LocalTempDirectoryOptions;
+use qubit_mime::CONFIG_COMMAND_OUTPUT_MAX_BYTES;
+use qubit_mime::CONFIG_COMMAND_TIMEOUT;
 use qubit_mime::FileCommandMimeDetector;
 use qubit_mime::FileCommandMimeDetectorProvider;
 use qubit_mime::MimeConfig;
@@ -39,6 +49,54 @@ fn test_file_command_mime_detector_provider_metadata_and_availability() {
     );
     assert_eq!(10, descriptor.priority());
     assert_eq!(FileCommandMimeDetector::is_available(), creation.is_ok());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_file_provider_applies_probe_output_and_timeout_budgets() {
+    let directory = LocalFileSystem::host()
+        .expect("host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
+        .expect("temporary command directory should be created");
+    let executable = directory.path().join("file");
+    let _path_guard = PathEnvGuard::prepend(directory.path());
+    let write_command = |body: &str| {
+        std::fs::write(&executable, body).expect("fake file command should be written");
+        let mut permissions = std::fs::metadata(&executable)
+            .expect("fake file command metadata should be readable")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions).expect("fake file command should be executable");
+    };
+    let provider = FileCommandMimeDetectorProvider;
+
+    write_command("#!/bin/sh\nprintf 'application/octet-stream\\n'\n");
+    let mut source = Config::new();
+    source
+        .set(CONFIG_COMMAND_OUTPUT_MAX_BYTES, 1_u64)
+        .expect("small output cap should be accepted");
+    let small_output_config = MimeConfig::from_config(&source).expect("small output config should parse");
+    assert_eq!(
+        ProviderFailureKind::Unavailable,
+        provider
+            .create_configured(&small_output_config)
+            .expect_err("truncated probe output should report unavailable")
+            .kind()
+    );
+
+    write_command("#!/bin/sh\nsleep 1\nprintf 'application/octet-stream\\n'\n");
+    let mut source = Config::new();
+    source
+        .set(CONFIG_COMMAND_TIMEOUT, "30ms")
+        .expect("short timeout should be accepted");
+    let short_timeout_config = MimeConfig::from_config(&source).expect("short timeout config should parse");
+    assert_eq!(
+        ProviderFailureKind::Unavailable,
+        provider
+            .create_configured(&short_timeout_config)
+            .expect_err("timed out probe should report unavailable")
+            .kind()
+    );
 }
 
 #[cfg(unix)]
