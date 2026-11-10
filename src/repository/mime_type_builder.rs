@@ -139,11 +139,12 @@ impl MimeTypeBuilder {
     /// when the canonical name, an alias, or a super type is invalid.
     pub fn build(self) -> MimeResult<MimeType> {
         validate_mime_name(&self.name)?;
+        let name = self.name.to_ascii_lowercase();
         let aliases = validate_and_deduplicate_names(self.aliases)?;
         let super_types = validate_and_deduplicate_names(self.super_types)?;
         let globs = deduplicate_globs(self.globs);
         Ok(MimeType::from_parts(
-            self.name,
+            name,
             self.descriptions,
             aliases,
             globs,
@@ -218,7 +219,7 @@ fn validate_and_deduplicate_names(names: Vec<String>) -> MimeResult<Vec<String>>
         validate_mime_name(&name)?;
         let normalized = name.to_ascii_lowercase();
         if seen.insert(normalized) {
-            result.push(name);
+            result.push(name.to_ascii_lowercase());
         }
     }
     Ok(result)

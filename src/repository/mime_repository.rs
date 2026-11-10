@@ -195,14 +195,14 @@ impl MimeRepository {
         if parent == "application/octet-stream" && self.get(&child).is_some() {
             return true;
         }
-        if child.starts_with("text/") && parent == "text/plain" {
-            return true;
-        }
         let mut pending = vec![child];
         let mut visited = std::collections::HashSet::new();
         while let Some(name) = pending.pop() {
             if !visited.insert(name.clone()) {
                 continue;
+            }
+            if name.starts_with("text/") && parent == "text/plain" {
+                return true;
             }
             let Some(mime_type) = self.get(&name) else {
                 continue;

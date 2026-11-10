@@ -185,6 +185,44 @@ fn test_is_a_is_transitive_and_implicit() {
 }
 
 #[test]
+fn test_is_a_composes_explicit_and_implicit_text_inheritance() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+<mime-type type="application/x-child"><sub-class-of type="TEXT/X-NOTE"/></mime-type>
+<mime-type type="TEXT/X-NOTE"/>
+<mime-type type="application/x-cycle-a"><sub-class-of type="application/x-cycle-b"/></mime-type>
+<mime-type type="application/x-cycle-b"><sub-class-of type="application/x-cycle-a"/></mime-type>
+<mime-type type="application/x-unrelated"/>
+</mime-info>"#,
+    )
+    .unwrap();
+
+    assert!(repository.is_a("application/x-child", "text/x-note"));
+    assert!(repository.is_a("TEXT/X-NOTE", "text/plain"));
+    assert!(repository.is_a("application/x-child", "text/plain"));
+    assert!(!repository.is_a("application/x-cycle-a", "application/x-unrelated"));
+    assert!(!repository.is_a("application/x-unrelated", "text/plain"));
+}
+
+#[test]
+fn test_glob_index_matches_newline_wildcards() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+<mime-type type="application/x-pdf"><glob pattern="*.pdf"/></mime-type>
+<mime-type type="text/x-file"><glob pattern="file?.txt" case-sensitive="true"/></mime-type>
+</mime-info>"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        vec!["application/x-pdf"],
+        names(repository.detect_by_filename("a\nb.pdf"))
+    );
+    assert_eq!(vec!["text/x-file"], names(repository.detect_by_filename("file\n.txt")));
+    assert!(repository.detect_by_filename("a\nb.txt").is_empty());
+}
+
+#[test]
 fn test_from_xml_indexes_names_aliases_and_max_test_bytes() {
     let repository = create_repository();
 

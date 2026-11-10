@@ -6,6 +6,10 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::Hash;
+use std::hash::Hasher;
+
 use qubit_mime::MagicValueType;
 use qubit_mime::MimeError;
 use qubit_mime::MimeGlob;
@@ -39,4 +43,27 @@ fn test_mime_type_builder_collects_metadata_and_matching_rules() {
     assert_eq!(Some("data"), mime_type.preferred_extension());
     assert_eq!(1, mime_type.magics().len());
     assert_eq!(&["application/octet-stream".to_owned()], mime_type.super_types());
+}
+
+#[test]
+fn test_builder_normalizes_canonical_alias_and_supertype_names() {
+    let upper = MimeTypeBuilder::new("TEXT/PLAIN").build().unwrap();
+    let lower = MimeTypeBuilder::new("text/plain").build().unwrap();
+    let with_names = MimeTypeBuilder::new("APPLICATION/X-CHILD")
+        .alias("APPLICATION/X-ALIAS")
+        .alias("application/x-alias")
+        .super_type("TEXT/X-NOTE")
+        .super_type("text/x-note")
+        .build()
+        .unwrap();
+    let mut upper_hash = DefaultHasher::new();
+    let mut lower_hash = DefaultHasher::new();
+    upper.name().hash(&mut upper_hash);
+    lower.name().hash(&mut lower_hash);
+
+    assert_eq!("text/plain", upper.name());
+    assert_eq!(upper, lower);
+    assert_eq!(upper_hash.finish(), lower_hash.finish());
+    assert_eq!(&["application/x-alias".to_owned()], with_names.aliases());
+    assert_eq!(&["text/x-note".to_owned()], with_names.super_types());
 }

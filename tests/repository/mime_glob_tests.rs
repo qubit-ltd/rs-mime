@@ -54,6 +54,13 @@ fn test_matches_returns_false_for_empty_inputs() {
 }
 
 #[test]
+fn test_glob_wildcards_match_newline() {
+    assert!(MimeGlob::new("*.pdf", 50, false).unwrap().matches("a\nb.pdf"));
+    assert!(MimeGlob::new("file?.txt", 50, true).unwrap().matches("file\n.txt"));
+    assert!(!MimeGlob::new("*.pdf", 50, false).unwrap().matches("a\nb.txt"));
+}
+
+#[test]
 fn test_matches_supports_question_negated_and_literal_class_edges() {
     let question = MimeGlob::new("file?.txt", 50, false).expect("glob should compile");
     let negated_class = MimeGlob::new("[!a]ile.txt", 50, false).expect("glob should compile");

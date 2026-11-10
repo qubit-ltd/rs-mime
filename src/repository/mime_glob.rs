@@ -66,6 +66,7 @@ impl MimeGlob {
         let regex = glob_to_regex(pattern);
         let matcher = RegexBuilder::new(&regex)
             .case_insensitive(!case_sensitive)
+            .dot_matches_new_line(true)
             .build()
             .map_err(|error| MimeError::invalid_attr("glob", "pattern", pattern, error.to_string()))?;
         Ok(Self {

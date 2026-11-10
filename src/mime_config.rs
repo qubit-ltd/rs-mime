@@ -84,7 +84,7 @@ use crate::MimeResult;
 /// | Media stream classifier | `mime.media.stream.classifier.default` | `QUBIT_MEDIA_STREAM_CLASSIFIER_DEFAULT` | `ffprobe` | Classifier selector |
 /// | Media stream staging limit | `mime.media.stream.max.staging.size` | `QUBIT_MEDIA_STREAM_MAX_STAGING_SIZE` | `67108864` | Byte count |
 /// | Command output limit | `mime.command.output.max.bytes` | `QUBIT_MIME_COMMAND_OUTPUT_MAX_BYTES` | `65536` | Per-stream byte count |
-/// | Precise detection switch | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `true` | Boolean |
+/// | Precise detection switch | `mime.enable.precise.detection` | `QUBIT_MIME_ENABLE_PRECISE_DETECTION` | `false` | Boolean |
 /// | Precise detection patterns | `mime.precise.detection.patterns` | `QUBIT_MIME_PRECISE_DETECTION_PATTERNS` | `webm,ogg` | Extension list |
 /// | Ambiguous MIME mapping | `mime.ambiguous.mime.mapping` | `QUBIT_MIME_AMBIGUOUS_MIME_MAPPING` | `webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg` | `ext:video,audio` entries split on `;` |
 /// | Maximum detector buffer size | `mime.max.buffer.size` | `QUBIT_MIME_MAX_BUFFER_SIZE` | `16777216` | Byte count |
@@ -527,8 +527,9 @@ impl MimeConfig {
 
     /// Gets the derived total output budget for one native command.
     ///
-    /// The budget allows stdout and stderr to each retain up to four times
-    /// the configured per-stream limit, with saturating arithmetic.
+    /// The combined stdout-plus-stderr budget is four times the configured
+    /// per-stream limit, with saturating arithmetic. Each stream still has its
+    /// own retained-output limit.
     #[must_use]
     pub(crate) fn command_total_output_max_bytes(&self) -> u64 {
         u64::try_from(self.command_output_max_bytes)
