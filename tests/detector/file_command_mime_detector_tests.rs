@@ -432,6 +432,7 @@ fn test_detect_file_rejects_successful_command_error_text() {
 
 #[test]
 fn test_detect_file_reports_missing_input_with_host_file_utility() {
+    let _path_guard = PathEnvGuard::preserve();
     if !FileCommandMimeDetector::is_available() {
         eprintln!("skipping: host file utility is unavailable");
         return;
