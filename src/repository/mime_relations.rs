@@ -47,6 +47,8 @@ impl MimeRelations {
     }
 
     /// Tests whether `child` equals or transitively inherits from `parent`.
+    /// Implicit text inheritance applies only to known MIME names; explicit
+    /// inheritance edges remain effective even when their parent is unknown.
     ///
     /// # Parameters
     /// - `child`: MIME name or alias to resolve as the possible subtype.
@@ -69,7 +71,10 @@ impl MimeRelations {
             if !visited.insert(name.clone()) {
                 continue;
             }
-            if name.starts_with("text/") && parent == "text/plain" {
+            if name.starts_with("text/")
+                && parent == "text/plain"
+                && self.canonical_names.contains_key(&name)
+            {
                 return true;
             }
             for super_type in self.super_types.get(&name).into_iter().flatten() {

@@ -201,6 +201,65 @@ fn test_repository_detector_core_uses_its_repository_relations() {
 }
 
 #[test]
+fn test_unknown_text_does_not_inherit_plain() {
+    let repository = MimeRepository::empty();
+    let detector = RepositoryMimeDetector::with_repository(&repository);
+    assert_eq!(
+        Some("text/plain".to_owned()),
+        detector.core().merge_results(
+            &["text/x-unregistered".to_owned()],
+            &["text/plain".to_owned()],
+        ),
+    );
+}
+
+#[test]
+fn test_text_inheritance_requires_known_name_but_keeps_explicit_edges() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+<mime-type type="text/x-known"><alias type="text/x-known-alias"/></mime-type>
+<mime-type type="application/x-inherits-unknown-text"><sub-class-of type="text/x-parent"/></mime-type>
+<mime-type type="application/x-explicit-child"><sub-class-of type="application/x-unknown-parent"/></mime-type>
+</mime-info>"#,
+    )
+    .expect("custom repository should parse");
+    let detector = RepositoryMimeDetector::with_repository(&repository);
+    let merge = |filename: &str, content: &str| {
+        detector
+            .core()
+            .merge_results(&[filename.to_owned()], &[content.to_owned()])
+    };
+
+    assert_eq!(
+        Some("text/plain".to_owned()),
+        merge("text/x-unregistered", "text/plain"),
+        "unknown names in a nonempty repository must not gain inferred inheritance"
+    );
+    assert_eq!(
+        Some("text/x-known".to_owned()),
+        merge("text/x-known", "text/plain")
+    );
+    assert_eq!(
+        Some("text/x-known-alias".to_owned()),
+        merge("text/x-known-alias", "text/plain")
+    );
+    assert_eq!(
+        Some("TEXT/X-UNREGISTERED".to_owned()),
+        merge("TEXT/X-UNREGISTERED", "text/x-unregistered")
+    );
+    assert_eq!(
+        Some("application/x-inherits-unknown-text".to_owned()),
+        merge("text/plain", "application/x-inherits-unknown-text"),
+        "an unknown text parent must not imply text/plain"
+    );
+    assert_eq!(
+        Some("application/x-explicit-child".to_owned()),
+        merge("application/x-explicit-child", "application/x-unknown-parent"),
+        "explicit edges to unknown parent names must remain effective"
+    );
+}
+
+#[test]
 fn test_candidate_policy_matrix() {
     let core = MimeDetectorCore::default();
     let filename = ["application/pdf".to_owned()];
