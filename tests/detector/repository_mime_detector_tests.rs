@@ -21,6 +21,7 @@ use std::sync::atomic::Ordering;
 use qubit_config::Config;
 use qubit_io::Output;
 use qubit_local_files::LocalFileSystem;
+use qubit_local_files::options::LocalTempDirectoryOptions;
 use qubit_local_files::options::LocalTempFileOptions;
 use qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION;
 use qubit_mime::MediaStreamClassifier;
@@ -253,6 +254,44 @@ fn test_detect_file_reads_file_and_uses_file_name() {
         .expect("file detection should succeed");
 
     assert_eq!(Some("application/pdf".to_owned()), detected);
+}
+
+#[test]
+#[cfg(unix)]
+fn test_detect_file_follows_valid_symlink_and_rejects_directory_and_dangling_symlink() {
+    let detector = RepositoryMimeDetector::new().expect("default repository should load");
+    let filesystem = LocalFileSystem::host().expect("Host filesystem should open");
+    let mut file = filesystem
+        .create_temp_file_with_options(&LocalTempFileOptions::new().with_suffix(".pdf"))
+        .expect("PDF file should be created");
+    Output::write_fully(&mut file, b"%PDF-1.7\n").expect("PDF content should be written");
+    let directory = filesystem
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
+        .expect("directory should be created");
+    let valid_link = directory.path().join("valid-pdf-link");
+    let dangling_link = directory.path().join("dangling-pdf-link");
+    std::os::unix::fs::symlink(file.path(), &valid_link).expect("valid symlink should be created");
+    std::os::unix::fs::symlink(directory.path().join("missing-target"), &dangling_link)
+        .expect("dangling symlink should be created");
+
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        detector
+            .detect_file(&valid_link, MimeDetectionPolicy::VerifyContent)
+            .expect("repository detector should follow a link to a regular PDF")
+    );
+    assert!(
+        detector
+            .detect_file(directory.path(), MimeDetectionPolicy::VerifyContent)
+            .is_err(),
+        "directory input should return an error"
+    );
+    assert!(
+        detector
+            .detect_file(&dangling_link, MimeDetectionPolicy::VerifyContent)
+            .is_err(),
+        "dangling symlink input should return an error"
+    );
 }
 
 #[test]

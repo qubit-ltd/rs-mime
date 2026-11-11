@@ -127,6 +127,16 @@ to open or execute. Native command providers also depend on the corresponding
 executable and can fail when it is unavailable, times out, or returns invalid
 output.
 
+Local `detect_file` path behavior depends on the selected provider. The repository
+detector follows a valid symbolic link to its target and returns an open/read
+error for dangling links or directories. The default `file` runner passes the
+path to the system command without `-L`; its handling of links and directories
+depends on the platform, `file` version, and environment. Injected executors
+define their own behavior. Applications that need consistent content semantics
+should apply their own link policy while opening an ordinary file, then detect
+through a reader. Rejecting links is an application path-opening policy; a
+separate metadata check alone does not eliminate races.
+
 ## Provider Selection and Configuration
 
 `MimeDetectorRegistry::builtin()` exposes the built-in `repository` provider

@@ -6,6 +6,17 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Top-level MIME detector interface.
+//!
+//! Local-path behavior can differ between detector providers. Repository-backed
+//! detection opens and reads the target of a valid symbolic link; dangling
+//! links and directories produce open/read errors. The default `file` command
+//! runner passes the path to the system command without `-L`, preserving that
+//! command's path-object behavior. An injected executor defines its own
+//! behavior.
+//! Applications needing consistent content semantics should apply their own
+//! link policy, open a regular file, then inspect it through a reader. A
+//! metadata check alone does not eliminate races between validation and
+//! opening.
 
 use std::fmt::Debug;
 use std::future::Future;
@@ -225,7 +236,13 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be
     /// opened or read, or another [`MimeError`](crate::MimeError) when a
-    /// detector backend fails.
+    /// detector backend fails. Path-object behavior is provider-specific: the
+    /// repository detector follows valid symbolic links and errors on dangling
+    /// links or directories, while native-command providers follow their own
+    /// command semantics. Applications requiring a consistent policy should
+    /// open a regular file according to application policy and call
+    /// [`Self::detect_reader`]; a separate metadata check alone is subject to
+    /// races.
     fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>>;
 
     /// Detects a MIME type through a provider-neutral filesystem path.

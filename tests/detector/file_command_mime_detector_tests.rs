@@ -269,6 +269,50 @@ fn test_detect_file_by_content_ends_file_option_parsing_before_path() {
 
 #[test]
 #[cfg(unix)]
+fn test_detect_file_preserves_native_link_semantics_and_accepts_inode_mimes() {
+    let directory = LocalFileSystem::host()
+        .expect("Host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
+        .expect("temporary command directory should be created");
+    let script = directory.path().join(FileCommandMimeDetector::COMMAND);
+    std::fs::write(
+        &script,
+        "#!/bin/sh\n\
+         [ \"$#\" -eq 4 ] && [ \"$1\" = \"--mime-type\" ] && [ \"$2\" = \"--brief\" ] && [ \"$3\" = \"--\" ] || exit 9\n\
+         case \"$4\" in *link-input) printf 'inode/symlink\\n' ;; *directory-input) printf 'inode/directory\\n' ;; *) exit 8 ;; esac\n",
+    )
+    .expect("fake file command should be written");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+        .expect("fake file command should be executable");
+    let target = directory.path().join("regular-target");
+    std::fs::write(&target, b"target").expect("symlink target should be written");
+    let link = directory.path().join("link-input");
+    let directory_input = directory.path().join("directory-input");
+    std::os::unix::fs::symlink(&target, &link).expect("valid symlink should be created");
+    std::fs::create_dir(&directory_input).expect("directory input should be created");
+    let _path_guard = PathEnvGuard::prepend(directory.path());
+    let repository = MimeRepository::empty();
+    let detector = FileCommandMimeDetector::with_repository_and_runner(
+        &repository,
+        CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
+    );
+
+    assert_eq!(
+        Some("inode/symlink".to_owned()),
+        detector
+            .detect_file(&link, MimeDetectionPolicy::VerifyContent)
+            .expect("native symlink MIME should pass MIME validation")
+    );
+    assert_eq!(
+        Some("inode/directory".to_owned()),
+        detector
+            .detect_file(&directory_input, MimeDetectionPolicy::VerifyContent)
+            .expect("native directory MIME should pass MIME validation")
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn test_detect_file_by_content_returns_none_for_empty_stdout() {
     let temp_dir = LocalFileSystem::host()
         .expect("Host filesystem should open")

@@ -6,6 +6,14 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Helpers for stream-backed MIME detectors.
+//!
+//! The default local-file hook opens a readable regular file and then reads
+//! from it. Since `std::fs::metadata` follows symbolic links, a valid link to
+//! a regular file is followed; dangling links and directories return an I/O
+//! error. This contract does not impose a shared policy on other providers or
+//! on custom overrides. Applications that need to reject links must enforce
+//! that policy while opening the resource; checking metadata separately does
+//! not by itself prevent a race.
 
 use std::fmt::Debug;
 use std::fs::File;

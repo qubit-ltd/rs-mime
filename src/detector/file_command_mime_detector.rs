@@ -11,6 +11,13 @@
 //! `file --mime-type --brief <path>` for content guesses on local files or
 //! temporary files staged from seekable readers. It is registered under the
 //! built-in provider id `file` and aliases such as `file-command`.
+//!
+//! Local-path detection passes the path to the system `file` command without
+//! `-L`. The default runner therefore preserves the installed command's
+//! path-object semantics, which may vary by platform, version, and environment.
+//! An injected executor determines its own behavior. Applications needing a
+//! consistent link policy should apply it while opening an ordinary file and
+//! use reader detection; a separate metadata check does not eliminate races.
 
 use std::future::Future;
 use std::path::Path;
@@ -227,7 +234,10 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Errors
     /// Returns [`MimeError::Command`](crate::MimeError::Command) when command
-    /// execution fails.
+    /// execution fails. The default runner passes the path to the system `file`
+    /// command without `-L`; the command's treatment of links, dangling links,
+    /// and directories depends on platform, version, and environment. A custom
+    /// executor defines its own behavior.
     pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }
