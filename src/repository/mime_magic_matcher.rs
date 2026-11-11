@@ -7,6 +7,7 @@
 // =============================================================================
 //! MIME content magic matcher.
 
+use super::internal::MAX_MAGIC_DEPTH;
 use crate::MagicValueType;
 use crate::MimeError;
 use crate::MimeResult;
@@ -35,6 +36,8 @@ pub struct MimeMagicMatcher {
     mask: Option<Vec<u8>>,
     /// Nested alternatives evaluated only after this matcher succeeds.
     sub_matchers: Vec<MimeMagicMatcher>,
+    /// Cached number of matcher levels from this node to the deepest leaf.
+    depth: usize,
 }
 
 impl MimeMagicMatcher {
@@ -55,8 +58,9 @@ impl MimeMagicMatcher {
     ///
     /// # Errors
     /// Returns [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher)
-    /// when offsets are inverted, when numeric value widths are wrong, or
-    /// when the mask length differs from the value length.
+    /// when offsets are inverted, when numeric value widths are wrong, when
+    /// the mask length differs from the value length, or when the nested
+    /// matcher depth exceeds 128 levels (counting this matcher as level one).
     pub fn new(
         value_type: MagicValueType,
         offset_begin: usize,
@@ -68,6 +72,17 @@ impl MimeMagicMatcher {
         validate_offsets(offset_begin, offset_end)?;
         validate_value_width(value_type, &value)?;
         validate_mask_width(&value, mask.as_deref())?;
+        let depth = sub_matchers
+            .iter()
+            .map(|matcher| matcher.depth)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+        if depth > MAX_MAGIC_DEPTH {
+            return Err(MimeError::invalid_matcher(format!(
+                "magic matcher depth {depth} exceeds the maximum of {MAX_MAGIC_DEPTH}"
+            )));
+        }
         Ok(Self {
             value_type,
             offset_begin,
@@ -75,6 +90,7 @@ impl MimeMagicMatcher {
             value,
             mask,
             sub_matchers,
+            depth,
         })
     }
 

@@ -9,3 +9,6 @@
 
 pub(super) mod glob_entry;
 pub(super) mod magic_entry;
+
+/// Maximum number of nested magic matchers, counting each root as level one.
+pub(super) const MAX_MAGIC_DEPTH: usize = 128;

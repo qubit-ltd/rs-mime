@@ -20,6 +20,7 @@ use roxmltree::NS_XML_URI;
 use roxmltree::Node;
 
 use super::glob_index::GlobIndex;
+use super::internal::MAX_MAGIC_DEPTH;
 use super::magic_index::MagicIndex;
 use super::mime_relations::MimeRelations;
 use super::xml_parser::strip_doctype;
@@ -413,7 +414,7 @@ fn parse_magic(node: Node<'_, '_>) -> MimeResult<MimeMagic> {
         .children()
         .filter(Node::is_element)
         .filter(|child| is_standard_element(*child, "match"))
-        .map(parse_matcher)
+        .map(|matcher| parse_matcher(matcher, 1))
         .collect();
     let matchers = matchers?;
     if matchers.is_empty() {
@@ -434,8 +435,19 @@ fn parse_magic(node: Node<'_, '_>) -> MimeResult<MimeMagic> {
 /// Parsed magic matcher.
 ///
 /// # Errors
-/// Returns [`MimeError`](crate::MimeError) when matcher attributes are invalid.
-fn parse_matcher(node: Node<'_, '_>) -> MimeResult<MimeMagicMatcher> {
+/// Returns [`MimeError`](crate::MimeError) when matcher attributes are invalid
+/// or the nested matcher depth exceeds [`MAX_MAGIC_DEPTH`]. Excessive depth is
+/// reported as
+/// [`MimeError::InvalidXmlAttribute`](crate::MimeError::InvalidXmlAttribute).
+fn parse_matcher(node: Node<'_, '_>, depth: usize) -> MimeResult<MimeMagicMatcher> {
+    if depth > MAX_MAGIC_DEPTH {
+        return Err(MimeError::invalid_attr(
+            "match",
+            "depth",
+            &depth.to_string(),
+            format!("maximum matcher depth is {MAX_MAGIC_DEPTH}"),
+        ));
+    }
     let type_name = required_attr(node, "type")?;
     let value_type = MagicValueType::from_name(type_name)
         .ok_or_else(|| MimeError::invalid_attr("match", "type", type_name, "unknown type"))?;
@@ -449,7 +461,7 @@ fn parse_matcher(node: Node<'_, '_>) -> MimeResult<MimeMagicMatcher> {
         .children()
         .filter(Node::is_element)
         .filter(|child| is_standard_element(*child, "match"))
-        .map(parse_matcher)
+        .map(|child| parse_matcher(child, depth + 1))
         .collect();
     MimeMagicMatcher::new(value_type, offset_begin, offset_end, value, mask, sub_matchers?)
 }

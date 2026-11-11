@@ -24,6 +24,34 @@ fn test_new_rejects_inverted_offset_range() {
 }
 
 #[test]
+fn test_magic_depth_accepts_128_and_rejects_129() {
+    let mut matcher =
+        MimeMagicMatcher::new(MagicValueType::Byte, 0, 0, vec![1], None, vec![]).expect("leaf matcher should be valid");
+    for _ in 1..128 {
+        matcher = MimeMagicMatcher::new(MagicValueType::Byte, 0, 0, vec![1], None, vec![matcher])
+            .expect("matcher depth 128 should be accepted");
+    }
+
+    assert_eq!(1, matcher.max_test_bytes());
+    assert!(matcher.matches(&[1]));
+    let cloned = matcher.clone();
+    assert!(cloned.matches(&[1]));
+    drop(cloned);
+    drop(matcher);
+
+    let child =
+        MimeMagicMatcher::new(MagicValueType::Byte, 0, 0, vec![1], None, vec![]).expect("leaf matcher should be valid");
+    let mut matcher = child;
+    for _ in 1..128 {
+        matcher = MimeMagicMatcher::new(MagicValueType::Byte, 0, 0, vec![1], None, vec![matcher])
+            .expect("matcher depth 128 should be accepted");
+    }
+    let error = MimeMagicMatcher::new(MagicValueType::Byte, 0, 0, vec![1], None, vec![matcher])
+        .expect_err("matcher depth 129 should be rejected");
+    assert!(matches!(error, MimeError::InvalidMagicMatcher { ref reason } if reason.contains("depth")));
+}
+
+#[test]
 fn test_matches_string_at_fixed_offset() {
     let matcher = MimeMagicMatcher::new(MagicValueType::String, 0, 0, b"%PDF-".to_vec(), None, vec![])
         .expect("matcher should be valid");

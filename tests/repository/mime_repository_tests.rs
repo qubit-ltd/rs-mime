@@ -35,6 +35,39 @@ fn test_from_xml_rejects_alias_collision() {
 }
 
 #[test]
+fn test_magic_depth_accepts_128_and_rejects_129() {
+    fn xml_with_match_depth(depth: usize) -> String {
+        let mut xml = String::from(
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="application/x-depth"><magic><match type="byte" value="1" offset="0">"#,
+        );
+        for _ in 1..depth {
+            xml.push_str(r#"<match type="byte" value="1" offset="0">"#);
+        }
+        for _ in 0..depth {
+            xml.push_str("</match>");
+        }
+        xml.push_str("</magic></mime-type></mime-info>");
+        xml
+    }
+
+    let repository =
+        MimeRepository::from_xml(&xml_with_match_depth(128)).expect("XML matcher depth 128 should be accepted");
+    assert_eq!(1, repository.max_test_bytes());
+    assert_eq!(1, repository.detect_by_content(&[1]).len());
+    let clone = repository.clone();
+    assert_eq!(1, clone.detect_by_content(&[1]).len());
+    drop(clone);
+    drop(repository);
+
+    let error =
+        MimeRepository::from_xml(&xml_with_match_depth(129)).expect_err("XML matcher depth 129 should be rejected");
+    assert!(
+        matches!(error, MimeError::InvalidXmlAttribute { ref attribute, ref reason, .. }
+        if attribute == "depth" && reason.contains("maximum matcher depth"))
+    );
+}
+
+#[test]
 fn test_from_xml_matches_literal_open_bracket_glob() {
     let repository = MimeRepository::from_xml(
         r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
