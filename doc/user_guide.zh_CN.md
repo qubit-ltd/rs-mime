@@ -160,7 +160,11 @@ classifier。
 `guess_from_file`。`MimeDetectorAdapter` 通过偏移零点对应调用者当前位置的视图委托给该 reader
 hook；自定义随机访问覆盖仍可使用。adapter 的 Prefix 请求使用
 `MimeConfig::max_buffer_size()` 预算。无文件名且同一 MIME 的精确检测映射对应不同 MIME 对时，
-细化会保留原 MIME，且不会调用 classifier。传入匹配文件名或消除映射冲突即可指定细化对。
+细化会保留原 MIME，且不会调用 classifier。有文件名扩展名时，该扩展名必须列在
+`MimeConfig::precise_detection_patterns()` 中。没有扩展名时（包括未提供文件名），映射查询会忽略该集合，
+并检查所有包含检测 MIME 的配置映射；只有这些映射都使用相同的视频/音频 MIME 对时才会细化。
+因此，即使某个扩展名未启用，它的冲突映射也会阻止无扩展名输入的细化。传入匹配且已启用的文件名，
+或移除冲突映射，才能明确选择细化对。
 
 这些入口都返回 `MimeResult<Option<String>>`。应先处理外层错误，再解释可选的 MIME 名称。
 

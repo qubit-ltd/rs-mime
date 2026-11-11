@@ -235,7 +235,11 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Refined MIME type name, or the original type if refinement is disabled
-    /// or not applicable.
+    /// or not applicable. With a filename extension, the extension must be in
+    /// [`MimeConfig::precise_detection_patterns`]. Without one, all configured
+    /// mappings matching the detected MIME type are considered; refinement
+    /// runs only when they all have the same video/audio pair. In that
+    /// fallback, the pattern set is not consulted.
     ///
     /// # Errors
     /// Propagates errors returned by the configured media stream classifier.
@@ -273,7 +277,10 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Refined MIME type name, or the original type if refinement is disabled
-    /// or not applicable.
+    /// or not applicable. When the filename has no extension, mapping lookup
+    /// uses all configured mappings matching the detected MIME type and
+    /// proceeds only if they all use the same video/audio pair; the precise
+    /// detection pattern set applies only when a filename extension exists.
     ///
     /// # Errors
     /// Propagates errors returned by the configured media stream classifier.

@@ -202,7 +202,14 @@ random-access override remains supported. The adapter uses
 `MimeConfig::max_buffer_size()` for prefix requests. If no filename is supplied
 and matching precise-detection mappings associate a MIME type with different
 pairs, refinement preserves the original MIME type without classification.
-Pass a matching filename or remove the conflicting mapping to choose a pair.
+When a filename extension exists, it must be listed in
+`MimeConfig::precise_detection_patterns()`. When no filename extension exists,
+the mapping lookup ignores that list and considers every configured mapping
+that contains the detected MIME type; refinement runs only if all such mappings
+share the same video/audio pair. This includes both a missing filename and a
+filename with no extension. A conflicting mapping can therefore prevent
+unnamed refinement even when its extension is not enabled. Pass a matching
+enabled filename or remove the conflicting mapping to choose a pair.
 
 All these results use `MimeResult<Option<String>>`. Handle the outer error
 before interpreting the optional MIME name.

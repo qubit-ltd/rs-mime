@@ -10,6 +10,8 @@ use std::io::Cursor;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 use qubit_config::Config;
 use qubit_mime::CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT;
@@ -35,6 +37,12 @@ struct StaticClassifier {
 
 #[derive(Debug)]
 struct FailingClassifier;
+
+#[derive(Debug)]
+struct CountingClassifier {
+    calls: Arc<AtomicUsize>,
+    stream_type: MediaStreamType,
+}
 
 impl MediaStreamClassifier for StaticClassifier {
     fn classify_file(&self, _file: &Path) -> Result<MediaStreamType, MimeError> {
@@ -66,6 +74,18 @@ impl MediaStreamClassifier for FailingClassifier {
         Err(MimeError::InvalidClassifierInput {
             reason: "forced".to_owned(),
         })
+    }
+}
+
+impl MediaStreamClassifier for CountingClassifier {
+    fn classify_file(&self, _file: &Path) -> Result<MediaStreamType, MimeError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        Ok(self.stream_type)
+    }
+
+    fn classify_reader(&self, _reader: &mut dyn Read) -> Result<MediaStreamType, MimeError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        Ok(self.stream_type)
     }
 }
 
@@ -674,4 +694,125 @@ fn test_refine_mapping_keeps_unique_pairs_and_filename_resolution() {
             .refine_detected_mime_type("video/webm", Some("sample.alt"), DetectionSource::Content(b"data"),)
             .unwrap()
     );
+}
+
+#[test]
+fn test_refine_without_filename_uses_all_consistent_mappings_and_counts_calls() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut detector = MimeDetectorCore::new(create_precise_config(
+        true,
+        "webm",
+        "webm:video/webm,audio/webm;ogg:video/ogg,audio/ogg",
+    ));
+    detector.set_media_stream_classifier(Some(Arc::new(CountingClassifier {
+        calls: Arc::clone(&calls),
+        stream_type: MediaStreamType::AudioOnly,
+    })));
+
+    assert_eq!(
+        "audio/webm",
+        detector
+            .refine_detected_mime_type("video/webm", Some("sample.webm"), DetectionSource::Content(b"data"))
+            .expect("enabled named webm should refine")
+    );
+    assert_eq!(1, calls.load(Ordering::Relaxed));
+
+    assert_eq!(
+        "video/ogg",
+        detector
+            .refine_detected_mime_type("video/ogg", Some("sample.ogg"), DetectionSource::Content(b"data"))
+            .expect("disabled named ogg should preserve MIME")
+    );
+    assert_eq!(1, calls.load(Ordering::Relaxed));
+
+    for filename in [None, Some("sample")] {
+        assert_eq!(
+            "audio/ogg",
+            detector
+                .refine_detected_mime_type("video/ogg", filename, DetectionSource::Content(b"data"))
+                .expect("unnamed or extensionless input should resolve by MIME mapping")
+        );
+    }
+    assert_eq!(3, calls.load(Ordering::Relaxed));
+}
+
+#[test]
+fn test_refine_without_filename_ignores_pattern_set_for_consistent_mappings() {
+    for (patterns, expected) in [("", "audio/webm"), ("webm", "audio/webm")] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut detector = MimeDetectorCore::new(create_precise_config(true, patterns, "webm:video/webm,audio/webm"));
+        detector.set_media_stream_classifier(Some(Arc::new(CountingClassifier {
+            calls: Arc::clone(&calls),
+            stream_type: MediaStreamType::AudioOnly,
+        })));
+
+        assert_eq!(
+            expected,
+            detector
+                .refine_detected_mime_type("video/webm", None, DetectionSource::Content(b"data"))
+                .expect("consistent MIME mappings refine without a filename")
+        );
+        assert_eq!(1, calls.load(Ordering::Relaxed));
+    }
+}
+
+#[test]
+fn test_refine_without_filename_unenabled_conflict_still_blocks_mapping() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut detector = MimeDetectorCore::new(create_precise_config(
+        true,
+        "webm",
+        "webm:video/webm,audio/webm;alt:video/webm,audio/ogg",
+    ));
+    detector.set_media_stream_classifier(Some(Arc::new(CountingClassifier {
+        calls: Arc::clone(&calls),
+        stream_type: MediaStreamType::AudioOnly,
+    })));
+
+    assert_eq!(
+        "video/webm",
+        detector
+            .refine_detected_mime_type("video/webm", None, DetectionSource::Content(b"data"))
+            .expect("conflicting MIME mappings should preserve the original")
+    );
+    assert_eq!(0, calls.load(Ordering::Relaxed));
+
+    assert_eq!(
+        "audio/webm",
+        detector
+            .refine_detected_mime_type("video/webm", Some("sample.webm"), DetectionSource::Content(b"data"))
+            .expect("explicit enabled filename should select its mapping")
+    );
+    assert_eq!(1, calls.load(Ordering::Relaxed));
+
+    assert_eq!(
+        "video/webm",
+        detector
+            .refine_detected_mime_type("video/webm", Some("sample.alt"), DetectionSource::Content(b"data"))
+            .expect("disabled extension should preserve MIME")
+    );
+    assert_eq!(1, calls.load(Ordering::Relaxed));
+}
+
+#[test]
+fn test_refine_without_filename_handles_same_and_different_enabled_pairs() {
+    for (mapping, expected, expected_calls) in [
+        ("webm:video/webm,audio/webm;ogg:video/webm,audio/webm", "audio/webm", 1),
+        ("webm:video/webm,audio/webm;ogg:video/webm,audio/ogg", "video/webm", 0),
+    ] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut detector = MimeDetectorCore::new(create_precise_config(true, "webm,ogg", mapping));
+        detector.set_media_stream_classifier(Some(Arc::new(CountingClassifier {
+            calls: Arc::clone(&calls),
+            stream_type: MediaStreamType::AudioOnly,
+        })));
+
+        assert_eq!(
+            expected,
+            detector
+                .refine_detected_mime_type("video/webm", None, DetectionSource::Content(b"data"))
+                .expect("MIME mapping consistency determines whether classification runs")
+        );
+        assert_eq!(expected_calls, calls.load(Ordering::Relaxed));
+    }
 }

@@ -526,7 +526,13 @@ impl MimeConfig {
         self.enable_precise_detection
     }
 
-    /// Gets extensions requiring precise detection.
+    /// Gets extensions requiring precise detection when a filename is
+    /// available.
+    ///
+    /// When refinement has no filename extension, mapping lookup uses all
+    /// configured ambiguous MIME mappings and does not consult this set. A
+    /// detected MIME type is refined only when every matching mapping uses the
+    /// same video/audio pair.
     ///
     /// # Returns
     /// Lowercase extension names without leading dots.
