@@ -1,0 +1,54 @@
+name: Documentation consumer
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-documentation-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.94
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-fs
+          path: .ci-dependencies/rs-fs
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-command
+          path: .ci-dependencies/rs-command
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-config
+          path: .ci-dependencies/rs-config
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-local-files
+          path: .ci-dependencies/rs-local-files
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-redact
+          path: .ci-dependencies/rs-redact
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-fs-local
+          path: .ci-dependencies/rs-fs-local
+      - name: Link local path dependencies beside the checkout
+        run: |
+          set -euo pipefail
+          for dependency in rs-fs rs-command rs-config rs-local-files rs-redact rs-fs-local; do
+            ln -s "$GITHUB_WORKSPACE/.ci-dependencies/$dependency" "$GITHUB_WORKSPACE/../$dependency"
+          done
+      - name: Prepare local path dependencies
+        run: ./.infra/bin/prepare-local-path-dependencies.sh
+      - name: Compile documentation consumer
+        run: cargo check --manifest-path tests/fixtures/documentation_consumer/Cargo.toml --locked
