@@ -455,6 +455,25 @@ fn test_from_xml_accepts_doctype_and_reports_structural_errors() {
 }
 
 #[test]
+fn test_from_xml_rejects_repeated_doctype_declarations() {
+    let xml = r#"<!DOCTYPE mime-info SYSTEM "mime.dtd"><!DOCTYPE mime-info SYSTEM "mime.dtd"><mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"/>"#;
+    assert!(MimeRepository::from_xml(xml).is_err());
+}
+
+#[test]
+fn test_from_xml_rejects_doctype_without_name() {
+    let xml = r#"<!DOCTYPE ><mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"/>"#;
+    assert!(MimeRepository::from_xml(xml).is_err());
+}
+
+#[test]
+fn test_from_xml_rejects_doctype_with_invalid_external_identifier() {
+    let xml =
+        r#"<!DOCTYPE mime-info garbage><mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"/>"#;
+    assert!(MimeRepository::from_xml(xml).is_err());
+}
+
+#[test]
 fn test_from_xml_reports_invalid_glob_and_magic_attributes() {
     let cases = [
         (
