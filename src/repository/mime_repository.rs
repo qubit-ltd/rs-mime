@@ -456,6 +456,13 @@ fn parse_matcher(node: Node<'_, '_>) -> MimeResult<MimeMagicMatcher> {
 
 /// Returns whether an element uses the standard shared MIME-info namespace
 /// and the requested local name.
+///
+/// # Parameters
+/// - `node`: XML element to inspect.
+/// - `name`: Expected local element name.
+///
+/// # Returns
+/// `true` when the element has both the expected namespace and local name.
 fn is_standard_element(node: Node<'_, '_>, name: &str) -> bool {
     node.tag_name().namespace() == Some(SHARED_MIME_INFO_NAMESPACE) && node.tag_name().name() == name
 }

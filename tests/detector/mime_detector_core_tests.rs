@@ -206,10 +206,9 @@ fn test_unknown_text_does_not_inherit_plain() {
     let detector = RepositoryMimeDetector::with_repository(&repository);
     assert_eq!(
         Some("text/plain".to_owned()),
-        detector.core().merge_results(
-            &["text/x-unregistered".to_owned()],
-            &["text/plain".to_owned()],
-        ),
+        detector
+            .core()
+            .merge_results(&["text/x-unregistered".to_owned()], &["text/plain".to_owned()],),
     );
 }
 
@@ -235,10 +234,7 @@ fn test_text_inheritance_requires_known_name_but_keeps_explicit_edges() {
         merge("text/x-unregistered", "text/plain"),
         "unknown names in a nonempty repository must not gain inferred inheritance"
     );
-    assert_eq!(
-        Some("text/x-known".to_owned()),
-        merge("text/x-known", "text/plain")
-    );
+    assert_eq!(Some("text/x-known".to_owned()), merge("text/x-known", "text/plain"));
     assert_eq!(
         Some("text/x-known-alias".to_owned()),
         merge("text/x-known-alias", "text/plain")
