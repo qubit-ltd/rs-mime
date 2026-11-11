@@ -192,7 +192,11 @@ fn test_from_xml_requires_standard_match_after_ignoring_foreign_match() {
     )
     .expect_err("foreign match must not satisfy a standard magic rule");
 
-    assert!(error.to_string().contains("magic must contain at least one match"));
+    assert!(matches!(
+        error,
+        MimeError::InvalidXmlElement { ref element, ref reason }
+            if element == "magic" && reason.contains("magic must contain at least one match")
+    ));
 }
 
 #[test]
