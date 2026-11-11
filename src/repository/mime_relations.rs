@@ -15,37 +15,45 @@ use super::mime_type::MimeType;
 /// The small part of a repository needed to compare MIME candidate relations.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MimeRelations {
+    /// Normalized canonical names and aliases mapped to canonical names.
     canonical_names: HashMap<String, String>,
+    /// Normalized parent MIME names indexed by canonical child name.
     super_types: HashMap<String, Vec<String>>,
 }
 
 impl MimeRelations {
     /// Builds the relation context from parsed MIME types.
+    ///
+    /// # Parameters
+    /// - `mime_types`: Parsed MIME types whose names and parent relations are
+    ///   indexed.
+    ///
+    /// # Returns
+    /// An immutable relation table for the supplied types.
     pub(crate) fn from_mime_types(mime_types: &[MimeType]) -> Self {
         let mut relations = Self::default();
         for mime_type in mime_types {
             let canonical = normalize(mime_type.name());
-            relations
-                .canonical_names
-                .insert(canonical.clone(), canonical.clone());
+            relations.canonical_names.insert(canonical.clone(), canonical.clone());
             for alias in mime_type.aliases() {
-                relations
-                    .canonical_names
-                    .insert(normalize(alias), canonical.clone());
+                relations.canonical_names.insert(normalize(alias), canonical.clone());
             }
             relations.super_types.insert(
                 canonical,
-                mime_type
-                    .super_types()
-                    .iter()
-                    .map(|name| normalize(name))
-                    .collect(),
+                mime_type.super_types().iter().map(|name| normalize(name)).collect(),
             );
         }
         relations
     }
 
     /// Tests whether `child` equals or transitively inherits from `parent`.
+    ///
+    /// # Parameters
+    /// - `child`: MIME name or alias to resolve as the possible subtype.
+    /// - `parent`: MIME name or alias to resolve as the possible supertype.
+    ///
+    /// # Returns
+    /// `true` when the resolved child equals or inherits from the parent.
     pub(crate) fn is_a(&self, child: &str, parent: &str) -> bool {
         let child = self.canonical_name_or_input(child);
         let parent = self.canonical_name_or_input(parent);
@@ -75,15 +83,26 @@ impl MimeRelations {
         false
     }
 
+    /// Resolves a normalized MIME name to its canonical name when known.
+    ///
+    /// # Parameters
+    /// - `name`: MIME type name or alias to normalize and resolve.
+    ///
+    /// # Returns
+    /// The canonical name, or the normalized input for an unknown name.
     fn canonical_name_or_input(&self, name: &str) -> String {
         let normalized = normalize(name);
-        self.canonical_names
-            .get(&normalized)
-            .cloned()
-            .unwrap_or(normalized)
+        self.canonical_names.get(&normalized).cloned().unwrap_or(normalized)
     }
 }
 
+/// Normalizes a MIME name for case-insensitive lookup.
+///
+/// # Parameters
+/// - `name`: MIME type name to normalize.
+///
+/// # Returns
+/// A lowercase copy of the supplied name.
 fn normalize(name: &str) -> String {
     name.to_lowercase()
 }

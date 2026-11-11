@@ -142,10 +142,9 @@ fn test_repository_detector_core_uses_its_repository_relations() {
     let empty_detector = RepositoryMimeDetector::with_repository(&empty_repository);
     assert_eq!(
         Some("application/zip".to_owned()),
-        empty_detector.core().merge_results(
-            &["application/epub+zip".to_owned()],
-            &["application/zip".to_owned()]
-        ),
+        empty_detector
+            .core()
+            .merge_results(&["application/epub+zip".to_owned()], &["application/zip".to_owned()]),
         "a custom empty repository must not borrow bundled relationships"
     );
 

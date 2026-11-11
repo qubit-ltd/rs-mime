@@ -98,10 +98,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     pub fn with_repository_and_config(repository: &'a MimeRepository, config: MimeConfig) -> Self {
         let mut core = MimeDetectorCore::from_mime_config(config);
         core.set_mime_relations(repository.relations());
-        Self {
-            core,
-            repository,
-        }
+        Self { core, repository }
     }
 
     /// Gets the shared detector core.

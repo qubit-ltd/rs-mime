@@ -2,6 +2,8 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Tests for indexed MIME magic priority, ordering, and de-duplication.
 
@@ -17,7 +19,7 @@ fn rule(priority: u16, value: &[u8]) -> MimeMagic {
 }
 
 #[test]
-fn magic_index_returns_only_highest_priority_in_source_order_once_per_mime() {
+fn test_magic_index_returns_only_highest_priority_in_source_order_once_per_mime() {
     let mut index = MagicIndex::default();
     index.add(3, &rule(10, b"same"));
     index.add(7, &rule(40, b"same"));
@@ -29,7 +31,7 @@ fn magic_index_returns_only_highest_priority_in_source_order_once_per_mime() {
 }
 
 #[test]
-fn magic_index_replaces_prior_results_and_returns_empty_for_no_match() {
+fn test_magic_index_replaces_prior_results_and_returns_empty_for_no_match() {
     let mut index = MagicIndex::default();
     index.add(1, &rule(20, b"same"));
     index.add(2, &rule(80, b"same"));

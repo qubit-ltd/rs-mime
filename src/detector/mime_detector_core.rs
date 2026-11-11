@@ -19,8 +19,8 @@ use crate::MediaStreamType;
 use crate::MimeConfig;
 use crate::MimeDetectionPolicy;
 use crate::MimeError;
-use crate::MimeResult;
 use crate::MimeRepository;
+use crate::MimeResult;
 use crate::candidate_selection::select_candidate;
 use crate::repository::mime_relations::MimeRelations;
 
@@ -105,6 +105,9 @@ impl MimeDetectorCore {
     }
 
     /// Installs the relations for the repository this core uses.
+    ///
+    /// # Parameters
+    /// - `mime_relations`: Immutable MIME names and inheritance metadata.
     pub(crate) fn set_mime_relations(&mut self, mime_relations: Arc<MimeRelations>) {
         self.mime_relations = Some(mime_relations);
     }
@@ -153,6 +156,14 @@ impl MimeDetectorCore {
     }
 
     /// Selects candidates using the policy's equality or inheritance rule.
+    ///
+    /// # Parameters
+    /// - `from_filename`: Candidates in filename precedence order.
+    /// - `from_content`: Candidates in content precedence order.
+    /// - `policy`: Rule for resolving the two candidate sources.
+    ///
+    /// # Returns
+    /// The selected candidate borrowed from either slice, or `None`.
     fn select_candidates<'a>(
         &self,
         from_filename: &'a [String],

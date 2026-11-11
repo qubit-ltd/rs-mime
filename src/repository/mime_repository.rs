@@ -263,9 +263,9 @@ impl MimeRepository {
                 a.name() == b.name()
             }
         })
-            .copied()
-            .into_iter()
-            .collect()
+        .copied()
+        .into_iter()
+        .collect()
     }
 
     /// Adds a MIME type and updates lookup indexes.
@@ -327,7 +327,6 @@ impl MimeRepository {
             self.magic_index.add(mime_index, magic);
         }
     }
-
 }
 
 /// Parses one `mime-type` element.
