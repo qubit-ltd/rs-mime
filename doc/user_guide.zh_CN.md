@@ -191,8 +191,10 @@ fn detect_precisely(content: &[u8], filename: &str) -> Result<Option<String>, Bo
 注入 executor 的行为由注入者决定。若应用要求一致的内容检测语义，应按自身链接策略打开普通文件，再用
 reader 检测。拒绝链接应由应用在打开路径时执行；单独调用 metadata 检查仍无法消除竞态。
 
-这些入口对应不同 backend 契约。默认 `MimeDetectorBackend` reader hook 只读取其前缀；backend
-声明 `Complete` 时会返回 `CompleteContentRequired`。需要完整资源的 backend 必须覆盖
+这些入口对应不同 backend 契约。默认 `MimeDetectorBackend` reader hook 按
+`content_requirement()` 中声明的 `Prefix(n)` 读取；只有未覆盖该方法时，才由
+`max_test_bytes()` 提供默认需求。backend 声明 `Complete` 时会返回
+`CompleteContentRequired`。需要完整资源的 backend 必须覆盖
 `guess_from_reader`，自行实现有界读取和位置恢复；若本地文件需要特殊处理，还应覆盖
 `guess_from_file`。`MimeDetectorAdapter` 通过偏移零点对应调用者当前位置的视图委托给该 reader
 hook；自定义随机访问覆盖仍可使用。adapter 的 Prefix 请求使用
@@ -206,8 +208,8 @@ hook；自定义随机访问覆盖仍可使用。adapter 的 Prefix 请求使用
 内置 `FileCommandMimeDetector` 检测 reader 时，最多暂存 `MimeConfig::max_buffer_size()` 字节，并在
 EOF 时停止。该上限来自 MIME 配置；所选文件名仓库中的 magic 偏移不会决定读取量。`detect_by_content(bytes)`
 仍接收调用方提供的字节，本地文件检测仍将本地路径传给 `file` 命令。超过配置预算的 reader 资源可能因
-命令只看到暂存前缀而得到不同结果。此修复也校正自定义仓库的 MIME 关系合并，并可能比旧版暂存更多字节。
-如需调整 reader 预算，可使用现有 `mime.max.buffer.size` 配置。无需迁移 API 或依赖，`rs-magika` 也无需迁移。
+命令只看到暂存前缀而得到不同结果。如需调整 reader 预算，可使用现有
+`mime.max.buffer.size` 配置。
 
 这些入口都返回 `MimeResult<Option<String>>`。应先处理外层错误，再解释可选的 MIME 名称。
 
@@ -242,6 +244,10 @@ classifier；如果环境提供 `ffprobe`，再使用 `FfprobeCommandMediaStream
 `http://www.freedesktop.org/standards/shared-mime-info` 命名空间。其他命名空间的元素会作为扩展
 忽略，其嵌套元素也不会被解析；标准元素中的非法属性仍会报错。标准 `magic` 元素仍必须至少包含一个
 标准 `match` 元素。
+
+嵌套 magic matcher 最多 128 层，根 matcher 计为第 1 层。超过限制的 XML 规则会返回
+`InvalidXmlAttribute`，程序化构造的 matcher 会返回 `InvalidMagicMatcher`。可在保持匹配语义的前提下
+减少冗余嵌套，或改写为等价的浅层 alternatives。
 
 ## 精确检测映射的配置错误
 

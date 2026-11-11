@@ -94,10 +94,10 @@ Provider 依赖对应的可执行文件，也可能因命令不可用、超时�
 路径打开策略；单独检查 metadata 无法消除竞态。
 
 内置 `file` Provider 检测 reader 时，最多暂存 `MimeConfig::max_buffer_size()` 字节，并在 EOF 时停止；
-该预算不由所选文件名仓库中的 magic 偏移决定。字节切片检测和本地文件检测仍沿用各自现有入口行为；
-超过 reader 预算的资源可能因只检查前缀而得到不同结果。自定义仓库的 MIME 关系合并也已校正。
-reader 暂存可能比旧版读取更多；应用可通过现有 `mime.max.buffer.size` 配置调整预算。无需更改 API
-或依赖，`rs-magika` 也无需迁移。
+该预算不由所选文件名仓库中的 magic 偏移决定。字节切片检测检查调用方提供的字节；`file` Provider
+则将本地路径传给系统 `file` 命令。超过 reader 预算的资源可能因只检查暂存前缀而得到不同结果。应用可通过现有
+`mime.max.buffer.size` 配置调整预算。reader 契约和不同入口的行为详见
+[reader 行为说明](doc/user_guide.zh_CN.md#核心工作流)。
 
 ## Provider 选择与配置
 

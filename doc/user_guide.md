@@ -232,11 +232,13 @@ file, then use reader detection. Rejecting links is the application's path
 opening policy; a separate metadata check alone does not eliminate races.
 
 These are separate backend contracts. The default `MimeDetectorBackend`
-reader hook reads only its prefix and returns `CompleteContentRequired` when the
-backend declares `Complete`. A backend requiring the whole resource must
-override `guess_from_reader`, implement bounded reading and position
-restoration, and override `guess_from_file` when local file handling needs
-special behavior. Through the asynchronous provider path, the built-in `file`
+reader hook reads the number of bytes declared by `content_requirement()` when
+it is `Prefix(n)`; `max_test_bytes()` supplies that requirement only when the
+method is not overridden. It returns `CompleteContentRequired` when the backend
+declares `Complete`. A backend requiring the whole resource must override
+`guess_from_reader`, implement bounded reading and position restoration, and
+override `guess_from_file` when local file handling needs special behavior.
+Through the asynchronous provider path, the built-in `file`
 provider runs staging, command execution, and cleanup on a blocking thread pool.
 A custom backend's default async content hook calls its synchronous method, so
 backends that may block should override it. Dropping an in-flight future does
@@ -263,11 +265,8 @@ configuration; magic offsets in the selected filename repository do not set
 the amount read. `detect_by_content(bytes)` continues to receive the provided
 bytes, and local-file detection continues to pass the local path to the `file`
 command. A reader resource longer than the configured budget may produce a
-different result because the command sees only its staged prefix. This also
-corrects custom repository relation merging and can increase the bytes staged
-compared with earlier versions. Adjust the existing `mime.max.buffer.size`
-setting if needed. No API or dependency migration is needed, and `rs-magika`
-requires no migration.
+different result because the command sees only its staged prefix. Adjust the
+existing `mime.max.buffer.size` setting if needed.
 
 All these results use `MimeResult<Option<String>>`. Handle the outer error
 before interpreting the optional MIME name.
@@ -311,6 +310,12 @@ from other namespaces are treated as extensions and ignored, including their
 nested elements; malformed attributes on standard elements still produce an
 error. A standard `magic` element must still contain at least one standard
 `match` element.
+
+Nested magic matchers are limited to 128 levels, counting the root matcher as
+level one. XML rules deeper than this return `InvalidXmlAttribute`, and
+programmatically constructed matchers return `InvalidMagicMatcher`. Reduce
+redundant nesting or rewrite a rule as equivalent shallower alternatives while
+preserving its matching behavior.
 
 ## Precise mapping configuration errors
 
