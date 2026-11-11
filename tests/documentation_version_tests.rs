@@ -89,6 +89,26 @@ fn test_provider_configuration_examples_match_compilable_consumer() {
 }
 
 #[test]
+fn test_precise_detection_examples_match_compilable_consumer() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let marker = "<!-- mime-doc-example:precise-detection -->";
+    let guides = ["doc/user_guide.md", "doc/user_guide.zh_CN.md"].map(|path| read(root.join(path)));
+    let examples = guides
+        .iter()
+        .map(|guide| documented_example(guide, marker))
+        .collect::<Vec<_>>();
+
+    assert_eq!(examples[0], examples[1], "precise detection examples drifted");
+
+    let fixture = read(root.join("tests/fixtures/documentation_consumer/src/main.rs"));
+    let fixture_code = fixture.replace("#[allow(dead_code)]\n", "");
+    assert!(
+        fixture_code.contains(examples[0]),
+        "consumer fixture is out of sync with the precise detection example"
+    );
+}
+
+#[test]
 fn test_user_guides_match_current_package_versions() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mime = manifest_field(&read(root.join("Cargo.toml")), "version");

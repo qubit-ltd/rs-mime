@@ -137,6 +137,34 @@ fn configured_detector() -> Result<(), Box<dyn std::error::Error>> {
 检测器 core 显式注入 `MediaStreamClassifier`。仅打开配置不会自动创建或安装 `ffprobe`
 classifier。
 
+下面的函数面向已完整读取的上传内容：它开启精确检测，在调用检测器前创建并注入内置
+`ffprobe` classifier。请将以下直接依赖加入 `Cargo.toml`，版本沿用本指南前文：
+
+```toml
+[dependencies]
+qubit-mime = "0.21"
+qubit-config = "0.15"
+qubit-spi = "0.14"
+```
+
+<!-- mime-doc-example:precise-detection -->
+```rust
+fn detect_precisely(content: &[u8], filename: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    use qubit_spi::ServiceProvider;
+    let mut source = qubit_config::Config::new();
+    source.set(qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)?;
+    let config = qubit_mime::MimeConfig::from_config(&source)?;
+    let classifier = qubit_mime::FfprobeCommandMediaStreamClassifierProvider.create_configured(&config)?;
+    let mut detector = qubit_mime::RepositoryMimeDetector::from_mime_config(config);
+    detector.core_mut().set_media_stream_classifier(Some(classifier));
+    Ok(detector.detect_bytes(content, Some(filename), qubit_mime::MimeDetectionPolicy::VerifyContent)?)
+}
+```
+
+没有 MIME 候选时，函数会返回 `None`。创建 classifier 时会检查 `ffprobe` 是否可用；
+若缺少该命令，创建过程返回错误并由函数向上传播。应用应明确决定传播错误还是放弃精确分类。
+不要把内容前缀传给此函数，因为前缀不会执行媒体分类。
+
 ## 核心工作流
 
 根据输入类型选择最简单的入口：
@@ -153,6 +181,15 @@ classifier。
 当前位置读取。`Prefix(n)` 最多读取 n 字节，提前遇到 EOF 时停止；`Complete` 在默认 16 MiB
 缓冲预算（或覆盖后的预算）内读到 EOF，并额外探测一个字节以检查超限。内容 backend 的两种模式
 都会恢复各自的起始位置；读取和恢复都失败时，恢复错误优先。
+
+
+### 本地路径行为因 Provider 而异
+
+`detect_file` 不会统一各 Provider 的符号链接策略。repository 检测会打开路径并跟随指向普通文件的
+有效链接；悬空链接或目录会在打开/读取时出错。默认 `file` runner 将路径原样交给系统命令，不添加
+`-L`，所以链接、悬空链接和目录的处理遵循当前命令的路径对象语义，可能因平台、`file` 版本和环境而异。
+注入 executor 的行为由注入者决定。若应用要求一致的内容检测语义，应按自身链接策略打开普通文件，再用
+reader 检测。拒绝链接应由应用在打开路径时执行；单独调用 metadata 检查仍无法消除竞态。
 
 这些入口对应不同 backend 契约。默认 `MimeDetectorBackend` reader hook 只读取其前缀；backend
 声明 `Complete` 时会返回 `CompleteContentRequired`。需要完整资源的 backend 必须覆盖
@@ -205,6 +242,15 @@ classifier；如果环境提供 `ffprobe`，再使用 `FfprobeCommandMediaStream
 `http://www.freedesktop.org/standards/shared-mime-info` 命名空间。其他命名空间的元素会作为扩展
 忽略，其嵌套元素也不会被解析；标准元素中的非法属性仍会报错。标准 `magic` 元素仍必须至少包含一个
 标准 `match` 元素。
+
+## 精确检测映射的配置错误
+
+解析 `MimeConfig` 时会逐条校验 `mime.ambiguous.mime.mapping`。两端名称都必须符合已接受的
+`type/subtype` token 语法。例如 `webm:video/webm,garbage` 会立即失败，因为音频侧名称缺少斜线；
+不会等到 classifier 报告“仅音频”后才发现问题。错误为
+`MimeError::InvalidConfigurationValue`：key 是 `CONFIG_MIME_AMBIGUOUS_MIME_MAPPING`，value 是
+完整原始映射项，reason 会指出错误一侧及语法原因。合法自定义 MIME 名称无需存在于内置仓库，
+也不要求以 `video/` 或 `audio/` 开头。
 
 ## 错误与诊断
 

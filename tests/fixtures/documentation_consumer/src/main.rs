@@ -40,4 +40,16 @@ fn configured_detector() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[allow(dead_code)]
+fn detect_precisely(content: &[u8], filename: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    use qubit_spi::ServiceProvider;
+    let mut source = qubit_config::Config::new();
+    source.set(qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)?;
+    let config = qubit_mime::MimeConfig::from_config(&source)?;
+    let classifier = qubit_mime::FfprobeCommandMediaStreamClassifierProvider.create_configured(&config)?;
+    let mut detector = qubit_mime::RepositoryMimeDetector::from_mime_config(config);
+    detector.core_mut().set_media_stream_classifier(Some(classifier));
+    Ok(detector.detect_bytes(content, Some(filename), qubit_mime::MimeDetectionPolicy::VerifyContent)?)
+}
+
 fn main() {}

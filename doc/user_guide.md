@@ -160,6 +160,38 @@ Precise media detection is opt-in: set `mime.enable.precise.detection` to
 `true` and explicitly inject a `MediaStreamClassifier` into the detector core.
 Enabling the setting alone does not create or install an `ffprobe` classifier.
 
+For a complete upload body that needs media refinement, this function enables the
+setting and injects the built-in `ffprobe` classifier before inspecting the full
+content. Add these direct dependencies using the versions already used in this
+guide:
+
+```toml
+[dependencies]
+qubit-mime = "0.21"
+qubit-config = "0.15"
+qubit-spi = "0.14"
+```
+
+<!-- mime-doc-example:precise-detection -->
+```rust
+fn detect_precisely(content: &[u8], filename: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    use qubit_spi::ServiceProvider;
+    let mut source = qubit_config::Config::new();
+    source.set(qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)?;
+    let config = qubit_mime::MimeConfig::from_config(&source)?;
+    let classifier = qubit_mime::FfprobeCommandMediaStreamClassifierProvider.create_configured(&config)?;
+    let mut detector = qubit_mime::RepositoryMimeDetector::from_mime_config(config);
+    detector.core_mut().set_media_stream_classifier(Some(classifier));
+    Ok(detector.detect_bytes(content, Some(filename), qubit_mime::MimeDetectionPolicy::VerifyContent)?)
+}
+```
+
+The function returns `None` when no MIME candidate is found. Creating the
+classifier checks that `ffprobe` is available; if it is missing, creation returns
+an error and this function propagates it. The application can explicitly choose
+to propagate that error or abandon precise classification. Do not pass a prefix
+to this function: prefixes are not classified.
+
 ## Core Workflow
 
 Use the simplest entry point that matches the input:
@@ -184,6 +216,20 @@ at EOF. `Complete` reads through EOF within the default 16 MiB buffer budget,
 or an overridden budget, and probes one extra byte to detect overflow. Both
 content-backend modes restore their starting position; if reading and
 restoration both fail, the restoration error takes precedence.
+
+
+### Local path behavior varies by provider
+
+`detect_file` does not impose one symbolic-link policy across providers. The
+repository detector opens the path as a file and follows a valid link to its
+target; a dangling link or directory produces an open/read error. The default
+`file` runner passes the path to the system command without `-L`, so links,
+dangling links, and directories follow the installed command's path-object
+semantics. This can vary by platform, `file` version, and environment; an
+injected executor defines its own behavior. Applications needing consistent
+content semantics should apply their own link policy while opening an ordinary
+file, then use reader detection. Rejecting links is the application's path
+opening policy; a separate metadata check alone does not eliminate races.
 
 These are separate backend contracts. The default `MimeDetectorBackend`
 reader hook reads only its prefix and returns `CompleteContentRequired` when the
@@ -265,6 +311,19 @@ from other namespaces are treated as extensions and ignored, including their
 nested elements; malformed attributes on standard elements still produce an
 error. A standard `magic` element must still contain at least one standard
 `match` element.
+
+## Precise mapping configuration errors
+
+Each `mime.ambiguous.mime.mapping` entry is validated while `MimeConfig` is
+parsed. Both configured MIME names must use the accepted `type/subtype` token
+syntax. For example, `webm:video/webm,garbage` fails immediately because the
+audio-side value has no slash; malformed values are not deferred until a
+classifier reports an audio-only stream. The error is
+`MimeError::InvalidConfigurationValue`, with key
+`CONFIG_MIME_AMBIGUOUS_MIME_MAPPING`, the complete original entry as its value,
+and a reason naming the invalid side and syntax problem. Valid custom names do
+not need to appear in the embedded repository or start with `video/` or
+`audio/`.
 
 ## Errors and Diagnostics
 
