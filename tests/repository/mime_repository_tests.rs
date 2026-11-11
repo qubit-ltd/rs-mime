@@ -116,7 +116,9 @@ fn test_from_xml_ignores_foreign_mime_rules_and_nested_matchers() {
     assert!(repository.get("application/x-missing").is_none());
     assert_eq!(
         Some("standard description"),
-        repository.get("application/x-namespace").and_then(MimeType::description)
+        repository
+            .get("application/x-namespace")
+            .and_then(MimeType::description)
     );
     assert_eq!(
         Some("application/x-namespace"),
@@ -159,6 +161,26 @@ fn test_from_xml_accepts_prefixed_standard_namespace() {
         vec!["application/x-prefixed"],
         names(repository.detect_by_filename("a.prefixed"))
     );
+}
+
+#[test]
+fn test_from_xml_matches_leading_close_bracket_glob() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+<mime-type type="application/x-bracket"><glob pattern="[]a].foo"/></mime-type>
+</mime-info>"#,
+    )
+    .expect("leading close bracket glob must parse");
+
+    assert_eq!(
+        vec!["application/x-bracket"],
+        names(repository.detect_by_filename("].foo"))
+    );
+    assert_eq!(
+        vec!["application/x-bracket"],
+        names(repository.detect_by_filename("a.foo"))
+    );
+    assert!(repository.detect_by_filename("b.foo").is_empty());
 }
 
 #[test]
