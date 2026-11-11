@@ -127,3 +127,26 @@ fn test_character_class_leading_close_bracket() {
     assert!(prefixed.matches("prea.foo"));
     assert!(!prefixed.matches("preb.foo"));
 }
+
+#[test]
+fn test_leading_close_bracket_keeps_wildcards_literal() {
+    for (pattern, accepted, rejected) in [
+        ("[]?]", vec!["]", "?"], vec![".", "*", "a"]),
+        ("[]*]", vec!["]", "*"], vec![".", "?", "a"]),
+        ("[!]?]", vec![".", "*", "a"], vec!["]", "?"]),
+        ("[!]*]", vec![".", "?", "a"], vec!["]", "*"]),
+        (
+            "pre[]?].foo",
+            vec!["pre].foo", "pre?.foo"],
+            vec!["pre..foo", "pre*.foo", "xpre?.foo"],
+        ),
+    ] {
+        let glob = MimeGlob::new(pattern, 50, true).expect("valid glob");
+        for name in accepted {
+            assert!(glob.matches(name), "{pattern}: {name}");
+        }
+        for name in rejected {
+            assert!(!glob.matches(name), "{pattern}: {name}");
+        }
+    }
+}

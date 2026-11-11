@@ -156,7 +156,16 @@ fn glob_to_regex(pattern: &str) -> String {
 /// # Returns
 /// Index of the closing `]` when a class was parsed; otherwise `start`.
 fn append_character_class(chars: &[char], start: usize, regex: &mut String) -> usize {
-    let mut end = start + 1;
+    let mut content_start = start + 1;
+    let negated = chars.get(content_start) == Some(&'!');
+    if negated {
+        content_start += 1;
+    }
+    let mut end = content_start;
+    let empty_group = chars.get(content_start) == Some(&']') && (chars.len() == content_start + 1);
+    if !empty_group && chars.get(end) == Some(&']') {
+        end += 1;
+    }
     while end < chars.len() && chars[end] != ']' {
         end += 1;
     }
@@ -165,10 +174,8 @@ fn append_character_class(chars: &[char], start: usize, regex: &mut String) -> u
         return start;
     }
     regex.push('[');
-    let mut content_start = start + 1;
-    if content_start < end && chars[content_start] == '!' {
+    if negated {
         regex.push('^');
-        content_start += 1;
     }
     let mut index = content_start;
     while index < end {
@@ -177,7 +184,7 @@ fn append_character_class(chars: &[char], start: usize, regex: &mut String) -> u
         // difference, and difference operators. Escape their punctuation so
         // each source glob character remains literal. A single hyphen still
         // denotes a glob range; only the regex `--` operator is escaped.
-        if matches!(ch, '[' | '\\' | '&' | '~' | '^') {
+        if matches!(ch, '[' | ']' | '\\' | '&' | '~' | '^') {
             regex.push('\\');
             regex.push(ch);
         } else if ch == '-' && (chars.get(index + 1) == Some(&'-') || chars.get(index.wrapping_sub(1)) == Some(&'-')) {
