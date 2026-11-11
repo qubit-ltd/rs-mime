@@ -44,7 +44,7 @@ pub(crate) fn strip_doctype(xml: &str) -> Cow<'_, str> {
             };
             position = end + 2;
         } else if bytes[position..].starts_with(DOCTYPE.as_bytes()) {
-            let Some(end) = doctype_end(bytes, position + DOCTYPE.len()) else {
+            let Some(end) = doctype_end(xml, bytes, position + DOCTYPE.len()) else {
                 return Cow::Borrowed(xml);
             };
             if !std::str::from_utf8(&bytes[position..end])
@@ -240,27 +240,14 @@ fn xml_comment_end(bytes: &[u8], position: usize) -> Option<usize> {
 /// # Returns
 /// The offset after the declaration, or `None` when it is incomplete or
 /// malformed.
-fn doctype_end(bytes: &[u8], mut position: usize) -> Option<usize> {
+fn doctype_end(xml: &str, bytes: &[u8], mut position: usize) -> Option<usize> {
     if bytes.get(position).is_none_or(|byte| !is_xml_whitespace(*byte)) {
         return None;
     }
     while position < bytes.len() && is_xml_whitespace(bytes[position]) {
         position += 1;
     }
-    let name = std::str::from_utf8(bytes.get(position..)?).ok()?;
-    let mut characters = name.char_indices();
-    let (_, first) = characters.next()?;
-    if !is_xml_name_start(first) {
-        return None;
-    }
-    let mut name_end = first.len_utf8();
-    for (offset, character) in characters {
-        if !is_xml_name_char(character) {
-            break;
-        }
-        name_end = offset + character.len_utf8();
-    }
-    position += name_end;
+    position = xml_name_end(xml, position)?;
     let had_space = skip_xml_whitespace(bytes, &mut position);
     if bytes.get(position) == Some(&b'>') {
         return Some(position + 1);
@@ -306,7 +293,7 @@ fn doctype_end(bytes: &[u8], mut position: usize) -> Option<usize> {
     }
 
     if in_subset {
-        position = internal_subset_end(bytes, position)?;
+        position = internal_subset_end(xml, bytes, position)?;
         skip_xml_whitespace(bytes, &mut position);
     }
     (bytes.get(position) == Some(&b'>')).then_some(position + 1)
@@ -321,7 +308,7 @@ fn doctype_end(bytes: &[u8], mut position: usize) -> Option<usize> {
 /// # Returns
 /// The offset after the closing bracket, or `None` for an incomplete or
 /// unrecognized item.
-fn internal_subset_end(bytes: &[u8], mut position: usize) -> Option<usize> {
+fn internal_subset_end(xml: &str, bytes: &[u8], mut position: usize) -> Option<usize> {
     loop {
         skip_xml_whitespace(bytes, &mut position);
         if bytes.get(position) == Some(&b']') {
@@ -332,10 +319,10 @@ fn internal_subset_end(bytes: &[u8], mut position: usize) -> Option<usize> {
         } else if bytes[position..].starts_with(b"<?") {
             position = find_bytes(bytes, position + 2, b"?>")? + 2;
         } else if bytes[position..].starts_with(b"<!") {
-            position = markup_declaration_end(bytes, position)?;
+            position = markup_declaration_end(xml, bytes, position)?;
         } else if bytes.get(position) == Some(&b'%') {
             position += 1;
-            let name_end = xml_name_end(bytes, position)?;
+            let name_end = xml_name_end(xml, position)?;
             position = name_end;
             if bytes.get(position) != Some(&b';') {
                 return None;
@@ -355,7 +342,7 @@ fn internal_subset_end(bytes: &[u8], mut position: usize) -> Option<usize> {
 ///
 /// # Returns
 /// The offset after its unquoted `>`, or `None` for malformed input.
-fn markup_declaration_end(bytes: &[u8], mut position: usize) -> Option<usize> {
+fn markup_declaration_end(xml: &str, bytes: &[u8], mut position: usize) -> Option<usize> {
     position += 2;
     let declarations = [
         (b"ELEMENT".as_slice(), 0),
@@ -378,7 +365,7 @@ fn markup_declaration_end(bytes: &[u8], mut position: usize) -> Option<usize> {
             return None;
         }
     }
-    position = xml_name_end(bytes, position)?;
+    position = xml_name_end(xml, position)?;
     if !skip_xml_whitespace(bytes, &mut position) {
         return None;
     }
@@ -388,7 +375,7 @@ fn markup_declaration_end(bytes: &[u8], mut position: usize) -> Option<usize> {
                 || bytes[position..].starts_with(b"ANY")
                 || bytes.get(position) == Some(&b'(')
         }
-        1 => xml_name_end(bytes, position).is_some(),
+        1 => xml_name_end(xml, position).is_some(),
         2 => {
             matches!(bytes.get(position), Some(b'\'' | b'"'))
                 || bytes[position..].starts_with(b"SYSTEM")
@@ -402,7 +389,7 @@ fn markup_declaration_end(bytes: &[u8], mut position: usize) -> Option<usize> {
     }
 
     match kind {
-        1 => return attlist_declaration_end(bytes, position),
+        1 => return attlist_declaration_end(xml, bytes, position),
         0 if bytes[position..].starts_with(b"EMPTY") => {
             position += b"EMPTY".len();
             return simple_keyword_declaration_end(bytes, position);
@@ -412,10 +399,10 @@ fn markup_declaration_end(bytes: &[u8], mut position: usize) -> Option<usize> {
             return simple_keyword_declaration_end(bytes, position);
         }
         0 if bytes.get(position) == Some(&b'(') => {
-            position = element_content_spec_end(bytes, position)?;
+            position = element_content_spec_end(xml, bytes, position)?;
             return simple_keyword_declaration_end(bytes, position);
         }
-        2 => return entity_declaration_end(bytes, position, parameter_entity),
+        2 => return entity_declaration_end(xml, bytes, position, parameter_entity),
         3 if bytes[position..].starts_with(b"SYSTEM") => {
             position += b"SYSTEM".len();
             if !skip_xml_whitespace(bytes, &mut position) {
@@ -461,7 +448,7 @@ fn markup_declaration_end(bytes: &[u8], mut position: usize) -> Option<usize> {
 ///
 /// # Returns
 /// The offset after the content specification, or `None` for invalid input.
-fn element_content_spec_end(bytes: &[u8], mut position: usize) -> Option<usize> {
+fn element_content_spec_end(xml: &str, bytes: &[u8], mut position: usize) -> Option<usize> {
     let group_start = position;
     position += 1;
     skip_xml_whitespace(bytes, &mut position);
@@ -473,7 +460,7 @@ fn element_content_spec_end(bytes: &[u8], mut position: usize) -> Option<usize> 
             if bytes.get(position) == Some(&b'|') {
                 position += 1;
                 skip_xml_whitespace(bytes, &mut position);
-                position = xml_name_end(bytes, position)?;
+                position = xml_name_end(xml, position)?;
                 has_names = true;
             } else if bytes.get(position) == Some(&b')') {
                 position += 1;
@@ -489,7 +476,7 @@ fn element_content_spec_end(bytes: &[u8], mut position: usize) -> Option<usize> 
             }
         }
     }
-    position = children_group_end(bytes, group_start, 0)?;
+    position = children_group_end(xml, bytes, group_start, 0)?;
     if matches!(bytes.get(position), Some(b'?' | b'*' | b'+')) {
         position += 1;
     }
@@ -505,13 +492,13 @@ fn element_content_spec_end(bytes: &[u8], mut position: usize) -> Option<usize> 
 ///
 /// # Returns
 /// The offset after the group, or `None` for invalid or deeply nested input.
-fn children_group_end(bytes: &[u8], mut position: usize, depth: usize) -> Option<usize> {
+fn children_group_end(xml: &str, bytes: &[u8], mut position: usize, depth: usize) -> Option<usize> {
     if depth >= 128 || bytes.get(position) != Some(&b'(') {
         return None;
     }
     position += 1;
     skip_xml_whitespace(bytes, &mut position);
-    position = content_particle_end(bytes, position, depth + 1)?;
+    position = content_particle_end(xml, bytes, position, depth + 1)?;
     let mut separator = None;
     loop {
         skip_xml_whitespace(bytes, &mut position);
@@ -525,7 +512,7 @@ fn children_group_end(bytes: &[u8], mut position: usize, depth: usize) -> Option
                 separator = Some(current);
                 position += 1;
                 skip_xml_whitespace(bytes, &mut position);
-                position = content_particle_end(bytes, position, depth + 1)?;
+                position = content_particle_end(xml, bytes, position, depth + 1)?;
             }
             _ => return None,
         }
@@ -541,11 +528,11 @@ fn children_group_end(bytes: &[u8], mut position: usize, depth: usize) -> Option
 ///
 /// # Returns
 /// The offset after the particle, or `None` for invalid input.
-fn content_particle_end(bytes: &[u8], mut position: usize, depth: usize) -> Option<usize> {
+fn content_particle_end(xml: &str, bytes: &[u8], mut position: usize, depth: usize) -> Option<usize> {
     if bytes.get(position) == Some(&b'(') {
-        position = children_group_end(bytes, position, depth)?;
+        position = children_group_end(xml, bytes, position, depth)?;
     } else {
-        position = xml_name_end(bytes, position)?;
+        position = xml_name_end(xml, position)?;
     }
     if matches!(bytes.get(position), Some(b'?' | b'*' | b'+')) {
         position += 1;
@@ -561,14 +548,14 @@ fn content_particle_end(bytes: &[u8], mut position: usize, depth: usize) -> Opti
 ///
 /// # Returns
 /// The offset after `>`, or `None` when a definition is incomplete.
-fn attlist_declaration_end(bytes: &[u8], mut position: usize) -> Option<usize> {
+fn attlist_declaration_end(xml: &str, bytes: &[u8], mut position: usize) -> Option<usize> {
     loop {
         skip_xml_whitespace(bytes, &mut position);
         if bytes.get(position) == Some(&b'>') {
             return Some(position + 1);
         }
 
-        position = xml_name_end(bytes, position)?;
+        position = xml_name_end(xml, position)?;
         if !skip_xml_whitespace(bytes, &mut position) {
             return None;
         }
@@ -577,9 +564,9 @@ fn attlist_declaration_end(bytes: &[u8], mut position: usize) -> Option<usize> {
             if !skip_xml_whitespace(bytes, &mut position) {
                 return None;
             }
-            position = enumeration_end(bytes, position, true)?;
+            position = enumeration_end(xml, bytes, position, true)?;
         } else if bytes.get(position) == Some(&b'(') {
-            position = enumeration_end(bytes, position, false)?;
+            position = enumeration_end(xml, bytes, position, false)?;
         } else {
             let value_types = [
                 b"CDATA".as_slice(),
@@ -628,7 +615,7 @@ fn attlist_declaration_end(bytes: &[u8], mut position: usize) -> Option<usize> {
 ///
 /// # Returns
 /// The offset after the closing parenthesis, or `None` for invalid input.
-fn enumeration_end(bytes: &[u8], mut position: usize, name_only: bool) -> Option<usize> {
+fn enumeration_end(xml: &str, bytes: &[u8], mut position: usize, name_only: bool) -> Option<usize> {
     if bytes.get(position) != Some(&b'(') {
         return None;
     }
@@ -636,9 +623,9 @@ fn enumeration_end(bytes: &[u8], mut position: usize, name_only: bool) -> Option
     loop {
         skip_xml_whitespace(bytes, &mut position);
         position = if name_only {
-            xml_name_end(bytes, position)?
+            xml_name_end(xml, position)?
         } else {
-            xml_nmtoken_end(bytes, position)?
+            xml_nmtoken_end(xml, position)?
         };
         skip_xml_whitespace(bytes, &mut position);
         match bytes.get(position) {
@@ -702,7 +689,7 @@ fn simple_keyword_declaration_end(bytes: &[u8], mut position: usize) -> Option<u
 ///
 /// # Returns
 /// The offset after `>`, or `None` when the definition is incomplete.
-fn entity_declaration_end(bytes: &[u8], mut position: usize, parameter_entity: bool) -> Option<usize> {
+fn entity_declaration_end(xml: &str, bytes: &[u8], mut position: usize, parameter_entity: bool) -> Option<usize> {
     if matches!(bytes.get(position), Some(b'\'' | b'"')) {
         position = quoted_literal_end(bytes, position, false)?;
         return simple_keyword_declaration_end(bytes, position);
@@ -732,7 +719,7 @@ fn entity_declaration_end(bytes: &[u8], mut position: usize, parameter_entity: b
         if !skip_xml_whitespace(bytes, &mut position) {
             return None;
         }
-        position = xml_name_end(bytes, position)?;
+        position = xml_name_end(xml, position)?;
         return simple_keyword_declaration_end(bytes, position);
     }
     simple_keyword_declaration_end(bytes, position)
@@ -746,8 +733,8 @@ fn entity_declaration_end(bytes: &[u8], mut position: usize, parameter_entity: b
 ///
 /// # Returns
 /// The offset after the name, or `None` when no valid name starts there.
-fn xml_name_end(bytes: &[u8], position: usize) -> Option<usize> {
-    let name = std::str::from_utf8(bytes.get(position..)?).ok()?;
+fn xml_name_end(xml: &str, position: usize) -> Option<usize> {
+    let name = xml.get(position..)?;
     let mut characters = name.char_indices();
     let (_, first) = characters.next()?;
     if !is_xml_name_start(first) {
@@ -771,8 +758,8 @@ fn xml_name_end(bytes: &[u8], position: usize) -> Option<usize> {
 ///
 /// # Returns
 /// The offset after the token, or `None` when no valid token starts there.
-fn xml_nmtoken_end(bytes: &[u8], position: usize) -> Option<usize> {
-    let token = std::str::from_utf8(bytes.get(position..)?).ok()?;
+fn xml_nmtoken_end(xml: &str, position: usize) -> Option<usize> {
+    let token = xml.get(position..)?;
     let mut end = position;
     for (offset, character) in token.char_indices() {
         if !is_xml_name_char(character) {

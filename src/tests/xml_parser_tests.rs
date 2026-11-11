@@ -48,6 +48,29 @@ fn test_valid_entity_notation_and_attribute_list_declarations_are_removed() {
 }
 
 #[test]
+fn test_removes_doctype_with_unicode_element_name_and_nmtoken_enumeration() {
+    let xml = "<!DOCTYPE 名 [<!ELEMENT 名 EMPTY><!ATTLIST 名 token (\u{301}|1) #IMPLIED>]><名/>";
+    assert_eq!(strip_doctype(xml), "<名/>");
+}
+
+#[test]
+fn test_leaves_truncated_unicode_element_name_unchanged() {
+    let xml = "<!DOCTYPE r [<!ELEMENT r (名|";
+    assert!(matches!(strip_doctype(xml), Cow::Borrowed(value) if value == xml));
+}
+
+#[test]
+fn test_removes_doctype_with_many_element_declarations_and_preserves_long_body() {
+    let declarations = (0..512)
+        .map(|index| format!("<!ELEMENT e{index} EMPTY>"))
+        .collect::<String>();
+    let body = "body text ".repeat(16_384);
+    let xml = format!("<!DOCTYPE r [{declarations}]><r>{body}</r>");
+    let stripped = strip_doctype(&xml);
+    assert_eq!(stripped, format!("<r>{body}</r>"));
+}
+
+#[test]
 fn test_leaves_truncated_declaration_unchanged() {
     let xml = "<!DOCTYPE mime-info [<!-- unterminated ]>";
     assert!(matches!(strip_doctype(xml), Cow::Borrowed(value) if value == xml));
