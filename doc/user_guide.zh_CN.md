@@ -166,6 +166,12 @@ hook；自定义随机访问覆盖仍可使用。adapter 的 Prefix 请求使用
 因此，即使某个扩展名未启用，它的冲突映射也会阻止无扩展名输入的细化。传入匹配且已启用的文件名，
 或移除冲突映射，才能明确选择细化对。
 
+内置 `FileCommandMimeDetector` 检测 reader 时，最多暂存 `MimeConfig::max_buffer_size()` 字节，并在
+EOF 时停止。该上限来自 MIME 配置；所选文件名仓库中的 magic 偏移不会决定读取量。`detect_by_content(bytes)`
+仍接收调用方提供的字节，本地文件检测仍将本地路径传给 `file` 命令。超过配置预算的 reader 资源可能因
+命令只看到暂存前缀而得到不同结果。此修复也校正自定义仓库的 MIME 关系合并，并可能比旧版暂存更多字节。
+如需调整 reader 预算，可使用现有 `mime.max.buffer.size` 配置。无需迁移 API 或依赖，`rs-magika` 也无需迁移。
+
 这些入口都返回 `MimeResult<Option<String>>`。应先处理外层错误，再解释可选的 MIME 名称。
 
 ## 进阶用法

@@ -131,8 +131,10 @@ impl<'a> FileCommandMimeDetector<'a> {
         command_runner: CommandRunner,
         config: MimeConfig,
     ) -> Self {
+        let mut core = MimeDetectorCore::from_mime_config(config);
+        core.set_mime_relations(repository.relations());
         Self {
-            core: MimeDetectorCore::from_mime_config(config),
+            core,
             repository,
             command_runner,
         }
@@ -487,9 +489,12 @@ impl<'a> FileBasedMimeDetector for FileCommandMimeDetector<'a> {
         &self.core
     }
 
-    /// Gets the maximum content prefix length from the repository.
+    /// Gets the maximum content prefix length used when staging a reader.
+    ///
+    /// The prefix budget comes from [`MimeConfig::max_buffer_size`] and is
+    /// independent of the magic offsets in the filename repository.
     fn max_test_bytes(&self) -> usize {
-        self.repository.max_test_bytes()
+        self.core.max_buffer_size()
     }
 
     /// Guesses MIME type names from filename rules.

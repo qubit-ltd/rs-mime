@@ -23,6 +23,7 @@ use qubit_mime::CONFIG_COMMAND_TIMEOUT;
 use qubit_mime::CONFIG_MEDIA_STREAM_CLASSIFIER_DEFAULT;
 use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
 use qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION;
+use qubit_mime::CONFIG_MIME_MAX_BUFFER_SIZE;
 use qubit_mime::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
 use qubit_mime::DEFAULT_COMMAND_TIMEOUT;
 use qubit_mime::FileBasedMimeDetector;
@@ -34,6 +35,44 @@ use qubit_mime::MimeDetector;
 #[cfg(unix)]
 use qubit_mime::MimeError;
 use qubit_mime::MimeRepository;
+
+#[test]
+fn test_custom_repository_relations() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-review-report">
+    <glob pattern="*.review-report"/>
+    <alias type="application/x-review-report-alias"/>
+    <sub-class-of type="application/pdf"/>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("custom repository should parse");
+    let detector = FileCommandMimeDetector::with_repository(&repository);
+    let filename = vec!["application/x-review-report".to_owned()];
+    let content = vec!["application/pdf".to_owned()];
+    assert_eq!(
+        filename.first().cloned(),
+        detector.core().merge_results(&filename, &content)
+    );
+    let aliases = vec!["application/x-review-report-alias".to_owned()];
+    assert_eq!(
+        aliases.first().cloned(),
+        detector.core().merge_results(&aliases, &content)
+    );
+}
+
+#[test]
+fn test_empty_repository_relations() {
+    let repository = MimeRepository::empty();
+    let detector = FileCommandMimeDetector::with_repository(&repository);
+    let filename = vec!["text/html".to_owned()];
+    let content = vec!["text/plain".to_owned()];
+    assert_eq!(
+        content.first().cloned(),
+        detector.core().merge_results(&filename, &content)
+    );
+}
 
 #[cfg(unix)]
 use crate::support::PathEnvGuard;
@@ -323,7 +362,7 @@ fn test_file_command_detector_accessors_and_repository_only_policy() {
     detector.core_mut().set_media_stream_classifier(None);
     assert!(detector.core().media_stream_classifier().is_none());
     assert_eq!(0, detector.repository().all().len());
-    assert_eq!(0, detector.max_test_bytes());
+    assert_eq!(detector.core().max_buffer_size(), detector.max_test_bytes());
 
     let replaced = FileCommandMimeDetector::with_repository(&repository)
         .with_command_runner(CommandRunner::new(Duration::from_secs(10)).disable_logging(true));
@@ -335,6 +374,179 @@ fn test_file_command_detector_accessors_and_repository_only_policy() {
             .detect_by_filename("unknown.bin")
             .expect("filename detection should succeed")
     );
+}
+
+#[test]
+fn test_file_reader_staging_budget_from_config() {
+    let mut source = Config::new();
+    source
+        .set(CONFIG_MIME_MAX_BUFFER_SIZE, 8_u64)
+        .expect("reader budget should be configurable");
+    #[cfg(not(unix))]
+    {
+        let repository = MimeRepository::empty();
+        let detector = FileCommandMimeDetector::with_repository_runner_and_config(
+            &repository,
+            CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
+            MimeConfig::from_config(&source).expect("MIME config should parse"),
+        );
+        assert_eq!(8, FileBasedMimeDetector::max_test_bytes(&detector));
+    }
+
+    #[cfg(unix)]
+    {
+        let directory = LocalFileSystem::host()
+            .expect("host filesystem available")
+            .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
+            .expect("fixture directory created");
+        let script = directory.path().join("file");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nfor input_path do :; done\nif [ \"$(cat \"$input_path\")\" = \"%PDF-1.7\" ]; then printf 'application/pdf\\n'; else printf 'application/octet-stream\\n'; fi\n",
+        )
+        .expect("fake file command written");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("fake file command executable");
+        let _path_guard = PathEnvGuard::prepend(directory.path());
+
+        let input = b"%PDF-1.7TAIL";
+        for repository_xml in [
+            None,
+            Some(
+                r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="application/x-glob"><glob pattern="*.glob"/></mime-type></mime-info>"#,
+            ),
+            Some(
+                r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="application/x-magic"><magic><match type="string" value="P" offset="0"/></magic></mime-type></mime-info>"#,
+            ),
+        ] {
+            let repository = repository_xml
+                .map(MimeRepository::from_xml)
+                .transpose()
+                .expect("fixture repository should parse")
+                .unwrap_or_else(MimeRepository::empty);
+            let detector = FileCommandMimeDetector::with_repository_runner_and_config(
+                &repository,
+                CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
+                MimeConfig::from_config(&source).expect("MIME config should parse"),
+            );
+            assert_eq!(
+                Some("application/pdf".to_owned()),
+                detector
+                    .detect_reader(
+                        &mut std::io::Cursor::new(input),
+                        None,
+                        MimeDetectionPolicy::VerifyContent
+                    )
+                    .expect("reader command should classify its eight staged bytes"),
+            );
+        }
+
+        let mut source = Config::new();
+        source
+            .set(CONFIG_MIME_MAX_BUFFER_SIZE, 32_u64)
+            .expect("larger budget should be configurable");
+        let config = MimeConfig::from_config(&source).expect("MIME config should parse");
+        let repository = MimeRepository::empty();
+        let detector = FileCommandMimeDetector::with_repository_runner_and_config(
+            &repository,
+            CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
+            config,
+        );
+        let short = b"%PDF-1.7";
+        let by_content = detector
+            .detect_by_content(short)
+            .expect("bytes detection should succeed");
+        let by_reader = detector
+            .detect_reader(
+                &mut std::io::Cursor::new(short.to_vec()),
+                None,
+                MimeDetectionPolicy::VerifyContent,
+            )
+            .expect("reader detection should succeed");
+        let short_path = directory.path().join("short-input");
+        std::fs::write(&short_path, short).expect("short input written");
+        let by_file = detector
+            .detect_file(&short_path, MimeDetectionPolicy::VerifyContent)
+            .expect("local file detection should succeed");
+        assert_eq!(by_content, by_reader);
+        assert_eq!(by_reader, by_file);
+
+        let mut cursor = std::io::Cursor::new(short.to_vec());
+        cursor.set_position(3);
+        assert_eq!(
+            Some("application/pdf".to_owned()),
+            detector
+                .detect_reader(&mut cursor, None, MimeDetectionPolicy::VerifyContent)
+                .expect("reader detection should inspect from zero and restore position"),
+        );
+        assert_eq!(3, cursor.position());
+
+        let mut zero_source = Config::new();
+        zero_source
+            .set(CONFIG_MIME_MAX_BUFFER_SIZE, 0_u64)
+            .expect("zero budget should be configurable");
+        let zero_config = MimeConfig::from_config(&zero_source).expect("zero config should parse");
+        let zero_detector = FileCommandMimeDetector::with_repository_runner_and_config(
+            &repository,
+            CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
+            zero_config,
+        );
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nfor input_path do :; done\nif [ ! -s \"$input_path\" ]; then printf 'application/pdf\\n'; else printf 'application/octet-stream\\n'; fi\n",
+        )
+        .expect("zero-budget fake command written");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("zero-budget fake command executable");
+        assert_eq!(
+            Some("application/pdf".to_owned()),
+            zero_detector
+                .detect_reader(
+                    &mut std::io::Cursor::new(input),
+                    None,
+                    MimeDetectionPolicy::VerifyContent
+                )
+                .expect("zero-budget reader staging should be empty"),
+        );
+
+        let custom_repository = MimeRepository::from_xml(
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="application/x-review-report"><glob pattern="*.review-report"/><sub-class-of type="application/pdf"/></mime-type></mime-info>"#,
+        )
+        .expect("custom repository should parse");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nfor input_path do :; done\nif [ \"$(cat \"$input_path\")\" = \"%PDF-1.7\" ]; then printf 'application/pdf\\n'; else printf 'application/octet-stream\\n'; fi\n",
+        )
+        .expect("custom-relation fake command written");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("custom-relation fake command executable");
+        let custom_detector = FileCommandMimeDetector::with_repository_runner_and_config(
+            &custom_repository,
+            CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
+            MimeConfig::from_config(&source).expect("MIME config should parse"),
+        );
+        assert_eq!(
+            Some("application/x-review-report".to_owned()),
+            custom_detector
+                .detect_reader(
+                    &mut std::io::Cursor::new(short.to_vec()),
+                    Some("report.review-report"),
+                    MimeDetectionPolicy::Freedesktop,
+                )
+                .expect("Freedesktop policy should merge custom inheritance"),
+        );
+        assert_eq!(
+            Some("application/pdf".to_owned()),
+            custom_detector
+                .detect_reader(
+                    &mut std::io::Cursor::new(short.to_vec()),
+                    Some("report.review-report"),
+                    MimeDetectionPolicy::ContentFirst,
+                )
+                .expect("ContentFirst should prefer the command result"),
+        );
+        assert_eq!(32, FileBasedMimeDetector::max_test_bytes(&detector));
+    }
 }
 
 #[test]

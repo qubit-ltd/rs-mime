@@ -87,6 +87,12 @@ MIME 对，细化会保留原 MIME；可传入匹配的文件名或消除映射�
 检测器只负责判断 MIME 类型，不能证明文件可以安全打开或执行。Native command
 Provider 依赖对应的可执行文件，也可能因命令不可用、超时或输出无效而失败。
 
+内置 `file` Provider 检测 reader 时，最多暂存 `MimeConfig::max_buffer_size()` 字节，并在 EOF 时停止；
+该预算不由所选文件名仓库中的 magic 偏移决定。字节切片检测和本地文件检测仍沿用各自现有入口行为；
+超过 reader 预算的资源可能因只检查前缀而得到不同结果。自定义仓库的 MIME 关系合并也已校正。
+reader 暂存可能比旧版读取更多；应用可通过现有 `mime.max.buffer.size` 配置调整预算。无需更改 API
+或依赖，`rs-magika` 也无需迁移。
+
 ## Provider 选择与配置
 
 `MimeDetectorRegistry::builtin()` 提供内置的 `repository` 和 `file` Provider。Provider

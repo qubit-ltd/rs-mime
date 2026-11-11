@@ -112,6 +112,16 @@ does not guarantee cancellation of started work. Prefix reads may temporarily
 keep both the provider buffer and an owned worker copy; `max_buffer_size` limits
 each buffer, not their combined memory use.
 
+For the built-in `file` provider, reader detection stages up to
+`MimeConfig::max_buffer_size()` bytes and stops at EOF. Its budget does not
+depend on magic offsets in the selected filename repository. Byte-slice and
+local-file detection keep their existing entry-point behavior; resources longer
+than the reader budget may differ because only the prefix is checked. Custom
+repository MIME relation merging is also corrected. Reader staging can read
+more than before; applications can adjust the existing `mime.max.buffer.size`
+setting. No API or dependency change is needed, and `rs-magika` needs no
+migration.
+
 The detector identifies MIME types; it does not establish that a file is safe
 to open or execute. Native command providers also depend on the corresponding
 executable and can fail when it is unavailable, times out, or returns invalid

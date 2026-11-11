@@ -211,6 +211,18 @@ filename with no extension. A conflicting mapping can therefore prevent
 unnamed refinement even when its extension is not enabled. Pass a matching
 enabled filename or remove the conflicting mapping to choose a pair.
 
+The built-in `FileCommandMimeDetector` stages reader input up to
+`MimeConfig::max_buffer_size()` and stops at EOF. This limit comes from MIME
+configuration; magic offsets in the selected filename repository do not set
+the amount read. `detect_by_content(bytes)` continues to receive the provided
+bytes, and local-file detection continues to pass the local path to the `file`
+command. A reader resource longer than the configured budget may produce a
+different result because the command sees only its staged prefix. This also
+corrects custom repository relation merging and can increase the bytes staged
+compared with earlier versions. Adjust the existing `mime.max.buffer.size`
+setting if needed. No API or dependency migration is needed, and `rs-magika`
+requires no migration.
+
 All these results use `MimeResult<Option<String>>`. Handle the outer error
 before interpreting the optional MIME name.
 
