@@ -210,8 +210,12 @@ Use the simplest entry point that matches the input:
 Filename hints use both `/` and `\` as separators, and only the final
 component determines the extension. For example, `C:\cache.v1\clip` has no
 extension, so precise media detection uses the existing MIME-mapping fallback.
-This filename interpretation does not change how local files are opened: actual
-file access continues to follow the host platform's path semantics.
+Because this fallback can now reach refinement that a dotted directory hint
+previously skipped, the classifier may run and its errors may propagate. If the
+final component has an extension that is not enabled in the precise detection
+patterns, refinement remains skipped. This filename interpretation does not
+change how local files are opened: actual file access continues to follow the
+host platform's path semantics.
 
 The top-level `MimeDetector::detect_reader` treats the reader as a whole
 resource: detection starts at logical byte zero even when the caller's cursor
