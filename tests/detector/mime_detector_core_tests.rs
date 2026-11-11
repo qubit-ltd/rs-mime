@@ -763,21 +763,13 @@ fn test_filename_hint_ignores_dots_in_cross_platform_directories() {
         r"C:\cache.v1/sub.dir\clip",
     ] {
         let calls = Arc::new(AtomicUsize::new(0));
-        let mut core = MimeDetectorCore::new(create_precise_config(
-            true,
-            "webm",
-            "webm:video/webm,audio/webm",
-        ));
+        let mut core = MimeDetectorCore::new(create_precise_config(true, "webm", "webm:video/webm,audio/webm"));
         core.set_media_stream_classifier(Some(Arc::new(CountingClassifier {
             calls: Arc::clone(&calls),
             stream_type: MediaStreamType::AudioOnly,
         })));
         let mime = core
-            .refine_detected_mime_type(
-                "video/webm",
-                Some(filename),
-                DetectionSource::Content(b"media"),
-            )
+            .refine_detected_mime_type("video/webm", Some(filename), DetectionSource::Content(b"media"))
             .unwrap();
         assert_eq!("audio/webm", mime, "filename={filename}");
         assert_eq!(1, calls.load(Ordering::Relaxed), "filename={filename}");
@@ -809,20 +801,12 @@ fn test_filename_hint_extension_matrix() {
     );
     assert_eq!(
         ("video/webm".to_owned(), 0),
-        refine_with(
-            "clip",
-            "webm",
-            "webm:video/webm,audio/webm;alt:video/webm,audio/ogg",
-        )
+        refine_with("clip", "webm", "webm:video/webm,audio/webm;alt:video/webm,audio/ogg",)
     );
     for filename in ["", "clip/", r"clip\", "clip."] {
         assert_eq!(
             ("audio/webm".to_owned(), 1),
-            refine_with(
-                filename,
-                "webm",
-                "webm:video/webm,audio/webm;alt:video/webm,audio/webm",
-            ),
+            refine_with(filename, "webm", "webm:video/webm,audio/webm;alt:video/webm,audio/webm",),
             "filename={filename}"
         );
     }
