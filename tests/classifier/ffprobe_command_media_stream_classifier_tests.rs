@@ -31,6 +31,7 @@ use qubit_mime::MimeConfig;
 #[cfg(unix)]
 use qubit_mime::MimeError;
 
+use crate::api::mime_config_tests::mime_config_test_lock;
 #[cfg(unix)]
 use crate::support::PathEnvGuard;
 
@@ -74,6 +75,7 @@ fn test_with_command_runner_uses_runner_configuration() {
 
 #[test]
 fn test_default_uses_disabled_logging_runner() {
+    let _guard = mime_config_test_lock();
     let classifier = FfprobeCommandMediaStreamClassifier::default();
 
     assert!(classifier.command_runner().is_logging_disabled());

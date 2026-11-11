@@ -632,7 +632,7 @@ fn test_registries_use_mime_config_defaults() {
     );
 }
 
-fn mime_config_test_lock() -> MutexGuard<'static, ()> {
+pub(crate) fn mime_config_test_lock() -> MutexGuard<'static, ()> {
     MIME_CONFIG_TEST_LOCK
         .lock()
         .expect("MIME config test lock should not be poisoned")
