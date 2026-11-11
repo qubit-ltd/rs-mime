@@ -272,6 +272,44 @@ impl MimeDetectorBackend for CompleteBackend {
 }
 
 #[derive(Debug)]
+struct DirectCompleteDetector;
+
+impl MimeDetector for DirectCompleteDetector {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Complete
+    }
+
+    fn max_buffer_size(&self) -> usize {
+        1
+    }
+
+    fn detect_by_filename(&self, _: &str) -> MimeResult<Option<String>> {
+        panic!("unexpected detection")
+    }
+
+    fn detect_by_content(&self, _: &[u8]) -> MimeResult<Option<String>> {
+        panic!("unexpected detection")
+    }
+
+    fn detect(&self, _: &[u8], _: Option<&str>, _: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+        panic!("unexpected detection")
+    }
+
+    fn detect_reader(
+        &self,
+        _: &mut dyn qubit_io::std_io::ReadSeek,
+        _: Option<&str>,
+        _: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
+        panic!("unexpected detection")
+    }
+
+    fn detect_file(&self, _: &Path, _: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+        panic!("unexpected detection")
+    }
+}
+
+#[derive(Debug)]
 struct CustomCompleteBackend;
 
 impl MimeDetectorBackend for CustomCompleteBackend {
@@ -414,6 +452,37 @@ fn test_mime_detector_path_reads_small_prefix_from_large_resource() {
     assert_eq!(1, spi.opened());
     assert!(spi.requested_read_bytes() <= 16);
     assert_eq!(0, spi.stat_calls());
+}
+
+#[test]
+fn test_direct_complete_default_path_rejects_before_io() {
+    let spi = PrefixFileSystemSpi::hierarchical(b"hello".to_vec());
+    let fs = FileSystem::from_spi(spi.clone()).expect("filesystem fixture");
+    let path = FsPath::parse("/unused").expect("valid path");
+    let detectors: Vec<Box<dyn MimeDetector>> = vec![
+        Box::new(DirectCompleteDetector),
+        Box::new(Box::new(DirectCompleteDetector) as Box<dyn MimeDetector>),
+        Box::new(Arc::new(DirectCompleteDetector) as Arc<dyn MimeDetector>),
+    ];
+    for detector in detectors {
+        let error = detector
+            .detect_path(&fs, &path, 1, MimeDetectionPolicy::VerifyContent)
+            .expect_err("complete input cannot use the default prefix path");
+        assert!(matches!(error, MimeError::CompleteContentRequired));
+        assert_eq!(spi.stat_calls(), 0);
+        assert_eq!(spi.opened(), 0);
+        assert_eq!(spi.requested_read_bytes(), 0);
+        let error = detector
+            .detect_path(&fs, &path, 2, MimeDetectionPolicy::VerifyContent)
+            .expect_err("buffer validation takes precedence");
+        assert!(matches!(
+            error,
+            MimeError::BufferLimitExceeded { requested: 2, limit: 1 }
+        ));
+        assert_eq!(spi.stat_calls(), 0);
+        assert_eq!(spi.opened(), 0);
+        assert_eq!(spi.requested_read_bytes(), 0);
+    }
 }
 
 #[test]

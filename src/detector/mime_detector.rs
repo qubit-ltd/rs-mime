@@ -241,8 +241,10 @@ pub trait MimeDetector: Debug + Send + Sync {
     ///
     /// # Errors
     /// Returns [`MimeError::BufferLimitExceeded`] when `max_bytes` exceeds the
-    /// detector limit, or a filesystem/detector error when reading or
-    /// detection fails.
+    /// detector limit. Otherwise, returns
+    /// [`MimeError::CompleteContentRequired`] before reading when this
+    /// detector requires the complete stream. Returns a filesystem/detector
+    /// error when reading or detection fails.
     ///
     /// `max_bytes` bounds the prefix read used for content inspection; larger
     /// resources remain eligible for detection.
@@ -259,6 +261,9 @@ pub trait MimeDetector: Debug + Send + Sync {
                 requested: max_bytes,
                 limit,
             });
+        }
+        if matches!(self.content_requirement(), ContentRequirement::Complete) {
+            return Err(MimeError::CompleteContentRequired);
         }
         let content = file_system
             .read_prefix(path, ReadOptions::default(), max_bytes)?
