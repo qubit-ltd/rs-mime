@@ -36,6 +36,17 @@ filename-selected media type, choose `VerifyContent` if the content must match
 or `ContentFirst` if the filename remains a fallback. If neither source
 matches, the successful result is `None`; an error is reported separately.
 
+The default `Freedesktop` policy also uses the selected repository's subtype
+metadata when filename and content candidates differ. For example, if the
+filename matches `text/html` and the content matches its parent `text/plain`,
+the detector returns `text/html`, the more specific filename candidate. Alias
+names resolve to their canonical type before this check. Unknown names are
+considered equivalent only when their normalized names are equal; the detector
+does not infer relationships absent from the repository. Other policies keep
+their existing selection rules. If your application depends on the earlier
+exact-name conflict result, select `ContentFirst` and validate the returned
+type against the application's own allowlist.
+
 ## Scenario: Inspect an Upload
 
 Suppose an upload is named `report.jpg`, but its leading bytes identify a PDF.

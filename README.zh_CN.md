@@ -52,6 +52,10 @@ fn main() -> qubit_mime::MimeResult<()> {
 `VerifyContent`，而文件名仍可作为 fallback 时改用 `ContentFirst`。检测成功返回
 `Some(mime)`，返回 `None` 表示没有匹配候选。
 
+默认的 `Freedesktop` 策略会在文件名类型属于内容结果的子类型时保留更具体的文件名类型；
+别名按当前仓库解析。未知 MIME 名称只有在规范化后相同才会匹配。若应用需要旧版按名称精确
+比较时的冲突结果，可选择 `ContentFirst`，并对返回类型应用自己的允许列表。
+
 对于内置 detector 和通过本 crate blanket `MimeDetector` 实现接入的 backend，
 `detect_prefix` 会匹配文件名和内容候选，不会把前缀交给需要完整媒体内容的
 classifier。直接实现 `MimeDetector` 的类型自行决定其行为。默认异步 Prefix 路径最多读取

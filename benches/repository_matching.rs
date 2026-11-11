@@ -2,6 +2,8 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Measures repository construction and repeated content matching.
 
@@ -31,11 +33,7 @@ fn measure_construction() -> u128 {
 fn measure_queries(repository: &MimeRepository, bytes: &[u8]) -> u128 {
     let start = Instant::now();
     for _ in 0..100_000 {
-        black_box(repository.detect(
-            "sample.bin",
-            black_box(bytes),
-            MimeDetectionPolicy::ContentFirst,
-        ));
+        black_box(repository.detect("sample.bin", black_box(bytes), MimeDetectionPolicy::ContentFirst));
     }
     start.elapsed().as_nanos() / 100_000
 }
@@ -64,10 +62,7 @@ fn main() {
         ("numeric_mask", &[0x12, 0x34, 0x56, 0x7f]),
     ] {
         for round in 1..=3 {
-            println!(
-                "query {name} round {round}: {}",
-                measure_queries(&repository, sample)
-            );
+            println!("query {name} round {round}: {}", measure_queries(&repository, sample));
         }
     }
 }

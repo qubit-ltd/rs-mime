@@ -60,6 +60,13 @@ content must match or `ContentFirst` when the filename remains a fallback. A
 successful detection returns `Some(mime)`; `None` means that no candidate
 matched.
 
+With the default `Freedesktop` policy, a filename MIME type that is a subtype
+of the content result is kept as the more specific result; aliases are resolved
+through the selected repository. Unknown MIME names only match after
+normalization when their names are equal. Applications that need the former
+exact-name conflict behavior can select `ContentFirst` and apply their own
+allowlist to the returned MIME type.
+
 For built-in detectors and backends using the crate's blanket `MimeDetector`
 implementation, `detect_prefix` matches filename and content candidates
 without passing the prefix to a complete-media classifier. Types that implement
