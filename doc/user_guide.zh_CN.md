@@ -29,6 +29,10 @@
 `VerifyContent`，而文件名仍可作为 fallback 时改用 `ContentFirst`。两种来源都没有匹配时，
 成功结果为 `None`；错误会单独返回。
 
+`detect_bytes` 和 `detect_by_content` 面向完整内容。启用精确媒体检测并注入 classifier 时，
+classifier 可能检查整份资源。只有前缀时请通过 `MimeDetector` 调用 `detect_prefix`；内置
+检测器不会把前缀交给 classifier。精确检测必须同时开启配置并显式注入 classifier。
+
 默认的 `Freedesktop` 策略还会使用当前仓库中的父子类型信息处理候选冲突。例如，文件名匹配
 `text/html`、内容匹配其父类型 `text/plain` 时，检测器会返回更具体的文件名候选
 `text/html`。比较前会把别名解析为规范类型；仓库中没有记录的类型关系不会被推断，未知名称
@@ -41,25 +45,14 @@
 检测出的类型，而不是信任可能误导的扩展名：
 
 ```rust
-use qubit_mime::{MimeDetectionPolicy, RepositoryMimeDetector};
-
-fn inspect_upload(
-    filename: &str,
-    content_prefix: &[u8],
-) -> qubit_mime::MimeResult<Option<String>> {
-    let detector = RepositoryMimeDetector::new()?;
-    detector.detect_bytes(
-        content_prefix,
-        Some(filename),
-        MimeDetectionPolicy::VerifyContent,
-    )
-}
+use qubit_mime::{MimeDetectionPolicy, MimeDetector, RepositoryMimeDetector};
 
 fn main() -> qubit_mime::MimeResult<()> {
-    assert_eq!(
-        inspect_upload("report.jpg", b"%PDF-1.7\n")?.as_deref(),
-        Some("application/pdf"),
-    );
+    let detector = RepositoryMimeDetector::new()?;
+    let mime = detector.detect_prefix(
+        b"%PDF-1.7\n", Some("report.jpg"), MimeDetectionPolicy::VerifyContent,
+    )?;
+    assert_eq!(mime.as_deref(), Some("application/pdf"));
     Ok(())
 }
 ```
@@ -150,7 +143,7 @@ classifier。
 
 - `detect_by_filename("photo.JPG")` 检查文件名 glob。
 - `detect_by_content(bytes)` 检查内容 magic 规则。
-- `RepositoryMimeDetector` 的 `detect_bytes(bytes, Some(filename), policy)` 组合两种结果。
+- `RepositoryMimeDetector` 的 `detect_bytes(bytes, Some(filename), policy)` 使用完整资源字节组合两种结果；只有有界前缀时应通过 `MimeDetector` 调用 `detect_prefix`。
 - `detect_reader(reader, filename, policy)` 按整份资源检查可 seek reader，并恢复 reader 的原始位置。
 - `detect_file(path, policy)` 读取本地文件。
 - `MimeDetector::detect_path` 和 `detect_async_path` 通过同步或异步文件系统 facade 读取。
@@ -231,7 +224,11 @@ classifier；如果环境提供 `ffprobe`，再使用 `FfprobeCommandMediaStream
 classifier；直接实现 `MimeDetector` 的类型自行决定其行为。异步路径入口默认读取请求的内容
 前缀。前缀后端可以在不加载完整资源的情况下检查大文件；声明
 `ContentRequirement::Complete` 后端不能使用前缀入口。自定义完整内容后端可以通过覆盖独立的
-`guess_from_async_provider_path` hook 检查异步 Provider 路径。Native command 检测可能需要
+`guess_from_async_provider_path` hook 检查异步 Provider 路径。通过异步 Provider 路径调用时，内置
+`file` provider 会在线程池执行暂存、命令和清理。自定义 backend 的默认异步内容 hook 会调用同步
+方法；可能阻塞的 backend 应覆盖该 hook。丢弃 future 不保证取消已启动的任务。前缀读取期间可能同时
+保留 Provider 缓冲区和 worker 的 owned 副本；`max_buffer_size` 限制单个缓冲区，不限制两者合计内存。
+Native command 检测可能需要
 暂存输入，并受命令超时、保留输出大小和媒体暂存大小限制。
 默认 `file` 和 `ffprobe` runner 还会限制 stdout 与 stderr 的总量，上限为
 `MimeConfig::command_output_max_bytes()` 的四倍。因此每流上限为零时，总预算也为零，

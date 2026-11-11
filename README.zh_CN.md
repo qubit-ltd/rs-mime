@@ -29,18 +29,14 @@ MIME 数据库，不依赖外部命令。
 上传接口可以同时比较文件名和内容前缀；两者不一致时，让内容检测结果优先：
 
 ```rust
-use qubit_mime::{MimeDetectionPolicy, RepositoryMimeDetector};
-
-fn detect_upload(content: &[u8], filename: &str) -> qubit_mime::MimeResult<Option<String>> {
-    let detector = RepositoryMimeDetector::new()?;
-    detector.detect_bytes(content, Some(filename), MimeDetectionPolicy::VerifyContent)
-}
+use qubit_mime::{MimeDetectionPolicy, MimeDetector, RepositoryMimeDetector};
 
 fn main() -> qubit_mime::MimeResult<()> {
-    assert_eq!(
-        detect_upload(b"%PDF-1.7\n", "report.jpg")?.as_deref(),
-        Some("application/pdf"),
-    );
+    let detector = RepositoryMimeDetector::new()?;
+    let mime = detector.detect_prefix(
+        b"%PDF-1.7\n", Some("report.jpg"), MimeDetectionPolicy::VerifyContent,
+    )?;
+    assert_eq!(mime.as_deref(), Some("application/pdf"));
     Ok(())
 }
 ```
@@ -50,7 +46,10 @@ fn main() -> qubit_mime::MimeResult<()> {
 仍会检查内容并要求内容匹配。若内容没有候选时仍需保留文件名结果作为 fallback，请使用
 `ContentFirst`。如果应用以前依赖对文件名候选进行媒体分类，内容必须匹配时改用
 `VerifyContent`，而文件名仍可作为 fallback 时改用 `ContentFirst`。检测成功返回
-`Some(mime)`，返回 `None` 表示没有匹配候选。
+`Some(mime)`，返回 `None` 表示没有匹配候选。`detect_bytes` 和 `detect_by_content`
+面向完整内容；若启用精确检测并注入 classifier，classifier 可能检查整份媒体资源。只有前缀时
+请调用 `MimeDetector::detect_prefix`；内置 detector 不会把该前缀交给 classifier。精确检测必须
+同时启用配置并显式注入 classifier。
 
 默认的 `Freedesktop` 策略会在文件名类型属于内容结果的子类型时保留更具体的文件名类型；
 别名按当前仓库解析。未知 MIME 名称只有在规范化后相同才会匹配。若应用需要旧版按名称精确
@@ -79,7 +78,10 @@ n 字节，若提前遇到 EOF 则停止；`Complete` 在默认 16 MiB 预算（
 EOF，并额外探测一个字节以检查是否超限。两者都会恢复起始位置；恢复错误优先。默认
 `MimeDetectorBackend` reader hook 只支持其前缀，遇到 `Complete` 会返回
 `CompleteContentRequired`，因此完整内容 backend 必须覆盖该 hook。adapter 委托给 backend
-reader hook；自定义随机访问覆盖仍可使用。无文件名时，若同一 MIME 对应的多个映射具有不同
+reader hook；自定义随机访问覆盖仍可使用。通过异步 Provider 路径调用时，内置 `file` provider
+会在线程池执行暂存、命令和清理。自定义 backend 的默认异步内容 hook 会调用同步方法；可能阻塞的
+backend 应覆盖该 hook。丢弃 future 不保证取消已启动的任务。前缀读取期间可能同时保留 Provider
+缓冲区和 worker 的 owned 副本；`max_buffer_size` 限制单个缓冲区，不限制两者合计内存。无文件名时，若同一 MIME 对应的多个映射具有不同
 MIME 对，细化会保留原 MIME；可传入匹配的文件名或消除映射冲突来指定细化对。
 
 检测器只负责判断 MIME 类型，不能证明文件可以安全打开或执行。Native command

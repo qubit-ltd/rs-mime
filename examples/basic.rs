@@ -8,6 +8,7 @@
 //! Detect a user-uploaded file by name and content.
 
 use qubit_mime::MimeDetectionPolicy;
+use qubit_mime::MimeDetector;
 use qubit_mime::RepositoryMimeDetector;
 
 fn main() -> qubit_mime::MimeResult<()> {
@@ -18,13 +19,13 @@ fn main() -> qubit_mime::MimeResult<()> {
     );
     assert_eq!(
         detector
-            .detect_bytes(b"%PDF-1.7\n", Some("report.pdf"), MimeDetectionPolicy::VerifyContent)?
+            .detect_prefix(b"%PDF-1.7\n", Some("report.pdf"), MimeDetectionPolicy::VerifyContent)?
             .as_deref(),
         Some("application/pdf"),
     );
     assert_eq!(
         detector
-            .detect_bytes(b"%PDF-1.7\n", Some("report.jpg"), MimeDetectionPolicy::VerifyContent)?
+            .detect_prefix(b"%PDF-1.7\n", Some("report.jpg"), MimeDetectionPolicy::VerifyContent)?
             .as_deref(),
         Some("application/pdf"),
     );

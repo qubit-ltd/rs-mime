@@ -8,7 +8,9 @@
 //! File-backed MIME detector helpers.
 
 use std::fmt::Debug;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 
 use qubit_io::Output;
 
@@ -64,6 +66,25 @@ pub trait FileBasedMimeDetector: Debug + Send + Sync {
     /// # Errors
     /// Returns an error when local-file inspection fails.
     fn guess_from_local_file(&self, file: &Path) -> MimeResult<Vec<String>>;
+
+    /// Stages and inspects content asynchronously. The compatibility default
+    /// performs the existing synchronous staging inline; implementations with
+    /// blocking work should override this hook.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes to stage and inspect.
+    ///
+    /// # Returns
+    /// A future containing candidate MIME type names.
+    ///
+    /// # Errors
+    /// Propagates staging and local-file inspection errors.
+    fn guess_from_staged_content_async<'a>(
+        &'a self,
+        content: &'a [u8],
+    ) -> Pin<Box<dyn Future<Output = MimeResult<Vec<String>>> + Send + 'a>> {
+        Box::pin(async move { with_temp_file(content, |path| Self::guess_from_local_file(self, path)) })
+    }
 }
 
 impl<T> StreamBasedMimeDetector for T
@@ -97,6 +118,23 @@ where
     /// - `content`: Content bytes staged for file-based inspection.
     fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         with_temp_file(content, |path| FileBasedMimeDetector::guess_from_local_file(self, path))
+    }
+
+    /// Stages and inspects content using the file-based asynchronous hook.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes passed through to the file-based hook.
+    ///
+    /// # Returns
+    /// A future containing candidate MIME type names.
+    ///
+    /// # Errors
+    /// Propagates staging and file inspection errors.
+    fn guess_from_content_bytes_async<'a>(
+        &'a self,
+        content: &'a [u8],
+    ) -> Pin<Box<dyn Future<Output = MimeResult<Vec<String>>> + Send + 'a>> {
+        FileBasedMimeDetector::guess_from_staged_content_async(self, content)
     }
 
     /// Delegates local-file inspection to the file-based hook.

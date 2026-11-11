@@ -9,9 +9,11 @@
 
 use std::fmt::Debug;
 use std::fs::File;
+use std::future::Future;
 use std::io;
 use std::io::ErrorKind;
 use std::path::Path;
+use std::pin::Pin;
 
 use qubit_io::std_io::ReadSeek;
 use qubit_io::std_io::ext::ReadSeekExt;
@@ -71,6 +73,24 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     /// # Errors
     /// Returns an error when a backend cannot inspect the supplied content.
     fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>>;
+
+    /// Guesses candidates asynchronously, using the synchronous hook inline
+    /// by default. Implementations that may block should override this method.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes to inspect.
+    ///
+    /// # Returns
+    /// A future containing candidate MIME type names.
+    ///
+    /// # Errors
+    /// Propagates content-inspection errors.
+    fn guess_from_content_bytes_async<'a>(
+        &'a self,
+        content: &'a [u8],
+    ) -> Pin<Box<dyn Future<Output = MimeResult<Vec<String>>> + Send + 'a>> {
+        Box::pin(async move { self.guess_from_content_bytes(content) })
+    }
 
     /// Guesses MIME type names from a seekable reader.
     ///

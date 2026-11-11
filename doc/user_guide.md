@@ -36,6 +36,13 @@ filename-selected media type, choose `VerifyContent` if the content must match
 or `ContentFirst` if the filename remains a fallback. If neither source
 matches, the successful result is `None`; an error is reported separately.
 
+`detect_bytes` and `detect_by_content` inspect complete content. When precise
+media detection is enabled and a classifier is injected, that classifier may
+inspect the full resource. Use `MimeDetector::detect_prefix` when only a prefix
+is available; built-in detectors do not pass it to the classifier. Both the
+configuration switch and an explicitly injected classifier are required for
+precise detection.
+
 The default `Freedesktop` policy also uses the selected repository's subtype
 metadata when filename and content candidates differ. For example, if the
 filename matches `text/html` and the content matches its parent `text/plain`,
@@ -54,25 +61,14 @@ The success criterion is to return the content-backed MIME type rather than
 trusting the misleading extension:
 
 ```rust
-use qubit_mime::{MimeDetectionPolicy, RepositoryMimeDetector};
-
-fn inspect_upload(
-    filename: &str,
-    content_prefix: &[u8],
-) -> qubit_mime::MimeResult<Option<String>> {
-    let detector = RepositoryMimeDetector::new()?;
-    detector.detect_bytes(
-        content_prefix,
-        Some(filename),
-        MimeDetectionPolicy::VerifyContent,
-    )
-}
+use qubit_mime::{MimeDetectionPolicy, MimeDetector, RepositoryMimeDetector};
 
 fn main() -> qubit_mime::MimeResult<()> {
-    assert_eq!(
-        inspect_upload("report.jpg", b"%PDF-1.7\n")?.as_deref(),
-        Some("application/pdf"),
-    );
+    let detector = RepositoryMimeDetector::new()?;
+    let mime = detector.detect_prefix(
+        b"%PDF-1.7\n", Some("report.jpg"), MimeDetectionPolicy::VerifyContent,
+    )?;
+    assert_eq!(mime.as_deref(), Some("application/pdf"));
     Ok(())
 }
 ```
@@ -171,7 +167,8 @@ Use the simplest entry point that matches the input:
 - `detect_by_filename("photo.JPG")` checks filename globs.
 - `detect_by_content(bytes)` checks content magic rules.
 - `detect_bytes(bytes, Some(filename), policy)` combines both on
-  `RepositoryMimeDetector`.
+  `RepositoryMimeDetector` for complete resource bytes; use `detect_prefix`
+  through `MimeDetector` when only a bounded prefix is available.
 - `detect_reader(reader, filename, policy)` inspects a seekable reader and
   restores its original position.
 - `detect_file(path, policy)` reads a local file.
@@ -193,7 +190,13 @@ reader hook reads only its prefix and returns `CompleteContentRequired` when the
 backend declares `Complete`. A backend requiring the whole resource must
 override `guess_from_reader`, implement bounded reading and position
 restoration, and override `guess_from_file` when local file handling needs
-special behavior. `MimeDetectorAdapter` delegates to that reader hook through
+special behavior. Through the asynchronous provider path, the built-in `file`
+provider runs staging, command execution, and cleanup on a blocking thread pool.
+A custom backend's default async content hook calls its synchronous method, so
+backends that may block should override it. Dropping an in-flight future does
+not guarantee cancellation of started work. Prefix reads may temporarily keep
+both the provider buffer and an owned worker copy; `max_buffer_size` limits each
+buffer, not their combined memory use. `MimeDetectorAdapter` delegates to that reader hook through
 a view whose offset zero is the caller's current position; a custom
 random-access override remains supported. The adapter uses
 `MimeConfig::max_buffer_size()` for prefix requests. If no filename is supplied

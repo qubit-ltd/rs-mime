@@ -80,6 +80,31 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// Returns an error when a backend cannot inspect the supplied content.
     fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>>;
 
+    /// Guesses MIME candidates from content asynchronously.
+    ///
+    /// The compatibility default calls [`Self::guess_from_content`] inline.
+    /// Custom backends that may block must override this hook to avoid
+    /// blocking their executor. Built-in file detection owns its input and
+    /// runs staging and command execution on the blocking pool. Dropping its
+    /// future does not guarantee cancellation after the worker starts. The
+    /// worker copy and provider prefix may coexist, each bounded by the
+    /// configured per-buffer limit.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes to inspect.
+    ///
+    /// # Returns
+    /// A future containing candidate MIME type names.
+    ///
+    /// # Errors
+    /// Propagates content-inspection errors.
+    fn guess_from_content_async<'a>(
+        &'a self,
+        content: &'a [u8],
+    ) -> Pin<Box<dyn Future<Output = MimeResult<Vec<String>>> + Send + 'a>> {
+        Box::pin(async move { self.guess_from_content(content) })
+    }
+
     /// Guesses MIME type names from a seekable reader.
     ///
     /// # Parameters
@@ -188,7 +213,7 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
                 .read_prefix(path, ReadOptions::default(), max_bytes)
                 .await?
                 .into_bytes();
-            let candidates = self.guess_from_content(&content)?;
+            let candidates = self.guess_from_content_async(&content).await?;
             Ok((candidates, Some(content)))
         })
     }
@@ -549,6 +574,23 @@ where
     #[inline]
     fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         StreamBasedMimeDetector::guess_from_content_bytes(self, content)
+    }
+
+    /// Delegates asynchronous content inspection to the stream-based hook.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes passed through to the stream-based hook.
+    ///
+    /// # Returns
+    /// A future containing candidate MIME type names.
+    ///
+    /// # Errors
+    /// Propagates stream-based content inspection errors.
+    fn guess_from_content_async<'a>(
+        &'a self,
+        content: &'a [u8],
+    ) -> Pin<Box<dyn Future<Output = MimeResult<Vec<String>>> + Send + 'a>> {
+        StreamBasedMimeDetector::guess_from_content_bytes_async(self, content)
     }
 
     /// Delegates reader inspection to the stream-based hook.

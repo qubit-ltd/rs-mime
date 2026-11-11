@@ -33,18 +33,14 @@ An upload endpoint can compare the filename with the leading content bytes and
 choose the content result when the two disagree:
 
 ```rust
-use qubit_mime::{MimeDetectionPolicy, RepositoryMimeDetector};
-
-fn detect_upload(content: &[u8], filename: &str) -> qubit_mime::MimeResult<Option<String>> {
-    let detector = RepositoryMimeDetector::new()?;
-    detector.detect_bytes(content, Some(filename), MimeDetectionPolicy::VerifyContent)
-}
+use qubit_mime::{MimeDetectionPolicy, MimeDetector, RepositoryMimeDetector};
 
 fn main() -> qubit_mime::MimeResult<()> {
-    assert_eq!(
-        detect_upload(b"%PDF-1.7\n", "report.jpg")?.as_deref(),
-        Some("application/pdf"),
-    );
+    let detector = RepositoryMimeDetector::new()?;
+    let mime = detector.detect_prefix(
+        b"%PDF-1.7\n", Some("report.jpg"), MimeDetectionPolicy::VerifyContent,
+    )?;
+    assert_eq!(mime.as_deref(), Some("application/pdf"));
     Ok(())
 }
 ```
@@ -59,6 +55,12 @@ classification of a filename-selected media type, use `VerifyContent` when the
 content must match or `ContentFirst` when the filename remains a fallback. A
 successful detection returns `Some(mime)`; `None` means that no candidate
 matched.
+
+`detect_bytes` and `detect_by_content` inspect complete content and may invoke
+the configured media classifier when precise detection is enabled. A prefix
+must go through `MimeDetector::detect_prefix`; it never reaches the classifier
+for built-in detectors. Precise detection requires both the configuration
+switch and an explicitly injected classifier.
 
 With the default `Freedesktop` policy, a filename MIME type that is a subtype
 of the content result is kept as the more specific result; aliases are resolved
@@ -101,6 +103,14 @@ backend reader hook; custom random-access overrides remain supported. When
 multiple no-filename mappings associate one MIME type with different pairs,
 refinement preserves the original MIME type; pass a matching filename or remove
 the mapping conflict to select a pair.
+
+The built-in `file` provider runs staging, command execution, and cleanup on a
+blocking thread pool through the asynchronous provider path. A custom
+backend's default async content hook calls its synchronous method, so a
+backend that can block should override that hook. Dropping an in-flight future
+does not guarantee cancellation of started work. Prefix reads may temporarily
+keep both the provider buffer and an owned worker copy; `max_buffer_size` limits
+each buffer, not their combined memory use.
 
 The detector identifies MIME types; it does not establish that a file is safe
 to open or execute. Native command providers also depend on the corresponding

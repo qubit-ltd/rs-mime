@@ -55,6 +55,11 @@ pub trait MimeDetector: Debug + Send + Sync {
 
     /// Detects from an already bounded prefix.
     ///
+    /// Built-in detectors using the crate's blanket implementation use this
+    /// as a prefix-only path and never pass the prefix to a complete-media
+    /// classifier. Direct `MimeDetector` implementations define their own
+    /// behavior.
+    ///
     /// # Parameters
     /// - `content`: Bounded prefix of the content to inspect.
     /// - `filename`: Optional path or basename used for filename detection.
@@ -142,7 +147,10 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// Detects a MIME type from content bytes.
     ///
     /// # Parameters
-    /// - `content`: Content bytes to inspect.
+    /// - `content`: Complete resource bytes to inspect. If precise media
+    ///   detection is enabled and a classifier is configured, classification
+    ///   may inspect the complete media stream; use [`Self::detect_prefix`]
+    ///   when only a bounded prefix is available.
     ///
     /// # Returns
     /// `Ok(Some(_))` contains the first matching MIME type; `Ok(None)` means
@@ -161,8 +169,10 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// - `policy`: Strategy for resolving filename and content results.
     ///
     /// # Returns
-    /// `Ok(Some(_))` contains the selected MIME type; `Ok(None)` means neither
-    /// filename nor content produced a candidate.
+    /// `Ok(Some(_))` contains the selected MIME type. `Ok(None)` means no
+    /// candidate was selected; with [`MimeDetectionPolicy::VerifyContent`],
+    /// this also occurs when content has no candidate, even if the filename
+    /// matched.
     ///
     /// # Errors
     /// Returns a backend or media-classifier error when detection cannot
@@ -177,9 +187,10 @@ pub trait MimeDetector: Debug + Send + Sync {
     #[must_use]
     fn max_buffer_size(&self) -> usize;
 
-    /// Detects a MIME type from a seekable reader without consuming its
-    /// position. Detection treats byte zero as the start of the resource,
-    /// regardless of the reader's initial position.
+    /// Detects a MIME type from a complete seekable resource without consuming
+    /// its position. Detection treats byte zero as the start of the resource,
+    /// regardless of the reader's initial position, and restores the original
+    /// position.
     ///
     /// # Parameters
     /// - `reader`: Reader to inspect from byte zero. The original stream
@@ -193,8 +204,8 @@ pub trait MimeDetector: Debug + Send + Sync {
     ///
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking
-    /// fails, or another detector error when reader inspection cannot
-    /// complete.
+    /// fails, or another detector or media-classifier error when inspection
+    /// cannot complete.
     fn detect_reader(
         &self,
         reader: &mut dyn ReadSeek,

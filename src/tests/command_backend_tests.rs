@@ -6,7 +6,19 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Exercises MIME policy using execution facts without modifying PATH.
+use std::fmt::Debug;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
+use std::sync::mpsc::Sender;
+use std::task::Context;
+use std::task::Poll;
+use std::task::Wake;
+use std::task::Waker;
 use std::time::Duration;
 
 use qubit_command::Command;
@@ -17,12 +29,238 @@ use qubit_config::Config;
 
 use crate::CONFIG_COMMAND_OUTPUT_MAX_BYTES;
 use crate::FfprobeCommandMediaStreamClassifier;
+use crate::FileBasedMimeDetector;
 use crate::FileCommandMimeDetector;
 use crate::MediaStreamType;
 use crate::MimeConfig;
 use crate::MimeError;
+use crate::MimeResult;
 use crate::command_execution::MimeCommandExecutor;
 use crate::command_execution::MimeCommandOutput;
+use crate::detector::MimeDetectorBackend;
+use crate::detector::MimeDetectorCore;
+
+struct WorkerGate {
+    started: Sender<std::path::PathBuf>,
+    release: Mutex<Receiver<()>>,
+    completed: Sender<()>,
+    code: Option<i32>,
+}
+
+struct ReleaseOnDrop(Option<Sender<()>>);
+
+impl Drop for ReleaseOnDrop {
+    fn drop(&mut self) {
+        if let Some(sender) = self.0.take() {
+            let _ = sender.send(());
+        }
+    }
+}
+
+impl Drop for WorkerGate {
+    fn drop(&mut self) {
+        let _ = self.completed.send(());
+    }
+}
+
+impl MimeCommandExecutor for WorkerGate {
+    fn run(&self, runner: &CommandRunner, command: Command) -> Result<MimeCommandOutput, CommandError> {
+        assert_eq!(runner.configured_max_total_output_bytes(), None);
+        let path = std::path::PathBuf::from(command.arguments().last().expect("command path"));
+        self.started.send(path).expect("test receiver remains alive");
+        self.release
+            .lock()
+            .expect("gate lock")
+            .recv_timeout(Duration::from_secs(5))
+            .expect("test releases worker within bound");
+        Ok(MimeCommandOutput {
+            exit_code: self.code,
+            stdout: b"application/test\n".to_vec(),
+            stdout_truncated: false,
+            stdout_complete: true,
+        })
+    }
+}
+
+struct AsyncFileCommandBackend<'a> {
+    detector: FileCommandMimeDetector<'a>,
+    executor: Arc<WorkerGate>,
+}
+
+impl Debug for AsyncFileCommandBackend<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AsyncFileCommandBackend")
+    }
+}
+
+impl FileBasedMimeDetector for AsyncFileCommandBackend<'_> {
+    fn core(&self) -> &MimeDetectorCore {
+        MimeDetectorBackend::core(&self.detector)
+    }
+
+    fn max_test_bytes(&self) -> usize {
+        MimeDetectorBackend::max_test_bytes(&self.detector)
+    }
+
+    fn guess_from_filename(&self, filename: &str) -> Vec<String> {
+        FileBasedMimeDetector::guess_from_filename(&self.detector, filename)
+    }
+
+    fn guess_from_local_file(&self, file: &Path) -> MimeResult<Vec<String>> {
+        FileBasedMimeDetector::guess_from_local_file(&self.detector, file)
+    }
+
+    fn guess_from_staged_content_async<'b>(
+        &'b self,
+        content: &'b [u8],
+    ) -> Pin<Box<dyn Future<Output = MimeResult<Vec<String>>> + Send + 'b>> {
+        let executor: Arc<dyn MimeCommandExecutor> = self.executor.clone();
+        FileCommandMimeDetector::guess_staged_content_async_with_executor(&self.detector, content, executor)
+    }
+}
+
+#[test]
+fn test_command_backend_async_worker_yields_and_cleans_up_after_future_drop() {
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_guard = ReleaseOnDrop(Some(release_tx));
+    let (completed_tx, completed_rx) = mpsc::channel();
+    let executor = Arc::new(WorkerGate {
+        started: started_tx,
+        release: Mutex::new(release_rx),
+        completed: completed_tx,
+        code: Some(0),
+    });
+    let detector = AsyncFileCommandBackend {
+        detector: FileCommandMimeDetector::new()
+            .with_command_runner(CommandRunner::new(Duration::from_secs(3)).without_total_output_limit()),
+        executor,
+    };
+    let mut future = MimeDetectorBackend::guess_from_content_async(&detector, b"owned worker bytes");
+    let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+    let mut context = Context::from_waker(&waker);
+    assert!(matches!(future.as_mut().poll(&mut context), Poll::Pending));
+    let staged_path = started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("worker starts within bound");
+
+    let (peer_tx, peer_rx) = mpsc::channel();
+    let mut peer = Box::pin(async move { peer_tx.send(()).expect("peer receiver remains alive") });
+    assert!(matches!(peer.as_mut().poll(&mut context), Poll::Ready(())));
+    peer_rx.recv_timeout(Duration::from_secs(1)).expect("peer progressed");
+
+    drop(future);
+    drop(detector);
+    drop(release_guard);
+    completed_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("worker and its temporary-file cleanup finish within bound");
+    assert!(!staged_path.exists(), "detached worker must clean up its staged file");
+}
+
+struct ImmediateExecutor {
+    code: Option<i32>,
+    observed_runner: Sender<Option<u64>>,
+}
+
+impl MimeCommandExecutor for ImmediateExecutor {
+    fn run(&self, runner: &CommandRunner, _: Command) -> Result<MimeCommandOutput, CommandError> {
+        self.observed_runner
+            .send(runner.configured_max_total_output_bytes())
+            .expect("runner receiver remains alive");
+        Ok(MimeCommandOutput {
+            exit_code: self.code,
+            stdout: b"application/test".to_vec(),
+            stdout_truncated: false,
+            stdout_complete: true,
+        })
+    }
+}
+
+fn block_on_worker<F: Future + ?Sized>(mut future: Pin<Box<F>>) -> F::Output {
+    let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+    let mut context = Context::from_waker(&waker);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
+            return output;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "worker future completed within bound"
+        );
+        std::thread::park_timeout(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn test_command_backend_async_worker_preserves_runner_and_errors() {
+    let runner = CommandRunner::new(Duration::from_secs(3)).without_total_output_limit();
+    let detector = FileCommandMimeDetector::new().with_command_runner(runner);
+    let (runner_tx, runner_rx) = mpsc::channel();
+    let result = block_on_worker(FileCommandMimeDetector::guess_staged_content_async_with_executor(
+        &detector,
+        b"async result",
+        Arc::new(ImmediateExecutor {
+            code: Some(0),
+            observed_runner: runner_tx,
+        }),
+    ));
+    assert_eq!(
+        vec!["application/test".to_owned()],
+        result.expect("successful async worker")
+    );
+    assert_eq!(
+        None,
+        runner_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker saw runner")
+    );
+
+    let (runner_tx, _runner_rx) = mpsc::channel();
+    let error = block_on_worker(FileCommandMimeDetector::guess_staged_content_async_with_executor(
+        &detector,
+        b"async failure",
+        Arc::new(ImmediateExecutor {
+            code: Some(7),
+            observed_runner: runner_tx,
+        }),
+    ))
+    .expect_err("nonzero async command exit must remain an error");
+    assert!(matches!(error, MimeError::DetectorBackend { backend, .. } if backend == "file"));
+}
+
+#[test]
+fn test_command_backend_async_file_hook_uses_the_worker() {
+    if !FileCommandMimeDetector::is_available() {
+        eprintln!("skipping: host file utility is unavailable");
+        return;
+    }
+
+    let detector = FileCommandMimeDetector::new();
+    let candidates = block_on_worker(MimeDetectorBackend::guess_from_content_async(
+        &detector,
+        b"plain text for asynchronous MIME detection",
+    ))
+    .expect("the built-in async file hook should inspect staged content");
+
+    assert!(
+        !candidates.is_empty(),
+        "the file utility should return a MIME candidate"
+    );
+}
+
+struct ThreadWake(std::thread::Thread);
+
+impl Wake for ThreadWake {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.unpark();
+    }
+}
 
 #[test]
 fn test_default_command_backends_configure_derived_total_output_budget() {

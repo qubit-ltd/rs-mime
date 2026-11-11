@@ -13,15 +13,41 @@ use std::io::Read;
 use std::io::Result as IoResult;
 use std::io::Seek;
 use std::io::SeekFrom;
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 use qubit_config::Config;
 use qubit_io::Output;
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::options::LocalTempFileOptions;
+use qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION;
+use qubit_mime::MediaStreamClassifier;
+use qubit_mime::MediaStreamType;
 use qubit_mime::MimeConfig;
 use qubit_mime::MimeDetectionPolicy;
+use qubit_mime::MimeDetector;
 use qubit_mime::MimeRepository;
+use qubit_mime::MimeResult;
 use qubit_mime::RepositoryMimeDetector;
+
+#[derive(Debug)]
+struct CountingAudioClassifier {
+    calls: Arc<AtomicUsize>,
+}
+
+impl MediaStreamClassifier for CountingAudioClassifier {
+    fn classify_file(&self, _file: &Path) -> MimeResult<MediaStreamType> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(MediaStreamType::AudioOnly)
+    }
+
+    fn classify_reader(&self, _reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(MediaStreamType::AudioOnly)
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 enum FailureMode {
@@ -121,6 +147,83 @@ fn test_detect_bytes_merges_filename_and_content_results() {
             .detect_bytes(b"%PDF-1.7\n", None, MimeDetectionPolicy::VerifyContent)
             .expect("combined detection should succeed")
     );
+}
+
+#[test]
+fn test_prefix_and_complete_content_have_distinct_classifier_scopes() {
+    let mut source = Config::new();
+    source
+        .set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)
+        .expect("precise detection should be configurable");
+    let config = MimeConfig::from_config(&source).expect("MIME config should parse");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut detector = RepositoryMimeDetector::from_mime_config(config.clone());
+    detector
+        .core_mut()
+        .set_media_stream_classifier(Some(Arc::new(CountingAudioClassifier {
+            calls: Arc::clone(&calls),
+        })));
+    let webm = b"\x1a\x45\xdf\xa3\x93\x42\x82\x88webm";
+
+    assert_eq!(
+        Some("video/webm".to_owned()),
+        detector
+            .detect_prefix(webm, Some("sample.webm"), MimeDetectionPolicy::VerifyContent)
+            .expect("prefix detection should succeed"),
+    );
+    assert_eq!(0, calls.load(Ordering::SeqCst), "prefix must skip classifier");
+
+    assert_eq!(
+        Some("audio/webm".to_owned()),
+        detector
+            .detect_bytes(webm, Some("sample.webm"), MimeDetectionPolicy::VerifyContent)
+            .expect("complete-content detection should succeed"),
+    );
+    assert_eq!(1, calls.load(Ordering::SeqCst), "complete content should classify once");
+
+    let no_classifier = RepositoryMimeDetector::from_mime_config(config.clone());
+    assert_eq!(
+        Some("video/webm".to_owned()),
+        no_classifier
+            .detect_bytes(webm, Some("sample.webm"), MimeDetectionPolicy::VerifyContent)
+            .expect("detection without a classifier should succeed"),
+    );
+    assert_eq!(
+        1,
+        calls.load(Ordering::SeqCst),
+        "missing classifier must not call the injected one"
+    );
+
+    let mut disabled_source = Config::new();
+    disabled_source
+        .set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, false)
+        .expect("precise detection should be configurable");
+    let disabled_config = MimeConfig::from_config(&disabled_source).expect("MIME config should parse");
+    let mut disabled = RepositoryMimeDetector::from_mime_config(disabled_config);
+    disabled
+        .core_mut()
+        .set_media_stream_classifier(Some(Arc::new(CountingAudioClassifier {
+            calls: Arc::clone(&calls),
+        })));
+    assert_eq!(
+        Some("video/webm".to_owned()),
+        disabled
+            .detect_bytes(webm, Some("sample.webm"), MimeDetectionPolicy::VerifyContent)
+            .expect("detection with precise mode disabled should succeed"),
+    );
+    assert_eq!(
+        1,
+        calls.load(Ordering::SeqCst),
+        "disabled precise detection must skip classifier"
+    );
+
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        detector
+            .detect_bytes(webm, Some("report.pdf"), MimeDetectionPolicy::PreferFilename)
+            .expect("unique filename should short-circuit content work"),
+    );
+    assert_eq!(1, calls.load(Ordering::SeqCst), "unique filename must skip classifier");
 }
 
 #[test]

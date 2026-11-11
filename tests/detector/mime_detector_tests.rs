@@ -55,6 +55,7 @@ use qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION;
 use qubit_mime::CONFIG_MIME_PRECISE_DETECTION_PATTERNS;
 use qubit_mime::ContentRequirement;
 use qubit_mime::DEFAULT_MIME_MAX_BUFFER_SIZE;
+use qubit_mime::FileCommandMimeDetector;
 use qubit_mime::MediaStreamClassifier;
 use qubit_mime::MediaStreamType;
 use qubit_mime::MimeConfig;
@@ -591,6 +592,38 @@ fn test_async_prefix_reaches_filesystem_after_buffer_preflight() {
         before,
         opens.load(Ordering::Relaxed),
         "PreferFilename must not open provider resource"
+    );
+}
+
+#[test]
+fn test_file_command_async_shortcuts_do_not_open_provider_or_start_worker() {
+    let spi = PrefixAsyncFileSystemSpi::new(b"%PDF-1.7\n");
+    let opens = Arc::clone(&spi.opens);
+    let filesystem = AsyncFileSystem::from_spi(spi).expect("async fixture");
+    let detector = FileCommandMimeDetector::new();
+    let pdf_path = FsPath::parse("/document.pdf").expect("PDF path");
+
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        run_ready(detector.detect_async_path(&filesystem, &pdf_path, 16, MimeDetectionPolicy::PreferFilename))
+            .expect("unique filename candidate should short-circuit file content inspection"),
+    );
+    assert_eq!(
+        0,
+        opens.load(Ordering::Relaxed),
+        "filename short-circuit must not start a file worker"
+    );
+
+    let path = FsPath::parse("/unknown").expect("fixture path");
+    let oversized = DEFAULT_MIME_MAX_BUFFER_SIZE + 1;
+    assert!(matches!(
+        run_ready(detector.detect_async_path(&filesystem, &path, oversized, MimeDetectionPolicy::VerifyContent)),
+        Err(MimeError::BufferLimitExceeded { requested, limit }) if requested == oversized && limit == DEFAULT_MIME_MAX_BUFFER_SIZE
+    ));
+    assert_eq!(
+        0,
+        opens.load(Ordering::Relaxed),
+        "over-limit request must not start a file worker"
     );
 }
 

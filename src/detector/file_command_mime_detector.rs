@@ -12,7 +12,10 @@
 //! temporary files staged from seekable readers. It is registered under the
 //! built-in provider id `file` and aliases such as `file-command`.
 
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use qubit_command::Command;
 use qubit_command::CommandRunner;
@@ -338,8 +341,29 @@ impl<'a> FileCommandMimeDetector<'a> {
         path: &Path,
         executor: &dyn MimeCommandExecutor,
     ) -> MimeResult<Vec<String>> {
+        Self::guess_with_runner_and_executor(&self.command_runner, path, executor)
+    }
+
+    /// Runs the file command with an explicit runner and executor.
+    ///
+    /// # Parameters
+    /// - `runner`: Command configuration used for process execution.
+    /// - `path`: File passed to the command.
+    /// - `executor`: Synchronous command executor.
+    ///
+    /// # Returns
+    /// Candidate MIME type names reported by the file command.
+    ///
+    /// # Errors
+    /// Returns command failures, incomplete output, invalid UTF-8, or an
+    /// invalid MIME type response.
+    fn guess_with_runner_and_executor(
+        runner: &CommandRunner,
+        path: &Path,
+        executor: &dyn MimeCommandExecutor,
+    ) -> MimeResult<Vec<String>> {
         let absolute_path = std::path::absolute(path)?;
-        let output = executor.run(&self.command_runner, Self::command_for_path(&absolute_path))?;
+        let output = executor.run(runner, Self::command_for_path(&absolute_path))?;
         if output.exit_code != Some(0) {
             return Err(MimeError::detector_backend(
                 Self::COMMAND,
@@ -359,6 +383,43 @@ impl<'a> FileCommandMimeDetector<'a> {
                 "file returned an invalid MIME type",
             ))
         }
+    }
+
+    /// Stages owned content and runs its inspection on the blocking pool.
+    ///
+    /// # Parameters
+    /// - `content`: Content copied into the worker-owned staging operation.
+    /// - `executor`: Executor used by the worker to run the command.
+    ///
+    /// # Returns
+    /// A future containing candidate MIME type names.
+    ///
+    /// # Errors
+    /// Returns allocation, staging, command, output, or MIME validation
+    /// errors. Dropping the future after the worker starts does not cancel the
+    /// worker or its cleanup.
+    pub(crate) fn guess_staged_content_async_with_executor<'b>(
+        &'b self,
+        content: &'b [u8],
+        executor: Arc<dyn MimeCommandExecutor>,
+    ) -> Pin<Box<dyn Future<Output = MimeResult<Vec<String>>> + Send + 'b>> {
+        Box::pin(async move {
+            let mut owned = Vec::new();
+            owned
+                .try_reserve_exact(content.len())
+                .map_err(|source| MimeError::BufferAllocationFailed {
+                    requested: content.len(),
+                    source,
+                })?;
+            owned.extend_from_slice(content);
+            let runner = self.command_runner.clone();
+            blocking::unblock(move || {
+                super::file_based_mime_detector::with_temp_file(&owned, |path| {
+                    Self::guess_with_runner_and_executor(&runner, path, executor.as_ref())
+                })
+            })
+            .await
+        })
     }
 
     /// Creates the default command runner for file detection.
@@ -445,5 +506,22 @@ impl<'a> FileBasedMimeDetector for FileCommandMimeDetector<'a> {
     /// - `file`: Local file path passed to the `file` command.
     fn guess_from_local_file(&self, file: &Path) -> MimeResult<Vec<String>> {
         self.guess_from_file_command(file)
+    }
+
+    /// Runs content staging and command inspection on the blocking pool.
+    ///
+    /// # Parameters
+    /// - `content`: Content bytes to copy and inspect.
+    ///
+    /// # Returns
+    /// A future containing candidate MIME type names.
+    ///
+    /// # Errors
+    /// Propagates allocation, staging, command, and output validation errors.
+    fn guess_from_staged_content_async<'b>(
+        &'b self,
+        content: &'b [u8],
+    ) -> Pin<Box<dyn Future<Output = MimeResult<Vec<String>>> + Send + 'b>> {
+        self.guess_staged_content_async_with_executor(content, Arc::new(SystemMimeCommandExecutor))
     }
 }

@@ -14,7 +14,7 @@ use super::MimeCommandOutput;
 
 /// Runs a structured command while preserving failures unrelated to exit
 /// policy.
-pub(crate) trait MimeCommandExecutor {
+pub(crate) trait MimeCommandExecutor: Send + Sync {
     /// Executes synchronously using the supplied runner configuration.
     ///
     /// Returns actual status and stdout, including clean unexpected exits.

@@ -43,6 +43,30 @@
 //! # }
 //! ```
 //!
+//! ```rust
+//! use qubit_mime::{MimeDetectionPolicy, MimeDetector, RepositoryMimeDetector};
+//!
+//! # fn main() -> qubit_mime::MimeResult<()> {
+//! let detector = RepositoryMimeDetector::new()?;
+//! let mime = detector.detect_prefix(
+//!     b"%PDF-1.7\n", Some("report.jpg"), MimeDetectionPolicy::VerifyContent,
+//! )?;
+//! assert_eq!(mime.as_deref(), Some("application/pdf"));
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! For upload prefixes, use [`MimeDetector::detect_prefix`]. The combined
+//! `detect`/`detect_bytes` and `detect_by_content` methods accept complete
+//! content and may invoke an explicitly configured media classifier when
+//! precise detection is enabled. The built-in `file` provider runs staging,
+//! command execution, and cleanup on a blocking thread pool through its async
+//! provider path. A custom backend's default async content hook calls its
+//! synchronous method, so implementations that may block should override it.
+//! Dropping the future does not guarantee cancellation of started work, and a
+//! prefix may temporarily occupy both the provider buffer and an owned worker
+//! copy; `max_buffer_size` limits each buffer individually.
+//!
 //! Configure a preferred detector and an explicit fallback. This is useful when
 //! `file` should be used on systems where it is available, while still allowing
 //! deterministic repository detection on minimal CI images:

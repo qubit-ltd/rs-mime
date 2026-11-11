@@ -149,14 +149,18 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// Detects a MIME type from content bytes.
     ///
     /// # Parameters
-    /// - `bytes`: Content prefix to inspect.
+    /// - `bytes`: Content bytes to inspect. When precise media detection is
+    ///   enabled and a classifier is configured, provide the complete resource
+    ///   because the classifier may inspect the entire media stream. Use
+    ///   [`MimeDetector::detect_prefix`] when only a bounded prefix is
+    ///   available.
     ///
     /// # Returns
     /// First MIME type matched by magic, or `None`.
     ///
     /// # Errors
     /// Propagates errors returned while inspecting content or refining a
-    /// detected MIME type.
+    /// detected MIME type, including media-classifier errors.
     #[inline]
     pub fn detect_by_content(&self, bytes: &[u8]) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_by_content(self, bytes)
@@ -165,7 +169,10 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// Detects a MIME type from content bytes and an optional filename.
     ///
     /// # Parameters
-    /// - `bytes`: Content prefix to inspect.
+    /// - `bytes`: Complete resource bytes to inspect. When precise media
+    ///   detection is enabled and a classifier is configured, the classifier
+    ///   may inspect the full resource. Use [`MimeDetector::detect_prefix`]
+    ///   when only a bounded prefix is available.
     /// - `filename`: Optional path or basename used for glob detection.
     /// - `policy`: Strategy for resolving filename and content results.
     ///
@@ -174,7 +181,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Errors
     /// Propagates errors returned while inspecting content or refining a
-    /// detected MIME type.
+    /// detected MIME type, including media-classifier errors.
     #[inline]
     pub fn detect_bytes(
         &self,
@@ -185,8 +192,9 @@ impl<'a> RepositoryMimeDetector<'a> {
         self.detect(bytes, filename, policy)
     }
 
-    /// Detects a MIME type from a seekable reader without consuming its
-    /// position.
+    /// Detects a MIME type from the complete seekable resource without
+    /// consuming its position. Detection starts at logical byte zero and
+    /// restores the reader's original position.
     ///
     /// # Parameters
     /// - `reader`: Reader to inspect. The original stream position is restored.
@@ -198,7 +206,8 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when reading or seeking
-    /// fails.
+    /// fails, or another detector or media-classifier error when detection
+    /// cannot complete.
     #[inline]
     pub fn detect_reader(
         &self,
@@ -220,7 +229,8 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Errors
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when the file cannot be
-    /// opened or read.
+    /// opened or read, or another detector or media-classifier error when
+    /// detection cannot complete.
     #[inline]
     pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
