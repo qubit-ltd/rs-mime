@@ -99,7 +99,7 @@ impl GlobIndex {
                     .filter(|entry| entry.glob.matches(basename)),
             );
         }
-        let literal_candidates = deduplicate_by_mime(literal_candidates);
+        let literal_candidates = select_best(literal_candidates);
         if !literal_candidates.is_empty() {
             return literal_candidates;
         }

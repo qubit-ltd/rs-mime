@@ -11,6 +11,7 @@ use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeError;
 use qubit_mime::MimeRepository;
 use qubit_mime::MimeType;
+use qubit_mime::RepositoryMimeDetector;
 
 #[test]
 fn test_bundled_repository_is_shared_and_usable() {
@@ -290,6 +291,103 @@ fn test_literal_precedes_higher_weight_wildcard() {
     assert_eq!(
         vec!["text/x-makefile"],
         names(repository.detect_by_filename("Makefile"))
+    );
+}
+
+#[test]
+fn test_literal_candidates_are_ranked_by_weight_before_mime_deduplication() {
+    for xml in [
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-low"><glob pattern="README" weight="10"/></mime-type>
+  <mime-type type="text/x-high"><glob pattern="README" weight="90"/></mime-type>
+</mime-info>"#,
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-high"><glob pattern="README" weight="90"/></mime-type>
+  <mime-type type="text/x-low"><glob pattern="README" weight="10"/></mime-type>
+</mime-info>"#,
+    ] {
+        let repository = MimeRepository::from_xml(xml).expect("weighted literal repository should parse");
+
+        assert_eq!(
+            vec!["text/x-high"],
+            names(repository.detect_by_filename("README")),
+            "the highest-weight literal must win regardless of XML declaration order"
+        );
+    }
+}
+
+#[test]
+fn test_equal_weight_literal_candidates_preserve_ties() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-one"><glob pattern="README" weight="70"/></mime-type>
+  <mime-type type="text/x-two"><glob pattern="README" weight="70"/></mime-type>
+</mime-info>"#,
+    )
+    .expect("equal-weight literal repository should parse");
+
+    assert_eq!(
+        vec!["text/x-one", "text/x-two"],
+        names(repository.detect_by_filename("README"))
+    );
+}
+
+#[test]
+fn test_literal_candidates_deduplicate_multiple_rules_for_same_mime() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-readme">
+    <glob pattern="README" weight="10"/>
+    <glob pattern="README" weight="90"/>
+  </mime-type>
+  <mime-type type="text/x-other"><glob pattern="README" weight="50"/></mime-type>
+</mime-info>"#,
+    )
+    .expect("repeated literal rules should parse");
+
+    assert_eq!(vec!["text/x-readme"], names(repository.detect_by_filename("README")));
+}
+
+#[test]
+fn test_case_sensitive_and_insensitive_literal_candidates_intersect() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-sensitive"><glob pattern="README" case-sensitive="true" weight="80"/></mime-type>
+  <mime-type type="text/x-insensitive"><glob pattern="README" weight="80"/></mime-type>
+</mime-info>"#,
+    )
+    .expect("case-sensitive literal repository should parse");
+
+    assert_eq!(
+        vec!["text/x-sensitive", "text/x-insensitive"],
+        names(repository.detect_by_filename("README"))
+    );
+    assert_eq!(
+        vec!["text/x-insensitive"],
+        names(repository.detect_by_filename("readme"))
+    );
+}
+
+#[test]
+fn test_prefer_filename_uses_unique_highest_weight_literal_candidate() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-low"><glob pattern="README" weight="10"/></mime-type>
+  <mime-type type="text/x-high"><glob pattern="README" weight="90"/></mime-type>
+</mime-info>"#,
+    )
+    .expect("weighted literal repository should parse");
+    let detector = RepositoryMimeDetector::with_repository(&repository);
+
+    assert_eq!(
+        Some("text/x-high".to_owned()),
+        detector
+            .detect_bytes(
+                b"unrecognized content",
+                Some("README"),
+                MimeDetectionPolicy::PreferFilename
+            )
+            .expect("filename detection should succeed")
     );
 }
 

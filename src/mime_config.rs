@@ -743,6 +743,15 @@ fn build_ambiguous_mime_mapping(entries: Vec<String>) -> MimeResult<HashMap<Stri
                 reason: "expected ext:video,audio with two MIME values".to_owned(),
             });
         }
+        for (side, name) in [("video", &video_type), ("audio", &audio_type)] {
+            crate::repository::mime_type_builder::validate_mime_name(name).map_err(|error| {
+                MimeError::InvalidConfigurationValue {
+                    key: CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+                    value: entry.clone(),
+                    reason: format!("invalid {side} MIME value: {error}"),
+                }
+            })?;
+        }
         mapping.insert(
             extension.trim().trim_start_matches('.').to_ascii_lowercase(),
             [video_type, audio_type],

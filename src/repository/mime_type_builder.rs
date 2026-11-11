@@ -156,6 +156,9 @@ impl MimeTypeBuilder {
 
 /// Validates a MIME type name against the token grammar.
 ///
+/// This helper is crate-visible so configuration parsing can apply the same
+/// syntax rules as the repository builder.
+///
 /// # Parameters
 ///
 /// * `name` - MIME type name to validate.
@@ -166,7 +169,7 @@ impl MimeTypeBuilder {
 /// # Errors
 /// Returns [`MimeError::InvalidMimeName`](crate::MimeError::InvalidMimeName)
 /// if the name does not follow the MIME type token grammar.
-fn validate_mime_name(name: &str) -> MimeResult<()> {
+pub(crate) fn validate_mime_name(name: &str) -> MimeResult<()> {
     let Some((kind, subtype)) = name.split_once('/') else {
         return Err(MimeError::InvalidMimeName {
             name: name.to_owned(),

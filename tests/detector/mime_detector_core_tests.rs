@@ -377,6 +377,24 @@ fn test_refine_detected_mime_type_uses_media_stream_classifier() {
 }
 
 #[test]
+fn test_refine_detected_mime_type_preserves_custom_mapping_case() {
+    let mut detector = MimeDetectorCore::new(create_precise_config(
+        true,
+        "webm",
+        "webm:Video/X-Custom,Audio/X-Custom",
+    ));
+    detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {
+        stream_type: MediaStreamType::AudioOnly,
+        expected_first_byte: None,
+    })));
+
+    let refined =
+        detector.refine_detected_mime_type("Video/X-Custom", Some("sample.webm"), DetectionSource::Content(b"webm"));
+
+    assert_eq!("Audio/X-Custom", refined.expect("valid custom MIME should refine"));
+}
+
+#[test]
 fn test_select_result_honors_prefer_filename_and_refines_content_result() {
     let mut detector = MimeDetectorCore::new(create_precise_config(true, "webm", "webm:video/webm,audio/webm"));
     detector.set_media_stream_classifier(Some(Arc::new(StaticClassifier {

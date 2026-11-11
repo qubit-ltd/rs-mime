@@ -369,6 +369,90 @@ fn test_from_config_rejects_malformed_mapping_entries() {
 }
 
 #[test]
+fn test_from_config_rejects_invalid_mime_names_in_ambiguous_mapping() {
+    let invalid_entries = [
+        ("webm:video/webm,garbage", "audio"),
+        ("webm:garbage,audio/webm", "video"),
+        ("webm:video/webm/extra,audio/webm", "video"),
+        ("webm:video//webm,audio/webm", "video"),
+        ("webm:video/webm,audio/webm extra", "audio"),
+        ("webm:video/webm; codecs=vp9,audio/webm", "video"),
+    ];
+
+    for (entry, side) in invalid_entries {
+        let mut config = Config::new();
+        if entry.contains(';') {
+            config
+                .set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, vec![entry.to_owned()])
+                .expect("invalid MIME mapping array should be storable");
+        } else {
+            config
+                .set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, entry)
+                .expect("invalid MIME mapping should be storable");
+        }
+
+        let error =
+            MimeConfig::from_config(&config).expect_err("invalid MIME names should fail while loading configuration");
+        assert!(
+            matches!(
+                error,
+                MimeError::InvalidConfigurationValue { key, value, reason }
+                    if key == CONFIG_MIME_AMBIGUOUS_MIME_MAPPING
+                        && value == entry
+                        && reason.contains(side)
+            ),
+            "unexpected configuration error for {entry}"
+        );
+    }
+}
+
+#[test]
+fn test_from_config_preserves_valid_custom_mime_mapping_values() {
+    let mut config = Config::new();
+    config
+        .set(
+            CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+            "webm: Video/X-Custom , Audio/X-Custom ",
+        )
+        .expect("custom MIME mapping should be configurable");
+
+    let mime_config = MimeConfig::from_config(&config).expect("valid custom MIME names should parse");
+
+    assert_eq!(
+        Some(&["Video/X-Custom".to_owned(), "Audio/X-Custom".to_owned()]),
+        mime_config.ambiguous_mime_mapping().get("webm")
+    );
+    let defaults = MimeConfig::from_config(&Config::new()).expect("default configuration should parse");
+    assert_eq!(
+        Some(&["video/webm".to_owned(), "audio/webm".to_owned()]),
+        defaults.ambiguous_mime_mapping().get("webm")
+    );
+    assert_eq!(
+        Some(&["video/ogg".to_owned(), "audio/ogg".to_owned()]),
+        defaults.ambiguous_mime_mapping().get("ogg")
+    );
+}
+
+#[test]
+fn test_from_env_rejects_invalid_ambiguous_mime_mapping() {
+    let _guard = mime_config_test_lock();
+    let _env_restore = EnvRestore::new(&[ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING]);
+    unsafe {
+        std::env::set_var(ENV_MIME_DETECTOR_AMBIGUOUS_MIME_MAPPING, "webm:video/webm,garbage");
+    }
+
+    let error = MimeConfig::from_env().expect_err("invalid environment mapping should fail during loading");
+
+    assert!(matches!(
+        error,
+        MimeError::InvalidConfigurationValue { key, value, reason }
+            if key == CONFIG_MIME_AMBIGUOUS_MIME_MAPPING
+                && value == "webm:video/webm,garbage"
+                && reason.contains("audio")
+    ));
+}
+
+#[test]
 fn test_load_falls_back_to_builtin_default_when_env_is_invalid() {
     let _guard = mime_config_test_lock();
     let _env_restore = EnvRestore::new(&[ENV_MIME_DETECTOR_ENABLE_PRECISE_DETECTION]);
