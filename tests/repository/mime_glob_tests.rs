@@ -110,3 +110,20 @@ fn test_character_class_regex_set_operators_are_literal() {
         assert!(!glob.matches("c"), "{pattern} must reject c");
     }
 }
+
+#[test]
+fn test_character_class_leading_close_bracket() {
+    let positive = MimeGlob::new("[]a]", 50, true).expect("valid class");
+    assert!(positive.matches("]"));
+    assert!(positive.matches("a"));
+    assert!(!positive.matches("b"));
+
+    let negative = MimeGlob::new("[!]]", 50, true).expect("valid negated class");
+    assert!(negative.matches("a"));
+    assert!(!negative.matches("]"));
+
+    let prefixed = MimeGlob::new("pre[]a].foo", 50, true).expect("valid prefixed class");
+    assert!(prefixed.matches("pre].foo"));
+    assert!(prefixed.matches("prea.foo"));
+    assert!(!prefixed.matches("preb.foo"));
+}
