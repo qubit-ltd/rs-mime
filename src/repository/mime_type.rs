@@ -222,50 +222,26 @@ impl MimeType {
         &'a self,
         repository: &'a MimeRepository,
         bytes: &[u8],
-        best_priority: u16,
-    ) -> Option<&'a MimeMagic> {
-        let mut visited = HashSet::new();
-        self.matched_magic_inner(repository, bytes, best_priority, &mut visited)
-    }
-
-    /// Recursive implementation for matching this type and super types.
-    ///
-    /// # Type Parameters
-    /// - `'a`: Shared lifetime for this MIME type, its repository, and the
-    ///   returned magic rule.
-    ///
-    /// # Parameters
-    /// - `repository`: Repository used to resolve super type names.
-    /// - `bytes`: Content bytes to test.
-    /// - `best_priority`: Lowest priority that may improve the current result.
-    /// - `visited`: MIME type names already visited during this lookup.
-    ///
-    /// # Returns
-    /// The highest-priority matched magic rule, or `None`.
-    fn matched_magic_inner<'a>(
-        &'a self,
-        repository: &'a MimeRepository,
-        bytes: &[u8],
         mut best_priority: u16,
-        visited: &mut HashSet<String>,
     ) -> Option<&'a MimeMagic> {
-        if !visited.insert(self.name.clone()) {
-            return None;
-        }
+        let mut pending = vec![self];
+        let mut visited = HashSet::new();
         let mut result = None;
-        for magic in &self.magics {
-            let priority = magic.priority();
-            if priority >= best_priority && magic.matches(bytes) {
-                result = Some(magic);
-                best_priority = priority;
+        while let Some(current) = pending.pop() {
+            if !visited.insert(current.name.clone()) {
+                continue;
             }
-        }
-        for parent_name in &self.super_types {
-            if let Some(parent) = repository.get(parent_name)
-                && let Some(magic) = parent.matched_magic_inner(repository, bytes, best_priority, visited)
-            {
-                best_priority = magic.priority();
-                result = Some(magic);
+            for magic in &current.magics {
+                let priority = magic.priority();
+                if priority >= best_priority && magic.matches(bytes) {
+                    result = Some(magic);
+                    best_priority = priority;
+                }
+            }
+            for parent_name in current.super_types.iter().rev() {
+                if let Some(parent) = repository.get(parent_name) {
+                    pending.push(parent);
+                }
             }
         }
         result
