@@ -55,6 +55,136 @@ fn test_from_xml_requires_shared_mime_info_namespace() {
     assert!(matches!(error, MimeError::InvalidXmlElement { .. }));
 }
 
+#[test]
+fn test_from_xml_ignores_foreign_glob() {
+    let repository = MimeRepository::from_xml(
+        r#"
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"
+           xmlns:ext="urn:example">
+  <mime-type type="application/x-example">
+    <ext:glob pattern="*.foreign"/>
+    <glob pattern="*.native"/>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("extensions must be ignored");
+
+    assert!(repository.detect_by_filename("a.foreign").is_empty());
+    assert_eq!(
+        vec!["application/x-example"],
+        names(repository.detect_by_filename("a.native"))
+    );
+}
+
+#[test]
+fn test_from_xml_ignores_foreign_mime_rules_and_nested_matchers() {
+    let repository = MimeRepository::from_xml(
+        r#"
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"
+           xmlns:ext="urn:example">
+  <ext:mime-type>
+    <glob pattern="*.foreign-type"/>
+  </ext:mime-type>
+  <mime-type type="application/x-namespace">
+    <comment>standard description</comment>
+    <ext:comment>foreign description</ext:comment>
+    <ext:alias/>
+    <alias type="application/x-standard-alias"/>
+    <ext:sub-class-of/>
+    <sub-class-of type="application/x-standard-parent"/>
+    <ext:glob/>
+    <glob pattern="*.standard"/>
+    <ext:magic/>
+    <magic priority="70">
+      <ext:match/>
+      <match type="string" value="ROOT" offset="0">
+        <ext:match type="string" value="NESTED" offset="4"/>
+        <match type="string" value="OK" offset="4"/>
+      </match>
+    </magic>
+  </mime-type>
+  <ext:wrapper>
+    <glob pattern="*.leaked"/>
+  </ext:wrapper>
+  <mime-type type="application/x-empty-namespace">
+    <glob xmlns="" pattern="*.empty"/>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("foreign namespace rules must be ignored");
+
+    assert!(repository.get("application/x-missing").is_none());
+    assert_eq!(
+        Some("standard description"),
+        repository.get("application/x-namespace").and_then(MimeType::description)
+    );
+    assert_eq!(
+        Some("application/x-namespace"),
+        repository.get("application/x-standard-alias").map(MimeType::name)
+    );
+    assert!(repository.get("application/x-foreign-alias").is_none());
+    assert!(repository.is_a("application/x-namespace", "application/x-standard-parent"));
+    assert!(!repository.is_a("application/x-namespace", "application/x-foreign-parent"));
+    assert!(repository.detect_by_filename("a.foreign-type").is_empty());
+    assert!(repository.detect_by_filename("a.leaked").is_empty());
+    assert!(repository.detect_by_filename("a.empty").is_empty());
+    assert_eq!(
+        vec!["application/x-namespace"],
+        names(repository.detect_by_filename("a.standard"))
+    );
+    let mime_type = repository
+        .get("application/x-namespace")
+        .expect("standard MIME type should be parsed");
+    assert_eq!(1, mime_type.magics().len());
+    assert_eq!(1, mime_type.magics()[0].matchers().len());
+    assert_eq!(1, mime_type.magics()[0].matchers()[0].sub_matchers().len());
+    assert_eq!(b"OK", mime_type.magics()[0].matchers()[0].sub_matchers()[0].value());
+    assert!(repository.detect_by_content(b"ROOTNESTED").is_empty());
+    assert_eq!(
+        vec!["application/x-namespace"],
+        names(repository.detect_by_content(b"ROOTOK"))
+    );
+}
+
+#[test]
+fn test_from_xml_accepts_prefixed_standard_namespace() {
+    let repository = MimeRepository::from_xml(
+        r#"<s:mime-info xmlns:s="http://www.freedesktop.org/standards/shared-mime-info">
+<s:mime-type type="application/x-prefixed"><s:glob pattern="*.prefixed"/></s:mime-type>
+</s:mime-info>"#,
+    )
+    .expect("prefixed standard namespace must be equivalent");
+
+    assert_eq!(
+        vec!["application/x-prefixed"],
+        names(repository.detect_by_filename("a.prefixed"))
+    );
+}
+
+#[test]
+fn test_from_xml_requires_standard_match_after_ignoring_foreign_match() {
+    let error = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info" xmlns:ext="urn:example">
+<mime-type type="application/x-no-match"><magic><ext:match type="string" value="X" offset="0"/></magic></mime-type>
+</mime-info>"#,
+    )
+    .expect_err("foreign match must not satisfy a standard magic rule");
+
+    assert!(error.to_string().contains("magic must contain at least one match"));
+}
+
+#[test]
+fn test_from_xml_still_rejects_invalid_standard_attributes() {
+    let error = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+<mime-type type="application/x-invalid"><glob/></mime-type>
+</mime-info>"#,
+    )
+    .expect_err("invalid standard glob must still be rejected");
+
+    assert!(matches!(error, MimeError::InvalidXmlAttribute { .. }));
+}
+
 const TEST_DATABASE: &str = r#"
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/gzip">
@@ -441,7 +571,9 @@ fn test_from_xml_accepts_doctype_and_reports_structural_errors() {
             .contains("root element")
     );
     assert!(
-        MimeRepository::from_xml("<mime-info><mime-type><comment>x</comment></mime-type></mime-info>",)
+        MimeRepository::from_xml(
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type><comment>x</comment></mime-type></mime-info>"#,
+        )
             .expect_err("missing type should fail")
             .to_string()
             .contains("attribute")
@@ -477,35 +609,35 @@ fn test_from_xml_rejects_doctype_with_invalid_external_identifier() {
 fn test_from_xml_reports_invalid_glob_and_magic_attributes() {
     let cases = [
         (
-            r#"<mime-info><mime-type type="x"><comment>x</comment><glob pattern="*.x" weight="101"/></mime-type></mime-info>"#,
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><glob pattern="*.x" weight="101"/></mime-type></mime-info>"#,
             "weight",
         ),
         (
-            r#"<mime-info><mime-type type="x"><comment>x</comment><glob pattern="*.x" weight="abc"/></mime-type></mime-info>"#,
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><glob pattern="*.x" weight="abc"/></mime-type></mime-info>"#,
             "weight",
         ),
         (
-            r#"<mime-info><mime-type type="x"><comment>x</comment><glob pattern="*.x" case-sensitive="maybe"/></mime-type></mime-info>"#,
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><glob pattern="*.x" case-sensitive="maybe"/></mime-type></mime-info>"#,
             "case-sensitive",
         ),
         (
-            r#"<mime-info><mime-type type="x"><comment>x</comment><magic priority="101"><match type="string" value="x" offset="0"/></magic></mime-type></mime-info>"#,
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic priority="101"><match type="string" value="x" offset="0"/></magic></mime-type></mime-info>"#,
             "priority",
         ),
         (
-            r#"<mime-info><mime-type type="x"><comment>x</comment><magic/></mime-type></mime-info>"#,
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic/></mime-type></mime-info>"#,
             "magic",
         ),
         (
-            r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="unknown" value="x" offset="0"/></magic></mime-type></mime-info>"#,
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="unknown" value="x" offset="0"/></magic></mime-type></mime-info>"#,
             "type",
         ),
         (
-            r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" offset="2:1"/></magic></mime-type></mime-info>"#,
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" offset="2:1"/></magic></mime-type></mime-info>"#,
             "offset",
         ),
         (
-            r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" offset="bad"/></magic></mime-type></mime-info>"#,
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" offset="bad"/></magic></mime-type></mime-info>"#,
             "offset",
         ),
     ];
@@ -522,13 +654,13 @@ fn test_from_xml_reports_invalid_glob_and_magic_attributes() {
 #[test]
 fn test_from_xml_reports_invalid_string_and_numeric_magic_values() {
     let cases = [
-        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="\" offset="0"/></magic></mime-type></mime-info>"#,
-        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="\x" offset="0"/></magic></mime-type></mime-info>"#,
-        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="ff" offset="0"/></magic></mime-type></mime-info>"#,
-        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="0xf" offset="0"/></magic></mime-type></mime-info>"#,
-        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="0xgg" offset="0"/></magic></mime-type></mime-info>"#,
-        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="0x€0" offset="0"/></magic></mime-type></mime-info>"#,
-        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="byte" value="bad" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="string" value="\" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="string" value="\x" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="ff" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="0xf" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="0xgg" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="string" value="x" mask="0x€0" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="byte" value="bad" offset="0"/></magic></mime-type></mime-info>"#,
     ];
 
     for xml in cases {
@@ -542,9 +674,9 @@ fn test_from_xml_reports_invalid_string_and_numeric_magic_values() {
 #[test]
 fn test_from_xml_rejects_numeric_magic_values_that_exceed_matcher_width() {
     let cases = [
-        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="byte" value="0x100" offset="0"/></magic></mime-type></mime-info>"#,
-        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="big16" value="0x10000" offset="0"/></magic></mime-type></mime-info>"#,
-        r#"<mime-info><mime-type type="x"><comment>x</comment><magic><match type="big32" value="0x100000000" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="byte" value="0x100" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="big16" value="0x10000" offset="0"/></magic></mime-type></mime-info>"#,
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="x"><comment>x</comment><magic><match type="big32" value="0x100000000" offset="0"/></magic></mime-type></mime-info>"#,
     ];
 
     for xml in cases {

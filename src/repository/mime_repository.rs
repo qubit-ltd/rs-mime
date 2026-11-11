@@ -37,6 +37,9 @@ use crate::candidate_selection::select_candidate;
 /// Embedded freedesktop MIME database.
 const BUNDLED_DATABASE: &str = include_str!("../../resources/freedesktop.org-v2.4.xml");
 
+/// Namespace URI for standard shared MIME-info elements.
+const SHARED_MIME_INFO_NAMESPACE: &str = "http://www.freedesktop.org/standards/shared-mime-info";
+
 /// Lazily initialized shared handle to the embedded repository.
 static BUNDLED_SHARED_REPOSITORY: OnceLock<Arc<MimeRepository>> = OnceLock::new();
 
@@ -91,7 +94,9 @@ impl MimeRepository {
     ///
     /// # Errors
     /// Returns [`MimeError`](crate::MimeError) when XML is malformed or a rule
-    /// contains an unsupported value.
+    /// contains an unsupported value. Elements in the shared MIME-info
+    /// namespace are parsed; child elements from other namespaces are ignored
+    /// as extensions.
     pub fn from_xml(xml: &str) -> MimeResult<Self> {
         let xml = strip_doctype(xml);
         let document = Document::parse(&xml)?;
@@ -102,19 +107,19 @@ impl MimeRepository {
                 "root element must be <mime-info>",
             ));
         }
-        let mut repository = Self::empty();
-        for child in root.children().filter(Node::is_element) {
-            if child.tag_name().name() == "mime-type" {
-                repository.add_mime_type(parse_mime_type(child)?)?;
-            }
-        }
-        repository.relations = Arc::new(MimeRelations::from_mime_types(&repository.mime_types));
-        if root.tag_name().namespace() != Some("http://www.freedesktop.org/standards/shared-mime-info") {
+        if !is_standard_element(root, "mime-info") {
             return Err(MimeError::invalid_element(
                 root.tag_name().name(),
                 "root element must declare the shared-mime-info namespace",
             ));
         }
+        let mut repository = Self::empty();
+        for child in root.children().filter(Node::is_element) {
+            if is_standard_element(child, "mime-type") {
+                repository.add_mime_type(parse_mime_type(child)?)?;
+            }
+        }
+        repository.relations = Arc::new(MimeRelations::from_mime_types(&repository.mime_types));
         Ok(repository)
     }
 
@@ -344,6 +349,9 @@ fn parse_mime_type(node: Node<'_, '_>) -> MimeResult<MimeType> {
     let name = required_attr(node, "type")?.to_owned();
     let mut builder = MimeTypeBuilder::new(&name);
     for child in node.children().filter(Node::is_element) {
+        if child.tag_name().namespace() != Some(SHARED_MIME_INFO_NAMESPACE) {
+            continue;
+        }
         match child.tag_name().name() {
             "comment" => {
                 let language = comment_language(child);
@@ -404,7 +412,7 @@ fn parse_magic(node: Node<'_, '_>) -> MimeResult<MimeMagic> {
     let matchers: MimeResult<Vec<_>> = node
         .children()
         .filter(Node::is_element)
-        .filter(|child| child.tag_name().name() == "match")
+        .filter(|child| is_standard_element(*child, "match"))
         .map(parse_matcher)
         .collect();
     let matchers = matchers?;
@@ -440,10 +448,16 @@ fn parse_matcher(node: Node<'_, '_>) -> MimeResult<MimeMagicMatcher> {
     let sub_matchers: MimeResult<Vec<_>> = node
         .children()
         .filter(Node::is_element)
-        .filter(|child| child.tag_name().name() == "match")
+        .filter(|child| is_standard_element(*child, "match"))
         .map(parse_matcher)
         .collect();
     MimeMagicMatcher::new(value_type, offset_begin, offset_end, value, mask, sub_matchers?)
+}
+
+/// Returns whether an element uses the standard shared MIME-info namespace
+/// and the requested local name.
+fn is_standard_element(node: Node<'_, '_>, name: &str) -> bool {
+    node.tag_name().namespace() == Some(SHARED_MIME_INFO_NAMESPACE) && node.tag_name().name() == name
 }
 
 /// Reads the language key from a `comment` element.

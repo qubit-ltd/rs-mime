@@ -237,6 +237,13 @@ relationships. When media extensions are ambiguous, configure the media stream
 classifier settings and use `FfprobeCommandMediaStreamClassifier` if `ffprobe`
 is available.
 
+When loading shared MIME-info XML, the root and standard rule elements must use
+the `http://www.freedesktop.org/standards/shared-mime-info` namespace. Elements
+from other namespaces are treated as extensions and ignored, including their
+nested elements; malformed attributes on standard elements still produce an
+error. A standard `magic` element must still contain at least one standard
+`match` element.
+
 ## Errors and Diagnostics
 
 Important `MimeError` cases include:

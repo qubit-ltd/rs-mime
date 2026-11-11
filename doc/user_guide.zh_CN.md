@@ -198,6 +198,11 @@ crate 通过 `qubit_spi::submit_sync_provider!` 向
 文件扩展名、magic 规则和父类型关系。对于媒体扩展名有歧义的情况，可以配置媒体流
 classifier；如果环境提供 `ffprobe`，再使用 `FfprobeCommandMediaStreamClassifier`。
 
+加载 shared MIME-info XML 时，根元素和标准规则元素必须使用
+`http://www.freedesktop.org/standards/shared-mime-info` 命名空间。其他命名空间的元素会作为扩展
+忽略，其嵌套元素也不会被解析；标准元素中的非法属性仍会报错。标准 `magic` 元素仍必须至少包含一个
+标准 `match` 元素。
+
 ## 错误与诊断
 
 常见的 `MimeError` 包括：
