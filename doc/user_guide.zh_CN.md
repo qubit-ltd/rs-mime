@@ -176,6 +176,11 @@ fn detect_precisely(content: &[u8], filename: &str) -> Result<Option<String>, Bo
 - `detect_file(path, policy)` 读取本地文件。
 - `MimeDetector::detect_path` 和 `detect_async_path` 通过同步或异步文件系统 facade 读取。
 
+文件名提示会同时把 `/` 和 `\` 视为分隔符，只有最后一段决定扩展名。例如，
+`C:\cache.v1\clip` 没有扩展名，因此精确媒体检测会使用现有的 MIME 映射回退逻辑。实际打开本地
+文件时仍遵循宿主平台的路径语义。修正此前对这类名称的误判后，以前被跳过的细分现在可能执行，
+classifier 错误也可能向调用方传播；若名称含有扩展名但该扩展名未启用，仍不会细分。
+
 顶层 `MimeDetector::detect_reader` 将 reader 视为整份资源：即使调用者当前游标不在开头，检测也从
 逻辑字节零开始，结束后恢复原始位置。默认的 `MimeContentBackend::detect_reader` 契约不同，只从
 当前位置读取。`Prefix(n)` 最多读取 n 字节，提前遇到 EOF 时停止；`Complete` 在默认 16 MiB

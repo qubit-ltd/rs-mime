@@ -207,6 +207,12 @@ Use the simplest entry point that matches the input:
 - `MimeDetector::detect_path` and `detect_async_path` read through the
   synchronous or asynchronous filesystem facade.
 
+Filename hints use both `/` and `\` as separators, and only the final
+component determines the extension. For example, `C:\cache.v1\clip` has no
+extension, so precise media detection uses the existing MIME-mapping fallback.
+This filename interpretation does not change how local files are opened: actual
+file access continues to follow the host platform's path semantics.
+
 The top-level `MimeDetector::detect_reader` treats the reader as a whole
 resource: detection starts at logical byte zero even when the caller's cursor
 is elsewhere, then restores the original position. The default
