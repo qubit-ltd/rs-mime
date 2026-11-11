@@ -8,7 +8,6 @@
 //! Shared MIME detector behavior.
 
 use std::io::SeekFrom;
-use std::path::Path;
 use std::sync::Arc;
 
 use qubit_io::std_io::ReadSeek;
@@ -428,18 +427,22 @@ impl Default for MimeDetectorCore {
     }
 }
 
-/// Extracts the last extension from a filename or path.
+/// Extracts the last extension from a filename hint.
+///
+/// Both `/` and `\` separate path components; only the final component's
+/// last dot determines the extension. This helper interprets a name hint and
+/// does not access or normalize a local file path.
 ///
 /// # Parameters
-/// - `filename`: Filename or path.
+/// - `filename`: Filename hint.
 ///
 /// # Returns
 /// Lowercase extension without a leading dot.
 fn extension_from_filename(filename: &str) -> Option<String> {
-    Path::new(filename)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .and_then(|name| name.rsplit_once('.').map(|(_, extension)| extension))
+    filename
+        .rsplit(['/', '\\'])
+        .next()
+        .and_then(|basename| basename.rsplit_once('.').map(|(_, extension)| extension))
         .filter(|extension| !extension.is_empty())
         .map(str::to_ascii_lowercase)
 }

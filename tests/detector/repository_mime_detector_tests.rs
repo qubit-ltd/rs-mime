@@ -23,7 +23,9 @@ use qubit_io::Output;
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::options::LocalTempDirectoryOptions;
 use qubit_local_files::options::LocalTempFileOptions;
+use qubit_mime::CONFIG_MIME_AMBIGUOUS_MIME_MAPPING;
 use qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION;
+use qubit_mime::CONFIG_MIME_PRECISE_DETECTION_PATTERNS;
 use qubit_mime::MediaStreamClassifier;
 use qubit_mime::MediaStreamType;
 use qubit_mime::MimeConfig;
@@ -225,6 +227,57 @@ fn test_prefix_and_complete_content_have_distinct_classifier_scopes() {
             .expect("unique filename should short-circuit content work"),
     );
     assert_eq!(1, calls.load(Ordering::SeqCst), "unique filename must skip classifier");
+}
+
+#[test]
+fn test_filename_hint_cross_platform_path_refines_public_byte_and_reader_detection() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="video/webm">
+    <magic priority="50"><match type="string" value="WEBM" offset="0"/></magic>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("custom WEBM repository should parse");
+    let mut source = Config::new();
+    source
+        .set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)
+        .expect("precise detection should be configurable");
+    source
+        .set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, "webm")
+        .expect("precise patterns should be configurable");
+    source
+        .set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, "webm:video/webm,audio/webm")
+        .expect("ambiguous MIME mapping should be configurable");
+    let config = MimeConfig::from_config(&source).expect("MIME config should parse");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut detector = RepositoryMimeDetector::with_repository_and_config(&repository, config);
+    detector
+        .core_mut()
+        .set_media_stream_classifier(Some(Arc::new(CountingAudioClassifier {
+            calls: Arc::clone(&calls),
+        })));
+    let filename = r"C:\cache.v1\clip";
+    let content = b"WEBM payload";
+
+    assert_eq!(
+        Some("audio/webm".to_owned()),
+        detector
+            .detect_bytes(content, Some(filename), MimeDetectionPolicy::VerifyContent)
+            .expect("byte detection should refine the repository MIME")
+    );
+    assert_eq!(1, calls.load(Ordering::SeqCst));
+
+    let mut reader = Cursor::new(content.to_vec());
+    reader.set_position(2);
+    assert_eq!(
+        Some("audio/webm".to_owned()),
+        detector
+            .detect_reader(&mut reader, Some(filename), MimeDetectionPolicy::VerifyContent)
+            .expect("reader detection should refine the repository MIME")
+    );
+    assert_eq!(2, calls.load(Ordering::SeqCst));
+    assert_eq!(2, reader.position(), "reader position should be restored");
 }
 
 #[test]
