@@ -38,7 +38,10 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// Describes how much content the backend needs for detection.
     ///
     /// # Returns
-    /// A prefix bounded by [`Self::max_test_bytes`] unless overridden.
+    /// The default reader hook uses the declared [`ContentRequirement::Prefix`]
+    /// length. [`Self::max_test_bytes`] supplies this default requirement when
+    /// an implementation does not override this method; it remains available
+    /// to existing backend and provider-path callers as a legacy limit.
     #[must_use]
     fn content_requirement(&self) -> ContentRequirement {
         ContentRequirement::Prefix(self.max_test_bytes())
@@ -51,10 +54,15 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     #[must_use]
     fn core(&self) -> &MimeDetectorCore;
 
-    /// Gets the maximum number of bytes needed for content inspection.
+    /// Gets the default maximum number of bytes needed for content inspection.
+    ///
+    /// This supplies the default `Prefix(n)` returned by
+    /// [`Self::content_requirement`]. When that method is overridden, the
+    /// default reader hook uses its declared prefix instead. This method
+    /// remains available to callers that explicitly use its legacy limit.
     ///
     /// # Returns
-    /// Content prefix length to read from files and readers.
+    /// Default content prefix length, in bytes.
     #[must_use]
     fn max_test_bytes(&self) -> usize;
 
@@ -121,10 +129,11 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// must override this hook and define their own bounded reading and
     /// position-restoration behavior.
     fn guess_from_reader(&self, reader: &mut dyn ReadSeek) -> MimeResult<(Vec<String>, Vec<u8>)> {
-        if matches!(self.content_requirement(), ContentRequirement::Complete) {
-            return Err(crate::MimeError::CompleteContentRequired);
-        }
-        let content = read_prefix(reader, self.max_test_bytes(), self.core().max_buffer_size())?;
+        let prefix_len = match self.content_requirement() {
+            ContentRequirement::Prefix(limit) => limit,
+            ContentRequirement::Complete => return Err(crate::MimeError::CompleteContentRequired),
+        };
+        let content = read_prefix(reader, prefix_len, self.core().max_buffer_size())?;
         let candidates = self.guess_from_content(&content)?;
         Ok((candidates, content))
     }

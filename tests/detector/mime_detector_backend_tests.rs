@@ -16,6 +16,7 @@ use qubit_config::Config;
 use qubit_io::Output;
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::options::LocalTempFileOptions;
+use qubit_mime::ContentRequirement;
 use qubit_mime::MediaStreamClassifier;
 use qubit_mime::MediaStreamType;
 use qubit_mime::MimeConfig;
@@ -432,6 +433,83 @@ fn test_mime_detector_backend_propagates_content_errors() {
 
 #[derive(Debug)]
 struct CompleteDefaultBackend(Backend);
+
+#[derive(Debug)]
+struct DeclaredPrefixBackend {
+    core: MimeDetectorCore,
+    declared: usize,
+    legacy: usize,
+}
+
+impl MimeDetectorBackend for DeclaredPrefixBackend {
+    fn core(&self) -> &MimeDetectorCore {
+        &self.core
+    }
+    fn max_test_bytes(&self) -> usize {
+        self.legacy
+    }
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(self.declared)
+    }
+    fn guess_from_filename(&self, _filename: &str) -> Vec<String> {
+        Vec::new()
+    }
+    fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+        Ok(vec![format!("application/x-length-{}", content.len())])
+    }
+}
+
+#[test]
+fn test_default_reader_uses_declared_prefix_not_legacy_length() {
+    for (declared, legacy) in [(4, 8), (8, 4)] {
+        let backend = DeclaredPrefixBackend {
+            core: MimeDetectorCore::from_mime_config(MimeConfig::default()),
+            declared,
+            legacy,
+        };
+        let mut reader = std::io::Cursor::new(b"0123456789abcdef".to_vec());
+        reader.set_position(3);
+        let (candidates, content) = backend.guess_from_reader(&mut reader).unwrap();
+        assert_eq!(content.len(), declared);
+        assert_eq!(candidates, [format!("application/x-length-{declared}")]);
+        assert_eq!(reader.position(), 3);
+    }
+}
+
+#[test]
+fn test_default_reader_declared_prefix_budget_and_eof_edges() {
+    let make_backend = |declared| {
+        let mut config = Config::new();
+        config.set(qubit_mime::CONFIG_MIME_MAX_BUFFER_SIZE, 4_u64).unwrap();
+        DeclaredPrefixBackend {
+            core: MimeDetectorCore::new(MimeConfig::from_config(&config).unwrap()),
+            declared,
+            legacy: 8,
+        }
+    };
+    let exact = make_backend(4);
+    let mut reader = std::io::Cursor::new(b"01234567".to_vec());
+    assert_eq!(exact.guess_from_reader(&mut reader).unwrap().1, b"0123");
+
+    let over = make_backend(5);
+    let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+    let mut reader = CountedReader {
+        cursor: std::io::Cursor::new(b"01234567".to_vec()),
+        reads: std::rc::Rc::clone(&reads),
+    };
+    assert!(matches!(
+        over.guess_from_reader(&mut reader),
+        Err(MimeError::BufferLimitExceeded { requested: 5, limit: 4 })
+    ));
+    assert_eq!(reads.get(), 0, "over-budget prefix must not read");
+
+    let zero = make_backend(0);
+    let mut reader = std::io::Cursor::new(b"0123".to_vec());
+    assert!(zero.guess_from_reader(&mut reader).unwrap().1.is_empty());
+    let short = make_backend(4);
+    let mut reader = std::io::Cursor::new(b"xy".to_vec());
+    assert_eq!(short.guess_from_reader(&mut reader).unwrap().1, b"xy");
+}
 
 impl MimeDetectorBackend for CompleteDefaultBackend {
     fn core(&self) -> &MimeDetectorCore {

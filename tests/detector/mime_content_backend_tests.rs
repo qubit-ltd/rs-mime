@@ -33,6 +33,74 @@ use qubit_mime::RepositoryMimeDetector;
 use crate::support::DirectBackendDetector;
 
 #[derive(Debug)]
+struct DeclaredPrefixBackend {
+    core: MimeDetectorCore,
+    declared: usize,
+    legacy: usize,
+}
+
+impl MimeDetectorBackend for DeclaredPrefixBackend {
+    fn core(&self) -> &MimeDetectorCore {
+        &self.core
+    }
+    fn max_test_bytes(&self) -> usize {
+        self.legacy
+    }
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(self.declared)
+    }
+    fn guess_from_filename(&self, _filename: &str) -> Vec<String> {
+        Vec::new()
+    }
+    fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
+        Ok(vec![format!("application/x-length-{}", content.len())])
+    }
+}
+
+#[derive(Debug)]
+struct ByteCountingReader {
+    cursor: Cursor<Vec<u8>>,
+    bytes_read: Rc<Cell<usize>>,
+}
+
+impl Read for ByteCountingReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let count = self.cursor.read(buffer)?;
+        self.bytes_read.set(self.bytes_read.get() + count);
+        Ok(count)
+    }
+}
+
+impl Seek for ByteCountingReader {
+    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+        self.cursor.seek(from)
+    }
+}
+
+#[test]
+fn test_adapter_reader_uses_declared_prefix_length() {
+    for (declared, legacy) in [(4, 8), (8, 4)] {
+        let adapter = MimeDetectorAdapter::new(DeclaredPrefixBackend {
+            core: MimeDetectorCore::from_mime_config(MimeConfig::default()),
+            declared,
+            legacy,
+        });
+        let bytes_read = Rc::new(Cell::new(0));
+        let mut reader = ByteCountingReader {
+            cursor: Cursor::new(b"0123456789abcdef".to_vec()),
+            bytes_read: Rc::clone(&bytes_read),
+        };
+        reader.cursor.set_position(3);
+        assert_eq!(
+            adapter.detect_reader(&mut reader).unwrap(),
+            [format!("application/x-length-{declared}")]
+        );
+        assert_eq!(bytes_read.get(), declared, "adapter must read the declared prefix");
+        assert_eq!(reader.cursor.position(), 3);
+    }
+}
+
+#[derive(Debug)]
 struct WholeResourceReaderBackend(DirectBackendDetector);
 
 impl MimeDetectorBackend for WholeResourceReaderBackend {
