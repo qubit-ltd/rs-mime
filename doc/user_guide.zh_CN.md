@@ -204,6 +204,11 @@ hook；自定义随机访问覆盖仍可使用。adapter 的 Prefix 请求使用
 并检查所有包含检测 MIME 的配置映射；只有这些映射都使用相同的视频/音频 MIME 对时才会细化。
 因此，即使某个扩展名未启用，它的冲突映射也会阻止无扩展名输入的细化。传入匹配且已启用的文件名，
 或移除冲突映射，才能明确选择细化对。
+MIME 类型和子类型的比较忽略 ASCII 字母大小写，但配置的输出拼写会保留。例如，
+`webm:Video/WebM,Audio/WebM` 可以匹配检测结果 `video/webm`，并按 classifier 结果返回配置中的拼写。
+配对等价按位置比较：视频与视频比较，音频与音频比较。没有文件名且多个映射仅大小写不同，
+会选择字典序最小的扩展名作为输出代表，因此不受映射表遍历顺序影响。真正不同的配对会跳过分类。
+这可能使此前因大小写不同而未进入细化的输入开始调用 classifier，也可能传播其错误。
 
 内置 `FileCommandMimeDetector` 检测 reader 时，最多暂存 `MimeConfig::max_buffer_size()` 字节，并在
 EOF 时停止。该上限来自 MIME 配置；所选文件名仓库中的 magic 偏移不会决定读取量。`detect_by_content(bytes)`
@@ -248,6 +253,9 @@ classifier；如果环境提供 `ffprobe`，再使用 `FfprobeCommandMediaStream
 嵌套 magic matcher 最多 128 层，根 matcher 计为第 1 层。超过限制的 XML 规则会返回
 `InvalidXmlAttribute`，程序化构造的 matcher 会返回 `InvalidMagicMatcher`。可在保持匹配语义的前提下
 减少冗余嵌套，或改写为等价的浅层 alternatives。
+
+MIME 父类型继承关系使用迭代方式遍历，因此长继承链不会为每个类型消耗一个调用栈帧。
+遍历所需的存储随已访问的图增长；这与上面的 128 层嵌套 matcher 限制是两项独立机制。
 
 ## 精确检测映射的配置错误
 

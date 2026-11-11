@@ -834,3 +834,58 @@ fn test_refine_without_filename_handles_same_and_different_enabled_pairs() {
         assert_eq!(expected_calls, calls.load(Ordering::Relaxed));
     }
 }
+
+#[test]
+fn test_mapping_case_is_ignored_and_equivalent_pairs_choose_stable_output() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut explicit = MimeDetectorCore::new(create_precise_config(true, "webm", "webm:Video/WebM,Audio/WebM"));
+    explicit.set_media_stream_classifier(Some(Arc::new(CountingClassifier {
+        calls: Arc::clone(&calls),
+        stream_type: MediaStreamType::AudioOnly,
+    })));
+    assert_eq!(
+        "Audio/WebM",
+        explicit
+            .refine_detected_mime_type("video/webm", Some("upload.webm"), DetectionSource::Content(b"media"))
+            .expect("case-insensitive filename mapping should refine")
+    );
+    assert_eq!(1, calls.load(Ordering::Relaxed));
+
+    for mapping in [
+        "z:video/webm,audio/webm;a:Video/WebM,Audio/WebM",
+        "a:Video/WebM,Audio/WebM;z:video/webm,audio/webm",
+    ] {
+        let mut unnamed = MimeDetectorCore::new(create_precise_config(true, "", mapping));
+        unnamed.set_media_stream_classifier(Some(Arc::new(CountingClassifier {
+            calls: Arc::clone(&calls),
+            stream_type: MediaStreamType::AudioOnly,
+        })));
+        for filename in [None, Some("without-extension")] {
+            assert_eq!(
+                "Audio/WebM",
+                unnamed
+                    .refine_detected_mime_type("VIDEO/WEBM", filename, DetectionSource::Content(b"media"))
+                    .expect("case-equivalent mappings should refine")
+            );
+        }
+    }
+    assert_eq!(5, calls.load(Ordering::Relaxed));
+
+    for mapping in [
+        "webm:video/webm,audio/webm;alt:Video/WebM,Audio/Ogg",
+        "webm:video/webm,audio/webm;alt:audio/webm,video/webm",
+    ] {
+        let mut conflict = MimeDetectorCore::new(create_precise_config(true, "webm,alt", mapping));
+        conflict.set_media_stream_classifier(Some(Arc::new(CountingClassifier {
+            calls: Arc::clone(&calls),
+            stream_type: MediaStreamType::AudioOnly,
+        })));
+        assert_eq!(
+            "VIDEO/WEBM",
+            conflict
+                .refine_detected_mime_type("VIDEO/WEBM", None, DetectionSource::Content(b"media"))
+                .expect("different pairs must preserve the detected MIME")
+        );
+    }
+    assert_eq!(5, calls.load(Ordering::Relaxed));
+}

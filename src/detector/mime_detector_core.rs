@@ -235,11 +235,15 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Refined MIME type name, or the original type if refinement is disabled
-    /// or not applicable. With a filename extension, the extension must be in
+    /// or not applicable. MIME names are compared without ASCII case
+    /// sensitivity, while the configured output spelling is preserved. With
+    /// a filename extension, the extension must be in
     /// [`MimeConfig::precise_detection_patterns`]. Without one, all configured
     /// mappings matching the detected MIME type are considered; refinement
-    /// runs only when they all have the same video/audio pair. In that
-    /// fallback, the pattern set is not consulted.
+    /// runs only when they all have the same video/audio pair. Equivalent
+    /// pairs use the lexicographically smallest extension as the stable
+    /// output representative. In that fallback, the pattern set is not
+    /// consulted.
     ///
     /// # Errors
     /// Propagates errors returned by the configured media stream classifier.
@@ -367,7 +371,7 @@ impl MimeDetectorCore {
         let possible_mime_types = self.config.ambiguous_mime_mapping().get(&extension)?;
         if possible_mime_types
             .iter()
-            .any(|mime_type| mime_type == detected_mime_type)
+            .any(|mime_type| mime_type.eq_ignore_ascii_case(detected_mime_type))
         {
             Some(extension)
         } else {
@@ -385,21 +389,36 @@ impl MimeDetectorCore {
     /// matching pairs. Returns `None` when matching extensions map the MIME
     /// type to different pairs, so detection preserves the original MIME type.
     fn precise_detection_mapping_key_by_mime_type(&self, detected_mime_type: &str) -> Option<String> {
-        let mut matches = self
-            .config
-            .ambiguous_mime_mapping()
-            .iter()
-            .filter(|(_, possible_mime_types)| {
-                possible_mime_types
-                    .iter()
-                    .any(|mime_type| mime_type == detected_mime_type)
-            });
-        let (extension, pair) = matches.next()?;
-        if matches.any(|(_, other_pair)| other_pair != pair) {
-            return None;
+        let mut selected: Option<(&String, &[String; 2])> = None;
+        for (extension, pair) in self.config.ambiguous_mime_mapping() {
+            if !pair.iter().any(|name| name.eq_ignore_ascii_case(detected_mime_type)) {
+                continue;
+            }
+            if let Some((best_extension, best_pair)) = selected {
+                if !mime_pair_eq_ignore_ascii_case(best_pair, pair) {
+                    return None;
+                }
+                if extension < best_extension {
+                    selected = Some((extension, pair));
+                }
+            } else {
+                selected = Some((extension, pair));
+            }
         }
-        Some(extension.clone())
+        selected.map(|(extension, _)| extension.clone())
     }
+}
+
+/// Compares video/audio MIME pairs by position without ASCII case sensitivity.
+///
+/// # Parameters
+/// - `left`: First video/audio MIME pair.
+/// - `right`: Second video/audio MIME pair.
+///
+/// # Returns
+/// `true` when both positions match without ASCII case sensitivity.
+fn mime_pair_eq_ignore_ascii_case(left: &[String; 2], right: &[String; 2]) -> bool {
+    left[0].eq_ignore_ascii_case(&right[0]) && left[1].eq_ignore_ascii_case(&right[1])
 }
 
 impl Default for MimeDetectorCore {

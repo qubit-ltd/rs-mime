@@ -258,6 +258,16 @@ share the same video/audio pair. This includes both a missing filename and a
 filename with no extension. A conflicting mapping can therefore prevent
 unnamed refinement even when its extension is not enabled. Pass a matching
 enabled filename or remove the conflicting mapping to choose a pair.
+MIME type and subtype comparisons ignore ASCII letter case, but configured
+video/audio output spelling is preserved. For example,
+`webm:Video/WebM,Audio/WebM` matches a detected `video/webm` and returns the
+configured spelling selected by the classifier. Pair equivalence is positional:
+video is compared with video and audio with audio. When several mappings match
+without a filename and differ only in letter case, the lexicographically
+smallest extension selects the output spelling, independent of map iteration
+order. Genuine pair conflicts skip classification. This can enable classifier
+calls, and therefore classifier errors, for inputs that previously bypassed
+refinement because of case differences.
 
 The built-in `FileCommandMimeDetector` stages reader input up to
 `MimeConfig::max_buffer_size()` and stops at EOF. This limit comes from MIME
@@ -316,6 +326,11 @@ level one. XML rules deeper than this return `InvalidXmlAttribute`, and
 programmatically constructed matchers return `InvalidMagicMatcher`. Reduce
 redundant nesting or rewrite a rule as equivalent shallower alternatives while
 preserving its matching behavior.
+
+MIME super-type inheritance is traversed iteratively, so a long inheritance
+chain does not consume one call-stack frame per type. Traversal storage grows
+with the visited graph; this is separate from the 128-level nested-matcher
+limit above.
 
 ## Precise mapping configuration errors
 
