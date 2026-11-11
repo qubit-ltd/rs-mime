@@ -19,7 +19,6 @@ use qubit_local_files::options::LocalTempDirectoryOptions;
 use qubit_mime::CONFIG_COMMAND_OUTPUT_MAX_BYTES;
 use qubit_mime::CONFIG_COMMAND_TIMEOUT;
 use qubit_mime::CONFIG_MEDIA_STREAM_MAX_STAGING_SIZE;
-use qubit_mime::DEFAULT_COMMAND_OUTPUT_MAX_BYTES;
 use qubit_mime::DEFAULT_COMMAND_TIMEOUT;
 use qubit_mime::FfprobeCommandMediaStreamClassifier;
 #[cfg(unix)]
@@ -76,20 +75,21 @@ fn test_with_command_runner_uses_runner_configuration() {
 #[test]
 fn test_default_uses_disabled_logging_runner() {
     let _guard = mime_config_test_lock();
+    let default_config = MimeConfig::default();
     let classifier = FfprobeCommandMediaStreamClassifier::default();
 
     assert!(classifier.command_runner().is_logging_disabled());
     assert_eq!(
         classifier.command_runner().configured_timeout(),
-        Some(DEFAULT_COMMAND_TIMEOUT),
+        Some(default_config.command_timeout()),
     );
     assert_eq!(
         classifier.command_runner().configured_max_stdout_bytes(),
-        Some(DEFAULT_COMMAND_OUTPUT_MAX_BYTES),
+        Some(default_config.command_output_max_bytes()),
     );
     assert_eq!(
         classifier.command_runner().configured_max_stderr_bytes(),
-        Some(DEFAULT_COMMAND_OUTPUT_MAX_BYTES),
+        Some(default_config.command_output_max_bytes()),
     );
     assert!(classifier.command_runner().is_output_truncation_failure_enabled());
 }
