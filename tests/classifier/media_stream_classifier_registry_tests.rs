@@ -91,6 +91,8 @@ fn test_ffprobe_provider_creates_classifier_when_command_is_available() {
 
 #[test]
 fn test_builtin_registry_lists_and_resolves_ffprobe_provider() {
+    #[cfg(unix)]
+    let _path_guard = PathEnvGuard::preserve();
     let registry = MediaStreamClassifierRegistry::builtin();
     let expected_default = ProviderSelection::named("ffprobe").expect("FFprobe provider ID should be valid");
     let selection = ProviderSelection::named("ffprobe-command").expect("FFprobe alias should be valid");

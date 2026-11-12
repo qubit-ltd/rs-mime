@@ -91,6 +91,8 @@ fn test_detect_by_filename_uses_repository_candidates() {
 
 #[test]
 fn test_is_available_can_be_called_without_panicking() {
+    #[cfg(unix)]
+    let _path_guard = PathEnvGuard::preserve();
     let _ = FileCommandMimeDetector::is_available();
 }
 
