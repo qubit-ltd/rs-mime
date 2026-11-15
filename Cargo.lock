@@ -550,7 +550,9 @@ dependencies = [
 
 [[package]]
 name = "qubit-redact"
-version = "0.10.2"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d217d6f987adc5f32b9daa5d506e99c5a435f99b1493d5ab3ef55caf27a3c86"
 dependencies = [
  "fluent-uri",
  "qubit-budget",
