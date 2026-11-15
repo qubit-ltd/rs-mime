@@ -49,8 +49,6 @@ qubit-datatype = { version = "^0.15", default-features = false, features = ["con
 qubit-local-files = { version = "^0.5" }
 qubit-spi = "^0.14"
 
-[patch.crates-io]
-qubit-redact = { path = "../rs-redact" }
 
 [dev-dependencies]
 qubit-fs-local = { version = "^0.11" }
