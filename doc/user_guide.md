@@ -355,6 +355,50 @@ and a reason naming the invalid side and syntax problem. Valid custom names do
 not need to appear in the embedded repository or start with `video/` or
 `audio/`.
 
+## Managed Detection Operations (0.22.0 Target)
+
+`MimeRuntime` adds an opt-in managed submission path for applications that already
+use `qubit-operation`. It accepts owned byte inputs with an explicit `Prefix` or
+`Complete` extent. Construct `MimeExecutionServices` with the application's
+`OperationManager`, a MIME operation group, a `MimeExecutionPort`, and a finite,
+nonzero cumulative read limit; attach it with `MimeRuntime::with_execution_services`
+and call `prepare()` before root submissions. Preparation is explicit.
+
+Select an async-capable provider with `MimeRuntime::with_async_provider_selection`
+when the runtime needs an async implementation. In this checkout, the bundled
+repository provider implements that path. Provider registration itself does not
+start detection work. A runtime without execution services returns a typed
+`ExecutionServicesRequired` submission rejection; an unsupported async backend
+returns `AsyncUnsupported`. Both rejections return the original
+`OwnedMimeInput` in `MimeSubmitFailure`, so the caller can retry or choose another
+path. Once accepted, detection failures are reported by the operation handle.
+
+The handle exposes two independent observations. `wait_outcome()` returns the
+MIME detection result (including `MimeDetectionReport` on success);
+`wait_settlement()` observes release or recovery responsibility. An early stopped
+or failed outcome does not by itself prove that staged resources or background
+helpers have been released. Do not interpret dropping a handle or future as proof
+of cancellation. The operation report contains the selected MIME value, backend
+identifier, inspected extent, and budget summary; it does not replace operation
+settlement diagnostics.
+
+Use `try_submit_detection_in` to submit beneath an existing
+`qubit-operation::OperationScope`; the child uses the parent's manager view and
+MIME group binding. The synchronous child entry point is
+`try_submit_detection_sync_in`. These APIs do not make every existing detector
+provider async-capable: the `file` backend currently declares that it requires
+complete content and lacks random-access support, and provider tests cover its
+capability rejection. Do not assume that selecting `file` enables managed async
+submission or that `ffprobe` is available through every async selection.
+
+`MimeExecutionServices::shutdown()` closes new root submissions and returns an
+observer. Observe operation settlements, stop MIME execution services from an
+external synchronous context with `stop_services()`, then observe group shutdown
+with `wait_group_shutdown()`. A pending settlement is unresolved work, not a
+release confirmation. The 0.22.0 target remains under acceptance; see the
+[acceptance record](acceptance-0.22.0-operation-0.2.zh_CN.md) for tested behavior
+and outstanding lifecycle checks.
+
 ## Errors and Diagnostics
 
 Important `MimeError` cases include:

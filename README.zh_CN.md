@@ -69,6 +69,8 @@ classifier。直接实现 `MimeDetector` 的类型自行决定其行为。默认
   文件系统入口 `detect_path` 和 `detect_async_path`。
 - 通过 `MimeDetectorRegistry` 与 `MimeConfig` 配置内置 Provider、应用自定义 Provider、
   Provider 选择、fallback 和资源限制。
+- `MimeRuntime` 提供受管检测操作：输入所有权明确，提交拒绝带回原输入，业务结果与资源
+  settlement 分开观察。0.22.0 目标接口仍在验收中，当前证据与未完成项见[验收记录](doc/acceptance-0.22.0-operation-0.2.zh_CN.md)。
 - 可选的 `FileCommandMimeDetector` 使用系统命令 `file --mime-type --brief` 检查内容。
 - 可选的 `FfprobeCommandMediaStreamClassifier` 可进一步区分 WebM、Ogg 等媒体流中的
   仅音频和仅视频结果。

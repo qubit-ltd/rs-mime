@@ -271,6 +271,39 @@ MIME 父类型继承关系使用迭代方式遍历，因此长继承链不会为
 完整原始映射项，reason 会指出错误一侧及语法原因。合法自定义 MIME 名称无需存在于内置仓库，
 也不要求以 `video/` 或 `audio/` 开头。
 
+## 受管检测操作（0.22.0 目标）
+
+`MimeRuntime` 提供一条可选的受管提交路径，供已使用 `qubit-operation` 的应用接入。
+输入采用 `OwnedMimeInput`，字节输入必须明确标记为 `Prefix` 或 `Complete`。应用创建
+`MimeExecutionServices` 时需要传入自己的 `OperationManager`、MIME 操作组、
+`MimeExecutionPort` 和有限且非零的累计读取上限；随后通过
+`MimeRuntime::with_execution_services` 注入服务。根操作提交前要显式调用 `prepare()`。
+准备阶段不会由 runtime 构造自动触发。
+
+如需异步实现，使用 `MimeRuntime::with_async_provider_selection` 选择明确支持异步的
+Provider。本 checkout 中内置 `repository` Provider 实现了这条路径。注册 Provider 不会启动
+检测任务。未配置执行服务时，提交会以 `ExecutionServicesRequired` 拒绝；所选 backend
+没有异步能力时会以 `AsyncUnsupported` 拒绝。这些提交前拒绝都通过
+`MimeSubmitFailure` 原样返还 `OwnedMimeInput`，调用方可以重试或改走其他入口。任务接纳后
+发生的检测错误则由 operation handle 报告。
+
+handle 提供两种彼此独立的观察方式。`wait_outcome()` 等待 MIME 业务结果；成功时结果包含
+`MimeDetectionReport`。`wait_settlement()` 观察资源是否已释放或恢复责任是否仍待处理。提前得到
+Stopped 或 Failed 并不能证明暂存文件和后台 helper 已退出；丢弃 handle 或 future 也不代表任务
+已取消。报告包含 MIME 结果、backend 标识、实际检查范围和预算摘要，不能替代 operation 的
+settlement 诊断。
+
+已有 `qubit-operation::OperationScope` 时，可调用 `try_submit_detection_in` 创建子操作；它沿用
+父操作的 manager 视图并绑定 MIME 组。同步子操作入口为
+`try_submit_detection_sync_in`。这些 API 不会让所有现有 Provider 自动具备异步能力：当前
+`file` backend 声明需要完整内容且不支持随机访问，Provider 测试覆盖了相应能力拒绝。因此不能
+假定选择 `file` 就能通过受管异步入口提交，也不能假定任意异步选择都能使用 `ffprobe`。
+
+调用 `MimeExecutionServices::shutdown()` 会关闭新的根提交并返回 observer。之后应等待已提交
+操作的 settlement，在外部同步上下文调用 `stop_services()` 停止 MIME 执行服务，再通过
+`wait_group_shutdown()` 观察组关闭。Pending 表示工作仍未解决，不是资源已释放的确认。
+0.22.0 目标仍处于验收阶段；已验证行为和未完成的生命周期检查见[验收记录](acceptance-0.22.0-operation-0.2.zh_CN.md)。
+
 ## 错误与诊断
 
 常见的 `MimeError` 包括：

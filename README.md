@@ -87,6 +87,10 @@ must provide their own asynchronous path hook.
   `detect_path` and `detect_async_path`.
 - `MimeDetectorRegistry` and `MimeConfig` for built-in providers, application
   providers, selection, fallbacks, and resource limits.
+- Managed detection operations through `MimeRuntime`, with owned byte inputs,
+  typed submission rejection, and separate outcome and settlement observation.
+  The target 0.22 operation surface is still under acceptance; see the guide
+  and [acceptance record](doc/acceptance-0.22.0-operation-0.2.zh_CN.md).
 - Optional `FileCommandMimeDetector`, which uses the system
   `file --mime-type --brief` command for content detection.
 - Optional `FfprobeCommandMediaStreamClassifier` for refining ambiguous media
