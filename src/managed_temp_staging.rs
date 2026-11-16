@@ -13,7 +13,7 @@ use qubit_operation::{OperationScope, ResourceId, ResourceRef};
 
 use crate::command_execution::MimeExecutionWorker;
 use crate::detector::mime_input::OwnedMimeInput;
-use crate::detector::{StagingBudget, StagingPermit};
+use crate::detector::{ReadPermit, ReadTreeContext, StagingBudget, StagingPermit};
 use crate::{MimeError, MimeFuture, MimeResult};
 
 /// Per-request staging cap and the shared service accounting handle.
@@ -79,6 +79,7 @@ pub(crate) fn stage_owned_in<'a>(
     scope: &'a OperationScope,
     input: OwnedMimeInput,
     limits: ManagedStagingLimits,
+    read_tree: Arc<ReadTreeContext>,
 ) -> MimeFuture<'a, ResourceRef<StagedMimeInput>> {
     Box::pin(async move {
         match input {
@@ -86,7 +87,7 @@ pub(crate) fn stage_owned_in<'a>(
                 content, extent, ..
             } => stage_bytes_in(scope, content, extent, limits).await,
             OwnedMimeInput::Provider { file_system, path } => {
-                stage_provider_in(scope, file_system, path, limits).await
+                stage_provider_in(scope, file_system, path, limits, read_tree).await
             }
         }
     })
@@ -184,6 +185,7 @@ async fn stage_provider_in(
     file_system: Arc<qubit_fs::AsyncFileSystem>,
     path: qubit_fs::Path,
     limits: ManagedStagingLimits,
+    read_tree: Arc<ReadTreeContext>,
 ) -> MimeResult<ResourceRef<StagedMimeInput>> {
     use qubit_fs::read::ReadOptions;
 
@@ -200,24 +202,50 @@ async fn stage_provider_in(
     let mut total = 0_u64;
     let mut chunk = vec![0_u8; 8 * 1024];
     loop {
-        let remaining = limits.max_bytes.saturating_sub(total);
-        // At the limit, ask for exactly one sentinel byte. It proves
-        // non-EOF without ever being written to disk.
-        let ask = usize::try_from(remaining.min(chunk.len() as u64))
-            .expect("read chunk length fits usize");
-        let ask = if ask == 0 { 1 } else { ask.min(chunk.len()) };
+        let staging_remaining = limits.max_bytes.saturating_sub(total);
+        // Read no more than the remaining staged allowance. Once it reaches
+        // zero, reserve exactly one additional byte to prove EOF; that byte
+        // is charged to the shared read tree but never written to disk.
+        let staging_request = if staging_remaining == 0 {
+            1
+        } else {
+            staging_remaining.min(chunk.len() as u64)
+        };
+        let tree_remaining = read_tree.remaining();
+        if tree_remaining == 0 {
+            return Err(MimeError::BudgetExceeded {
+                kind: "read",
+                requested: staging_request,
+                limit: 0,
+            });
+        }
+        let ask_u64 = staging_request.min(tree_remaining);
+        let permit: ReadPermit = read_tree
+            .reserve(ask_u64)
+            .ok_or(MimeError::BudgetExceeded {
+                kind: "read",
+                requested: staging_request,
+                limit: tree_remaining,
+            })?;
+        let ask = usize::try_from(ask_u64).expect("request is capped by fixed chunk size");
         let count = reader
-            .read_fully_async(&mut chunk[..ask])
+            .read_async(&mut chunk[..ask])
             .await
-            .map_err(MimeError::Io)?;
+            .map_err(|error| {
+                // A single AsyncInput read either transfers its returned count or
+                // transfers no bytes on error, so dropping the permit rolls back
+                // the reservation safely.
+                MimeError::Io(error)
+            })?;
+        let count_u64 = u64::try_from(count).map_err(|_| MimeError::BudgetExceeded {
+            kind: "read",
+            requested: u64::MAX,
+            limit: ask_u64,
+        })?;
+        permit.commit(count_u64);
         if count == 0 {
             return Ok(staged);
         }
-        let count_u64 = u64::try_from(count).map_err(|_| MimeError::BudgetExceeded {
-            kind: "staging",
-            requested: u64::MAX,
-            limit: limits.max_bytes,
-        })?;
         let new_total = total
             .checked_add(count_u64)
             .ok_or(MimeError::BudgetExceeded {
@@ -378,7 +406,17 @@ impl qubit_operation::AsyncCleanup<StagedMimeInput> for ManagedTempCleanup {
                     .cleanup()
             }));
             let outcome = match result {
-                Ok(Ok(())) => qubit_operation::CleanupOutcome::Released,
+                Ok(Ok(())) => {
+                    // Return staged-byte capacity only after cleanup has
+                    // confirmed the native owner is gone. Clearing explicitly
+                    // makes budget release coincide with that evidence.
+                    resource
+                        .permits
+                        .get_mut()
+                        .unwrap_or_else(|poison| poison.into_inner())
+                        .clear();
+                    qubit_operation::CleanupOutcome::Released
+                }
                 Ok(Err(error)) => qubit_operation::CleanupOutcome::Failed {
                     failure: cleanup_failure(&cleanup_id, Arc::new(error)),
                     resource,

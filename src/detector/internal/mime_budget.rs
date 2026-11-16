@@ -42,6 +42,11 @@ impl StagingBudget {
             .reserve_staging(bytes)
             .map(|permit| StagingPermit { _permit: permit })
     }
+
+    #[cfg(test)]
+    pub(crate) fn used_bytes(&self) -> u64 {
+        self.budget.staging_bytes()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -72,7 +77,7 @@ pub(in crate::detector) struct ReadTreeBudget {
 
 /// Read accounting context inherited by MIME descendants.
 #[derive(Debug)]
-pub(in crate::detector) struct ReadTreeContext {
+pub(crate) struct ReadTreeContext {
     tree: Arc<ReadTreeBudget>,
     scope: Arc<ReadScopeBudget>,
     /// Keeps an external-parent anchor alive while a child operation is held.
@@ -81,10 +86,14 @@ pub(in crate::detector) struct ReadTreeContext {
 }
 
 impl ReadTreeContext {
-    pub(in crate::detector) fn new(limit: u64) -> Arc<Self> {
+    pub(crate) fn new(limit: u64) -> Arc<Self> {
         Arc::new(Self {
             tree: ReadTreeBudget::new(limit),
-            scope: Arc::new(ReadScopeBudget { limit, counters: Mutex::new(ScopeCounters::default()), parent: None }),
+            scope: Arc::new(ReadScopeBudget {
+                limit,
+                counters: Mutex::new(ScopeCounters::default()),
+                parent: None,
+            }),
             parent: None,
         })
     }
@@ -101,9 +110,14 @@ impl ReadTreeContext {
         })
     }
 
-    pub(in crate::detector) fn reserve(&self, bytes: u64) -> Option<ReadPermit> {
+    pub(crate) fn reserve(&self, bytes: u64) -> Option<ReadPermit> {
         let mut tree = self.tree.counters.lock().unwrap_or_else(|e| e.into_inner());
-        if bytes > self.tree.limit.saturating_sub(tree.consumed.saturating_add(tree.reserved)) {
+        if bytes
+            > self
+                .tree
+                .limit
+                .saturating_sub(tree.consumed.saturating_add(tree.reserved))
+        {
             return None;
         }
         tree.reserved += bytes;
@@ -113,12 +127,24 @@ impl ReadTreeContext {
         let mut scope = Some(Arc::clone(&self.scope));
         while let Some(current) = scope {
             let mut counters = current.counters.lock().unwrap_or_else(|e| e.into_inner());
-            if bytes > current.limit.saturating_sub(counters.consumed.saturating_add(counters.reserved)) {
+            if bytes
+                > current
+                    .limit
+                    .saturating_sub(counters.consumed.saturating_add(counters.reserved))
+            {
                 drop(counters);
                 for reserved in &scopes {
-                    reserved.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= bytes;
+                    reserved
+                        .counters
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .reserved -= bytes;
                 }
-                self.tree.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= bytes;
+                self.tree
+                    .counters
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .reserved -= bytes;
                 return None;
             }
             counters.reserved += bytes;
@@ -126,17 +152,29 @@ impl ReadTreeContext {
             scope = current.parent.clone();
             scopes.push(current);
         }
-        Some(ReadPermit { tree: Arc::clone(&self.tree), scopes, reserved: bytes, committed: false })
+        Some(ReadPermit {
+            tree: Arc::clone(&self.tree),
+            scopes,
+            reserved: bytes,
+            committed: false,
+        })
     }
 
-    pub(in crate::detector) fn remaining(&self) -> u64 {
+    pub(crate) fn remaining(&self) -> u64 {
         let tree = self.tree.counters.lock().unwrap_or_else(|e| e.into_inner());
-        let mut remaining = self.tree.limit.saturating_sub(tree.consumed.saturating_add(tree.reserved));
+        let mut remaining = self
+            .tree
+            .limit
+            .saturating_sub(tree.consumed.saturating_add(tree.reserved));
         drop(tree);
         let mut scope = Some(Arc::clone(&self.scope));
         while let Some(current) = scope {
             let counters = current.counters.lock().unwrap_or_else(|e| e.into_inner());
-            remaining = remaining.min(current.limit.saturating_sub(counters.consumed.saturating_add(counters.reserved)));
+            remaining = remaining.min(
+                current
+                    .limit
+                    .saturating_sub(counters.consumed.saturating_add(counters.reserved)),
+            );
             drop(counters);
             scope = current.parent.clone();
         }
@@ -146,17 +184,23 @@ impl ReadTreeContext {
 
 impl ReadTreeBudget {
     pub(in crate::detector) fn new(limit: u64) -> Arc<Self> {
-        Arc::new(Self { limit, counters: Mutex::new(ReadCounters::default()) })
+        Arc::new(Self {
+            limit,
+            counters: Mutex::new(ReadCounters::default()),
+        })
     }
 
     /// Reserves requested read capacity before provider I/O begins.
     #[allow(dead_code)]
     pub(in crate::detector) fn consumed(&self) -> u64 {
-        self.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
+        self.counters
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .consumed
     }
 }
 
-pub(in crate::detector) struct ReadPermit {
+pub(crate) struct ReadPermit {
     tree: Arc<ReadTreeBudget>,
     scopes: Vec<Arc<ReadScopeBudget>>,
     reserved: u64,
@@ -165,8 +209,11 @@ pub(in crate::detector) struct ReadPermit {
 
 impl ReadPermit {
     /// Commits the bytes actually returned and releases unused capacity.
-    pub(in crate::detector) fn commit(mut self, actual: u64) -> u64 {
-        assert!(actual <= self.reserved, "provider returned more bytes than reserved");
+    pub(crate) fn commit(mut self, actual: u64) -> u64 {
+        assert!(
+            actual <= self.reserved,
+            "provider returned more bytes than reserved"
+        );
         let mut counters = self.tree.counters.lock().unwrap_or_else(|e| e.into_inner());
         counters.reserved -= self.reserved;
         counters.consumed += actual;
@@ -183,9 +230,17 @@ impl ReadPermit {
 impl Drop for ReadPermit {
     fn drop(&mut self) {
         if !self.committed {
-            self.tree.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= self.reserved;
+            self.tree
+                .counters
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .reserved -= self.reserved;
             for scope in &self.scopes {
-                scope.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= self.reserved;
+                scope
+                    .counters
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .reserved -= self.reserved;
             }
         }
     }
@@ -197,7 +252,12 @@ pub(in crate::detector) struct ReadTreeRegistry {
 }
 
 impl ReadTreeRegistry {
-    pub(in crate::detector) fn child_for_parent(&self, id: OperationId, tree_limit: u64, scope_limit: u64) -> Arc<ReadTreeContext> {
+    pub(in crate::detector) fn child_for_parent(
+        &self,
+        id: OperationId,
+        tree_limit: u64,
+        scope_limit: u64,
+    ) -> Arc<ReadTreeContext> {
         let mut roots = self.roots.lock().unwrap_or_else(|e| e.into_inner());
         roots.retain(|_, tree| tree.strong_count() > 0);
         let parent = roots.get(&id).and_then(Weak::upgrade).unwrap_or_else(|| {
@@ -209,7 +269,18 @@ impl ReadTreeRegistry {
     }
 
     pub(in crate::detector) fn bind(&self, id: OperationId, tree: &Arc<ReadTreeContext>) {
-        self.roots.lock().unwrap_or_else(|e| e.into_inner()).insert(id, Arc::downgrade(tree));
+        self.roots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, Arc::downgrade(tree));
+    }
+
+    pub(crate) fn for_operation(&self, id: OperationId) -> Option<Arc<ReadTreeContext>> {
+        self.roots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&id)
+            .and_then(Weak::upgrade)
     }
 }
 

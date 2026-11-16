@@ -80,18 +80,19 @@ struct BytesAsyncFs {
     properties: ProviderProperties,
     content: Vec<u8>,
     opens: Arc<AtomicUsize>,
+    reads: Arc<AtomicUsize>,
     pending_read: Option<Arc<AtomicBool>>,
 }
 
 impl BytesAsyncFs {
-    fn filesystem(content: &[u8]) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>) {
+    fn filesystem(content: &[u8]) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
         Self::filesystem_with_pending(content, None)
     }
 
     fn filesystem_with_pending(
         content: &[u8],
         pending_read: Option<Arc<AtomicBool>>,
-    ) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>) {
+    ) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
         let properties = ProviderProperties::new(
             FileSystemInfo::new(
                 FileSystemId::new("managed-staging-test").unwrap(),
@@ -107,14 +108,16 @@ impl BytesAsyncFs {
         )
         .unwrap();
         let opens = Arc::new(AtomicUsize::new(0));
+        let reads = Arc::new(AtomicUsize::new(0));
         let fs = AsyncFileSystem::from_spi(Self {
             properties,
             content: content.to_vec(),
             opens: Arc::clone(&opens),
+            reads: Arc::clone(&reads),
             pending_read,
         })
         .unwrap();
-        (Arc::new(fs), opens)
+        (Arc::new(fs), opens, reads)
     }
 }
 
@@ -130,7 +133,6 @@ impl AsyncFileSystemSpi for BytesAsyncFs {
         request: OpenReaderRequest<'a>,
     ) -> SpiFuture<'a, FsResult<OpenedAsyncReader>> {
         self.opens.fetch_add(1, Ordering::SeqCst);
-        let bytes = self.content.clone();
         let info = OpenedFileInfo::new(
             FileSystemId::new("managed-staging-test").unwrap(),
             request.path().clone(),
@@ -143,10 +145,16 @@ impl AsyncFileSystemSpi for BytesAsyncFs {
                 ))
             })
         } else {
+            let bytes = self.content.clone();
+            let reads = Arc::clone(&self.reads);
             Box::pin(async move {
                 Ok(OpenedAsyncReader::new(
                     info,
-                    Box::new(ShortAsyncInput { bytes, at: 0 }),
+                    Box::new(ShortAsyncInput {
+                        bytes,
+                        at: 0,
+                        reads,
+                    }),
                 ))
             })
         }
@@ -173,6 +181,7 @@ impl AsyncInput for PendingAsyncInput {
 struct ShortAsyncInput {
     bytes: Vec<u8>,
     at: usize,
+    reads: Arc<AtomicUsize>,
 }
 impl AsyncInput for ShortAsyncInput {
     type Item = u8;
@@ -187,6 +196,7 @@ impl AsyncInput for ShortAsyncInput {
         let read = count.min(available).min(2);
         output[index..index + read].copy_from_slice(&self.bytes[self.at..self.at + read]);
         self.at += read;
+        self.reads.fetch_add(read, Ordering::SeqCst);
         Poll::Ready(Ok(read))
     }
 }
@@ -198,16 +208,20 @@ fn managed_staging_provider_limit_boundaries_and_short_reads() {
         .group(qubit_operation::GroupOptions { capacity: 8 })
         .unwrap();
     let port = Arc::new(FixedMimeExecutionPort::new(1, 8));
-    let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap();
+    let services =
+        Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
     services.prepare().unwrap();
 
-    for (content, should_succeed) in [
-        (b"ab".as_slice(), true),
-        (b"abc", true),
-        (b"abcd", false),
-        (b"", true),
+    for (content, should_succeed, actual_read) in [
+        (b"ab".as_slice(), true, 2),
+        (b"abc", true, 3),
+        (b"abcd", false, 4), // includes the one-byte sentinel
+        (b"", true, 0),
     ] {
-        let (filesystem, opens) = BytesAsyncFs::filesystem(content);
+        let (filesystem, opens, reads) = BytesAsyncFs::filesystem(content);
+        let read_tree = services.new_read_tree(16);
+        let body_read_tree = Arc::clone(&read_tree);
+        let body_services = Arc::clone(&services);
         let input = OwnedMimeInput::Provider {
             file_system: filesystem,
             path: FsPath::parse("/input").unwrap(),
@@ -217,11 +231,14 @@ fn managed_staging_provider_limit_boundaries_and_short_reads() {
             budget: services.staging_budget(),
             worker: MimeExecutionWorker::new(port.clone()),
         };
-        let mut handle = block_on(
-            group.try_submit_async(Default::default(), move |scope| async move {
-                stage_owned_in(&scope, input, limits).await
-            }),
-        )
+        let mut handle = block_on(group.try_submit_async(
+            Default::default(),
+            move |scope| async move {
+                body_services.bind_read_tree(scope.id(), &body_read_tree);
+                let read_tree = body_services.read_tree_for_operation(scope.id())?;
+                stage_owned_in(&scope, input, limits, read_tree).await
+            },
+        ))
         .unwrap();
         match block_on(handle.wait_outcome()).unwrap() {
             qubit_operation::OperationOutcome::Succeeded(resource) => {
@@ -244,7 +261,48 @@ fn managed_staging_provider_limit_boundaries_and_short_reads() {
             opens.load(Ordering::SeqCst),
             "provider object opens exactly once"
         );
+        assert_eq!(actual_read, reads.load(Ordering::SeqCst));
+        assert_eq!(16_u64 - actual_read as u64, read_tree.remaining());
     }
+    let shutdown = services.shutdown();
+    block_on(shutdown.wait_services_settled()).unwrap();
+    shutdown.stop_services().unwrap();
+}
+
+#[test]
+fn managed_staging_provider_read_tree_budget_stops_before_sentinel_overrun() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 4 })
+        .unwrap();
+    let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
+    let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
+    services.prepare().unwrap();
+    let (filesystem, _, reads) = BytesAsyncFs::filesystem(b"abcd");
+    let input = OwnedMimeInput::Provider {
+        file_system: filesystem,
+        path: FsPath::parse("/input").unwrap(),
+    };
+    let limits = ManagedStagingLimits {
+        max_bytes: 3,
+        budget: services.staging_budget(),
+        worker: MimeExecutionWorker::new(port),
+    };
+    let read_tree = services.new_read_tree(3);
+    let body_read_tree = Arc::clone(&read_tree);
+    let mut handle = block_on(
+        group.try_submit_async(Default::default(), move |scope| async move {
+            stage_owned_in(&scope, input, limits, body_read_tree).await
+        }),
+    )
+    .unwrap();
+    assert!(matches!(
+        block_on(handle.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Failed(_)
+    ));
+    assert_eq!(3, reads.load(Ordering::SeqCst));
+    assert_eq!(0, read_tree.remaining());
+    assert!(block_on(handle.wait_settlement()).all_released());
     let shutdown = services.shutdown();
     block_on(shutdown.wait_services_settled()).unwrap();
     shutdown.stop_services().unwrap();
@@ -265,7 +323,7 @@ fn managed_staging_provider_budget_failure_cleans_partial_owner() {
         .try_reserve(256 * 1024 * 1024 - 8 * 1024)
         .unwrap();
     let content = vec![b'x'; 8 * 1024 + 1];
-    let (filesystem, opens) = BytesAsyncFs::filesystem(&content);
+    let (filesystem, opens, _) = BytesAsyncFs::filesystem(&content);
     let input = OwnedMimeInput::Provider {
         file_system: filesystem,
         path: FsPath::parse("/input").unwrap(),
@@ -275,9 +333,11 @@ fn managed_staging_provider_budget_failure_cleans_partial_owner() {
         budget: services.staging_budget(),
         worker: MimeExecutionWorker::new(port),
     };
+    let read_tree = services.new_read_tree(content.len() as u64);
+    let body_read_tree = Arc::clone(&read_tree);
     let mut handle = block_on(
         group.try_submit_async(Default::default(), move |scope| async move {
-            stage_owned_in(&scope, input, limits).await
+            stage_owned_in(&scope, input, limits, body_read_tree).await
         }),
     )
     .unwrap();
@@ -286,10 +346,20 @@ fn managed_staging_provider_budget_failure_cleans_partial_owner() {
         qubit_operation::OperationOutcome::Failed(_)
     ));
     assert_eq!(1, opens.load(Ordering::SeqCst));
+    assert_eq!(
+        0,
+        read_tree.remaining(),
+        "staging read bytes count cumulatively"
+    );
     let report = block_on(handle.wait_settlement());
     assert!(
         report.all_released(),
         "partial staged owner must be cleaned"
+    );
+    assert_eq!(
+        256 * 1024 * 1024 - 8 * 1024,
+        services.staging_budget().used_bytes(),
+        "only the test's held budget reservation remains after cleanup"
     );
     drop(occupied);
     assert!(
@@ -313,7 +383,7 @@ fn managed_staging_cancel_during_provider_read_retains_cleanup_owner() {
     let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
     services.prepare().unwrap();
     let read_polled = Arc::new(AtomicBool::new(false));
-    let (filesystem, _) =
+    let (filesystem, _, _) =
         BytesAsyncFs::filesystem_with_pending(b"unused", Some(Arc::clone(&read_polled)));
     let input = OwnedMimeInput::Provider {
         file_system: filesystem,
@@ -324,10 +394,12 @@ fn managed_staging_cancel_during_provider_read_retains_cleanup_owner() {
         budget: services.staging_budget(),
         worker: MimeExecutionWorker::new(port),
     };
+    let read_tree = services.new_read_tree(8);
+    let body_read_tree = Arc::clone(&read_tree);
     let mut handle = block_on(group.try_submit_async(
         Default::default(),
         move |scope| async move {
-            let mut stage = Box::pin(stage_owned_in(&scope, input, limits));
+            let mut stage = Box::pin(stage_owned_in(&scope, input, limits, body_read_tree));
             std::future::poll_fn(|cx| {
                 match stage.as_mut().poll(cx) {
                     Poll::Ready(_) => panic!("provider read should remain pending"),
@@ -359,6 +431,11 @@ fn managed_staging_cancel_during_provider_read_retains_cleanup_owner() {
     assert!(
         services.staging_budget().try_reserve(16).is_some(),
         "any permits remain attached to the retained owner until cleanup"
+    );
+    assert_eq!(
+        8,
+        read_tree.remaining(),
+        "a Pending read transfers zero bytes"
     );
     let shutdown = services.shutdown();
     block_on(shutdown.wait_services_settled()).unwrap();
@@ -446,13 +523,15 @@ fn managed_staging_owner_waits_for_scope_end_and_all_references() {
         budget: services.staging_budget(),
         worker: crate::command_execution::MimeExecutionWorker::new(port),
     };
+    let read_tree = services.new_read_tree(128);
+    let body_read_tree = Arc::clone(&read_tree);
     let input = OwnedMimeInput::bytes(
         Arc::from(b"owned staging payload".as_slice()),
         InputExtent::Complete,
     );
     let mut handle = block_on(
         group.try_submit_async(Default::default(), move |scope| async move {
-            stage_owned_in(&scope, input, limits).await
+            stage_owned_in(&scope, input, limits, body_read_tree).await
         }),
     )
     .unwrap();
@@ -523,6 +602,8 @@ fn managed_staging_outcome_precedes_helper_input_release() {
         budget: services.staging_budget(),
         worker: MimeExecutionWorker::new(port),
     };
+    let read_tree = services.new_read_tree(128);
+    let body_read_tree = Arc::clone(&read_tree);
     let helper_input = Arc::new(std::sync::Mutex::new(None));
     let executor = Arc::new(EarlyOutcomeCommand {
         helper_input: Arc::clone(&helper_input),
@@ -532,7 +613,7 @@ fn managed_staging_outcome_precedes_helper_input_release() {
     let mut handle = block_on(group.try_submit_async(
         Default::default(),
         move |scope| async move {
-            let staged = stage_owned_in(&scope, input, limits).await?;
+            let staged = stage_owned_in(&scope, input, limits, body_read_tree).await?;
             let request = ManagedMimeCommand::new(
                 qubit_command::CommandRunner::new(std::time::Duration::from_secs(1)),
                 qubit_command::Command::new("unused-by-fake"),
@@ -579,13 +660,15 @@ fn managed_staging_cleanup_failure_retains_owner_for_retry() {
         budget: services.staging_budget(),
         worker: MimeExecutionWorker::new(port),
     };
+    let read_tree = services.new_read_tree(128);
+    let body_read_tree = Arc::clone(&read_tree);
     let input = OwnedMimeInput::bytes(
         Arc::from(b"retry cleanup".as_slice()),
         InputExtent::Complete,
     );
     let mut handle = block_on(
         group.try_submit_async(Default::default(), move |scope| async move {
-            stage_owned_in(&scope, input, limits).await
+            stage_owned_in(&scope, input, limits, body_read_tree).await
         }),
     )
     .unwrap();
@@ -608,6 +691,11 @@ fn managed_staging_cleanup_failure_retains_owner_for_retry() {
         report.recoveries.len() == 1,
         "failed cleanup keeps one recovery owner"
     );
+    assert_eq!(
+        13,
+        services.staging_budget().used_bytes(),
+        "failed cleanup keeps staging capacity reserved with the owner"
+    );
     assert!(
         !path.exists(),
         "cleanup removed the file but retained its sandbox owner"
@@ -619,6 +707,11 @@ fn managed_staging_cleanup_failure_retains_owner_for_retry() {
     assert!(
         retry_report.failures.is_empty(),
         "retry should release the retained sandbox owner"
+    );
+    assert_eq!(
+        0,
+        services.staging_budget().used_bytes(),
+        "successful cleanup retry releases staged-byte capacity"
     );
     assert!(!sandbox.exists(), "retry removes the retained sandbox");
     let shutdown = services.shutdown();
@@ -702,9 +795,11 @@ fn managed_staging_unconsumed_outcome_does_not_hold_temp() {
         Arc::from(b"no resource in outcome".as_slice()),
         InputExtent::Complete,
     );
+    let read_tree = services.new_read_tree(128);
+    let body_read_tree = Arc::clone(&read_tree);
     let handle = block_on(
         group.try_submit_async(Default::default(), move |scope| async move {
-            let staged = stage_owned_in(&scope, input, limits).await?;
+            let staged = stage_owned_in(&scope, input, limits, body_read_tree).await?;
             *slot.lock().unwrap() = Some(staged.path()?);
             drop(staged);
             Ok::<(), crate::MimeError>(())

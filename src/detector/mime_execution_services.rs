@@ -186,20 +186,34 @@ impl MimeExecutionServices {
         self.budget.reserve_owned(bytes)
     }
 
-    pub(in crate::detector) fn read_tree_for_parent(
+    pub(crate) fn read_tree_for_parent(
         &self,
         parent: qubit_operation::OperationId,
         tree_limit: u64,
         scope_limit: u64,
     ) -> Arc<ReadTreeContext> {
-        self.read_trees.child_for_parent(parent, tree_limit, scope_limit)
+        self.read_trees
+            .child_for_parent(parent, tree_limit, scope_limit)
     }
 
-    pub(in crate::detector) fn new_read_tree(&self, limit: u64) -> Arc<ReadTreeContext> {
+    pub(crate) fn new_read_tree(&self, limit: u64) -> Arc<ReadTreeContext> {
         ReadTreeContext::new(limit)
     }
 
-    pub(in crate::detector) fn bind_read_tree(
+    /// Retrieves the read-budget context already bound to an operation.
+    ///
+    /// Staging and refinement must use this context so their provider reads
+    /// share the request's cumulative allowance.
+    pub(crate) fn read_tree_for_operation(
+        &self,
+        operation: qubit_operation::OperationId,
+    ) -> Result<Arc<ReadTreeContext>, crate::MimeError> {
+        self.read_trees
+            .for_operation(operation)
+            .ok_or(crate::MimeError::ExecutionServicesRequired)
+    }
+
+    pub(crate) fn bind_read_tree(
         &self,
         operation: qubit_operation::OperationId,
         tree: &Arc<ReadTreeContext>,
