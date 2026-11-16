@@ -11,7 +11,9 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU8, Ordering},
 };
 
-use super::internal::mime_budget::{BudgetPermit, Limits, MimeBudget};
+use super::internal::mime_budget::{
+    BudgetPermit, Limits, MimeBudget, ReadTreeContext, ReadTreeRegistry,
+};
 use qubit_operation::{
     AsyncOperationGroup, AsyncOperationManager, AsyncOperationObserver, AsyncShutdownHandle,
     OperationGroup, OperationManager, ShutdownReport, ShutdownSnapshot,
@@ -45,6 +47,7 @@ pub struct MimeExecutionServices {
     /// Finite cumulative bytes-read limit required by construction.
     pub max_read_bytes: u64,
     budget: Arc<MimeBudget>,
+    read_trees: Arc<ReadTreeRegistry>,
     lifecycle: Arc<AtomicU8>,
     top_closed: Arc<AtomicBool>,
     lifecycle_lock: Arc<Mutex<()>>,
@@ -96,6 +99,7 @@ impl MimeExecutionServices {
                 owned: 16 * 1024 * 1024,
                 staging: 256 * 1024 * 1024,
             }),
+            read_trees: Arc::new(ReadTreeRegistry::default()),
             lifecycle: Arc::new(AtomicU8::new(0)),
             top_closed: Arc::new(AtomicBool::new(false)),
             lifecycle_lock: Arc::new(Mutex::new(())),
@@ -172,6 +176,27 @@ impl MimeExecutionServices {
     }
     pub(in crate::detector) fn reserve_owned(&self, bytes: usize) -> Option<BudgetPermit> {
         self.budget.reserve_owned(bytes)
+    }
+
+    pub(in crate::detector) fn read_tree_for_parent(
+        &self,
+        parent: qubit_operation::OperationId,
+        tree_limit: u64,
+        scope_limit: u64,
+    ) -> Arc<ReadTreeContext> {
+        self.read_trees.child_for_parent(parent, tree_limit, scope_limit)
+    }
+
+    pub(in crate::detector) fn new_read_tree(&self, limit: u64) -> Arc<ReadTreeContext> {
+        ReadTreeContext::new(limit)
+    }
+
+    pub(in crate::detector) fn bind_read_tree(
+        &self,
+        operation: qubit_operation::OperationId,
+        tree: &Arc<ReadTreeContext>,
+    ) {
+        self.read_trees.bind(operation, tree);
     }
     pub(in crate::detector) fn reserve_allocation(
         &self,

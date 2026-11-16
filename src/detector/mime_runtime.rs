@@ -145,15 +145,6 @@ impl MimeRuntime {
                 input,
             });
         }
-        if options.max_buffer_bytes == Some(0)
-            || options.max_staging_bytes == Some(0)
-            || options.max_read_bytes == Some(0)
-        {
-            return Err(MimeSubmitFailure {
-                reason: MimeSubmitRejection::InvalidOptions("a request budget is zero".into()),
-                input,
-            });
-        }
         let detector = match self.create_detector() {
             Ok(detector) => detector,
             Err(_) => {
@@ -165,31 +156,22 @@ impl MimeRuntime {
                 });
             }
         };
-        let permit = match &input {
-            OwnedMimeInput::Bytes { content, .. } => services.reserve_allocation(content),
-            OwnedMimeInput::Provider { .. } => services.reserve_owned(0),
+        let permit = match mime_submission::preflight(&input, &options, &*detector, &services) {
+            Ok(permit) => permit,
+            Err(reason) => return Err(MimeSubmitFailure { reason, input }),
         };
-        let Some(permit) = permit else {
-            return Err(MimeSubmitFailure {
-                reason: MimeSubmitRejection::BudgetExceeded,
-                input,
-            });
-        };
-        if let (OwnedMimeInput::Bytes { content, .. }, Some(limit)) =
-            (&input, options.max_buffer_bytes)
-        {
-            if content.len() > limit {
-                return Err(MimeSubmitFailure {
-                    reason: MimeSubmitRejection::BudgetExceeded,
-                    input,
-                });
-            }
-        }
+        let tree_limit = options.max_read_bytes.unwrap_or(services.max_read_bytes)
+            .min(services.max_read_bytes);
+        let read_tree = parent.map_or_else(
+            || services.new_read_tree(tree_limit),
+            |parent| services.read_tree_for_parent(parent.id(), tree_limit, tree_limit),
+        );
         let cell = mime_submission::cell(input);
         let body_cell = Arc::clone(&cell);
         let body_services = Arc::clone(&services);
         let body_options = options.clone();
-        let body = move |scope| {
+        let body_tree = Arc::clone(&read_tree);
+        let body = move |scope: OperationScope| {
             mime_submission::detect(
                 scope,
                 mime_submission::take(&body_cell),
@@ -197,6 +179,7 @@ impl MimeRuntime {
                 detector,
                 body_options,
                 Some(permit),
+                body_tree,
             )
         };
         let result = if let Some(parent) = parent {
@@ -260,19 +243,19 @@ impl MimeRuntime {
                 });
             }
         };
-        let permit = match &input {
-            OwnedMimeInput::Bytes { content, .. } => services.reserve_allocation(content),
-            OwnedMimeInput::Provider { .. } => services.reserve_owned(0),
+        let permit = match mime_submission::preflight(&input, &options, &*detector, &services) {
+            Ok(permit) => permit,
+            Err(reason) => return Err(MimeSubmitFailure { reason, input }),
         };
-        let Some(permit) = permit else {
-            return Err(MimeSubmitFailure {
-                reason: MimeSubmitRejection::BudgetExceeded,
-                input,
-            });
-        };
+        let tree_limit = options.max_read_bytes.unwrap_or(services.max_read_bytes)
+            .min(services.max_read_bytes);
+        let read_tree = services.read_tree_for_parent(parent.id(), tree_limit, tree_limit);
         let cell = mime_submission::cell(input);
         let body_cell = Arc::clone(&cell);
-        let body = move |scope| {
+        let body_services = Arc::clone(&services);
+        let body_tree = Arc::clone(&read_tree);
+        let body = move |scope: OperationScope| {
+            body_services.bind_read_tree(scope.id(), &body_tree);
             let input = mime_submission::take(&body_cell);
             let result = match input {
                 OwnedMimeInput::Bytes {

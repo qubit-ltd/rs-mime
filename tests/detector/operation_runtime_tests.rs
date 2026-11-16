@@ -1,9 +1,79 @@
 use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
+use std::{pin::Pin, sync::atomic::{AtomicUsize, Ordering}};
 
 use qubit_mime::detector::MimeRuntime;
 use qubit_mime::{InputExtent, MimeOperationOptions, OwnedMimeInput};
+
+#[derive(Debug)]
+struct CountingFileSystem {
+    properties: qubit_fs::spi::ProviderProperties,
+    opens: Arc<AtomicUsize>,
+}
+
+impl CountingFileSystem {
+    fn new(opens: Arc<AtomicUsize>) -> Self {
+        use qubit_fs::metadata::{FileSystemCapabilities, FileSystemId, FileSystemInfo, FileSystemLimits, FileSystemCapability, SymlinkPolicy};
+        use qubit_fs::path::{PathConstraints, PathSemantics};
+        use qubit_fs::spi::{ProviderOperation, ProviderOperations, ProviderProperties};
+        Self {
+            properties: ProviderProperties::new(
+                FileSystemInfo::new(
+                    FileSystemId::new("mime-runtime-counting").unwrap(),
+                    "mime-runtime-counting",
+                    PathSemantics::Hierarchical,
+                ),
+                ProviderOperations::new().with(ProviderOperation::OpenReader),
+                FileSystemCapabilities::new().with_guaranteed(FileSystemCapability::Read),
+                FileSystemLimits::unknown(),
+                PathConstraints::absolute(),
+                SymlinkPolicy::Reject,
+            ).unwrap(),
+            opens,
+        }
+    }
+}
+
+impl qubit_fs::spi::AsyncFileSystemSpi for CountingFileSystem {
+    fn properties(&self) -> qubit_fs::spi::ProviderProperties { self.properties.clone() }
+
+    fn stat<'a>(&'a self, _request: qubit_fs::spi::StatRequest<'a>) -> qubit_fs::spi::SpiFuture<'a, qubit_fs::FsResult<qubit_fs::spi::StatResponse>> {
+        Box::pin(async { panic!("stat should not be called") })
+    }
+
+    fn open_reader<'a>(&'a self, request: qubit_fs::spi::OpenReaderRequest<'a>) -> qubit_fs::spi::SpiFuture<'a, qubit_fs::FsResult<qubit_fs::spi::OpenedAsyncReader>> {
+        self.opens.fetch_add(1, Ordering::SeqCst);
+        let info = qubit_fs::metadata::OpenedFileInfo::new(
+            qubit_fs::metadata::FileSystemId::new("mime-runtime-counting").unwrap(),
+            request.path().clone(),
+        );
+        Box::pin(async move {
+            Ok(qubit_fs::spi::OpenedAsyncReader::new(
+                info,
+                Box::new(PdfInput { bytes: b"%PDF".to_vec(), position: 0 }),
+            ))
+        })
+    }
+}
+
+struct PdfInput { bytes: Vec<u8>, position: usize }
+
+impl qubit_io::AsyncInput for PdfInput {
+    type Item = u8;
+    unsafe fn poll_read_unchecked(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        output: &mut [u8],
+        index: usize,
+        count: usize,
+    ) -> Poll<std::io::Result<usize>> {
+        let read = count.min(self.bytes.len().saturating_sub(self.position));
+        output[index..index + read].copy_from_slice(&self.bytes[self.position..self.position + read]);
+        self.position += read;
+        Poll::Ready(Ok(read))
+    }
+}
 
 struct ThreadWake(std::thread::Thread);
 impl Wake for ThreadWake {
@@ -503,4 +573,180 @@ fn operation_runtime_closed_group_returns_original_input() {
         qubit_operation::OperationOutcome::Succeeded(true)
     ));
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn operation_runtime_sync_preflight_matches_async() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let port = Arc::new(TestExecution::default());
+    let services = services(&manager, 4, port);
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin().unwrap().with_execution_services(services.clone());
+    let body_runtime = runtime.clone();
+    let mut parent = manager
+        .try_submit(Default::default(), move |scope| {
+            let zero_bytes: Arc<[u8]> = Arc::from(b"zero-read".as_slice());
+            let mut zero_options = MimeOperationOptions::default();
+            zero_options.max_read_bytes = Some(0);
+            let sync_zero = body_runtime.try_submit_detection_sync_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::clone(&zero_bytes), InputExtent::Complete),
+                zero_options.clone(),
+            );
+            let async_zero = body_runtime.try_submit_detection_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::clone(&zero_bytes), InputExtent::Complete),
+                zero_options,
+            );
+            let zero_matches = matches!(sync_zero, Err(ref failure) if matches!(failure.reason, qubit_mime::MimeSubmitRejection::InvalidOptions(_)))
+                && matches!(async_zero, Err(ref failure) if matches!(failure.reason, qubit_mime::MimeSubmitRejection::InvalidOptions(_)))
+                && returned_same_bytes(sync_zero, &zero_bytes)
+                && returned_same_async_bytes(async_zero, &zero_bytes);
+
+            let limited_bytes: Arc<[u8]> = Arc::from(b"buffer-limit".as_slice());
+            let mut limited_options = MimeOperationOptions::default();
+            limited_options.max_buffer_bytes = Some(2);
+            let sync_limited = body_runtime.try_submit_detection_sync_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::clone(&limited_bytes), InputExtent::Complete),
+                limited_options.clone(),
+            );
+            let async_limited = body_runtime.try_submit_detection_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::clone(&limited_bytes), InputExtent::Complete),
+                limited_options,
+            );
+            let limit_matches = matches!(sync_limited, Err(ref failure) if matches!(failure.reason, qubit_mime::MimeSubmitRejection::BudgetExceeded))
+                && matches!(async_limited, Err(ref failure) if matches!(failure.reason, qubit_mime::MimeSubmitRejection::BudgetExceeded))
+                && returned_same_bytes(sync_limited, &limited_bytes)
+                && returned_same_async_bytes(async_limited, &limited_bytes);
+            Ok::<_, ()>(zero_matches && limit_matches)
+        })
+        .unwrap();
+    assert!(matches!(parent.wait_outcome().unwrap(), qubit_operation::OperationOutcome::Succeeded(true)));
+    let shutdown = services.shutdown();
+    block_on(shutdown.wait_services_settled()).unwrap();
+    shutdown.stop_services().unwrap();
+    let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn operation_runtime_parallel_children_share_actual_read_budget() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let port = Arc::new(TestExecution::default());
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(manager.clone(), group, port, 6).unwrap();
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin().unwrap().with_execution_services(services.clone());
+    let opens = Arc::new(AtomicUsize::new(0));
+    let opens_body = Arc::clone(&opens);
+    let child_slot = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let child_slot_body = Arc::clone(&child_slot);
+    let body_runtime = runtime.clone();
+    let parent_options = qubit_operation::OperationOptions {
+        child_failure_policy: qubit_operation::ChildFailurePolicy::ContinueSiblings,
+        ..Default::default()
+    };
+    let mut parent = manager.try_submit(parent_options, move |scope| {
+        let mut accepted = true;
+        for _ in 0..2 {
+            let fs = Arc::new(AsyncFileSystem::from_spi(CountingFileSystem::new(Arc::clone(&opens_body))).unwrap());
+            let input = OwnedMimeInput::Provider { file_system: fs, path: Path::parse("/document.pdf").unwrap() };
+            let options = MimeOperationOptions { max_buffer_bytes: Some(4), ..Default::default() };
+            match body_runtime.try_submit_detection_in(&scope, input, options) {
+                Ok(child) => child_slot_body.lock().unwrap().push(child),
+                Err(_) => {
+                    accepted = false;
+                }
+            }
+        }
+        Ok::<_, ()>(accepted)
+    }).unwrap();
+    let _parent_outcome = parent.wait_outcome().unwrap();
+
+    let children = std::mem::take(&mut *child_slot.lock().unwrap());
+    assert_eq!(children.len(), 2);
+    let outcomes: Vec<_> = children.into_iter().map(|mut child| block_on(child.wait_outcome()).unwrap()).collect();
+    let reports: Vec<_> = outcomes.iter().filter_map(|outcome| match outcome {
+        qubit_operation::OperationOutcome::Succeeded(report) => Some(report),
+        _ => None,
+    }).collect();
+    let read_failures = outcomes.iter().filter(|outcome| matches!(outcome,
+        qubit_operation::OperationOutcome::Failed(qubit_mime::MimeError::BudgetExceeded { kind: "read", .. })
+    )).count();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(read_failures, 1);
+    assert_eq!(reports[0].budget.bytes_read, 4);
+    assert_eq!(reports[0].budget.owned_bytes, 4);
+    assert_eq!(opens.load(Ordering::SeqCst), 1, "the rejected cumulative read must not reach the provider");
+
+    let shutdown = services.shutdown();
+    block_on(shutdown.wait_services_settled()).unwrap();
+    shutdown.stop_services().unwrap();
+    let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn operation_runtime_independent_roots_have_independent_read_limits() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let port = Arc::new(TestExecution::default());
+    let services = services(&manager, 4, port);
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin().unwrap().with_execution_services(services.clone());
+    let opens = Arc::new(AtomicUsize::new(0));
+    let mut handles = Vec::new();
+    for _ in 0..2 {
+        let fs = Arc::new(AsyncFileSystem::from_spi(CountingFileSystem::new(Arc::clone(&opens))).unwrap());
+        let input = OwnedMimeInput::Provider { file_system: fs, path: Path::parse("/document.pdf").unwrap() };
+        let options = MimeOperationOptions { max_buffer_bytes: Some(4), ..Default::default() };
+        handles.push(match runtime.try_submit_detection(input, options) {
+            Ok(handle) => handle,
+            Err(_) => panic!("prepared runtime should admit independent read roots"),
+        });
+    }
+    for mut handle in handles {
+        let report = match block_on(handle.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(report) => report,
+            outcome => panic!("independent root should fit its own read budget: {outcome:?}"),
+        };
+        assert_eq!(report.budget.bytes_read, 4);
+        assert_eq!(report.budget.owned_bytes, 4);
+    }
+    assert_eq!(opens.load(Ordering::SeqCst), 2);
+    let shutdown = services.shutdown();
+    block_on(shutdown.wait_services_settled()).unwrap();
+    shutdown.stop_services().unwrap();
+    let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+fn returned_same_bytes(
+    result: Result<qubit_mime::MimeOperation, qubit_mime::MimeSubmitFailure>,
+    original: &Arc<[u8]>,
+) -> bool {
+    match result {
+        Err(failure) => match failure.input {
+            OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(original, &content),
+            OwnedMimeInput::Provider { .. } => false,
+        },
+        Ok(_) => false,
+    }
+}
+
+fn returned_same_async_bytes(
+    result: Result<qubit_mime::AsyncMimeOperation, qubit_mime::MimeSubmitFailure>,
+    original: &Arc<[u8]>,
+) -> bool {
+    match result {
+        Err(failure) => match failure.input {
+            OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(original, &content),
+            OwnedMimeInput::Provider { .. } => false,
+        },
+        Ok(_) => false,
+    }
 }
