@@ -99,7 +99,36 @@ fn managed_staging_worker_queue_is_bounded_and_shutdown_joins() {
     let release_thread = std::thread::spawn(move || release.wait());
     worker.shutdown().unwrap();
     release_thread.join().unwrap();
+    assert!(
+        worker.prepare().is_err(),
+        "shutdown permanently closes worker preparation"
+    );
     assert!(worker.try_dispatch(Box::new(|| {})).is_err());
+}
+
+#[test]
+fn managed_staging_prepare_shutdown_race_is_terminal() {
+    for _ in 0..64 {
+        let worker = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let gate = Arc::new(Barrier::new(3));
+        let prepare_worker = Arc::clone(&worker);
+        let prepare_gate = Arc::clone(&gate);
+        let prepare = std::thread::spawn(move || {
+            prepare_gate.wait();
+            prepare_worker.prepare()
+        });
+        let shutdown_worker = Arc::clone(&worker);
+        let shutdown_gate = Arc::clone(&gate);
+        let shutdown = std::thread::spawn(move || {
+            shutdown_gate.wait();
+            shutdown_worker.shutdown()
+        });
+        gate.wait();
+        let _ = prepare.join().unwrap();
+        shutdown.join().unwrap().unwrap();
+        assert!(worker.prepare().is_err());
+        assert!(worker.try_dispatch(Box::new(|| {})).is_err());
+    }
 }
 
 #[test]

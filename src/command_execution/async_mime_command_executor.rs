@@ -41,12 +41,10 @@ struct PreparedCommand {
     worker: MimeExecutionWorker,
     id: Mutex<Option<OperationId>>,
     request: Mutex<Option<(CommandRunner, Command, ResourceRef<StagedMimeInput>)>>,
-    outcome: Mutex<Option<OperationOutcome<MimeCommandOutput, CommandError>>>,
-    summary_cache: Mutex<Option<ChildOutcomeSummary>>,
-    outcome_waker: Mutex<Option<Waker>>,
-    summary_waker: Mutex<Option<Waker>>,
-    release_waker: Mutex<Option<Waker>>,
-    settlement_waker: Mutex<Option<Waker>>,
+    outcome: PollSignal<OperationOutcome<MimeCommandOutput, CommandError>>,
+    summary: PollSignal<ChildOutcomeSummary>,
+    release: PollSignal<ChildRelease>,
+    settlement: PollSignal<Arc<SettlementReport>>,
     started: AtomicBool,
     released: AtomicBool,
     stop_reason: Mutex<Option<StopReason>>,
@@ -74,10 +72,7 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
                 accepted_at: None,
             }));
             self.released.store(true, Ordering::Release);
-            wake(&self.outcome_waker);
-            wake(&self.summary_waker);
-            wake(&self.release_waker);
-            wake(&self.settlement_waker);
+            self.publish_release();
             return Ok(());
         }
         let (runner, command, input) = self
@@ -97,10 +92,7 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
                     accepted_at: None,
                 }));
                 task.released.store(true, Ordering::Release);
-                wake(&task.outcome_waker);
-                wake(&task.summary_waker);
-                wake(&task.release_waker);
-                wake(&task.settlement_waker);
+                task.publish_release();
                 return;
             }
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -140,16 +132,12 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
             };
             task.publish(outcome);
             task.released.store(true, Ordering::Release);
-            wake(&task.outcome_waker);
-            wake(&task.summary_waker);
-            wake(&task.release_waker);
-            wake(&task.settlement_waker);
+            task.publish_release();
         });
         if let Err(job) = self.worker.try_dispatch(job) {
             drop(job);
             self.released.store(true, Ordering::Release);
-            wake(&self.release_waker);
-            wake(&self.settlement_waker);
+            self.publish_release();
             return Err(ExecutionFailure {
                 operation_id: self
                     .id
@@ -169,24 +157,14 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
             .unwrap_or_else(|e| e.into_inner())
             .take();
         self.released.store(true, Ordering::Release);
-        wake(&self.release_waker);
-        wake(&self.settlement_waker);
+        self.publish_release();
     }
 
     fn poll_take_outcome(
         &self,
         cx: &mut Context<'_>,
     ) -> Poll<OperationOutcome<MimeCommandOutput, CommandError>> {
-        if let Some(outcome) = self
-            .outcome
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
-            return Poll::Ready(outcome);
-        }
-        *self.outcome_waker.lock().unwrap_or_else(|e| e.into_inner()) = Some(cx.waker().clone());
-        Poll::Pending
+        self.outcome.poll_take(cx)
     }
 }
 
@@ -219,44 +197,22 @@ impl OperationControl for PreparedCommand {
                     reason,
                     accepted_at: None,
                 }),
-            outcome: self.summary(),
+            outcome: self.summary.value(),
             input_released: self.released.load(Ordering::Acquire),
-            settlement: self.settlement(),
+            settlement: self.settlement.value(),
         }
     }
 
     fn poll_outcome(&self, cx: &mut Context<'_>) -> Poll<ChildOutcomeSummary> {
-        if let Some(summary) = self.summary() {
-            return Poll::Ready(summary);
-        }
-        *self.summary_waker.lock().unwrap_or_else(|e| e.into_inner()) = Some(cx.waker().clone());
-        Poll::Pending
+        self.summary.poll_clone(cx)
     }
 
     fn poll_release(&self, cx: &mut Context<'_>) -> Poll<ChildRelease> {
-        if self.released.load(Ordering::Acquire) {
-            return Poll::Ready(ChildRelease {
-                operation_id: self
-                    .id
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .expect("bound before release"),
-                confirmed_at: None,
-            });
-        }
-        *self.release_waker.lock().unwrap_or_else(|e| e.into_inner()) = Some(cx.waker().clone());
-        Poll::Pending
+        self.release.poll_clone(cx)
     }
 
     fn poll_settlement(&self, cx: &mut Context<'_>) -> Poll<Arc<SettlementReport>> {
-        if let Some(report) = self.settlement() {
-            return Poll::Ready(report);
-        }
-        *self
-            .settlement_waker
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(cx.waker().clone());
-        Poll::Pending
+        self.settlement.poll_clone(cx)
     }
 }
 
@@ -279,27 +235,22 @@ impl PreparedCommand {
             kind,
             summary: DiagnosticSummary::new("MIME command worker completed"),
         };
-        *self.summary_cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(summary);
-        *self.outcome.lock().unwrap_or_else(|e| e.into_inner()) = Some(outcome);
+        self.summary.publish(summary);
+        self.outcome.publish(outcome);
     }
 
-    fn summary(&self) -> Option<ChildOutcomeSummary> {
-        self.summary_cache
+    fn publish_release(&self) {
+        let operation_id = self
+            .id
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .clone()
-    }
-
-    fn settlement(&self) -> Option<Arc<SettlementReport>> {
-        if !self.released.load(Ordering::Acquire) {
-            return None;
-        }
-        Some(Arc::new(SettlementReport {
-            operation_id: self
-                .id
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .expect("bound before settlement"),
+            .expect("bound before release");
+        self.release.publish(ChildRelease {
+            operation_id,
+            confirmed_at: None,
+        });
+        self.settlement.publish(Arc::new(SettlementReport {
+            operation_id,
             status: SettlementStatus::Released,
             released_count: 0,
             transferred_count: 0,
@@ -322,7 +273,75 @@ impl PreparedCommand {
             effects: Arc::from([]),
             effects_total: 0,
             effect_overflow: 0,
-        }))
+        }));
+    }
+}
+
+struct SignalState<T> {
+    value: Option<T>,
+    waker: Option<Waker>,
+}
+
+/// Readiness and its waiter share one lock, so a publisher cannot slip
+/// between a poll's readiness check and waker registration.
+struct PollSignal<T> {
+    state: Mutex<SignalState<T>>,
+}
+
+impl<T> PollSignal<T> {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(SignalState {
+                value: None,
+                waker: None,
+            }),
+        }
+    }
+
+    fn publish(&self, value: T) {
+        let waker = {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.value = Some(value);
+            state.waker.take()
+        };
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+
+    fn poll_take(&self, cx: &mut Context<'_>) -> Poll<T> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(value) = state.value.take() {
+            state.waker = None;
+            Poll::Ready(value)
+        } else {
+            state.waker = Some(cx.waker().clone());
+            Poll::Pending
+        }
+    }
+
+    fn value(&self) -> Option<T>
+    where
+        T: Clone,
+    {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .value
+            .clone()
+    }
+
+    fn poll_clone(&self, cx: &mut Context<'_>) -> Poll<T>
+    where
+        T: Clone,
+    {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(value) = state.value.as_ref() {
+            Poll::Ready(value.clone())
+        } else {
+            state.waker = Some(cx.waker().clone());
+            Poll::Pending
+        }
     }
 }
 
@@ -350,12 +369,10 @@ impl AsyncMimeCommandExecutor for ManagedCommandExecutor {
                 worker: self.worker.clone(),
                 id: Mutex::new(None),
                 request: Mutex::new(Some((request.runner, request.command, input))),
-                outcome: Mutex::new(None),
-                summary_cache: Mutex::new(None),
-                outcome_waker: Mutex::new(None),
-                summary_waker: Mutex::new(None),
-                release_waker: Mutex::new(None),
-                settlement_waker: Mutex::new(None),
+                outcome: PollSignal::new(),
+                summary: PollSignal::new(),
+                release: PollSignal::new(),
+                settlement: PollSignal::new(),
                 started: AtomicBool::new(false),
                 released: AtomicBool::new(false),
                 stop_reason: Mutex::new(None),
@@ -393,8 +410,71 @@ impl AsyncMimeCommandExecutor for ManagedCommandExecutor {
     }
 }
 
-fn wake(slot: &Mutex<Option<Waker>>) {
-    if let Some(waker) = slot.lock().unwrap_or_else(|e| e.into_inner()).take() {
-        waker.wake();
+#[cfg(test)]
+mod tests {
+    use super::PollSignal;
+    use std::sync::{
+        Arc, Barrier,
+        atomic::{AtomicUsize, Ordering},
+    };
+    use std::task::{Context, Poll, Wake, Waker};
+
+    struct CountWake(AtomicUsize);
+    impl Wake for CountWake {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn managed_staging_poll_signal_has_no_lost_wakeup() {
+        for _ in 0..512 {
+            let signal = Arc::new(PollSignal::new());
+            let gate = Arc::new(Barrier::new(2));
+            let to_publish = Arc::clone(&signal);
+            let publisher_gate = Arc::clone(&gate);
+            let publisher = std::thread::spawn(move || {
+                publisher_gate.wait();
+                to_publish.publish(7_u8);
+            });
+            let wake = Arc::new(CountWake(AtomicUsize::new(0)));
+            let waker = Waker::from(Arc::clone(&wake));
+            let mut context = Context::from_waker(&waker);
+            gate.wait();
+            let first = signal.poll_clone(&mut context);
+            publisher.join().unwrap();
+            match first {
+                Poll::Ready(7) => {}
+                Poll::Pending => {
+                    assert!(
+                        wake.0.load(Ordering::SeqCst) > 0,
+                        "publisher must wake a registered poller"
+                    );
+                    assert!(matches!(signal.poll_clone(&mut context), Poll::Ready(7)));
+                }
+                other => panic!("unexpected signal result: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn managed_staging_poll_signal_outcome_is_single_take() {
+        let signal = Arc::new(PollSignal::new());
+        let wake_probe = Arc::new(CountWake(AtomicUsize::new(0)));
+        let wake = Waker::from(Arc::clone(&wake_probe));
+        let mut context = Context::from_waker(&wake);
+        assert!(matches!(signal.poll_take(&mut context), Poll::Pending));
+        let publisher_signal = Arc::clone(&signal);
+        let publisher = std::thread::spawn(move || publisher_signal.publish("outcome"));
+        publisher.join().unwrap();
+        assert!(wake_probe.0.load(Ordering::SeqCst) > 0);
+        assert!(matches!(
+            signal.poll_take(&mut context),
+            Poll::Ready("outcome")
+        ));
+        assert!(matches!(signal.poll_take(&mut context), Poll::Pending));
     }
 }

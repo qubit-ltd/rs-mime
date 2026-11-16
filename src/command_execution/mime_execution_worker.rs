@@ -78,10 +78,10 @@ impl FixedMimeExecutionPort {
 
 impl crate::detector::MimeExecutionPort for FixedMimeExecutionPort {
     fn prepare(&self) -> Result<(), crate::MimeError> {
+        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
         if self.stopped.load(Ordering::Acquire) {
             return Err(crate::MimeError::ExecutionServicesRequired);
         }
-        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
         if running.is_some() {
             return Ok(());
         }
@@ -120,6 +120,9 @@ impl crate::detector::MimeExecutionPort for FixedMimeExecutionPort {
 
     fn try_dispatch(&self, job: Job) -> Result<(), Job> {
         let running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(job);
+        }
         let Some(running) = running.as_ref() else {
             return Err(job);
         };
@@ -138,15 +141,12 @@ impl crate::detector::MimeExecutionPort for FixedMimeExecutionPort {
     }
 
     fn shutdown(&self) -> Result<(), crate::MimeError> {
+        let mut slot = self.running.lock().unwrap_or_else(|e| e.into_inner());
         self.stopped.store(true, Ordering::Release);
-        let Some(running) = self
-            .running
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        else {
+        let Some(running) = slot.take() else {
             return Ok(());
         };
+        drop(slot);
         {
             let mut state = running
                 .queue
