@@ -2,6 +2,8 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Focused checks for staging bounds and fixed-worker admission.
 
@@ -77,7 +79,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
 }
 
 #[test]
-fn managed_staging_limit_boundaries() {
+fn test_managed_staging_limit_boundaries() {
     let limit = 8;
     assert!(within_staging_limit(limit - 1, limit));
     assert!(within_staging_limit(limit, limit));
@@ -85,13 +87,13 @@ fn managed_staging_limit_boundaries() {
 }
 
 #[test]
-fn managed_staging_zero_limit() {
+fn test_managed_staging_zero_limit() {
     assert!(within_staging_limit(0, 0));
     assert!(!within_staging_limit(1, 0));
 }
 
 #[test]
-fn managed_staging_checked_sentinel_arithmetic() {
+fn test_managed_staging_checked_sentinel_arithmetic() {
     assert_eq!(sentinel_read_limit(8), Some(9));
     assert_eq!(sentinel_read_limit(u64::MAX), None);
 }
@@ -209,7 +211,7 @@ impl AsyncInput for ShortAsyncInput {
 }
 
 #[test]
-fn managed_staging_provider_limit_boundaries_and_short_reads() {
+fn test_managed_staging_provider_limit_boundaries_and_short_reads() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 8 }).unwrap();
     let port = Arc::new(FixedMimeExecutionPort::new(1, 8));
@@ -264,7 +266,7 @@ fn managed_staging_provider_limit_boundaries_and_short_reads() {
 }
 
 #[test]
-fn managed_staging_provider_read_tree_budget_stops_before_sentinel_overrun() {
+fn test_managed_staging_provider_read_tree_budget_stops_before_sentinel_overrun() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
     let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
@@ -299,7 +301,7 @@ fn managed_staging_provider_read_tree_budget_stops_before_sentinel_overrun() {
 }
 
 #[test]
-fn managed_staging_provider_budget_failure_cleans_partial_owner() {
+fn test_managed_staging_provider_budget_failure_cleans_partial_owner() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
     let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
@@ -348,7 +350,7 @@ fn managed_staging_provider_budget_failure_cleans_partial_owner() {
 }
 
 #[test]
-fn managed_staging_cancel_during_provider_read_retains_cleanup_owner() {
+fn test_managed_staging_cancel_during_provider_read_retains_cleanup_owner() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
     let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
@@ -407,7 +409,7 @@ fn managed_staging_cancel_during_provider_read_retains_cleanup_owner() {
 }
 
 #[test]
-fn managed_staging_cancel_before_create() {
+fn test_managed_staging_cancel_before_create() {
     let worker = FixedMimeExecutionPort::new(1, 1);
     let called = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&called);
@@ -420,7 +422,7 @@ fn managed_staging_cancel_before_create() {
 }
 
 #[test]
-fn managed_staging_worker_queue_is_bounded_and_shutdown_joins() {
+fn test_managed_staging_worker_queue_is_bounded_and_shutdown_joins() {
     let worker = FixedMimeExecutionPort::new(1, 1);
     worker.prepare().unwrap();
     let entered = Arc::new(Barrier::new(2));
@@ -449,7 +451,7 @@ fn managed_staging_worker_queue_is_bounded_and_shutdown_joins() {
 }
 
 #[test]
-fn managed_staging_prepare_shutdown_race_is_terminal() {
+fn test_managed_staging_prepare_shutdown_race_is_terminal() {
     for _ in 0..64 {
         let worker = Arc::new(FixedMimeExecutionPort::new(1, 1));
         let gate = Arc::new(Barrier::new(3));
@@ -474,7 +476,7 @@ fn managed_staging_prepare_shutdown_race_is_terminal() {
 }
 
 #[test]
-fn managed_staging_owner_waits_for_scope_end_and_all_references() {
+fn test_managed_staging_owner_waits_for_scope_end_and_all_references() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
     let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
@@ -540,7 +542,7 @@ impl AsyncMimeCommandExecutor for EarlyOutcomeCommand {
 }
 
 #[test]
-fn managed_staging_outcome_precedes_helper_input_release() {
+fn test_managed_staging_outcome_precedes_helper_input_release() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
     let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
@@ -593,7 +595,7 @@ fn managed_staging_outcome_precedes_helper_input_release() {
 
 #[cfg(unix)]
 #[test]
-fn managed_staging_cleanup_failure_retains_owner_for_retry() {
+fn test_managed_staging_cleanup_failure_retains_owner_for_retry() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
     let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
@@ -653,7 +655,7 @@ fn managed_staging_cleanup_failure_retains_owner_for_retry() {
 }
 
 #[test]
-fn managed_staging_commit_failure_retains_partial_owner_and_permit() {
+fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
     let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
@@ -701,7 +703,7 @@ fn managed_staging_commit_failure_retains_partial_owner_and_permit() {
 }
 
 #[test]
-fn managed_staging_unconsumed_outcome_does_not_hold_temp() {
+fn test_managed_staging_unconsumed_outcome_does_not_hold_temp() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
     let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
