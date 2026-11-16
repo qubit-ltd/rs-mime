@@ -5,9 +5,11 @@
 // =============================================================================
 //! Public typed handles for MIME detection operations.
 
+use qubit_operation::AsyncOperationHandle;
+use qubit_operation::OperationHandle;
+
 use super::mime_detection_report::MimeDetectionReport;
 use crate::MimeError;
-use qubit_operation::{AsyncOperationHandle, OperationHandle};
 
 /// Asynchronous operation handle for one MIME request.
 pub type AsyncMimeOperation = AsyncOperationHandle<MimeDetectionReport, MimeError>;

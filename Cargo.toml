@@ -36,7 +36,6 @@ inventory = ["qubit-spi/inventory"]
 regex = "^1.13"
 roxmltree = "^0.21"
 thiserror = "^2.0"
-blocking = "^1.6"
 
 qubit-io = "^0.19"
 qubit-operation = "^0.3"

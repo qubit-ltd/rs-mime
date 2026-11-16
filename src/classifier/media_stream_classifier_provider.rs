@@ -7,8 +7,9 @@
 // =============================================================================
 //! Provider contract for pluggable media stream classifiers.
 
-use super::MediaStreamClassifierSpec;
 use qubit_spi::ProviderDefinition;
+
+use super::MediaStreamClassifierSpec;
 
 /// Marker trait for media stream classifier providers.
 ///
@@ -30,15 +31,10 @@ pub trait MediaStreamClassifierProvider: ProviderDefinition<MediaStreamClassifie
     // empty
 }
 
-impl<T> MediaStreamClassifierProvider for T where
-    T: ProviderDefinition<MediaStreamClassifierSpec> + ?Sized
-{
-}
+impl<T> MediaStreamClassifierProvider for T where T: ProviderDefinition<MediaStreamClassifierSpec> + ?Sized {}
 
 /// Explicit async capability offered by a media classifier provider.
-pub trait AsyncMediaStreamClassifierProvider:
-    qubit_spi::ProviderMetadata + std::fmt::Debug + Send + Sync
-{
+pub trait AsyncMediaStreamClassifierProvider: qubit_spi::ProviderMetadata + std::fmt::Debug + Send + Sync {
     /// Creates an async classifier bound to operation execution services.
     fn create_async_backend(
         &self,

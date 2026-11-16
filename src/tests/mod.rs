@@ -8,9 +8,9 @@
 //! Tests of crate-private command and staging contracts.
 
 mod magic_index_tests;
+mod managed_staging_tests;
 mod mime_type_tests;
 mod temp_staging_tests;
-mod managed_staging_tests;
 mod xml_parser_tests;
 
 mod bundled_repository_tests;

@@ -19,7 +19,8 @@ pub struct MimeOperationOptions {
     pub max_buffer_bytes: Option<usize>,
     /// Maximum staging bytes for this request, if further restricted.
     pub max_staging_bytes: Option<u64>,
-    /// Maximum cumulative provider reads for this request, if further restricted.
+    /// Maximum cumulative provider reads for this request, if further
+    /// restricted.
     pub max_read_bytes: Option<u64>,
     /// Shared operation context, deadline, and stop options.
     pub operation: OperationOptions,

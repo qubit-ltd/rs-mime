@@ -6,18 +6,27 @@
 //! MIME-owned ports and shared operation context for managed execution.
 
 use std::fmt::Debug;
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, AtomicU8, Ordering},
-};
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU8;
+use std::sync::atomic::Ordering;
 
-use super::internal::mime_budget::{
-    BudgetPermit, Limits, MimeBudget, ReadTreeContext, ReadTreeRegistry, StagingBudget,
-};
-use qubit_operation::{
-    AsyncOperationGroup, AsyncOperationManager, AsyncOperationObserver, AsyncShutdownHandle,
-    OperationGroup, OperationManager, ShutdownReport, ShutdownSnapshot,
-};
+use qubit_operation::AsyncOperationGroup;
+use qubit_operation::AsyncOperationManager;
+use qubit_operation::AsyncOperationObserver;
+use qubit_operation::AsyncShutdownHandle;
+use qubit_operation::OperationGroup;
+use qubit_operation::OperationManager;
+use qubit_operation::ShutdownReport;
+use qubit_operation::ShutdownSnapshot;
+
+use super::internal::mime_budget::BudgetPermit;
+use super::internal::mime_budget::Limits;
+use super::internal::mime_budget::MimeBudget;
+use super::internal::mime_budget::ReadTreeContext;
+use super::internal::mime_budget::ReadTreeRegistry;
+use super::internal::mime_budget::StagingBudget;
 
 /// MIME-specific command and I/O execution boundary. Implementations are
 /// MIME-owned adapters; their callbacks must preserve typed domain errors.
@@ -26,10 +35,7 @@ pub trait MimeExecutionPort: Debug + Send + Sync + 'static {
     fn prepare(&self) -> Result<(), crate::MimeError>;
     /// Tries to dispatch one owned command or I/O job without blocking.
     /// Returning the job on rejection preserves captured resources.
-    fn try_dispatch(
-        &self,
-        job: Box<dyn FnOnce() + Send + 'static>,
-    ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+    fn try_dispatch(&self, job: Box<dyn FnOnce() + Send + 'static>) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
         Err(job)
     }
     /// Stops accepting new work and observes actual worker exit.
@@ -120,10 +126,7 @@ impl MimeExecutionServices {
 
     /// Starts MIME-owned fixed-capacity workers explicitly.
     pub fn prepare(&self) -> Result<(), crate::MimeError> {
-        let _guard = self
-            .lifecycle_lock
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = self.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
         match self
             .lifecycle
             .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
@@ -144,23 +147,16 @@ impl MimeExecutionServices {
     /// Await operation settlements, call `stop_services` from an external
     /// synchronous context, then observe group Drain separately.
     pub fn shutdown(&self) -> MimeShutdownObserver {
-        let _guard = self
-            .lifecycle_lock
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = self.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
         if self.lifecycle.load(Ordering::Acquire) != 3 {
             self.top_closed.store(true, Ordering::Release);
             self.lifecycle.store(2, Ordering::Release);
         }
-        MimeShutdownObserver {
-            services: self.clone(),
-        }
+        MimeShutdownObserver { services: self.clone() }
     }
 
     pub(in crate::detector) fn submission_guard(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.submission_lock
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        self.submission_lock.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub(in crate::detector) fn track_observer(&self, observer: AsyncOperationObserver) {
@@ -192,8 +188,7 @@ impl MimeExecutionServices {
         tree_limit: u64,
         scope_limit: u64,
     ) -> Arc<ReadTreeContext> {
-        self.read_trees
-            .child_for_parent(parent, tree_limit, scope_limit)
+        self.read_trees.child_for_parent(parent, tree_limit, scope_limit)
     }
 
     pub(crate) fn new_read_tree(&self, limit: u64) -> Arc<ReadTreeContext> {
@@ -213,17 +208,10 @@ impl MimeExecutionServices {
             .ok_or(crate::MimeError::ExecutionServicesRequired)
     }
 
-    pub(crate) fn bind_read_tree(
-        &self,
-        operation: qubit_operation::OperationId,
-        tree: &Arc<ReadTreeContext>,
-    ) {
+    pub(crate) fn bind_read_tree(&self, operation: qubit_operation::OperationId, tree: &Arc<ReadTreeContext>) {
         self.read_trees.bind(operation, tree);
     }
-    pub(in crate::detector) fn reserve_allocation(
-        &self,
-        bytes: &Arc<[u8]>,
-    ) -> Option<BudgetPermit> {
+    pub(in crate::detector) fn reserve_allocation(&self, bytes: &Arc<[u8]>) -> Option<BudgetPermit> {
         self.budget.reserve_allocation(bytes)
     }
     #[allow(dead_code)]
@@ -266,9 +254,7 @@ impl MimeShutdownObserver {
                 drop(submissions);
                 continue;
             }
-            self.services
-                .operations_settled
-                .store(true, Ordering::Release);
+            self.services.operations_settled.store(true, Ordering::Release);
             drop(submissions);
             return Ok(self.snapshot());
         }
@@ -281,11 +267,7 @@ impl MimeShutdownObserver {
         if !self.services.operations_settled.load(Ordering::Acquire) {
             return Err(crate::MimeError::OperationShutdownPending);
         }
-        let _lifecycle = self
-            .services
-            .lifecycle_lock
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _lifecycle = self.services.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
         if self.services.lifecycle.load(Ordering::Acquire) != 3 {
             let _submissions = self.services.submission_guard();
             self.services.execution.shutdown()?;
@@ -294,11 +276,7 @@ impl MimeShutdownObserver {
                 .root_group
                 .request_shutdown(qubit_operation::ShutdownMode::Drain)
                 .as_async();
-            *self
-                .services
-                .group_shutdown
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()) = Some(shutdown);
+            *self.services.group_shutdown.lock().unwrap_or_else(|e| e.into_inner()) = Some(shutdown);
             self.services.lifecycle.store(3, Ordering::Release);
         }
         Ok(self.snapshot())
@@ -320,7 +298,8 @@ impl MimeShutdownObserver {
     }
 
     /// Waits for group shutdown after workers and tracked operation settlements
-    /// are complete. This may remain pending while callers retain typed handles.
+    /// are complete. This may remain pending while callers retain typed
+    /// handles.
     pub async fn wait_group_shutdown(&self) -> Result<ShutdownReport, crate::MimeError> {
         let handle = self
             .services
@@ -329,9 +308,6 @@ impl MimeShutdownObserver {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
             .ok_or(crate::MimeError::OperationShutdownPending)?;
-        handle
-            .wait()
-            .await
-            .map_err(crate::MimeError::OperationShutdown)
+        handle.wait().await.map_err(crate::MimeError::OperationShutdown)
     }
 }

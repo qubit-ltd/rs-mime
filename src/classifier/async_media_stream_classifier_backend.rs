@@ -9,8 +9,10 @@ use std::fmt::Debug;
 
 use qubit_operation::OperationScope;
 
+use crate::MediaStreamType;
+use crate::MimeFuture;
+use crate::MimeOperationOptions;
 use crate::detector::BorrowedMimeInput;
-use crate::{MediaStreamType, MimeFuture, MimeOperationOptions};
 
 /// Asynchronous media stream classifier. Implementations must not call a
 /// synchronous classifier implicitly.

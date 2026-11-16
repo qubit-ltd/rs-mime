@@ -67,13 +67,8 @@ impl ServiceProvider<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
     ///
     /// This provider does not currently return an error.
     #[inline]
-    fn create_configured(
-        &self,
-        config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
-        Ok(Arc::new(RepositoryMimeDetector::from_mime_config(
-            config.clone(),
-        )))
+    fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+        Ok(Arc::new(RepositoryMimeDetector::from_mime_config(config.clone())))
     }
 }
 
@@ -94,9 +89,7 @@ impl super::AsyncMimeDetectorProvider for RepositoryMimeDetectorProvider {
         config: &MimeConfig,
         _services: &crate::MimeExecutionServices,
     ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
-        Ok(RepositoryMimeDetectorProvider::create_async_backend(
-            self, config,
-        ))
+        Ok(RepositoryMimeDetectorProvider::create_async_backend(self, config))
     }
 
     fn create_async_backend_with_classifier(
@@ -105,8 +98,8 @@ impl super::AsyncMimeDetectorProvider for RepositoryMimeDetectorProvider {
         _services: &crate::MimeExecutionServices,
         classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
     ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
-        let detector = RepositoryMimeDetector::from_mime_config(config.clone())
-            .with_async_media_stream_classifier(classifier);
+        let detector =
+            RepositoryMimeDetector::from_mime_config(config.clone()).with_async_media_stream_classifier(classifier);
         Ok(Arc::new(detector))
     }
 }

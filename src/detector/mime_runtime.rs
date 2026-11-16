@@ -6,25 +6,28 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+use std::fmt;
+use std::sync::Arc;
+
 use qubit_operation::OperationScope;
-use std::{fmt, sync::Arc};
+use qubit_spi::ProviderSelection;
 
 use super::internal::mime_submission;
 pub use super::mime_detector_context::MimeDetectorContext;
 use super::mime_detector_registry::MimeDetectorRegistry;
+use super::mime_execution_services::MimeExecutionServices;
+use super::mime_input::OwnedMimeInput;
+use super::mime_operation::AsyncMimeOperation;
+use super::mime_operation::MimeOperation;
+use super::mime_operation::MimeSubmitFailure;
+use super::mime_operation::MimeSubmitRejection;
+use super::mime_operation_options::MimeOperationOptions;
 use super::owned_repository_mime_detector::OwnedRepositoryMimeDetector;
-use super::{
-    mime_execution_services::MimeExecutionServices,
-    mime_input::OwnedMimeInput,
-    mime_operation::{AsyncMimeOperation, MimeOperation, MimeSubmitFailure, MimeSubmitRejection},
-    mime_operation_options::MimeOperationOptions,
-};
 use crate::MediaStreamClassifierRegistry;
 use crate::MimeConfig;
 use crate::MimeDetector;
 use crate::MimeRepository;
 use crate::MimeResult;
-use qubit_spi::ProviderSelection;
 
 /// Process-local runtime owning shared MIME configuration and repository.
 ///
@@ -95,19 +98,14 @@ impl MimeRuntime {
     /// values and returns `Ok`. The result type is retained for consistency
     /// with detector creation APIs.
     pub fn builtin() -> MimeResult<Self> {
-        Ok(Self::new(
-            MimeConfig::default(),
-            MimeRepository::bundled_shared(),
-        ))
+        Ok(Self::new(MimeConfig::default(), MimeRepository::bundled_shared()))
     }
 
-    /// Attaches shared operation and MIME execution services without starting workers.
+    /// Attaches shared operation and MIME execution services without starting
+    /// workers.
     #[must_use]
     pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
-        let backend = OwnedRepositoryMimeDetector::new(
-            self.context.config().clone(),
-            self.context.repository_arc(),
-        );
+        let backend = OwnedRepositoryMimeDetector::new(self.context.config().clone(), self.context.repository_arc());
         self.async_backend = Some(("repository".to_owned(), Arc::new(backend)));
         self.execution_services = Some(Arc::new(services));
         self
@@ -125,8 +123,7 @@ impl MimeRuntime {
             .execution_services
             .as_ref()
             .ok_or(crate::MimeError::ExecutionServicesRequired)?;
-        self.async_backend =
-            Some(registry.create_async_backend(selection, self.context.config(), services)?);
+        self.async_backend = Some(registry.create_async_backend(selection, self.context.config(), services)?);
         Ok(self)
     }
 
@@ -144,11 +141,8 @@ impl MimeRuntime {
             .execution_services
             .as_ref()
             .ok_or(crate::MimeError::ExecutionServicesRequired)?;
-        let (_, classifier) = classifier_registry.create_async_backend(
-            classifier_selection,
-            self.context.config(),
-            services,
-        )?;
+        let (_, classifier) =
+            classifier_registry.create_async_backend(classifier_selection, self.context.config(), services)?;
         self.async_backend = Some(detector_registry.create_async_backend_with_classifier(
             detector_selection,
             self.context.config(),
@@ -258,9 +252,7 @@ impl MimeRuntime {
                 }
             }
         } else {
-            services
-                .async_root_group
-                .try_submit(options.operation, body)
+            services.async_root_group.try_submit(options.operation, body)
         };
         match result {
             Ok(handle) => {
@@ -301,9 +293,7 @@ impl MimeRuntime {
             Ok(detector) => detector,
             Err(_) => {
                 return Err(MimeSubmitFailure {
-                    reason: MimeSubmitRejection::InvalidOptions(
-                        "detector construction failed".into(),
-                    ),
+                    reason: MimeSubmitRejection::InvalidOptions("detector construction failed".into()),
                     input,
                 });
             }
@@ -337,15 +327,12 @@ impl MimeRuntime {
                     extent,
                     filename,
                 } => {
-                    let mime_type =
-                        detector.detect(&content, filename.as_deref(), options.policy)?;
+                    let mime_type = detector.detect(&content, filename.as_deref(), options.policy)?;
                     let inspected_extent = match extent {
                         super::mime_input::InputExtent::Prefix => {
                             super::mime_input::InspectedExtent::Prefix(content.len())
                         }
-                        super::mime_input::InputExtent::Complete => {
-                            super::mime_input::InspectedExtent::Complete
-                        }
+                        super::mime_input::InputExtent::Complete => super::mime_input::InspectedExtent::Complete,
                     };
                     Ok(crate::MimeDetectionReport {
                         mime_type,

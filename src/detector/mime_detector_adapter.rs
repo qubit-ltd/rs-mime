@@ -103,10 +103,7 @@ where
     /// takes precedence over a backend error. Prefix requirements larger
     /// than the configured reader budget return
     /// [`crate::MimeError::BufferLimitExceeded`].
-    fn detect_reader(
-        &self,
-        reader: &mut dyn qubit_io::std_io::ReadSeek,
-    ) -> MimeResult<Vec<String>> {
+    fn detect_reader(&self, reader: &mut dyn qubit_io::std_io::ReadSeek) -> MimeResult<Vec<String>> {
         use std::io::SeekFrom;
 
         let position = reader.stream_position()?;

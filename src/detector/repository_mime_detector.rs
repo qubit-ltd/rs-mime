@@ -13,15 +13,22 @@ use std::sync::Arc;
 use qubit_io::std_io::ReadSeek;
 
 use super::RandomAccessCapability;
+use crate::AsyncMimeDetectorBackend;
+use crate::BorrowedMimeInput;
+use crate::ContentRequirement;
+use crate::InputExtent;
+use crate::InspectedExtent;
+use crate::MimeCandidate;
+use crate::MimeCandidates;
 use crate::MimeConfig;
 use crate::MimeDetectionPolicy;
 use crate::MimeDetector;
 use crate::MimeDetectorCore;
+use crate::MimeError;
+use crate::MimeOperationOptions;
 use crate::MimeRepository;
 use crate::MimeResult;
 use crate::StreamBasedMimeDetector;
-use crate::{AsyncMimeDetectorBackend, BorrowedMimeInput, ContentRequirement, InputExtent};
-use crate::{InspectedExtent, MimeCandidate, MimeCandidates, MimeError, MimeOperationOptions};
 
 /// MIME detector backed by a [`MimeRepository`].
 ///
@@ -245,11 +252,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// opened or read, or another detector or media-classifier error when
     /// detection cannot complete.
     #[inline]
-    pub fn detect_file(
-        &self,
-        file: &Path,
-        policy: MimeDetectionPolicy,
-    ) -> MimeResult<Option<String>> {
+    pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }
 
@@ -315,12 +318,8 @@ impl AsyncMimeDetectorBackend for RepositoryMimeDetector<'_> {
                     ));
                 }
             };
-            let matched = super::internal::async_repository_matcher::match_content(
-                scope,
-                self.repository,
-                content,
-            )
-            .await?;
+            let matched =
+                super::internal::async_repository_matcher::match_content(scope, self.repository, content).await?;
             let from_filename = filename.map_or_else(Vec::new, |filename| {
                 self.repository
                     .detect_by_filename(filename)
@@ -344,9 +343,7 @@ impl AsyncMimeDetectorBackend for RepositoryMimeDetector<'_> {
             Ok(MimeCandidates {
                 candidates,
                 inspected_extent: match extent {
-                    InputExtent::Prefix | InputExtent::Complete => {
-                        InspectedExtent::Prefix(inspected)
-                    }
+                    InputExtent::Prefix | InputExtent::Complete => InspectedExtent::Prefix(inspected),
                 },
                 retained_prefix: Vec::new(),
             })

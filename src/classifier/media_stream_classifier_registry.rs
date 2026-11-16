@@ -77,8 +77,7 @@ impl MediaStreamClassifierRegistry {
             .expect("built-in FFprobe classifier provider should register");
         registry
             .set_default_selection(
-                ProviderSelection::named("ffprobe")
-                    .expect("built-in FFprobe selection should be valid"),
+                ProviderSelection::named("ffprobe").expect("built-in FFprobe selection should be valid"),
             )
             .expect("built-in selection should be accepted");
         registry
@@ -96,18 +95,10 @@ impl MediaStreamClassifierRegistry {
         let descriptor = provider.descriptor();
         let id = descriptor.id().as_str().to_owned();
         let provider: Arc<dyn AsyncMediaStreamClassifierProvider> = Arc::new(provider);
-        let mut providers = self
-            .async_providers
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
         let mut selectors = Vec::with_capacity(1 + descriptor.aliases().len());
         selectors.push(id.clone());
-        selectors.extend(
-            descriptor
-                .aliases()
-                .iter()
-                .map(|alias| alias.as_str().to_owned()),
-        );
+        selectors.extend(descriptor.aliases().iter().map(|alias| alias.as_str().to_owned()));
         for selector in &selectors {
             if let Some(existing) = providers.get(selector) {
                 return Err(format!(
@@ -137,10 +128,7 @@ impl MediaStreamClassifierRegistry {
             }
             _ => return Err(MimeError::AsyncUnsupported),
         };
-        let providers = self
-            .async_providers
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
+        let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
         for selector in selectors {
             if let Some(provider) = providers.get(selector) {
                 let id = provider.descriptor().id().as_str().to_owned();
@@ -238,10 +226,7 @@ impl MediaStreamClassifierRegistry {
     ///
     /// * `selection` - Validated selection and creation fallback policy.
     #[inline]
-    pub fn set_default_selection(
-        &self,
-        selection: ProviderSelection,
-    ) -> Result<(), RegistryMutationError> {
+    pub fn set_default_selection(&self, selection: ProviderSelection) -> Result<(), RegistryMutationError> {
         self.providers.set_default_selection(selection)
     }
 
@@ -287,9 +272,7 @@ impl MediaStreamClassifierRegistry {
     /// Returns [`ProviderResolutionError`] when the stored default matches no
     /// registered provider.
     #[inline]
-    pub fn resolve(
-        &self,
-    ) -> Result<ResolvingServiceProvider<MediaStreamClassifierSpec>, ProviderResolutionError> {
+    pub fn resolve(&self) -> Result<ResolvingServiceProvider<MediaStreamClassifierSpec>, ProviderResolutionError> {
         self.providers.resolve()
     }
 }

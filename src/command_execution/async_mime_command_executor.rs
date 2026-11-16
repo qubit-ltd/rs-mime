@@ -5,26 +5,49 @@
 // =============================================================================
 //! Asynchronous command boundary driven through operation's public adapter.
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
-use std::task::{Context, Poll, Waker};
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::task::Context;
+use std::task::Poll;
+use std::task::Waker;
 
-use qubit_command::{Command, CommandCancellation, CommandError, CommandErrorKind, CommandRunner};
-use qubit_operation::{
-    AsyncOperationHandle, ChildOutcomeKind, ChildOutcomeSummary, ChildRelease, ChildSnapshot,
-    CleanupFailure, DiagnosticSummary, ExecutionFailure, ExecutionPhase, ExternalBindError,
-    OperationControl, OperationId, OperationOptions, OperationOutcome, OperationScope,
-    PanicSummary, PreparedExternalOperation, ResourceRef, SettlementReport, SettlementStatus,
-    StopReason, StopReport,
-};
+use qubit_command::Command;
+use qubit_command::CommandCancellation;
+use qubit_command::CommandError;
+use qubit_command::CommandErrorKind;
+use qubit_command::CommandRunner;
+use qubit_operation::AsyncOperationHandle;
+use qubit_operation::ChildOutcomeKind;
+use qubit_operation::ChildOutcomeSummary;
+use qubit_operation::ChildRelease;
+use qubit_operation::ChildSnapshot;
+use qubit_operation::CleanupFailure;
+use qubit_operation::DiagnosticSummary;
+use qubit_operation::ExecutionFailure;
+use qubit_operation::ExecutionPhase;
+use qubit_operation::ExternalBindError;
+use qubit_operation::OperationControl;
+use qubit_operation::OperationId;
+use qubit_operation::OperationOptions;
+use qubit_operation::OperationOutcome;
+use qubit_operation::OperationScope;
+use qubit_operation::PanicSummary;
+use qubit_operation::PreparedExternalOperation;
+use qubit_operation::ResourceRef;
+use qubit_operation::SettlementReport;
+use qubit_operation::SettlementStatus;
+use qubit_operation::StopReason;
+use qubit_operation::StopReport;
 
-use super::{
-    ManagedMimeCommand, MimeCommandOutput, MimeExecutionWorker, SystemMimeCommandExecutor,
-};
+use super::ManagedMimeCommand;
+use super::MimeCommandOutput;
+use super::MimeExecutionWorker;
+use super::SystemMimeCommandExecutor;
+use crate::MimeError;
+use crate::MimeFuture;
 use crate::managed_temp_staging::StagedMimeInput;
-use crate::{MimeError, MimeFuture};
 
 /// Async command adapter. The command remains an operation child, so typed
 /// outcome and worker input release are observed independently.
@@ -63,10 +86,7 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
 
     fn activate(self: Arc<Self>, _scope: OperationScope) -> Result<(), ExecutionFailure> {
         if let Some(reason) = *self.stop_reason.lock().unwrap_or_else(|e| e.into_inner()) {
-            self.request
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .take();
+            self.request.lock().unwrap_or_else(|e| e.into_inner()).take();
             self.publish(OperationOutcome::Stopped(StopReport {
                 reason,
                 accepted_at: None,
@@ -152,18 +172,12 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
     }
 
     fn abandon(self: Arc<Self>) {
-        self.request
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
+        self.request.lock().unwrap_or_else(|e| e.into_inner()).take();
         self.released.store(true, Ordering::Release);
         self.publish_release();
     }
 
-    fn poll_take_outcome(
-        &self,
-        cx: &mut Context<'_>,
-    ) -> Poll<OperationOutcome<MimeCommandOutput, CommandError>> {
+    fn poll_take_outcome(&self, cx: &mut Context<'_>) -> Poll<OperationOutcome<MimeCommandOutput, CommandError>> {
         self.outcome.poll_take(cx)
     }
 }
@@ -324,11 +338,7 @@ impl<T> PollSignal<T> {
     where
         T: Clone,
     {
-        self.state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .value
-            .clone()
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).value.clone()
     }
 
     fn poll_clone(&self, cx: &mut Context<'_>) -> Poll<T>
@@ -399,12 +409,8 @@ impl AsyncMimeCommandExecutor for ManagedCommandExecutor {
                 OperationOutcome::Failed(error) => Err(MimeError::from(error)),
                 OperationOutcome::Stopped(report) => Err(MimeError::OperationStopped(report)),
                 OperationOutcome::Panicked(summary) => Err(MimeError::OperationPanicked(summary)),
-                OperationOutcome::ExecutionFailed(failure) => {
-                    Err(MimeError::OperationExecutionFailed(failure))
-                }
-                OperationOutcome::ChildFailed(failure) => {
-                    Err(MimeError::ChildOperationFailed(failure))
-                }
+                OperationOutcome::ExecutionFailed(failure) => Err(MimeError::OperationExecutionFailed(failure)),
+                OperationOutcome::ChildFailed(failure) => Err(MimeError::ChildOperationFailed(failure)),
             }
         })
     }
@@ -412,12 +418,16 @@ impl AsyncMimeCommandExecutor for ManagedCommandExecutor {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::Barrier;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::task::Context;
+    use std::task::Poll;
+    use std::task::Wake;
+    use std::task::Waker;
+
     use super::PollSignal;
-    use std::sync::{
-        Arc, Barrier,
-        atomic::{AtomicUsize, Ordering},
-    };
-    use std::task::{Context, Poll, Wake, Waker};
 
     struct CountWake(AtomicUsize);
     impl Wake for CountWake {
@@ -471,10 +481,7 @@ mod tests {
         let publisher = std::thread::spawn(move || publisher_signal.publish("outcome"));
         publisher.join().unwrap();
         assert!(wake_probe.0.load(Ordering::SeqCst) > 0);
-        assert!(matches!(
-            signal.poll_take(&mut context),
-            Poll::Ready("outcome")
-        ));
+        assert!(matches!(signal.poll_take(&mut context), Poll::Ready("outcome")));
         assert!(matches!(signal.poll_take(&mut context), Poll::Pending));
     }
 }

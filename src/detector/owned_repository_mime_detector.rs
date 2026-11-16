@@ -11,11 +11,17 @@ use std::sync::Arc;
 
 use super::mime_detector_core::MimeDetectorCore;
 use super::stream_based_mime_detector::StreamBasedMimeDetector;
+use crate::AsyncMimeDetectorBackend;
+use crate::BorrowedMimeInput;
+use crate::ContentRequirement;
+use crate::InputExtent;
+use crate::InspectedExtent;
+use crate::MimeCandidates;
 use crate::MimeConfig;
+use crate::MimeError;
+use crate::MimeOperationOptions;
 use crate::MimeRepository;
 use crate::MimeResult;
-use crate::{AsyncMimeDetectorBackend, BorrowedMimeInput, ContentRequirement, InputExtent};
-use crate::{InspectedExtent, MimeCandidates, MimeError, MimeOperationOptions};
 
 /// MIME detector that shares a repository without copying its detection data.
 ///
@@ -125,12 +131,8 @@ impl AsyncMimeDetectorBackend for OwnedRepositoryMimeDetector {
                     ));
                 }
             };
-            let matched = super::internal::async_repository_matcher::match_content(
-                scope,
-                &self.repository,
-                content,
-            )
-            .await?;
+            let matched =
+                super::internal::async_repository_matcher::match_content(scope, &self.repository, content).await?;
             let candidates = super::internal::async_repository_matcher::select_candidates(
                 &self.repository,
                 matched,

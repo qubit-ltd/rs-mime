@@ -11,10 +11,12 @@ use qubit_command::CommandError;
 use qubit_config::ConfigError;
 use qubit_fs::FsError;
 use qubit_local_files::LocalFileError;
-use qubit_operation::{
-    AdmissionError, ChildFailureSummary, ExecutionFailure, GroupBindingError, PanicSummary,
-    StopReport,
-};
+use qubit_operation::AdmissionError;
+use qubit_operation::ChildFailureSummary;
+use qubit_operation::ExecutionFailure;
+use qubit_operation::GroupBindingError;
+use qubit_operation::PanicSummary;
+use qubit_operation::StopReport;
 use roxmltree::Error as XmlError;
 use thiserror::Error;
 
@@ -77,7 +79,11 @@ pub enum MimeError {
     },
     /// An input or staging budget was exceeded.
     #[error("MIME {kind} budget exceeded: requested {requested}, limit {limit}")]
-    BudgetExceeded { kind: &'static str, requested: u64, limit: u64 },
+    BudgetExceeded {
+        kind: &'static str,
+        requested: u64,
+        limit: u64,
+    },
     /// The detector requires the complete resource rather than a prefix.
     #[error("complete content is required for MIME detection")]
     CompleteContentRequired,

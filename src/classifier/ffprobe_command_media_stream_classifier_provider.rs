@@ -59,16 +59,14 @@ impl ServiceProvider<MediaStreamClassifierSpec> for FfprobeCommandMediaStreamCla
         config: &MimeConfig,
     ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderFailure<MimeError>> {
         if !FfprobeCommandMediaStreamClassifier::is_available_with_config(config) {
-            return Err(ProviderFailure::unavailable(
-                MimeError::ClassifierUnavailable {
-                    name: "ffprobe".to_owned(),
-                    reason: "`ffprobe` command is not available".to_owned(),
-                },
-            ));
+            return Err(ProviderFailure::unavailable(MimeError::ClassifierUnavailable {
+                name: "ffprobe".to_owned(),
+                reason: "`ffprobe` command is not available".to_owned(),
+            }));
         }
-        Ok(Arc::new(
-            FfprobeCommandMediaStreamClassifier::from_mime_config(config.clone()),
-        ))
+        Ok(Arc::new(FfprobeCommandMediaStreamClassifier::from_mime_config(
+            config.clone(),
+        )))
     }
 }
 
@@ -80,8 +78,7 @@ impl FfprobeCommandMediaStreamClassifierProvider {
         services: Arc<MimeExecutionServices>,
     ) -> Arc<dyn AsyncMediaStreamClassifierBackend> {
         Arc::new(
-            FfprobeCommandMediaStreamClassifier::from_mime_config(config.clone())
-                .with_execution_services(services),
+            FfprobeCommandMediaStreamClassifier::from_mime_config(config.clone()).with_execution_services(services),
         )
     }
 }

@@ -2,15 +2,27 @@ use std::future::Future;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::task::{Context, Poll, Wake, Waker};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+use std::task::Context;
+use std::task::Poll;
+use std::task::Wake;
+use std::task::Waker;
 
-use qubit_mime::{
-    AsyncMediaStreamClassifierBackend, BorrowedMimeInput, CONFIG_MIME_ENABLE_PRECISE_DETECTION,
-    InputExtent, MediaStreamClassifier, MediaStreamType, MimeConfig, MimeDetectionPolicy,
-    MimeDetectorCore, MimeFuture, MimeOperationOptions, MimeResult,
-};
-use qubit_operation::{OperationOutcome, OperationScope};
+use qubit_mime::AsyncMediaStreamClassifierBackend;
+use qubit_mime::BorrowedMimeInput;
+use qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION;
+use qubit_mime::InputExtent;
+use qubit_mime::MediaStreamClassifier;
+use qubit_mime::MediaStreamType;
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetectionPolicy;
+use qubit_mime::MimeDetectorCore;
+use qubit_mime::MimeFuture;
+use qubit_mime::MimeOperationOptions;
+use qubit_mime::MimeResult;
+use qubit_operation::OperationOutcome;
+use qubit_operation::OperationScope;
 
 struct ThreadWake(std::thread::Thread);
 impl Wake for ThreadWake {
@@ -72,9 +84,7 @@ fn audio_classifier() -> Arc<AsyncClassifier> {
 
 fn refinement_config() -> MimeConfig {
     let mut config = qubit_config::Config::new();
-    config
-        .set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, "true")
-        .unwrap();
+    config.set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, "true").unwrap();
     MimeConfig::from_config(&config).unwrap()
 }
 

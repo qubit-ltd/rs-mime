@@ -27,8 +27,8 @@ pub use ffprobe_command_media_stream_classifier_provider::FfprobeCommandMediaStr
 pub use file_based_media_stream_classifier::FileBasedMediaStreamClassifier;
 pub use media_stream_classifier::MediaStreamClassifier;
 pub use media_stream_classifier_backend::MediaStreamClassifierBackend;
-pub use media_stream_classifier_provider::MediaStreamClassifierProvider;
 pub use media_stream_classifier_provider::AsyncMediaStreamClassifierProvider;
+pub use media_stream_classifier_provider::MediaStreamClassifierProvider;
 pub use media_stream_classifier_registry::MediaStreamClassifierRegistry;
 pub use media_stream_classifier_spec::MediaStreamClassifierSpec;
 pub use media_stream_type::MediaStreamType;

@@ -26,11 +26,7 @@ impl SystemMimeCommandExecutor {
         command: Command,
         cancellation: CommandCancellation,
     ) -> Result<MimeCommandOutput, CommandError> {
-        Self::run_with_options(
-            runner,
-            command,
-            CommandRunOptions::new().cancellation(cancellation),
-        )
+        Self::run_with_options(runner, command, CommandRunOptions::new().cancellation(cancellation))
     }
 
     fn run_with_options(
@@ -46,9 +42,7 @@ impl SystemMimeCommandExecutor {
                     && error.output().is_some() =>
             {
                 Ok(MimeCommandOutput::from_output(
-                    error
-                        .into_output()
-                        .expect("checked command output must exist"),
+                    error.into_output().expect("checked command output must exist"),
                 ))
             }
             Err(error) => Err(error),
@@ -70,11 +64,7 @@ impl MimeCommandExecutor for SystemMimeCommandExecutor {
     /// # Errors
     /// Returns execution and cleanup failures that cannot be safely represented
     /// as command output.
-    fn run(
-        &self,
-        runner: &CommandRunner,
-        command: Command,
-    ) -> Result<MimeCommandOutput, CommandError> {
+    fn run(&self, runner: &CommandRunner, command: Command) -> Result<MimeCommandOutput, CommandError> {
         Self::run_with_options(runner, command, CommandRunOptions::new())
     }
 }

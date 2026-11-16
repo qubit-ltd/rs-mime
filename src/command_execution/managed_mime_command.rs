@@ -5,7 +5,8 @@
 // =============================================================================
 //! A structured command paired with its runner configuration.
 
-use qubit_command::{Command, CommandRunner};
+use qubit_command::Command;
+use qubit_command::CommandRunner;
 use qubit_operation::OperationGroup;
 
 /// Command request handed to the MIME execution worker.
@@ -18,11 +19,7 @@ pub(crate) struct ManagedMimeCommand {
 
 impl ManagedMimeCommand {
     /// Creates a managed request without flattening argv or runner settings.
-    pub(crate) fn new(
-        runner: CommandRunner,
-        command: Command,
-        runtime_group: OperationGroup,
-    ) -> Self {
+    pub(crate) fn new(runner: CommandRunner, command: Command, runtime_group: OperationGroup) -> Self {
         Self {
             runner,
             command,

@@ -5,11 +5,17 @@
 // =============================================================================
 //! Bounded cooperative matcher for immutable MIME repository rules.
 
-use std::{collections::HashSet, future::poll_fn, task::Poll};
+use std::collections::HashSet;
+use std::future::poll_fn;
+use std::task::Poll;
 
 use qubit_operation::OperationScope;
 
-use crate::{MimeCandidate, MimeDetectionPolicy, MimeError, MimeRepository, MimeResult};
+use crate::MimeCandidate;
+use crate::MimeDetectionPolicy;
+use crate::MimeError;
+use crate::MimeRepository;
+use crate::MimeResult;
 
 /// Maximum number of repository rules evaluated between cooperative yields.
 pub(super) const RULES_PER_BATCH: usize = 32;
@@ -89,18 +95,13 @@ pub(in crate::detector) fn select_candidates(
         .iter()
         .filter_map(|candidate| repository.get(&candidate.mime_type))
         .collect::<Vec<_>>();
-    crate::candidate_selection::select_candidate(
-        &from_filename,
-        &from_content,
-        policy,
-        |left, right| {
-            if policy == MimeDetectionPolicy::Freedesktop {
-                repository.is_a(left.name(), right.name())
-            } else {
-                left.name() == right.name()
-            }
-        },
-    )
+    crate::candidate_selection::select_candidate(&from_filename, &from_content, policy, |left, right| {
+        if policy == MimeDetectionPolicy::Freedesktop {
+            repository.is_a(left.name(), right.name())
+        } else {
+            left.name() == right.name()
+        }
+    })
     .map(|mime| {
         vec![MimeCandidate {
             mime_type: mime.name().to_owned(),

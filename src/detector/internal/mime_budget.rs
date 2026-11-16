@@ -1,9 +1,9 @@
 //! Shared bounded MIME-owned memory and staging counters.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex, Weak},
-};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::Weak;
 
 use qubit_operation::OperationId;
 
@@ -150,17 +150,9 @@ impl ReadTreeContext {
             {
                 drop(counters);
                 for reserved in &scopes {
-                    reserved
-                        .counters
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .reserved -= bytes;
+                    reserved.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= bytes;
                 }
-                self.tree
-                    .counters
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .reserved -= bytes;
+                self.tree.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= bytes;
                 return None;
             }
             counters.reserved += bytes;
@@ -199,11 +191,7 @@ impl ReadTreeContext {
 
     /// Returns bytes committed in this operation's inherited read tree.
     pub(crate) fn consumed(&self) -> u64 {
-        self.scope
-            .counters
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .consumed
+        self.scope.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
     }
 }
 
@@ -218,10 +206,7 @@ impl ReadTreeBudget {
     /// Reserves requested read capacity before provider I/O begins.
     #[allow(dead_code)]
     pub(in crate::detector) fn consumed(&self) -> u64 {
-        self.counters
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .consumed
+        self.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
     }
 }
 
@@ -235,10 +220,7 @@ pub(crate) struct ReadPermit {
 impl ReadPermit {
     /// Commits the bytes actually returned and releases unused capacity.
     pub(crate) fn commit(mut self, actual: u64) -> u64 {
-        assert!(
-            actual <= self.reserved,
-            "provider returned more bytes than reserved"
-        );
+        assert!(actual <= self.reserved, "provider returned more bytes than reserved");
         let mut counters = self.tree.counters.lock().unwrap_or_else(|e| e.into_inner());
         counters.reserved -= self.reserved;
         counters.consumed += actual;
@@ -255,17 +237,9 @@ impl ReadPermit {
 impl Drop for ReadPermit {
     fn drop(&mut self) {
         if !self.committed {
-            self.tree
-                .counters
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .reserved -= self.reserved;
+            self.tree.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= self.reserved;
             for scope in &self.scopes {
-                scope
-                    .counters
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .reserved -= self.reserved;
+                scope.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= self.reserved;
             }
         }
     }
@@ -323,18 +297,12 @@ impl MimeBudget {
         })
     }
 
-    pub(in crate::detector) fn reserve_owned(
-        self: &Arc<Self>,
-        bytes: usize,
-    ) -> Option<BudgetPermit> {
+    pub(in crate::detector) fn reserve_owned(self: &Arc<Self>, bytes: usize) -> Option<BudgetPermit> {
         self.reserve(Amount::Owned(bytes))
     }
 
     /// Counts an Arc allocation once while any request retains that allocation.
-    pub(in crate::detector) fn reserve_allocation(
-        self: &Arc<Self>,
-        allocation: &Arc<[u8]>,
-    ) -> Option<BudgetPermit> {
+    pub(in crate::detector) fn reserve_allocation(self: &Arc<Self>, allocation: &Arc<[u8]>) -> Option<BudgetPermit> {
         let identity = Arc::as_ptr(allocation) as *const u8 as usize;
         let mut counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((registered, permit)) = counters.allocations.get(&identity) {
@@ -354,18 +322,14 @@ impl MimeBudget {
             budget: Arc::clone(self),
             amount: Amount::Owned(allocation.len()),
         });
-        counters.allocations.insert(
-            identity,
-            (Arc::downgrade(allocation), Arc::downgrade(&inner)),
-        );
+        counters
+            .allocations
+            .insert(identity, (Arc::downgrade(allocation), Arc::downgrade(&inner)));
         Some(BudgetPermit { _inner: inner })
     }
 
     #[allow(dead_code)]
-    pub(in crate::detector) fn reserve_staging(
-        self: &Arc<Self>,
-        bytes: u64,
-    ) -> Option<BudgetPermit> {
+    pub(in crate::detector) fn reserve_staging(self: &Arc<Self>, bytes: u64) -> Option<BudgetPermit> {
         self.reserve(Amount::Staging(bytes))
     }
 
@@ -397,18 +361,12 @@ impl MimeBudget {
 
     #[allow(dead_code)]
     pub(in crate::detector) fn owned_bytes(&self) -> usize {
-        self.counters
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .owned
+        self.counters.lock().unwrap_or_else(|e| e.into_inner()).owned
     }
 
     #[allow(dead_code)]
     pub(in crate::detector) fn staging_bytes(&self) -> u64 {
-        self.counters
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .staging
+        self.counters.lock().unwrap_or_else(|e| e.into_inner()).staging
     }
 }
 
@@ -428,11 +386,7 @@ pub(in crate::detector) struct BudgetPermit {
 
 impl Drop for PermitInner {
     fn drop(&mut self) {
-        let mut counters = self
-            .budget
-            .counters
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut counters = self.budget.counters.lock().unwrap_or_else(|e| e.into_inner());
         match self.amount {
             Amount::Owned(bytes) => counters.owned -= bytes,
             Amount::Staging(bytes) => counters.staging -= bytes,
@@ -446,10 +400,7 @@ mod tests {
 
     #[test]
     fn operation_runtime_budget_shared_across_refinement() {
-        let budget = MimeBudget::new(Limits {
-            owned: 16,
-            staging: 8,
-        });
+        let budget = MimeBudget::new(Limits { owned: 16, staging: 8 });
         let first: Arc<[u8]> = Arc::from([1u8; 8]);
         let alias = Arc::clone(&first);
         let permit_a = budget.reserve_allocation(&first).unwrap();

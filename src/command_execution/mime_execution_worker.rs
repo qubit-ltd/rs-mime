@@ -6,10 +6,11 @@
 //! Nonblocking dispatch into the MIME execution service's bounded workers.
 
 use std::collections::VecDeque;
-use std::sync::{
-    Arc, Condvar, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
+use std::sync::Condvar;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::thread::JoinHandle;
 
 use crate::detector::MimeExecutionPort;
@@ -53,11 +54,7 @@ impl std::fmt::Debug for FixedMimeExecutionPort {
             .field("queue_capacity", &self.queue_capacity)
             .field(
                 "prepared",
-                &self
-                    .running
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .is_some(),
+                &self.running.lock().unwrap_or_else(|e| e.into_inner()).is_some(),
             )
             .field("stopped", &self.stopped.load(Ordering::Acquire))
             .finish()
@@ -126,11 +123,7 @@ impl crate::detector::MimeExecutionPort for FixedMimeExecutionPort {
         let Some(running) = running.as_ref() else {
             return Err(job);
         };
-        let mut state = running
-            .queue
-            .state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut state = running.queue.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.closed || state.jobs.len() >= running.queue.capacity {
             return Err(job);
         }
@@ -148,11 +141,7 @@ impl crate::detector::MimeExecutionPort for FixedMimeExecutionPort {
         };
         drop(slot);
         {
-            let mut state = running
-                .queue
-                .state
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut state = running.queue.state.lock().unwrap_or_else(|e| e.into_inner());
             state.closed = true;
         }
         running.queue.ready.notify_all();

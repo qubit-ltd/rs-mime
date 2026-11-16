@@ -11,17 +11,16 @@ use crate::command_execution::MimeCommandOutput;
 use crate::command_execution::require_complete_stdout;
 
 /// Converts a completed ffprobe invocation into the domain result.
-pub(crate) fn stream_type_from_output(
-    output: &MimeCommandOutput,
-) -> Result<MediaStreamType, MimeError> {
+pub(crate) fn stream_type_from_output(output: &MimeCommandOutput) -> Result<MediaStreamType, MimeError> {
     match output.exit_code {
         Some(0) => {
-            let stdout =
-                require_complete_stdout(output).map_err(|reason| MimeError::ClassifierBackend {
-                    backend: "ffprobe".to_owned(),
-                    reason: reason.to_owned(),
-                })?;
-            Ok(crate::FfprobeCommandMediaStreamClassifier::classify_stream_listing(stdout))
+            let stdout = require_complete_stdout(output).map_err(|reason| MimeError::ClassifierBackend {
+                backend: "ffprobe".to_owned(),
+                reason: reason.to_owned(),
+            })?;
+            Ok(crate::FfprobeCommandMediaStreamClassifier::classify_stream_listing(
+                stdout,
+            ))
         }
         Some(_) => Ok(MediaStreamType::None),
         None => Err(MimeError::ClassifierBackend {

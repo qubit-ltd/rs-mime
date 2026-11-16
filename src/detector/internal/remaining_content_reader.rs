@@ -125,8 +125,5 @@ fn checked_offset(base: u64, offset: i64) -> std::io::Result<u64> {
 /// # Returns
 /// An invalid-input I/O error.
 fn invalid_seek() -> Error {
-    Error::new(
-        ErrorKind::InvalidInput,
-        "seek is outside the remaining content window",
-    )
+    Error::new(ErrorKind::InvalidInput, "seek is outside the remaining content window")
 }

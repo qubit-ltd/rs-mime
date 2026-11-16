@@ -7,7 +7,8 @@
 
 use std::sync::Arc;
 
-use qubit_fs::{AsyncFileSystem, Path as FsPath};
+use qubit_fs::AsyncFileSystem;
+use qubit_fs::Path as FsPath;
 
 /// Completeness claim attached to byte input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,7 +41,8 @@ pub enum OwnedMimeInput {
 }
 
 impl OwnedMimeInput {
-    /// Builds a byte input and records whether it is a prefix or complete object.
+    /// Builds a byte input and records whether it is a prefix or complete
+    /// object.
     #[must_use]
     pub fn bytes(content: Arc<[u8]>, extent: InputExtent) -> Self {
         Self::Bytes {
@@ -54,9 +56,7 @@ impl OwnedMimeInput {
     #[must_use]
     pub fn with_filename(self, filename: impl Into<String>) -> Self {
         match self {
-            Self::Bytes {
-                content, extent, ..
-            } => Self::Bytes {
+            Self::Bytes { content, extent, .. } => Self::Bytes {
                 content,
                 extent,
                 filename: Some(filename.into()),

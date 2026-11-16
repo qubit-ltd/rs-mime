@@ -5,13 +5,17 @@
 // =============================================================================
 //! Explicit asynchronous MIME detector interface.
 
-use super::{
-    mime_detection_report::MimeCandidates, mime_input::BorrowedMimeInput,
-    mime_operation_options::MimeOperationOptions,
-};
-use crate::{ContentRequirement, MimeResult};
+use std::fmt::Debug;
+use std::future::Future;
+use std::pin::Pin;
+
 use qubit_operation::OperationScope;
-use std::{fmt::Debug, future::Future, pin::Pin};
+
+use super::mime_detection_report::MimeCandidates;
+use super::mime_input::BorrowedMimeInput;
+use super::mime_operation_options::MimeOperationOptions;
+use crate::ContentRequirement;
+use crate::MimeResult;
 
 /// Random-access provider capability declared by an async backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

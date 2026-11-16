@@ -33,7 +33,9 @@ use crate::command_execution::require_complete_stdout;
 use crate::detector::MimeExecutionServices;
 use crate::detector::mime_input::OwnedMimeInput;
 use crate::detector::stream_type_from_output;
-use crate::managed_temp_staging::{ManagedStagingLimits, stage_borrowed_bytes_in, stage_owned_in};
+use crate::managed_temp_staging::ManagedStagingLimits;
+use crate::managed_temp_staging::stage_borrowed_bytes_in;
+use crate::managed_temp_staging::stage_owned_in;
 
 /// Media stream classifier backed by the `ffprobe` command.
 ///
@@ -54,7 +56,8 @@ pub struct FfprobeCommandMediaStreamClassifier {
     max_staging_size: u64,
     /// Optional operation services for explicit asynchronous classification.
     execution_services: Option<Arc<MimeExecutionServices>>,
-    /// Optional test or adapter executor; production uses the managed command service.
+    /// Optional test or adapter executor; production uses the managed command
+    /// service.
     async_executor: Option<Arc<dyn AsyncMimeCommandExecutor>>,
 }
 
@@ -257,18 +260,13 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// `true` when the probe succeeds and its output is complete.
-    pub(crate) fn is_available_with_executor(
-        config: &MimeConfig,
-        executor: &dyn MimeCommandExecutor,
-    ) -> bool {
+    pub(crate) fn is_available_with_executor(config: &MimeConfig, executor: &dyn MimeCommandExecutor) -> bool {
         executor
             .run(
                 &Self::default_command_runner(config),
                 Command::new(Self::COMMAND).arg("-version"),
             )
-            .is_ok_and(|output| {
-                output.exit_code == Some(0) && require_complete_stdout(&output).is_ok()
-            })
+            .is_ok_and(|output| output.exit_code == Some(0) && require_complete_stdout(&output).is_ok())
     }
 
     /// Executes FFprobe for one local file.
@@ -314,11 +312,9 @@ impl FfprobeCommandMediaStreamClassifier {
         let output = executor.run(&self.command_runner, command)?;
         match output.exit_code {
             Some(0) => {
-                let stdout = require_complete_stdout(&output).map_err(|reason| {
-                    MimeError::ClassifierBackend {
-                        backend: Self::COMMAND.to_owned(),
-                        reason: reason.to_owned(),
-                    }
+                let stdout = require_complete_stdout(&output).map_err(|reason| MimeError::ClassifierBackend {
+                    backend: Self::COMMAND.to_owned(),
+                    reason: reason.to_owned(),
                 })?;
                 Ok(Self::classify_stream_listing(stdout))
             }
@@ -463,16 +459,11 @@ impl AsyncMediaStreamClassifierBackend for FfprobeCommandMediaStreamClassifier {
                 command = command.working_directory(working_directory);
             }
             let managed_executor = ManagedCommandExecutor::new(worker);
-            let executor: &dyn AsyncMimeCommandExecutor =
-                self.async_executor.as_deref().unwrap_or(&managed_executor);
+            let executor: &dyn AsyncMimeCommandExecutor = self.async_executor.as_deref().unwrap_or(&managed_executor);
             let output = executor
                 .run_in(
                     scope,
-                    ManagedMimeCommand::new(
-                        self.command_runner.clone(),
-                        command,
-                        services.root_group.clone(),
-                    ),
+                    ManagedMimeCommand::new(self.command_runner.clone(), command, services.root_group.clone()),
                     staged,
                 )
                 .await?;
@@ -483,29 +474,43 @@ impl AsyncMediaStreamClassifierBackend for FfprobeCommandMediaStreamClassifier {
 
 #[cfg(test)]
 mod async_operation_tests {
-    use super::*;
-    use qubit_fs::metadata::{
-        FileSystemCapabilities, FileSystemId, FileSystemInfo, FileSystemLimits, OpenedFileInfo,
-        SymlinkPolicy,
-    };
-    use qubit_fs::path::{PathConstraints, PathSemantics};
-    use qubit_fs::spi::{
-        AsyncFileSystemSpi, OpenReaderRequest, OpenedAsyncReader, ProviderOperation,
-        ProviderOperations, ProviderProperties, SpiFuture, StatRequest, StatResponse,
-    };
-    use qubit_fs::{AsyncFileSystem, FsResult};
-    use qubit_io::AsyncInput;
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Condvar;
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::task::{Context, Poll, Wake, Waker};
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::task::Context;
+    use std::task::Poll;
+    use std::task::Wake;
+    use std::task::Waker;
 
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::FsResult;
+    use qubit_fs::metadata::FileSystemCapabilities;
+    use qubit_fs::metadata::FileSystemId;
+    use qubit_fs::metadata::FileSystemInfo;
+    use qubit_fs::metadata::FileSystemLimits;
+    use qubit_fs::metadata::OpenedFileInfo;
+    use qubit_fs::metadata::SymlinkPolicy;
+    use qubit_fs::path::PathConstraints;
+    use qubit_fs::path::PathSemantics;
+    use qubit_fs::spi::AsyncFileSystemSpi;
+    use qubit_fs::spi::OpenReaderRequest;
+    use qubit_fs::spi::OpenedAsyncReader;
+    use qubit_fs::spi::ProviderOperation;
+    use qubit_fs::spi::ProviderOperations;
+    use qubit_fs::spi::ProviderProperties;
+    use qubit_fs::spi::SpiFuture;
+    use qubit_fs::spi::StatRequest;
+    use qubit_fs::spi::StatResponse;
+    use qubit_io::AsyncInput;
+    use qubit_operation::ResourceRef;
+
+    use super::*;
     use crate::MimeExecutionPort;
     use crate::command_execution::MimeCommandOutput;
     use crate::managed_temp_staging::StagedMimeInput;
-    use qubit_operation::ResourceRef;
 
     #[derive(Debug)]
     struct InlinePort;
@@ -543,8 +548,7 @@ mod async_operation_tests {
         ) -> MimeFuture<'a, MimeCommandOutput> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let path = input.path().expect("staged path should be available");
-            *self.staged_len.lock().unwrap() =
-                std::fs::metadata(&path).ok().map(|metadata| metadata.len());
+            *self.staged_len.lock().unwrap() = std::fs::metadata(&path).ok().map(|metadata| metadata.len());
             if self.fail {
                 let blocker = path.parent().unwrap().join("refinement-cleanup-blocker");
                 std::fs::write(&blocker, b"retain temp owner").unwrap();
@@ -590,8 +594,7 @@ mod async_operation_tests {
                     PathSemantics::Hierarchical,
                 ),
                 ProviderOperations::new().with(ProviderOperation::OpenReader),
-                FileSystemCapabilities::new()
-                    .with_guaranteed(qubit_fs::metadata::FileSystemCapability::Read),
+                FileSystemCapabilities::new().with_guaranteed(qubit_fs::metadata::FileSystemCapability::Read),
                 FileSystemLimits::unknown(),
                 PathConstraints::absolute(),
                 SymlinkPolicy::Reject,
@@ -615,21 +618,12 @@ mod async_operation_tests {
             Box::pin(async { panic!("refinement staging must not stat provider input") })
         }
 
-        fn open_reader<'a>(
-            &'a self,
-            request: OpenReaderRequest<'a>,
-        ) -> SpiFuture<'a, FsResult<OpenedAsyncReader>> {
+        fn open_reader<'a>(&'a self, request: OpenReaderRequest<'a>) -> SpiFuture<'a, FsResult<OpenedAsyncReader>> {
             let content = self.content.clone();
             Box::pin(async move {
                 Ok(OpenedAsyncReader::new(
-                    OpenedFileInfo::new(
-                        FileSystemId::new("refinement-test").unwrap(),
-                        request.path().clone(),
-                    ),
-                    Box::new(ProviderBytes {
-                        content,
-                        position: 0,
-                    }),
+                    OpenedFileInfo::new(FileSystemId::new("refinement-test").unwrap(), request.path().clone()),
+                    Box::new(ProviderBytes { content, position: 0 }),
                 ))
             })
         }
@@ -649,8 +643,7 @@ mod async_operation_tests {
             count: usize,
         ) -> Poll<std::io::Result<usize>> {
             let read = count.min(self.content.len().saturating_sub(self.position));
-            output[index..index + read]
-                .copy_from_slice(&self.content[self.position..self.position + read]);
+            output[index..index + read].copy_from_slice(&self.content[self.position..self.position + read]);
             self.position += read;
             Poll::Ready(Ok(read))
         }
@@ -726,12 +719,8 @@ mod async_operation_tests {
     #[test]
     fn refinement_operation_ffprobe_stages_and_cleans_input() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 4 })
-            .unwrap();
-        let services = Arc::new(
-            MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap(),
-        );
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());
         services.prepare().unwrap();
         let command_executor = Arc::new(FakeCommandExecutor::default());
         let classifier = Arc::new(
@@ -765,16 +754,10 @@ mod async_operation_tests {
             qubit_operation::OperationOutcome::Succeeded(MediaStreamType::AudioOnly)
         ));
         assert_eq!(command_executor.calls.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            *command_executor.staged_len.lock().unwrap(),
-            Some(40 * 1024)
-        );
+        assert_eq!(*command_executor.staged_len.lock().unwrap(), Some(40 * 1024));
         let _settlement = block_on(operation.wait_settlement());
         let path = command_executor.path.lock().unwrap().clone().unwrap();
-        assert!(
-            !path.exists(),
-            "staged owner should be cleaned at settlement"
-        );
+        assert!(!path.exists(), "staged owner should be cleaned at settlement");
         let shutdown = services.shutdown();
         block_on(shutdown.wait_services_settled()).unwrap();
         shutdown.stop_services().unwrap();
@@ -784,12 +767,8 @@ mod async_operation_tests {
     #[test]
     fn refinement_operation_zero_staging_budget_does_not_launch_command() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 4 })
-            .unwrap();
-        let services = Arc::new(
-            MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap(),
-        );
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());
         services.prepare().unwrap();
         let command_executor = Arc::new(FakeCommandExecutor::default());
         let classifier = Arc::new(
@@ -834,12 +813,8 @@ mod async_operation_tests {
     #[test]
     fn refinement_operation_staging_overlimit_does_not_launch_command() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 4 })
-            .unwrap();
-        let services = Arc::new(
-            MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap(),
-        );
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());
         services.prepare().unwrap();
         let command_executor = Arc::new(FakeCommandExecutor::default());
         let classifier = Arc::new(
@@ -871,10 +846,7 @@ mod async_operation_tests {
             .unwrap();
         assert!(matches!(
             block_on(operation.wait_outcome()).unwrap(),
-            qubit_operation::OperationOutcome::Failed(MimeError::BudgetExceeded {
-                kind: "staging",
-                ..
-            })
+            qubit_operation::OperationOutcome::Failed(MimeError::BudgetExceeded { kind: "staging", .. })
         ));
         assert_eq!(command_executor.calls.load(Ordering::SeqCst), 0);
         let _settlement = block_on(operation.wait_settlement());
@@ -887,12 +859,8 @@ mod async_operation_tests {
     #[test]
     fn refinement_operation_stop_retains_staged_input_until_command_returns() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 4 })
-            .unwrap();
-        let services = Arc::new(
-            MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap(),
-        );
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());
         services.prepare().unwrap();
         let gate = Arc::new(TestGate::default());
         let command_executor = Arc::new(FakeCommandExecutor {
@@ -935,18 +903,12 @@ mod async_operation_tests {
         assert!(path.exists(), "active command must retain the staged input");
         assert_eq!(budget.used_bytes(), 40 * 1024);
         let _stop = operation.request_stop(qubit_operation::StopReason::UserCancelled);
-        assert!(
-            path.exists(),
-            "stop cannot release input before command return"
-        );
+        assert!(path.exists(), "stop cannot release input before command return");
         assert_eq!(budget.used_bytes(), 40 * 1024);
         gate.release();
         let _outcome = block_on(operation.wait_outcome()).unwrap();
         let _settlement = block_on(operation.wait_settlement());
-        assert!(
-            !path.exists(),
-            "staged input should clean after command returns"
-        );
+        assert!(!path.exists(), "staged input should clean after command returns");
         assert_eq!(budget.used_bytes(), 0);
         let shutdown = services.shutdown();
         block_on(shutdown.wait_services_settled()).unwrap();
@@ -957,12 +919,8 @@ mod async_operation_tests {
     #[test]
     fn refinement_operation_reuses_staging_budget() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 4 })
-            .unwrap();
-        let services = Arc::new(
-            MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap(),
-        );
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());
         services.prepare().unwrap();
         let command_executor = Arc::new(FakeCommandExecutor::default());
         let classifier = Arc::new(
@@ -1001,16 +959,9 @@ mod async_operation_tests {
             .unwrap();
         assert!(matches!(
             block_on(operation.wait_outcome()).unwrap(),
-            qubit_operation::OperationOutcome::Failed(MimeError::BudgetExceeded {
-                kind: "staging",
-                ..
-            })
+            qubit_operation::OperationOutcome::Failed(MimeError::BudgetExceeded { kind: "staging", .. })
         ));
-        assert_eq!(
-            tree.remaining(),
-            0,
-            "prior bytes and the sentinel share one read tree"
-        );
+        assert_eq!(tree.remaining(), 0, "prior bytes and the sentinel share one read tree");
         assert_eq!(command_executor.calls.load(Ordering::SeqCst), 0);
         let _settlement = block_on(operation.wait_settlement());
         assert_eq!(services.staging_budget().used_bytes(), 0);
@@ -1024,12 +975,8 @@ mod async_operation_tests {
     #[test]
     fn refinement_operation_double_error_retains_and_recovers_staging_owner() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 4 })
-            .unwrap();
-        let services = Arc::new(
-            MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap(),
-        );
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());
         services.prepare().unwrap();
         let command_executor = Arc::new(FakeCommandExecutor {
             calls: AtomicUsize::new(0),
@@ -1072,15 +1019,9 @@ mod async_operation_tests {
             })
         ));
         let report = block_on(operation.wait_settlement());
-        assert_eq!(
-            report.status,
-            qubit_operation::SettlementStatus::RecoveryRequired
-        );
+        assert_eq!(report.status, qubit_operation::SettlementStatus::RecoveryRequired);
         assert_eq!(report.recoveries.len(), 1);
-        assert_eq!(
-            services.staging_budget().used_bytes(),
-            b"primary error".len() as u64
-        );
+        assert_eq!(services.staging_budget().used_bytes(), b"primary error".len() as u64);
         let blocker = command_executor.blocker.lock().unwrap().clone().unwrap();
         std::fs::remove_file(blocker).unwrap();
         let attempt = report.recoveries[0].try_retry().unwrap();

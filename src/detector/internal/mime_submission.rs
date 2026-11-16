@@ -1,20 +1,22 @@
 //! Submission helpers that preserve input ownership until admission succeeds.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use qubit_operation::OperationScope;
 
-use crate::detector::{
-    mime_detection_report::MimeBudgetSummary,
-    mime_execution_services::MimeExecutionServices,
-    mime_input::{InputExtent, OwnedMimeInput},
-    mime_operation::MimeSubmitRejection,
-    mime_operation_options::MimeOperationOptions,
-};
-use crate::{
-    AsyncMimeDetectorBackend, BorrowedMimeInput, ContentRequirement, MimeDetectionReport,
-    MimeError, MimeResult,
-};
+use crate::AsyncMimeDetectorBackend;
+use crate::BorrowedMimeInput;
+use crate::ContentRequirement;
+use crate::MimeDetectionReport;
+use crate::MimeError;
+use crate::MimeResult;
+use crate::detector::mime_detection_report::MimeBudgetSummary;
+use crate::detector::mime_execution_services::MimeExecutionServices;
+use crate::detector::mime_input::InputExtent;
+use crate::detector::mime_input::OwnedMimeInput;
+use crate::detector::mime_operation::MimeSubmitRejection;
+use crate::detector::mime_operation_options::MimeOperationOptions;
 
 pub(in crate::detector) type InputCell = Arc<Mutex<Option<OwnedMimeInput>>>;
 
@@ -46,18 +48,11 @@ pub(in crate::detector) fn preflight(
     max_buffer_size: usize,
     services: &MimeExecutionServices,
 ) -> Result<crate::detector::internal::mime_budget::BudgetPermit, MimeSubmitRejection> {
-    if options.max_buffer_bytes == Some(0)
-        || options.max_staging_bytes == Some(0)
-        || options.max_read_bytes == Some(0)
+    if options.max_buffer_bytes == Some(0) || options.max_staging_bytes == Some(0) || options.max_read_bytes == Some(0)
     {
-        return Err(MimeSubmitRejection::InvalidOptions(
-            "a request budget is zero".into(),
-        ));
+        return Err(MimeSubmitRejection::InvalidOptions("a request budget is zero".into()));
     }
-    let limit = options
-        .max_buffer_bytes
-        .unwrap_or(max_buffer_size)
-        .min(max_buffer_size);
+    let limit = options.max_buffer_bytes.unwrap_or(max_buffer_size).min(max_buffer_size);
     match input {
         OwnedMimeInput::Bytes { content, .. } => {
             if content.len() > limit {
@@ -137,80 +132,75 @@ pub(in crate::detector) async fn detect(
             )
         }
         OwnedMimeInput::Provider { file_system, path } => {
-            let candidates =
-                if matches!(backend.content_requirement(), ContentRequirement::Complete)
-                    || backend.random_access_capability()
-                        == crate::RandomAccessCapability::SamplesSameObject
-                {
-                    backend
-                        .guess_content_in(
-                            &_scope,
-                            BorrowedMimeInput::Provider {
-                                file_system: &file_system,
-                                path: &path,
-                            },
-                            &options,
-                        )
-                        .await?
-                } else {
-                    let read_limit = options
-                        .max_read_bytes
-                        .unwrap_or(services.max_read_bytes)
-                        .min(services.max_read_bytes);
-                    let max_bytes = options
-                        .max_buffer_bytes
-                        .unwrap_or(max_buffer_size)
-                        .min(max_buffer_size)
+            let candidates = if matches!(backend.content_requirement(), ContentRequirement::Complete)
+                || backend.random_access_capability() == crate::RandomAccessCapability::SamplesSameObject
+            {
+                backend
+                    .guess_content_in(
+                        &_scope,
+                        BorrowedMimeInput::Provider {
+                            file_system: &file_system,
+                            path: &path,
+                        },
+                        &options,
+                    )
+                    .await?
+            } else {
+                let read_limit = options
+                    .max_read_bytes
+                    .unwrap_or(services.max_read_bytes)
+                    .min(services.max_read_bytes);
+                let max_bytes = options
+                    .max_buffer_bytes
+                    .unwrap_or(max_buffer_size)
+                    .min(max_buffer_size)
                     .min(match backend.content_requirement() {
                         ContentRequirement::Prefix(required) => required,
                         ContentRequirement::Complete => max_buffer_size,
                     })
-                        .min(usize::try_from(read_limit).unwrap_or(usize::MAX));
-                    let read_permit =
-                        read_tree
-                            .reserve(max_bytes as u64)
-                            .ok_or(MimeError::BudgetExceeded {
-                                kind: "read",
-                                requested: max_bytes as u64,
-                                limit: read_tree.remaining(),
-                            })?;
-                    let outcome = file_system
-                        .read_prefix(&path, qubit_fs::read::ReadOptions::default(), max_bytes)
-                        .await;
-                    let content = match outcome {
-                        Ok(outcome) => outcome.into_bytes(),
-                        Err(error) => {
-                            read_permit.commit(max_bytes as u64);
-                            return Err(error.into());
-                        }
-                    };
-                    let bytes_read = content.len() as u64;
-                    let _read = read_permit.commit(bytes_read);
-                    let candidates = backend
-                        .guess_content_in(
-                            &_scope,
-                            BorrowedMimeInput::Bytes {
-                                content: &content,
-                                extent: InputExtent::Prefix,
-                                filename: path.file_name(),
-                            },
-                            &options,
-                        )
-                        .await?;
-                    return Ok(MimeDetectionReport {
-                        mime_type: candidates
-                            .candidates
-                            .first()
-                            .map(|candidate| candidate.mime_type.clone()),
-                        backend_id,
-                        inspected_extent: candidates.inspected_extent,
-                        budget: MimeBudgetSummary {
-                            owned_bytes: content.len(),
-                            bytes_read,
-                            staging_bytes: 0,
-                        },
-                    });
+                    .min(usize::try_from(read_limit).unwrap_or(usize::MAX));
+                let read_permit = read_tree.reserve(max_bytes as u64).ok_or(MimeError::BudgetExceeded {
+                    kind: "read",
+                    requested: max_bytes as u64,
+                    limit: read_tree.remaining(),
+                })?;
+                let outcome = file_system
+                    .read_prefix(&path, qubit_fs::read::ReadOptions::default(), max_bytes)
+                    .await;
+                let content = match outcome {
+                    Ok(outcome) => outcome.into_bytes(),
+                    Err(error) => {
+                        read_permit.commit(max_bytes as u64);
+                        return Err(error.into());
+                    }
                 };
+                let bytes_read = content.len() as u64;
+                let _read = read_permit.commit(bytes_read);
+                let candidates = backend
+                    .guess_content_in(
+                        &_scope,
+                        BorrowedMimeInput::Bytes {
+                            content: &content,
+                            extent: InputExtent::Prefix,
+                            filename: path.file_name(),
+                        },
+                        &options,
+                    )
+                    .await?;
+                return Ok(MimeDetectionReport {
+                    mime_type: candidates
+                        .candidates
+                        .first()
+                        .map(|candidate| candidate.mime_type.clone()),
+                    backend_id,
+                    inspected_extent: candidates.inspected_extent,
+                    budget: MimeBudgetSummary {
+                        owned_bytes: content.len(),
+                        bytes_read,
+                        staging_bytes: 0,
+                    },
+                });
+            };
             (
                 candidates
                     .candidates

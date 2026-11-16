@@ -11,8 +11,9 @@
 //! implement [`qubit_spi::ProviderDefinition<MimeDetectorSpec>`], which
 //! combines detector creation with self-described registration metadata.
 
-use super::MimeDetectorSpec;
 use qubit_spi::ProviderDefinition;
+
+use super::MimeDetectorSpec;
 
 /// Marker trait for MIME detector providers.
 ///
@@ -39,9 +40,7 @@ pub trait MimeDetectorProvider: ProviderDefinition<MimeDetectorSpec> {
 impl<T> MimeDetectorProvider for T where T: ProviderDefinition<MimeDetectorSpec> + ?Sized {}
 
 /// Explicit async capability offered by a detector provider.
-pub trait AsyncMimeDetectorProvider:
-    qubit_spi::ProviderMetadata + std::fmt::Debug + Send + Sync
-{
+pub trait AsyncMimeDetectorProvider: qubit_spi::ProviderMetadata + std::fmt::Debug + Send + Sync {
     /// Creates an async backend bound to this operation service set.
     fn create_async_backend(
         &self,

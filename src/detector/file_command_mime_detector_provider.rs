@@ -45,10 +45,7 @@ impl FileCommandMimeDetectorProvider {
         config: &MimeConfig,
         services: MimeExecutionServices,
     ) -> Arc<dyn AsyncMimeDetectorBackend> {
-        Arc::new(
-            FileCommandMimeDetector::from_mime_config(config.clone())
-                .with_execution_services(services),
-        )
+        Arc::new(FileCommandMimeDetector::from_mime_config(config.clone()).with_execution_services(services))
     }
 }
 
@@ -67,21 +64,14 @@ impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
     /// # Errors
     /// Returns an unavailable provider failure if the system `file` command
     /// cannot be executed in the current environment.
-    fn create_configured(
-        &self,
-        config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         if !FileCommandMimeDetector::is_available_with_config(config) {
-            return Err(ProviderFailure::unavailable(
-                MimeError::DetectorUnavailable {
-                    name: "file".to_owned(),
-                    reason: "`file` command is not available".to_owned(),
-                },
-            ));
+            return Err(ProviderFailure::unavailable(MimeError::DetectorUnavailable {
+                name: "file".to_owned(),
+                reason: "`file` command is not available".to_owned(),
+            }));
         }
-        Ok(Arc::new(FileCommandMimeDetector::from_mime_config(
-            config.clone(),
-        )))
+        Ok(Arc::new(FileCommandMimeDetector::from_mime_config(config.clone())))
     }
 }
 
@@ -107,8 +97,7 @@ impl super::AsyncMimeDetectorProvider for FileCommandMimeDetectorProvider {
         services: &MimeExecutionServices,
     ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
         Ok(Arc::new(
-            FileCommandMimeDetector::from_mime_config(config.clone())
-                .with_execution_services(services.clone()),
+            FileCommandMimeDetector::from_mime_config(config.clone()).with_execution_services(services.clone()),
         ))
     }
 
