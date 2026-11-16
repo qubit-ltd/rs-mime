@@ -19,7 +19,9 @@ pub mod mime_execution_services;
 pub mod mime_input;
 pub mod mime_operation;
 pub mod mime_operation_options;
-pub(crate) use internal::mime_budget::{ReadPermit, ReadTreeContext, StagingBudget, StagingPermit};
+pub(crate) use internal::mime_budget::{
+    OwnedMemoryPermit, ReadPermit, ReadTreeContext, StagingBudget, StagingPermit,
+};
 /// Content backend contracts and adapters.
 pub mod mime_content_backend;
 pub(crate) mod mime_detection_policy;

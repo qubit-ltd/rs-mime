@@ -52,7 +52,7 @@ use crate::detector::mime_input::{
     BorrowedMimeInput, InputExtent, InspectedExtent, OwnedMimeInput,
 };
 use crate::detector::mime_operation_options::MimeOperationOptions;
-use crate::managed_temp_staging::{ManagedStagingLimits, stage_owned_in};
+use crate::managed_temp_staging::{ManagedStagingLimits, stage_borrowed_bytes_in, stage_owned_in};
 
 /// MIME detector backed by `file --mime-type --brief`.
 ///
@@ -76,6 +76,9 @@ pub struct FileCommandMimeDetector<'a> {
     /// The command runner used for command execution.
     command_runner: CommandRunner,
     execution_services: Option<MimeExecutionServices>,
+    max_staging_bytes: u64,
+    #[cfg(test)]
+    test_command_executor: Option<Arc<dyn AsyncMimeCommandExecutor>>,
 }
 
 impl std::fmt::Debug for FileCommandMimeDetector<'_> {
@@ -177,6 +180,7 @@ impl<'a> FileCommandMimeDetector<'a> {
         command_runner: CommandRunner,
         config: MimeConfig,
     ) -> Self {
+        let max_staging_bytes = config.media_stream_max_staging_size();
         let mut core = MimeDetectorCore::from_mime_config(config);
         core.set_mime_relations(repository.relations());
         Self {
@@ -184,6 +188,9 @@ impl<'a> FileCommandMimeDetector<'a> {
             repository,
             command_runner,
             execution_services: None,
+            max_staging_bytes,
+            #[cfg(test)]
+            test_command_executor: None,
         }
     }
 
@@ -191,6 +198,12 @@ impl<'a> FileCommandMimeDetector<'a> {
     #[must_use]
     pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
         self.execution_services = Some(services);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_test_command_executor(mut self, executor: Arc<dyn AsyncMimeCommandExecutor>) -> Self {
+        self.test_command_executor = Some(executor);
         self
     }
 
@@ -538,52 +551,75 @@ impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
         options: &'b MimeOperationOptions,
     ) -> MimeFuture<'b, MimeCandidates> {
         Box::pin(async move {
-            let owned = match input {
+            if let Some(reason) = scope.context().stop_reason() {
+                return Err(MimeError::OperationStopped(qubit_operation::StopReport {
+                    reason,
+                    accepted_at: None,
+                }));
+            }
+            if matches!(
+                input,
                 BorrowedMimeInput::Bytes {
-                    content,
-                    extent,
-                    filename,
-                } => {
-                    if extent != InputExtent::Complete {
-                        return Err(MimeError::CompleteContentRequired);
-                    }
-                    OwnedMimeInput::Bytes {
-                        content: Arc::from(content),
-                        extent,
-                        filename: filename.map(str::to_owned),
-                    }
+                    extent: InputExtent::Prefix,
+                    ..
                 }
-                BorrowedMimeInput::Provider { file_system, path } => OwnedMimeInput::Provider {
-                    file_system: Arc::new(file_system.clone()),
-                    path: path.clone(),
-                },
-            };
+            ) {
+                return Err(MimeError::CompleteContentRequired);
+            }
             let services = self
                 .execution_services
                 .as_ref()
                 .ok_or(MimeError::ExecutionServicesRequired)?;
+            if options.max_staging_bytes == Some(0) {
+                return Err(MimeError::InvalidOperationBudget);
+            }
             let max_bytes = options
                 .max_staging_bytes
-                .unwrap_or(256 * 1024 * 1024)
-                .min(256 * 1024 * 1024);
+                .unwrap_or(self.max_staging_bytes)
+                .min(self.max_staging_bytes)
+                .min(services.staging_budget().limit());
+            if max_bytes == 0 {
+                return Err(MimeError::InvalidOperationBudget);
+            }
             let worker = MimeExecutionWorker::new(Arc::clone(&services.execution));
-            let read_tree = services.read_tree_for_operation(scope.id())?;
-            let staged = stage_owned_in(
-                scope,
-                owned,
-                ManagedStagingLimits {
-                    max_bytes,
-                    budget: services.staging_budget(),
-                    worker: worker.clone(),
-                },
-                read_tree,
-            )
-            .await?;
+            let limits = ManagedStagingLimits {
+                max_bytes,
+                budget: services.staging_budget(),
+                worker: worker.clone(),
+            };
+            // Byte staging does not consult or charge provider-read context.
+            let staged = match input {
+                BorrowedMimeInput::Bytes {
+                    content, extent, ..
+                } => stage_borrowed_bytes_in(scope, content, extent, limits).await?,
+                BorrowedMimeInput::Provider { file_system, path } => {
+                    let read_tree = services.read_tree_for_operation(scope.id())?;
+                    stage_owned_in(
+                        scope,
+                        OwnedMimeInput::Provider {
+                            file_system: Arc::new(file_system.clone()),
+                            path: path.clone(),
+                        },
+                        limits,
+                        read_tree,
+                    )
+                    .await?
+                }
+            };
             let command = ManagedMimeCommand::new(
                 self.command_runner.clone(),
                 Self::command_for_path(&staged.path()?),
                 services.root_group.clone(),
             );
+            #[cfg(test)]
+            let output = if let Some(executor) = &self.test_command_executor {
+                executor.run_in(scope, command, staged).await?
+            } else {
+                ManagedCommandExecutor::new(worker)
+                    .run_in(scope, command, staged)
+                    .await?
+            };
+            #[cfg(not(test))]
             let output = ManagedCommandExecutor::new(worker)
                 .run_in(scope, command, staged)
                 .await?;
@@ -636,6 +672,529 @@ fn is_mime_name(value: &str) -> bool {
                 .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
     };
     token(kind) && token(subtype)
+}
+
+#[cfg(test)]
+mod file_operation_tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::{Context, Poll, Wake, Waker};
+
+    use crate::command_execution::MimeCommandOutput;
+    use crate::managed_temp_staging::StagedMimeInput;
+    use crate::{MimeExecutionPort, MimeOperationOptions};
+    use qubit_fs::metadata::{
+        FileSystemCapabilities, FileSystemId, FileSystemInfo, FileSystemLimits, OpenedFileInfo,
+        SymlinkPolicy,
+    };
+    use qubit_fs::path::{PathConstraints, PathSemantics};
+    use qubit_fs::spi::{
+        AsyncFileSystemSpi, OpenReaderRequest, OpenedAsyncReader, ProviderOperation,
+        ProviderOperations, ProviderProperties, SpiFuture, StatRequest, StatResponse,
+    };
+    use qubit_fs::{AsyncFileSystem, FsResult, Path as FsPath};
+    use qubit_io::AsyncInput;
+    use qubit_operation::{OperationOutcome, ResourceRef, StopReason};
+
+    struct ThreadWake(std::thread::Thread);
+    impl Wake for ThreadWake {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => std::thread::park(),
+            }
+        }
+    }
+
+    struct ImmediatePort;
+    impl std::fmt::Debug for ImmediatePort {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("ImmediatePort")
+        }
+    }
+
+    struct ProviderFs {
+        properties: ProviderProperties,
+        bytes: Vec<u8>,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl ProviderFs {
+        fn new(bytes: &[u8]) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>) {
+            let properties = ProviderProperties::new(
+                FileSystemInfo::new(
+                    FileSystemId::new("mime-file-operation-test").unwrap(),
+                    "mime-file-operation-test",
+                    PathSemantics::Hierarchical,
+                ),
+                ProviderOperations::new().with(ProviderOperation::OpenReader),
+                FileSystemCapabilities::new()
+                    .with_guaranteed(qubit_fs::metadata::FileSystemCapability::Read),
+                FileSystemLimits::unknown(),
+                PathConstraints::absolute(),
+                SymlinkPolicy::Reject,
+            )
+            .unwrap();
+            let reads = Arc::new(AtomicUsize::new(0));
+            let filesystem = AsyncFileSystem::from_spi(Self {
+                properties,
+                bytes: bytes.to_vec(),
+                reads: Arc::clone(&reads),
+            })
+            .unwrap();
+            (Arc::new(filesystem), reads)
+        }
+    }
+
+    impl AsyncFileSystemSpi for ProviderFs {
+        fn properties(&self) -> ProviderProperties {
+            self.properties.clone()
+        }
+
+        fn stat<'a>(&'a self, _request: StatRequest<'a>) -> SpiFuture<'a, FsResult<StatResponse>> {
+            Box::pin(async { panic!("file staging must not stat provider input") })
+        }
+
+        fn open_reader<'a>(
+            &'a self,
+            request: OpenReaderRequest<'a>,
+        ) -> SpiFuture<'a, FsResult<OpenedAsyncReader>> {
+            let id = FileSystemId::new("mime-file-operation-test").unwrap();
+            let info = OpenedFileInfo::new(id, request.path().clone());
+            let bytes = self.bytes.clone();
+            let reads = Arc::clone(&self.reads);
+            Box::pin(async move {
+                Ok(OpenedAsyncReader::new(
+                    info,
+                    Box::new(ProviderInput {
+                        bytes,
+                        offset: 0,
+                        reads,
+                    }),
+                ))
+            })
+        }
+    }
+
+    struct ProviderInput {
+        bytes: Vec<u8>,
+        offset: usize,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl AsyncInput for ProviderInput {
+        type Item = u8;
+        unsafe fn poll_read_unchecked(
+            mut self: Pin<&mut Self>,
+            _context: &mut Context<'_>,
+            output: &mut [u8],
+            index: usize,
+            count: usize,
+        ) -> Poll<std::io::Result<usize>> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            let count = count.min(self.bytes.len().saturating_sub(self.offset));
+            output[index..index + count]
+                .copy_from_slice(&self.bytes[self.offset..self.offset + count]);
+            self.offset += count;
+            Poll::Ready(Ok(count))
+        }
+    }
+    impl MimeExecutionPort for ImmediatePort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+        fn try_dispatch(
+            &self,
+            job: Box<dyn FnOnce() + Send + 'static>,
+        ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+            job();
+            Ok(())
+        }
+        fn shutdown(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+    }
+
+    struct RecordingExecutor {
+        output: std::sync::Mutex<Option<MimeResult<MimeCommandOutput>>>,
+        calls: AtomicUsize,
+        observation: Arc<std::sync::Mutex<Option<(std::path::PathBuf, Vec<OsString>, String)>>>,
+        helper_ref: Option<Arc<std::sync::Mutex<Option<ResourceRef<StagedMimeInput>>>>>,
+    }
+    impl std::fmt::Debug for RecordingExecutor {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("RecordingExecutor")
+        }
+    }
+    impl AsyncMimeCommandExecutor for RecordingExecutor {
+        fn run_in<'a>(
+            &'a self,
+            _scope: &'a qubit_operation::OperationScope,
+            request: ManagedMimeCommand,
+            input: ResourceRef<StagedMimeInput>,
+        ) -> MimeFuture<'a, MimeCommandOutput> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let path = input.path().expect("staged path should be available");
+            let bytes = std::fs::read(&path).expect("staged bytes should be readable");
+            *self.observation.lock().unwrap() = Some((
+                path,
+                request.command.arguments().map(OsString::from).collect(),
+                String::from_utf8(bytes).unwrap(),
+            ));
+            if let Some(helper_ref) = &self.helper_ref {
+                *helper_ref.lock().unwrap() = Some(input.clone());
+            }
+            let output = self
+                .output
+                .lock()
+                .unwrap()
+                .take()
+                .expect("one output per call");
+            Box::pin(async move { output })
+        }
+    }
+
+    struct Harness {
+        detector: FileCommandMimeDetector<'static>,
+        services: MimeExecutionServices,
+        group: qubit_operation::OperationGroup,
+    }
+
+    fn harness(executor: Arc<RecordingExecutor>) -> Harness {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager
+            .group(qubit_operation::GroupOptions { capacity: 4 })
+            .unwrap();
+        let services = MimeExecutionServices::new(
+            manager.clone(),
+            group.clone(),
+            Arc::new(ImmediatePort),
+            1024,
+        )
+        .unwrap();
+        services.prepare().unwrap();
+        Harness {
+            detector: FileCommandMimeDetector::new()
+                .with_execution_services(services.clone())
+                .with_test_command_executor(executor),
+            services,
+            group,
+        }
+    }
+
+    fn executor(
+        stdout: &[u8],
+        truncated: bool,
+        helper_ref: Option<Arc<std::sync::Mutex<Option<ResourceRef<StagedMimeInput>>>>>,
+    ) -> Arc<RecordingExecutor> {
+        Arc::new(RecordingExecutor {
+            output: std::sync::Mutex::new(Some(Ok(MimeCommandOutput {
+                exit_code: Some(0),
+                stdout: stdout.to_vec(),
+                stdout_truncated: truncated,
+                stdout_complete: !truncated,
+            }))),
+            calls: AtomicUsize::new(0),
+            observation: Arc::new(std::sync::Mutex::new(None)),
+            helper_ref,
+        })
+    }
+
+    fn submit(
+        harness: &Harness,
+        bytes: Arc<[u8]>,
+        options: MimeOperationOptions,
+        cancelled: bool,
+    ) -> (
+        qubit_operation::AsyncOperationHandle<MimeCandidates, MimeError>,
+        OperationOutcome<MimeCandidates, MimeError>,
+    ) {
+        let detector = harness.detector.clone();
+        let services = harness.services.clone();
+        let tree = services.new_read_tree(0);
+        let mut handle = harness
+            .group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                services.bind_read_tree(scope.id(), &tree);
+                if cancelled {
+                    let _ = scope.request_stop(StopReason::UserCancelled);
+                }
+                detector
+                    .guess_content_in(
+                        &scope,
+                        BorrowedMimeInput::Bytes {
+                            content: &bytes,
+                            extent: InputExtent::Complete,
+                            filename: Some("--private-name.bin"),
+                        },
+                        &options,
+                    )
+                    .await
+            })
+            .unwrap();
+        let outcome = block_on(handle.wait_outcome()).unwrap();
+        (handle, outcome)
+    }
+
+    fn submit_provider(
+        harness: &Harness,
+        filesystem: Arc<AsyncFileSystem>,
+        options: MimeOperationOptions,
+    ) -> (
+        qubit_operation::AsyncOperationHandle<MimeCandidates, MimeError>,
+        OperationOutcome<MimeCandidates, MimeError>,
+    ) {
+        let detector = harness.detector.clone();
+        let services = harness.services.clone();
+        let tree = services.new_read_tree(1024);
+        let mut handle = harness
+            .group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                services.bind_read_tree(scope.id(), &tree);
+                let path = FsPath::parse("/input").unwrap();
+                detector
+                    .guess_content_in(
+                        &scope,
+                        BorrowedMimeInput::Provider {
+                            file_system: &filesystem,
+                            path: &path,
+                        },
+                        &options,
+                    )
+                    .await
+            })
+            .unwrap();
+        let outcome = block_on(handle.wait_outcome()).unwrap();
+        (handle, outcome)
+    }
+
+    fn cleanup(harness: &Harness) {
+        let shutdown = harness.services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+    }
+
+    #[test]
+    fn file_operation_cancel_before_launch() {
+        let fake = executor(b"application/pdf", false, None);
+        let harness = harness(Arc::clone(&fake));
+        let (handle, outcome) = submit(
+            &harness,
+            Arc::from(b"complete input".as_slice()),
+            MimeOperationOptions::default(),
+            true,
+        );
+        assert!(matches!(outcome, OperationOutcome::Stopped(_)));
+        assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+        block_on(handle.wait_settlement());
+        cleanup(&harness);
+    }
+
+    #[test]
+    fn file_operation_staged_input_survives_helpers() {
+        let held = Arc::new(std::sync::Mutex::new(None));
+        let fake = executor(b"application/pdf\n", false, Some(Arc::clone(&held)));
+        let harness_empty = harness(Arc::clone(&fake));
+        let (handle, outcome) = submit(
+            &harness_empty,
+            Arc::from(b"full object".as_slice()),
+            MimeOperationOptions::default(),
+            false,
+        );
+        assert!(matches!(outcome, OperationOutcome::Succeeded(_)));
+        if let OperationOutcome::Succeeded(result) = &outcome {
+            assert_eq!(result.candidates[0].mime_type, "application/pdf");
+        }
+        let resource = held.lock().unwrap().take().unwrap();
+        let path = resource.path().unwrap();
+        assert!(path.exists());
+        assert_eq!(std::fs::read(&path).unwrap(), b"full object");
+        drop(resource);
+        assert!(block_on(handle.wait_settlement()).all_released());
+        assert!(!path.exists());
+        cleanup(&harness_empty);
+    }
+
+    #[test]
+    fn file_operation_structured_argv_and_private_temp_path() {
+        let fake = executor(b"application/pdf\n", false, None);
+        let observation = Arc::clone(&fake.observation);
+        let harness = harness(fake.clone());
+        let (handle, outcome) = submit(
+            &harness,
+            Arc::from(b"complete".as_slice()),
+            MimeOperationOptions::default(),
+            false,
+        );
+        assert!(matches!(outcome, OperationOutcome::Succeeded(_)));
+        let (path, args, _) = observation.lock().unwrap().take().unwrap();
+        assert_eq!(args[0], "--mime-type");
+        assert_eq!(args[1], "--brief");
+        assert_eq!(args[2], "--");
+        assert_eq!(args[3], path.as_os_str());
+        assert!(path.is_absolute());
+        let command = FileCommandMimeDetector::command_for_path(&path);
+        assert!(!format!("{command:?}").contains(path.to_string_lossy().as_ref()));
+        block_on(handle.wait_settlement());
+        assert!(!path.exists());
+        cleanup(&harness);
+    }
+
+    #[test]
+    fn file_operation_output_policy_checks_truncation_and_empty_result() {
+        let fake = executor(b"application/pdf", true, None);
+        let harness_truncated = harness(Arc::clone(&fake));
+        let (handle, outcome) = submit(
+            &harness_truncated,
+            Arc::from(b"complete".as_slice()),
+            MimeOperationOptions::default(),
+            false,
+        );
+        assert!(matches!(
+            outcome,
+            OperationOutcome::Failed(MimeError::DetectorBackend { .. })
+        ));
+        block_on(handle.wait_settlement());
+        cleanup(&harness_truncated);
+
+        let fake = executor(b"  \n", false, None);
+        let harness_empty = harness(Arc::clone(&fake));
+        let (handle, outcome) = submit(
+            &harness_empty,
+            Arc::from(b"complete".as_slice()),
+            MimeOperationOptions::default(),
+            false,
+        );
+        assert!(
+            matches!(outcome, OperationOutcome::Succeeded(ref result) if result.candidates.is_empty())
+        );
+        block_on(handle.wait_settlement());
+        cleanup(&harness_empty);
+    }
+
+    #[test]
+    fn file_operation_budget_rejects_before_launch_and_zero_options() {
+        let fake = executor(b"application/pdf", false, None);
+        let harness = harness(Arc::clone(&fake));
+        let mut options = MimeOperationOptions::default();
+        options.max_staging_bytes = Some(4);
+        let (handle, outcome) = submit(&harness, Arc::from(b"five!".as_slice()), options, false);
+        assert!(matches!(
+            outcome,
+            OperationOutcome::Failed(MimeError::BudgetExceeded {
+                kind: "staging",
+                ..
+            })
+        ));
+        assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+        block_on(handle.wait_settlement());
+
+        let mut options = MimeOperationOptions::default();
+        options.max_staging_bytes = Some(0);
+        let (handle, outcome) = submit(&harness, Arc::from(b"data".as_slice()), options, false);
+        assert!(matches!(
+            outcome,
+            OperationOutcome::Failed(MimeError::InvalidOperationBudget)
+        ));
+        assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+        block_on(handle.wait_settlement());
+        cleanup(&harness);
+    }
+
+    #[test]
+    fn file_operation_provider_sentinel_rejects_l_plus_one_before_launch() {
+        let fake = executor(b"application/pdf", false, None);
+        let harness = harness(Arc::clone(&fake));
+        let (filesystem, reads) = ProviderFs::new(b"12345");
+        let mut options = MimeOperationOptions::default();
+        options.max_staging_bytes = Some(4);
+        let (handle, outcome) = submit_provider(&harness, filesystem, options);
+        assert!(matches!(
+            outcome,
+            OperationOutcome::Failed(MimeError::BudgetExceeded {
+                kind: "staging",
+                requested: 5,
+                limit: 4,
+            })
+        ));
+        assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            2,
+            "data and L+1 sentinel are read"
+        );
+        block_on(handle.wait_settlement());
+        cleanup(&harness);
+    }
+
+    #[test]
+    fn file_operation_executor_error_keeps_typed_timeout_error() {
+        let held = Arc::new(std::sync::Mutex::new(None));
+        let fake = Arc::new(RecordingExecutor {
+            output: std::sync::Mutex::new(Some(Err(MimeError::OperationStopped(
+                qubit_operation::StopReport {
+                    reason: StopReason::Timeout,
+                    accepted_at: None,
+                },
+            )))),
+            calls: AtomicUsize::new(0),
+            observation: Arc::new(std::sync::Mutex::new(None)),
+            helper_ref: Some(Arc::clone(&held)),
+        });
+        let harness = harness(Arc::clone(&fake));
+        let (handle, outcome) = submit(
+            &harness,
+            Arc::from(b"complete".as_slice()),
+            MimeOperationOptions::default(),
+            false,
+        );
+        assert!(matches!(
+            outcome,
+            OperationOutcome::Failed(MimeError::OperationStopped(qubit_operation::StopReport {
+                reason: StopReason::Timeout,
+                ..
+            }))
+        ));
+        assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+        let resource = held.lock().unwrap().take().unwrap();
+        let path = resource.path().unwrap();
+        assert!(
+            path.exists(),
+            "helper reference keeps the staged file alive"
+        );
+        let sandbox = path.parent().unwrap().to_path_buf();
+        let blocker = sandbox.join("command-cleanup-blocker");
+        std::fs::write(&blocker, b"force retryable cleanup failure").unwrap();
+        drop(resource);
+        let settlement = block_on(handle.wait_settlement());
+        assert_eq!(
+            settlement.status,
+            qubit_operation::SettlementStatus::RecoveryRequired,
+            "cleanup failure is reported separately from the primary timeout"
+        );
+        assert!(!path.exists());
+        std::fs::remove_file(blocker).unwrap();
+        let retry = settlement.recoveries[0].try_retry().unwrap();
+        assert!(block_on(retry.wait_async()).failures.is_empty());
+        assert!(!sandbox.exists());
+        cleanup(&harness);
+    }
 }
 
 impl Default for FileCommandMimeDetector<'static> {

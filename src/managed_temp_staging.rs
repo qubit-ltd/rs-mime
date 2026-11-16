@@ -13,7 +13,9 @@ use qubit_operation::{OperationScope, ResourceId, ResourceRef};
 
 use crate::command_execution::MimeExecutionWorker;
 use crate::detector::mime_input::OwnedMimeInput;
-use crate::detector::{ReadPermit, ReadTreeContext, StagingBudget, StagingPermit};
+use crate::detector::{
+    OwnedMemoryPermit, ReadPermit, ReadTreeContext, StagingBudget, StagingPermit,
+};
 use crate::{MimeError, MimeFuture, MimeResult};
 
 /// Per-request staging cap and the shared service accounting handle.
@@ -34,6 +36,7 @@ pub(crate) struct StagedMimeInput {
 }
 
 impl StagedMimeInput {
+    #[cfg(test)]
     pub(crate) fn new(
         owner: LocalTempFile,
         permit: StagingPermit,
@@ -85,7 +88,7 @@ pub(crate) fn stage_owned_in<'a>(
         match input {
             OwnedMimeInput::Bytes {
                 content, extent, ..
-            } => stage_bytes_in(scope, content, extent, limits).await,
+            } => stage_byte_slice_in(scope, &content, extent, limits).await,
             OwnedMimeInput::Provider { file_system, path } => {
                 stage_provider_in(scope, file_system, path, limits, read_tree).await
             }
@@ -93,10 +96,19 @@ pub(crate) fn stage_owned_in<'a>(
     })
 }
 
-async fn stage_bytes_in(
-    scope: &OperationScope,
-    content: Arc<[u8]>,
+pub(crate) fn stage_borrowed_bytes_in<'a>(
+    scope: &'a OperationScope,
+    content: &'a [u8],
     extent: crate::InputExtent,
+    limits: ManagedStagingLimits,
+) -> MimeFuture<'a, ResourceRef<StagedMimeInput>> {
+    Box::pin(stage_byte_slice_in(scope, content, extent, limits))
+}
+
+async fn stage_byte_slice_in(
+    scope: &OperationScope,
+    content: &[u8],
+    _extent: crate::InputExtent,
     limits: ManagedStagingLimits,
 ) -> MimeResult<ResourceRef<StagedMimeInput>> {
     let size = u64::try_from(content.len()).map_err(|_| MimeError::BudgetExceeded {
@@ -111,73 +123,44 @@ async fn stage_bytes_in(
             limit: limits.max_bytes,
         });
     }
-    if extent == crate::InputExtent::Prefix && content.is_empty() {
-        // Empty prefixes are valid; this branch deliberately does not
-        // infer Complete from length.
-    }
-    let permit = limits
-        .budget
-        .try_reserve(size)
-        .ok_or(MimeError::BudgetExceeded {
-            kind: "staging",
-            requested: size,
-            limit: limits.max_bytes,
-        })?;
     let reservation = scope
         .reserve_resource()
         .map_err(|_| MimeError::ExecutionServicesRequired)?;
-    let (sender, receiver) = completion_pair();
-    let worker = limits.worker.clone();
-    let job = Box::new(move || {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            (|| {
-                let fs = LocalFileSystem::host()
-                    .map_err(|error| MimeError::Io(error.into_io_error()))?;
-                let mut temp = fs
-                    .create_temp_file()
-                    .map_err(|error| MimeError::Io(error.into_io_error()))?;
-                use std::io::Write;
-                if let Err(error) = temp.as_file_mut().and_then(|file| file.write_all(&content)) {
-                    let cleanup_id = Arc::new(Mutex::new(None));
-                    let staged = StagedMimeInput {
-                        owner: Mutex::new(temp),
-                        permits: Mutex::new(vec![permit]),
-                        worker: worker.clone(),
-                        cleanup_id: Arc::clone(&cleanup_id),
-                    };
-                    let id = reservation.retain_with_for_cleanup(
-                        staged,
-                        Arc::new(ManagedTempCleanup {
-                            resource_id: Arc::clone(&cleanup_id),
-                        }),
-                    );
-                    *cleanup_id
-                        .lock()
-                        .unwrap_or_else(|poison| poison.into_inner()) = Some(id);
-                    return Err(MimeError::Io(error));
-                }
-                commit_staged(
-                    reservation,
-                    StagedMimeInput::new(temp, permit, worker.clone()),
-                )
-            })()
-        }))
-        .unwrap_or_else(|payload| {
-            Err(MimeError::detector_backend(
-                "managed staging",
-                format!(
-                    "staging worker panicked: {}",
-                    panic_message(payload.as_ref())
-                ),
-            ))
-        });
-        sender.complete(result);
-    });
-    if let Err(job) = limits.worker.try_dispatch(job) {
-        drop(job);
-        return Err(MimeError::ExecutionServicesRequired);
+    let staged = create_empty_staged(reservation, &limits).await?;
+    for bytes in content.chunks(8 * 1024) {
+        let chunk_size = u64::try_from(bytes.len()).map_err(|_| MimeError::BudgetExceeded {
+            kind: "staging",
+            requested: u64::MAX,
+            limit: limits.max_bytes,
+        })?;
+        let staging_permit =
+            limits
+                .budget
+                .try_reserve(chunk_size)
+                .ok_or(MimeError::BudgetExceeded {
+                    kind: "staging",
+                    requested: chunk_size,
+                    limit: limits.max_bytes,
+                })?;
+        let owned_permit =
+            limits
+                .budget
+                .try_reserve_owned(bytes.len())
+                .ok_or(MimeError::BudgetExceeded {
+                    kind: "owned",
+                    requested: bytes.len() as u64,
+                    limit: 16 * 1024 * 1024,
+                })?;
+        write_chunk_in(
+            &limits.worker,
+            staged.clone(),
+            bytes.to_vec(),
+            staging_permit,
+            owned_permit,
+        )
+        .await?;
     }
-    receiver.await
+    Ok(staged)
 }
 
 async fn stage_provider_in(
@@ -199,6 +182,15 @@ async fn stage_provider_in(
         .reserve_resource()
         .map_err(|_| MimeError::ExecutionServicesRequired)?;
     let staged = create_empty_staged(reservation, &limits).await?;
+    let _chunk_buffer_permit =
+        limits
+            .budget
+            .try_reserve_owned(8 * 1024)
+            .ok_or(MimeError::BudgetExceeded {
+                kind: "owned",
+                requested: 8 * 1024,
+                limit: 16 * 1024 * 1024,
+            })?;
     let mut total = 0_u64;
     let mut chunk = vec![0_u8; 8 * 1024];
     loop {
@@ -268,13 +260,17 @@ async fn stage_provider_in(
                 requested: new_total,
                 limit: limits.max_bytes,
             })?;
-        write_chunk_in(
-            &limits.worker,
-            staged.clone(),
-            chunk[..count].to_vec(),
-            permit,
-        )
-        .await?;
+        let owned_permit =
+            limits
+                .budget
+                .try_reserve_owned(count)
+                .ok_or(MimeError::BudgetExceeded {
+                    kind: "owned",
+                    requested: count as u64,
+                    limit: 16 * 1024 * 1024,
+                })?;
+        let bytes = chunk[..count].to_vec();
+        write_chunk_in(&limits.worker, staged.clone(), bytes, permit, owned_permit).await?;
         total = new_total;
     }
 }
@@ -319,11 +315,14 @@ async fn write_chunk_in(
     staged: ResourceRef<StagedMimeInput>,
     bytes: Vec<u8>,
     permit: StagingPermit,
+    owned_permit: OwnedMemoryPermit,
 ) -> MimeResult<()> {
     let (sender, receiver) = completion_pair();
     let job = Box::new(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            staged.write_chunk(&bytes, permit)
+            let result = staged.write_chunk(&bytes, permit);
+            drop(owned_permit);
+            result
         }))
         .unwrap_or_else(|payload| {
             Err(MimeError::detector_backend(
@@ -372,6 +371,7 @@ pub(crate) const fn within_staging_limit(size: u64, limit: u64) -> bool {
 
 /// Returns the optional one-byte sentinel budget without overflowing at the
 /// integer boundary.
+#[cfg(test)]
 pub(crate) const fn sentinel_read_limit(limit: u64) -> Option<u64> {
     limit.checked_add(1)
 }

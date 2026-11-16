@@ -43,10 +43,26 @@ impl StagingBudget {
             .map(|permit| StagingPermit { _permit: permit })
     }
 
+    pub(crate) fn try_reserve_owned(&self, bytes: usize) -> Option<OwnedMemoryPermit> {
+        self.budget
+            .reserve_owned(bytes)
+            .map(|permit| OwnedMemoryPermit { _permit: permit })
+    }
+
+    pub(crate) fn limit(&self) -> u64 {
+        self.budget.limits.staging
+    }
+
     #[cfg(test)]
     pub(crate) fn used_bytes(&self) -> u64 {
         self.budget.staging_bytes()
     }
+}
+
+/// Owned-memory reservation held while one bounded staging chunk is copied
+/// and written by the execution worker.
+pub(crate) struct OwnedMemoryPermit {
+    _permit: BudgetPermit,
 }
 
 #[derive(Debug, Default)]
