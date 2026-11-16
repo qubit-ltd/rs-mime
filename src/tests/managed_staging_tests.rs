@@ -5,10 +5,22 @@
 // =============================================================================
 //! Focused checks for staging bounds and fixed-worker admission.
 
+use qubit_fs::metadata::{
+    FileSystemCapabilities, FileSystemId, FileSystemInfo, FileSystemLimits, OpenedFileInfo,
+    SymlinkPolicy,
+};
+use qubit_fs::path::{PathConstraints, PathSemantics};
+use qubit_fs::spi::{
+    AsyncFileSystemSpi, OpenReaderRequest, OpenedAsyncReader, ProviderOperation,
+    ProviderOperations, ProviderProperties, SpiFuture, StatRequest, StatResponse,
+};
+use qubit_fs::{AsyncFileSystem, FsResult, Path as FsPath};
+use qubit_io::AsyncInput;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::{
     Arc, Barrier,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::task::{Context, Poll, Wake, Waker};
 
@@ -62,6 +74,295 @@ fn managed_staging_zero_limit() {
 fn managed_staging_checked_sentinel_arithmetic() {
     assert_eq!(sentinel_read_limit(8), Some(9));
     assert_eq!(sentinel_read_limit(u64::MAX), None);
+}
+
+struct BytesAsyncFs {
+    properties: ProviderProperties,
+    content: Vec<u8>,
+    opens: Arc<AtomicUsize>,
+    pending_read: Option<Arc<AtomicBool>>,
+}
+
+impl BytesAsyncFs {
+    fn filesystem(content: &[u8]) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>) {
+        Self::filesystem_with_pending(content, None)
+    }
+
+    fn filesystem_with_pending(
+        content: &[u8],
+        pending_read: Option<Arc<AtomicBool>>,
+    ) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>) {
+        let properties = ProviderProperties::new(
+            FileSystemInfo::new(
+                FileSystemId::new("managed-staging-test").unwrap(),
+                "managed-staging-test",
+                PathSemantics::Hierarchical,
+            ),
+            ProviderOperations::new().with(ProviderOperation::OpenReader),
+            FileSystemCapabilities::new()
+                .with_guaranteed(qubit_fs::metadata::FileSystemCapability::Read),
+            FileSystemLimits::unknown(),
+            PathConstraints::absolute(),
+            SymlinkPolicy::Reject,
+        )
+        .unwrap();
+        let opens = Arc::new(AtomicUsize::new(0));
+        let fs = AsyncFileSystem::from_spi(Self {
+            properties,
+            content: content.to_vec(),
+            opens: Arc::clone(&opens),
+            pending_read,
+        })
+        .unwrap();
+        (Arc::new(fs), opens)
+    }
+}
+
+impl AsyncFileSystemSpi for BytesAsyncFs {
+    fn properties(&self) -> ProviderProperties {
+        self.properties.clone()
+    }
+    fn stat<'a>(&'a self, _request: StatRequest<'a>) -> SpiFuture<'a, FsResult<StatResponse>> {
+        Box::pin(async { panic!("staging must not stat provider input") })
+    }
+    fn open_reader<'a>(
+        &'a self,
+        request: OpenReaderRequest<'a>,
+    ) -> SpiFuture<'a, FsResult<OpenedAsyncReader>> {
+        self.opens.fetch_add(1, Ordering::SeqCst);
+        let bytes = self.content.clone();
+        let info = OpenedFileInfo::new(
+            FileSystemId::new("managed-staging-test").unwrap(),
+            request.path().clone(),
+        );
+        if let Some(polled) = self.pending_read.as_ref().map(Arc::clone) {
+            Box::pin(async move {
+                Ok(OpenedAsyncReader::new(
+                    info,
+                    Box::new(PendingAsyncInput { polled }),
+                ))
+            })
+        } else {
+            Box::pin(async move {
+                Ok(OpenedAsyncReader::new(
+                    info,
+                    Box::new(ShortAsyncInput { bytes, at: 0 }),
+                ))
+            })
+        }
+    }
+}
+
+struct PendingAsyncInput {
+    polled: Arc<AtomicBool>,
+}
+impl AsyncInput for PendingAsyncInput {
+    type Item = u8;
+    unsafe fn poll_read_unchecked(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _output: &mut [u8],
+        _index: usize,
+        _count: usize,
+    ) -> Poll<std::io::Result<usize>> {
+        self.polled.store(true, Ordering::SeqCst);
+        Poll::Pending
+    }
+}
+
+struct ShortAsyncInput {
+    bytes: Vec<u8>,
+    at: usize,
+}
+impl AsyncInput for ShortAsyncInput {
+    type Item = u8;
+    unsafe fn poll_read_unchecked(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        output: &mut [u8],
+        index: usize,
+        count: usize,
+    ) -> Poll<std::io::Result<usize>> {
+        let available = self.bytes.len().saturating_sub(self.at);
+        let read = count.min(available).min(2);
+        output[index..index + read].copy_from_slice(&self.bytes[self.at..self.at + read]);
+        self.at += read;
+        Poll::Ready(Ok(read))
+    }
+}
+
+#[test]
+fn managed_staging_provider_limit_boundaries_and_short_reads() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 8 })
+        .unwrap();
+    let port = Arc::new(FixedMimeExecutionPort::new(1, 8));
+    let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap();
+    services.prepare().unwrap();
+
+    for (content, should_succeed) in [
+        (b"ab".as_slice(), true),
+        (b"abc", true),
+        (b"abcd", false),
+        (b"", true),
+    ] {
+        let (filesystem, opens) = BytesAsyncFs::filesystem(content);
+        let input = OwnedMimeInput::Provider {
+            file_system: filesystem,
+            path: FsPath::parse("/input").unwrap(),
+        };
+        let limits = ManagedStagingLimits {
+            max_bytes: 3,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port.clone()),
+        };
+        let mut handle = block_on(
+            group.try_submit_async(Default::default(), move |scope| async move {
+                stage_owned_in(&scope, input, limits).await
+            }),
+        )
+        .unwrap();
+        match block_on(handle.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(resource) => {
+                assert!(should_succeed, "oversized input must fail");
+                assert_eq!(
+                    content,
+                    std::fs::read(resource.path().unwrap()).unwrap().as_slice()
+                );
+                drop(resource);
+            }
+            qubit_operation::OperationOutcome::Failed(_) => {
+                assert!(!should_succeed, "bounded input should stage")
+            }
+            _ => panic!("unexpected provider staging outcome"),
+        }
+        let report = block_on(handle.wait_settlement());
+        assert!(report.all_released());
+        assert_eq!(
+            1,
+            opens.load(Ordering::SeqCst),
+            "provider object opens exactly once"
+        );
+    }
+    let shutdown = services.shutdown();
+    block_on(shutdown.wait_services_settled()).unwrap();
+    shutdown.stop_services().unwrap();
+}
+
+#[test]
+fn managed_staging_provider_budget_failure_cleans_partial_owner() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 4 })
+        .unwrap();
+    let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
+    // Leave room for one full staging chunk in the fixed service budget.
+    let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
+    services.prepare().unwrap();
+    let occupied = services
+        .staging_budget()
+        .try_reserve(256 * 1024 * 1024 - 8 * 1024)
+        .unwrap();
+    let content = vec![b'x'; 8 * 1024 + 1];
+    let (filesystem, opens) = BytesAsyncFs::filesystem(&content);
+    let input = OwnedMimeInput::Provider {
+        file_system: filesystem,
+        path: FsPath::parse("/input").unwrap(),
+    };
+    let limits = ManagedStagingLimits {
+        max_bytes: content.len() as u64,
+        budget: services.staging_budget(),
+        worker: MimeExecutionWorker::new(port),
+    };
+    let mut handle = block_on(
+        group.try_submit_async(Default::default(), move |scope| async move {
+            stage_owned_in(&scope, input, limits).await
+        }),
+    )
+    .unwrap();
+    assert!(matches!(
+        block_on(handle.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Failed(_)
+    ));
+    assert_eq!(1, opens.load(Ordering::SeqCst));
+    let report = block_on(handle.wait_settlement());
+    assert!(
+        report.all_released(),
+        "partial staged owner must be cleaned"
+    );
+    drop(occupied);
+    assert!(
+        services
+            .staging_budget()
+            .try_reserve(256 * 1024 * 1024)
+            .is_some()
+    );
+    let shutdown = services.shutdown();
+    block_on(shutdown.wait_services_settled()).unwrap();
+    shutdown.stop_services().unwrap();
+}
+
+#[test]
+fn managed_staging_cancel_during_provider_read_retains_cleanup_owner() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 4 })
+        .unwrap();
+    let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
+    let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
+    services.prepare().unwrap();
+    let read_polled = Arc::new(AtomicBool::new(false));
+    let (filesystem, _) =
+        BytesAsyncFs::filesystem_with_pending(b"unused", Some(Arc::clone(&read_polled)));
+    let input = OwnedMimeInput::Provider {
+        file_system: filesystem,
+        path: FsPath::parse("/input").unwrap(),
+    };
+    let limits = ManagedStagingLimits {
+        max_bytes: 8,
+        budget: services.staging_budget(),
+        worker: MimeExecutionWorker::new(port),
+    };
+    let mut handle = block_on(group.try_submit_async(
+        Default::default(),
+        move |scope| async move {
+            let mut stage = Box::pin(stage_owned_in(&scope, input, limits));
+            std::future::poll_fn(|cx| {
+                match stage.as_mut().poll(cx) {
+                    Poll::Ready(_) => panic!("provider read should remain pending"),
+                    Poll::Pending => {}
+                }
+                if read_polled.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await;
+            // Simulate cancellation of the caller while the provider reader
+            // is pending, after the temp owner has already been registered.
+            drop(stage);
+            Ok::<(), crate::MimeError>(())
+        },
+    ))
+    .unwrap();
+    assert!(matches!(
+        block_on(handle.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(())
+    ));
+    let report = block_on(handle.wait_settlement());
+    assert!(
+        report.all_released(),
+        "the registered temp owner is cleaned after cancellation"
+    );
+    assert!(
+        services.staging_budget().try_reserve(16).is_some(),
+        "any permits remain attached to the retained owner until cleanup"
+    );
+    let shutdown = services.shutdown();
+    block_on(shutdown.wait_services_settled()).unwrap();
+    shutdown.stop_services().unwrap();
 }
 
 #[test]

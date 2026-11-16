@@ -7,6 +7,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use qubit_io::AsyncInput;
 use qubit_local_files::{LocalFileSystem, LocalTempFile};
 use qubit_operation::{OperationScope, ResourceId, ResourceRef};
 
@@ -27,7 +28,7 @@ pub(crate) struct ManagedStagingLimits {
 /// exactly once by operation; consumers receive only `ResourceRef`s.
 pub(crate) struct StagedMimeInput {
     owner: Mutex<LocalTempFile>,
-    _permit: StagingPermit,
+    permits: Mutex<Vec<StagingPermit>>,
     worker: MimeExecutionWorker,
     cleanup_id: Arc<Mutex<Option<ResourceId>>>,
 }
@@ -40,7 +41,7 @@ impl StagedMimeInput {
     ) -> Self {
         Self {
             owner: Mutex::new(owner),
-            _permit: permit,
+            permits: Mutex::new(vec![permit]),
             worker,
             cleanup_id: Arc::new(Mutex::new(None)),
         }
@@ -54,6 +55,21 @@ impl StagedMimeInput {
             .unwrap_or_else(|poison| poison.into_inner());
         Ok(owner.path().to_path_buf())
     }
+
+    fn write_chunk(&self, bytes: &[u8], permit: StagingPermit) -> MimeResult<()> {
+        // Store the permit before writing: if a partial write fails, the
+        // registered resource continues to account for every reserved byte.
+        self.permits
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(permit);
+        use std::io::Write;
+        let mut owner = self.owner.lock().unwrap_or_else(|p| p.into_inner());
+        owner
+            .as_file_mut()
+            .and_then(|file| file.write_all(bytes))
+            .map_err(|error| MimeError::Io(error.into()))
+    }
 }
 
 /// Stages owned bytes without performing filesystem work in the caller's
@@ -65,97 +81,235 @@ pub(crate) fn stage_owned_in<'a>(
     limits: ManagedStagingLimits,
 ) -> MimeFuture<'a, ResourceRef<StagedMimeInput>> {
     Box::pin(async move {
-        let (content, extent) = match input {
+        match input {
             OwnedMimeInput::Bytes {
                 content, extent, ..
-            } => (content, extent),
-            OwnedMimeInput::Provider { .. } => {
-                return Err(MimeError::UnsupportedCapability {
-                    capability: crate::MimeCapability::RandomAccessSampling,
-                });
+            } => stage_bytes_in(scope, content, extent, limits).await,
+            OwnedMimeInput::Provider { file_system, path } => {
+                stage_provider_in(scope, file_system, path, limits).await
             }
-        };
-        let size = u64::try_from(content.len()).map_err(|_| MimeError::BudgetExceeded {
+        }
+    })
+}
+
+async fn stage_bytes_in(
+    scope: &OperationScope,
+    content: Arc<[u8]>,
+    extent: crate::InputExtent,
+    limits: ManagedStagingLimits,
+) -> MimeResult<ResourceRef<StagedMimeInput>> {
+    let size = u64::try_from(content.len()).map_err(|_| MimeError::BudgetExceeded {
+        kind: "staging",
+        requested: u64::MAX,
+        limit: limits.max_bytes,
+    })?;
+    if !within_staging_limit(size, limits.max_bytes) {
+        return Err(MimeError::BudgetExceeded {
+            kind: "staging",
+            requested: size,
+            limit: limits.max_bytes,
+        });
+    }
+    if extent == crate::InputExtent::Prefix && content.is_empty() {
+        // Empty prefixes are valid; this branch deliberately does not
+        // infer Complete from length.
+    }
+    let permit = limits
+        .budget
+        .try_reserve(size)
+        .ok_or(MimeError::BudgetExceeded {
+            kind: "staging",
+            requested: size,
+            limit: limits.max_bytes,
+        })?;
+    let reservation = scope
+        .reserve_resource()
+        .map_err(|_| MimeError::ExecutionServicesRequired)?;
+    let (sender, receiver) = completion_pair();
+    let worker = limits.worker.clone();
+    let job = Box::new(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            (|| {
+                let fs = LocalFileSystem::host()
+                    .map_err(|error| MimeError::Io(error.into_io_error()))?;
+                let mut temp = fs
+                    .create_temp_file()
+                    .map_err(|error| MimeError::Io(error.into_io_error()))?;
+                use std::io::Write;
+                if let Err(error) = temp.as_file_mut().and_then(|file| file.write_all(&content)) {
+                    let cleanup_id = Arc::new(Mutex::new(None));
+                    let staged = StagedMimeInput {
+                        owner: Mutex::new(temp),
+                        permits: Mutex::new(vec![permit]),
+                        worker: worker.clone(),
+                        cleanup_id: Arc::clone(&cleanup_id),
+                    };
+                    let id = reservation.retain_with_for_cleanup(
+                        staged,
+                        Arc::new(ManagedTempCleanup {
+                            resource_id: Arc::clone(&cleanup_id),
+                        }),
+                    );
+                    *cleanup_id
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner()) = Some(id);
+                    return Err(MimeError::Io(error));
+                }
+                commit_staged(
+                    reservation,
+                    StagedMimeInput::new(temp, permit, worker.clone()),
+                )
+            })()
+        }))
+        .unwrap_or_else(|payload| {
+            Err(MimeError::detector_backend(
+                "managed staging",
+                format!(
+                    "staging worker panicked: {}",
+                    panic_message(payload.as_ref())
+                ),
+            ))
+        });
+        sender.complete(result);
+    });
+    if let Err(job) = limits.worker.try_dispatch(job) {
+        drop(job);
+        return Err(MimeError::ExecutionServicesRequired);
+    }
+    receiver.await
+}
+
+async fn stage_provider_in(
+    scope: &OperationScope,
+    file_system: Arc<qubit_fs::AsyncFileSystem>,
+    path: qubit_fs::Path,
+    limits: ManagedStagingLimits,
+) -> MimeResult<ResourceRef<StagedMimeInput>> {
+    use qubit_fs::read::ReadOptions;
+
+    // Exactly one open binds every sequential read to the same provider
+    // object. No metadata/stat call or path-based reopen is used.
+    let mut reader = file_system
+        .open_reader(&path, ReadOptions::default())
+        .await
+        .map_err(MimeError::FileSystem)?;
+    let reservation = scope
+        .reserve_resource()
+        .map_err(|_| MimeError::ExecutionServicesRequired)?;
+    let staged = create_empty_staged(reservation, &limits).await?;
+    let mut total = 0_u64;
+    let mut chunk = vec![0_u8; 8 * 1024];
+    loop {
+        let remaining = limits.max_bytes.saturating_sub(total);
+        // At the limit, ask for exactly one sentinel byte. It proves
+        // non-EOF without ever being written to disk.
+        let ask = usize::try_from(remaining.min(chunk.len() as u64))
+            .expect("read chunk length fits usize");
+        let ask = if ask == 0 { 1 } else { ask.min(chunk.len()) };
+        let count = reader
+            .read_fully_async(&mut chunk[..ask])
+            .await
+            .map_err(MimeError::Io)?;
+        if count == 0 {
+            return Ok(staged);
+        }
+        let count_u64 = u64::try_from(count).map_err(|_| MimeError::BudgetExceeded {
             kind: "staging",
             requested: u64::MAX,
             limit: limits.max_bytes,
         })?;
-        if !within_staging_limit(size, limits.max_bytes) {
+        let new_total = total
+            .checked_add(count_u64)
+            .ok_or(MimeError::BudgetExceeded {
+                kind: "staging",
+                requested: u64::MAX,
+                limit: limits.max_bytes,
+            })?;
+        if new_total > limits.max_bytes {
             return Err(MimeError::BudgetExceeded {
                 kind: "staging",
-                requested: size,
+                requested: new_total,
                 limit: limits.max_bytes,
             });
-        }
-        if extent == crate::InputExtent::Prefix && content.is_empty() {
-            // Empty prefixes are valid; this branch deliberately does not
-            // infer Complete from length.
         }
         let permit = limits
             .budget
-            .try_reserve(size)
+            .try_reserve(count_u64)
             .ok_or(MimeError::BudgetExceeded {
                 kind: "staging",
-                requested: size,
+                requested: new_total,
                 limit: limits.max_bytes,
             })?;
-        let reservation = scope
-            .reserve_resource()
-            .map_err(|_| MimeError::ExecutionServicesRequired)?;
-        let (sender, receiver) = completion_pair();
-        let worker = limits.worker.clone();
-        let job = Box::new(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                (|| {
-                    let fs = LocalFileSystem::host()
-                        .map_err(|error| MimeError::Io(error.into_io_error()))?;
-                    let mut temp = fs
-                        .create_temp_file()
-                        .map_err(|error| MimeError::Io(error.into_io_error()))?;
-                    use std::io::Write;
-                    if let Err(error) = temp.as_file_mut().and_then(|file| file.write_all(&content))
-                    {
-                        let cleanup_id = Arc::new(Mutex::new(None));
-                        let staged = StagedMimeInput {
-                            owner: Mutex::new(temp),
-                            _permit: permit,
-                            worker: worker.clone(),
-                            cleanup_id: Arc::clone(&cleanup_id),
-                        };
-                        let id = reservation.retain_with_for_cleanup(
-                            staged,
-                            Arc::new(ManagedTempCleanup {
-                                resource_id: Arc::clone(&cleanup_id),
-                            }),
-                        );
-                        *cleanup_id
-                            .lock()
-                            .unwrap_or_else(|poison| poison.into_inner()) = Some(id);
-                        return Err(MimeError::Io(error));
-                    }
-                    commit_staged(
-                        reservation,
-                        StagedMimeInput::new(temp, permit, worker.clone()),
-                    )
-                })()
-            }))
-            .unwrap_or_else(|payload| {
-                Err(MimeError::detector_backend(
-                    "managed staging",
-                    format!(
-                        "staging worker panicked: {}",
-                        panic_message(payload.as_ref())
-                    ),
-                ))
-            });
-            sender.complete(result);
+        write_chunk_in(
+            &limits.worker,
+            staged.clone(),
+            chunk[..count].to_vec(),
+            permit,
+        )
+        .await?;
+        total = new_total;
+    }
+}
+
+async fn create_empty_staged(
+    reservation: qubit_operation::ResourceReservation,
+    limits: &ManagedStagingLimits,
+) -> MimeResult<ResourceRef<StagedMimeInput>> {
+    let (sender, receiver) = completion_pair();
+    let worker = limits.worker.clone();
+    let job = Box::new(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let fs = LocalFileSystem::host().map_err(|e| MimeError::Io(e.into_io_error()))?;
+            let temp = fs
+                .create_temp_file()
+                .map_err(|e| MimeError::Io(e.into_io_error()))?;
+            let staged = StagedMimeInput {
+                owner: Mutex::new(temp),
+                permits: Mutex::new(Vec::new()),
+                worker: worker.clone(),
+                cleanup_id: Arc::new(Mutex::new(None)),
+            };
+            commit_staged(reservation, staged)
+        }))
+        .unwrap_or_else(|payload| {
+            Err(MimeError::detector_backend(
+                "managed staging",
+                panic_message(payload.as_ref()),
+            ))
         });
-        if let Err(job) = limits.worker.try_dispatch(job) {
-            drop(job);
-            return Err(MimeError::ExecutionServicesRequired);
-        }
-        receiver.await
-    })
+        sender.complete(result);
+    });
+    if let Err(job) = limits.worker.try_dispatch(job) {
+        drop(job);
+        return Err(MimeError::ExecutionServicesRequired);
+    }
+    receiver.await
+}
+
+async fn write_chunk_in(
+    worker: &MimeExecutionWorker,
+    staged: ResourceRef<StagedMimeInput>,
+    bytes: Vec<u8>,
+    permit: StagingPermit,
+) -> MimeResult<()> {
+    let (sender, receiver) = completion_pair();
+    let job = Box::new(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            staged.write_chunk(&bytes, permit)
+        }))
+        .unwrap_or_else(|payload| {
+            Err(MimeError::detector_backend(
+                "managed staging",
+                panic_message(payload.as_ref()),
+            ))
+        });
+        sender.complete(result);
+    });
+    if let Err(job) = worker.try_dispatch(job) {
+        drop(job);
+        return Err(MimeError::ExecutionServicesRequired);
+    }
+    receiver.await
 }
 
 pub(crate) fn commit_staged(
