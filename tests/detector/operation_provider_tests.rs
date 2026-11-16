@@ -15,7 +15,7 @@ use qubit_mime::{
     AsyncMimeDetectorBackend, AsyncMimeDetectorProvider, BorrowedMimeInput, ContentRequirement,
     FixedMimeExecutionPort, InputExtent, InspectedExtent, MediaStreamType, MimeCandidates,
     MimeConfig, MimeDetector, MimeDetectorBackend, MimeDetectorRegistry, MimeError,
-    MimeExecutionServices, MimeFuture, MimeOperationOptions, OwnedMimeInput,
+    MimeExecutionServices, MimeFuture, MimeOperationOptions, MimeRepository, OwnedMimeInput,
     RandomAccessCapability,
 };
 use qubit_spi::error::ProviderFailure;
@@ -218,6 +218,46 @@ fn operation_provider_selected_backend_runs_async_without_sync_factory() {
         other => panic!("async backend operation failed: {other:?}"),
     }
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).is_ok());
+    assert!(shutdown.stop_services().is_ok());
+}
+
+#[test]
+fn operation_provider_runtime_keeps_injected_repository() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-runtime-only">
+    <magic priority="50"><match type="string" value="RUNTIME-ONLY" offset="0"/></magic>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("custom runtime repository should parse");
+    let runtime = MimeRuntime::new(MimeConfig::default(), Arc::new(repository));
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let services = MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 4)),
+        1024,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+    let runtime = runtime.with_execution_services(services.clone());
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(&b"RUNTIME-ONLY"[..]), InputExtent::Complete),
+            MimeOperationOptions::default(),
+        )
+        .unwrap_or_else(|_| panic!("custom repository operation should be admitted"));
+    let outcome = block_on(operation.wait_outcome()).unwrap();
+    match outcome {
+        qubit_operation::OperationOutcome::Succeeded(report) => {
+            assert_eq!(report.mime_type.as_deref(), Some("application/x-runtime-only"));
+        }
+        other => panic!("runtime should use its injected repository: {other:?}"),
+    }
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).is_ok());
     assert!(shutdown.stop_services().is_ok());

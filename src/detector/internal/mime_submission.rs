@@ -161,6 +161,10 @@ pub(in crate::detector) async fn detect(
                         .max_buffer_bytes
                         .unwrap_or(max_buffer_size)
                         .min(max_buffer_size)
+                    .min(match backend.content_requirement() {
+                        ContentRequirement::Prefix(required) => required,
+                        ContentRequirement::Complete => max_buffer_size,
+                    })
                         .min(usize::try_from(read_limit).unwrap_or(usize::MAX));
                     let read_permit =
                         read_tree
@@ -213,7 +217,7 @@ pub(in crate::detector) async fn detect(
                     .first()
                     .map(|candidate| candidate.mime_type.clone()),
                 candidates.inspected_extent,
-                0,
+                read_tree.consumed(),
                 0,
             )
         }

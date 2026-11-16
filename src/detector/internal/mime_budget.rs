@@ -196,6 +196,15 @@ impl ReadTreeContext {
         }
         remaining
     }
+
+    /// Returns bytes committed in this operation's inherited read tree.
+    pub(crate) fn consumed(&self) -> u64 {
+        self.scope
+            .counters
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .consumed
+    }
 }
 
 impl ReadTreeBudget {

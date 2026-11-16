@@ -103,16 +103,11 @@ impl MimeRuntime {
     /// Attaches shared operation and MIME execution services without starting workers.
     #[must_use]
     pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
-        let registry = MimeDetectorRegistry::builtin();
-        let async_backend = registry
-            .create_async_backend(
-                &ProviderSelection::named("repository")
-                    .expect("built-in provider selector is valid"),
-                self.context.config(),
-                &services,
-            )
-            .ok();
-        self.async_backend = async_backend;
+        let backend = OwnedRepositoryMimeDetector::new(
+            self.context.config().clone(),
+            self.context.repository_arc(),
+        );
+        self.async_backend = Some(("repository".to_owned(), Arc::new(backend)));
         self.execution_services = Some(Arc::new(services));
         self
     }
