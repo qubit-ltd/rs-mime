@@ -11,6 +11,7 @@ use std::path::Path;
 
 use qubit_io::std_io::ReadSeek;
 
+use super::RandomAccessCapability;
 use crate::MimeConfig;
 use crate::MimeDetectionPolicy;
 use crate::MimeDetector;
@@ -18,6 +19,8 @@ use crate::MimeDetectorCore;
 use crate::MimeRepository;
 use crate::MimeResult;
 use crate::StreamBasedMimeDetector;
+use crate::{AsyncMimeDetectorBackend, BorrowedMimeInput, ContentRequirement, InputExtent};
+use crate::{InspectedExtent, MimeCandidates, MimeError, MimeOperationOptions};
 
 /// MIME detector backed by a [`MimeRepository`].
 ///
@@ -232,7 +235,11 @@ impl<'a> RepositoryMimeDetector<'a> {
     /// opened or read, or another detector or media-classifier error when
     /// detection cannot complete.
     #[inline]
-    pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+    pub fn detect_file(
+        &self,
+        file: &Path,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }
 
@@ -266,6 +273,61 @@ impl<'a> RepositoryMimeDetector<'a> {
             .into_iter()
             .map(|mime_type| mime_type.name().to_owned())
             .collect()
+    }
+}
+
+impl AsyncMimeDetectorBackend for RepositoryMimeDetector<'_> {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(self.repository.max_test_bytes())
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        options: &'a MimeOperationOptions,
+    ) -> crate::MimeFuture<'a, MimeCandidates> {
+        Box::pin(async move {
+            let (content, extent, filename) = match input {
+                BorrowedMimeInput::Bytes {
+                    content,
+                    extent,
+                    filename,
+                } => (content, extent, filename),
+                BorrowedMimeInput::Provider { .. } => {
+                    return Err(MimeError::detector_backend(
+                        "repository",
+                        "provider-backed input must be resolved by the managed execution service",
+                    ));
+                }
+            };
+            let matched = super::internal::async_repository_matcher::match_content(
+                scope,
+                self.repository,
+                content,
+            )
+            .await?;
+            let candidates = super::internal::async_repository_matcher::select_candidates(
+                self.repository,
+                matched,
+                filename,
+                options.policy,
+            );
+            let inspected = content.len().min(self.repository.max_test_bytes());
+            Ok(MimeCandidates {
+                candidates,
+                inspected_extent: match extent {
+                    InputExtent::Prefix | InputExtent::Complete => {
+                        InspectedExtent::Prefix(inspected)
+                    }
+                },
+                retained_prefix: Vec::new(),
+            })
+        })
     }
 }
 

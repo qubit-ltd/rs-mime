@@ -14,6 +14,8 @@ use super::stream_based_mime_detector::StreamBasedMimeDetector;
 use crate::MimeConfig;
 use crate::MimeRepository;
 use crate::MimeResult;
+use crate::{AsyncMimeDetectorBackend, BorrowedMimeInput, ContentRequirement, InputExtent};
+use crate::{InspectedExtent, MimeCandidates, MimeError, MimeOperationOptions};
 
 /// MIME detector that shares a repository without copying its detection data.
 ///
@@ -91,5 +93,59 @@ impl StreamBasedMimeDetector for OwnedRepositoryMimeDetector {
             .into_iter()
             .map(|mime| mime.name().to_owned())
             .collect())
+    }
+}
+
+impl AsyncMimeDetectorBackend for OwnedRepositoryMimeDetector {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(self.repository.max_test_bytes())
+    }
+
+    fn random_access_capability(&self) -> super::RandomAccessCapability {
+        super::RandomAccessCapability::Unsupported
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        options: &'a MimeOperationOptions,
+    ) -> crate::MimeFuture<'a, MimeCandidates> {
+        Box::pin(async move {
+            let (content, extent, filename) = match input {
+                BorrowedMimeInput::Bytes {
+                    content,
+                    extent,
+                    filename,
+                } => (content, extent, filename),
+                BorrowedMimeInput::Provider { .. } => {
+                    return Err(MimeError::detector_backend(
+                        "repository",
+                        "provider-backed input must be resolved by the managed execution service",
+                    ));
+                }
+            };
+            let matched = super::internal::async_repository_matcher::match_content(
+                scope,
+                &self.repository,
+                content,
+            )
+            .await?;
+            let candidates = super::internal::async_repository_matcher::select_candidates(
+                &self.repository,
+                matched,
+                filename,
+                options.policy,
+            );
+            let inspected = content.len().min(self.repository.max_test_bytes());
+            let inspected_extent = match extent {
+                InputExtent::Prefix | InputExtent::Complete => InspectedExtent::Prefix(inspected),
+            };
+            Ok(MimeCandidates {
+                candidates,
+                inspected_extent,
+                retained_prefix: Vec::new(),
+            })
+        })
     }
 }

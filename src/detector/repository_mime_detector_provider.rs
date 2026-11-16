@@ -16,6 +16,7 @@ use qubit_spi::error::ProviderFailure;
 use qubit_spi::provider_descriptor;
 
 use super::MimeDetectorSpec;
+use crate::AsyncMimeDetectorBackend;
 use crate::MimeConfig;
 use crate::MimeDetector;
 use crate::MimeError;
@@ -41,6 +42,16 @@ use crate::RepositoryMimeDetector;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RepositoryMimeDetectorProvider;
 
+impl RepositoryMimeDetectorProvider {
+    /// Creates the repository backend for callers explicitly selecting the
+    /// asynchronous MIME interface. Construction uses the already-loaded
+    /// bundled repository and performs no I/O or XML parsing.
+    #[must_use]
+    pub fn create_async_backend(&self, config: &MimeConfig) -> Arc<dyn AsyncMimeDetectorBackend> {
+        Arc::new(RepositoryMimeDetector::from_mime_config(config.clone()))
+    }
+}
+
 impl ServiceProvider<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
     /// Creates a repository-backed detector from the supplied configuration.
     ///
@@ -56,8 +67,13 @@ impl ServiceProvider<MimeDetectorSpec> for RepositoryMimeDetectorProvider {
     ///
     /// This provider does not currently return an error.
     #[inline]
-    fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
-        Ok(Arc::new(RepositoryMimeDetector::from_mime_config(config.clone())))
+    fn create_configured(
+        &self,
+        config: &MimeConfig,
+    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+        Ok(Arc::new(RepositoryMimeDetector::from_mime_config(
+            config.clone(),
+        )))
     }
 }
 
