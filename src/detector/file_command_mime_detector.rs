@@ -40,6 +40,19 @@ use crate::MimeResult;
 use crate::command_execution::MimeCommandExecutor;
 use crate::command_execution::SystemMimeCommandExecutor;
 use crate::command_execution::require_complete_stdout;
+use crate::command_execution::{
+    AsyncMimeCommandExecutor, ManagedCommandExecutor, ManagedMimeCommand, MimeExecutionWorker,
+};
+use crate::detector::MimeExecutionServices;
+use crate::detector::async_mime_detector_backend::{
+    AsyncMimeDetectorBackend, MimeFuture, RandomAccessCapability,
+};
+use crate::detector::mime_detection_report::{MimeCandidate, MimeCandidates};
+use crate::detector::mime_input::{
+    BorrowedMimeInput, InputExtent, InspectedExtent, OwnedMimeInput,
+};
+use crate::detector::mime_operation_options::MimeOperationOptions;
+use crate::managed_temp_staging::{ManagedStagingLimits, stage_owned_in};
 
 /// MIME detector backed by `file --mime-type --brief`.
 ///
@@ -54,7 +67,7 @@ use crate::command_execution::require_complete_stdout;
 /// let _ = detector.detect_by_filename("document.pdf")?;
 /// # Ok::<(), qubit_mime::MimeError>(())
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FileCommandMimeDetector<'a> {
     /// The shared detector core.
     core: MimeDetectorCore,
@@ -62,6 +75,21 @@ pub struct FileCommandMimeDetector<'a> {
     repository: &'a MimeRepository,
     /// The command runner used for command execution.
     command_runner: CommandRunner,
+    execution_services: Option<MimeExecutionServices>,
+}
+
+impl std::fmt::Debug for FileCommandMimeDetector<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FileCommandMimeDetector")
+            .field("repository", &self.repository)
+            .field("command_runner", &self.command_runner)
+            .field(
+                "execution_services_configured",
+                &self.execution_services.is_some(),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl FileCommandMimeDetector<'static> {
@@ -83,7 +111,11 @@ impl FileCommandMimeDetector<'static> {
     /// File command detector.
     #[must_use]
     pub fn from_mime_config(config: MimeConfig) -> Self {
-        Self::with_repository_runner_and_config(default_repository(), Self::default_command_runner(&config), config)
+        Self::with_repository_runner_and_config(
+            default_repository(),
+            Self::default_command_runner(&config),
+            config,
+        )
     }
 }
 
@@ -105,7 +137,11 @@ impl<'a> FileCommandMimeDetector<'a> {
     #[must_use]
     pub fn with_repository(repository: &'a MimeRepository) -> Self {
         let config = MimeConfig::default();
-        Self::with_repository_runner_and_config(repository, Self::default_command_runner(&config), config)
+        Self::with_repository_runner_and_config(
+            repository,
+            Self::default_command_runner(&config),
+            config,
+        )
     }
 
     /// Creates a detector using an explicit repository and command runner.
@@ -118,7 +154,10 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// File command detector borrowing `repository` and owning the supplied
     /// runner.
     #[must_use]
-    pub fn with_repository_and_runner(repository: &'a MimeRepository, command_runner: CommandRunner) -> Self {
+    pub fn with_repository_and_runner(
+        repository: &'a MimeRepository,
+        command_runner: CommandRunner,
+    ) -> Self {
         Self::with_repository_runner_and_config(repository, command_runner, MimeConfig::default())
     }
 
@@ -144,7 +183,15 @@ impl<'a> FileCommandMimeDetector<'a> {
             core,
             repository,
             command_runner,
+            execution_services: None,
         }
+    }
+
+    /// Attaches prepared MIME operation services for explicit async detection.
+    #[must_use]
+    pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
+        self.execution_services = Some(services);
+        self
     }
 
     /// Gets the shared detector core.
@@ -238,7 +285,11 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// command without `-L`; the command's treatment of links, dangling links,
     /// and directories depends on platform, version, and environment. A custom
     /// executor defines its own behavior.
-    pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+    pub fn detect_file(
+        &self,
+        file: &Path,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }
 
@@ -297,13 +348,18 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// `true` when the probe succeeds and its output is complete.
-    pub(crate) fn is_available_with_executor(config: &MimeConfig, executor: &dyn MimeCommandExecutor) -> bool {
+    pub(crate) fn is_available_with_executor(
+        config: &MimeConfig,
+        executor: &dyn MimeCommandExecutor,
+    ) -> bool {
         executor
             .run(
                 &Self::default_command_runner(config).disable_logging(true),
                 Self::command_for_path(Path::new(".")),
             )
-            .is_ok_and(|output| output.exit_code == Some(0) && require_complete_stdout(&output).is_ok())
+            .is_ok_and(|output| {
+                output.exit_code == Some(0) && require_complete_stdout(&output).is_ok()
+            })
     }
 
     /// Gets filename candidates from the repository.
@@ -382,8 +438,8 @@ impl<'a> FileCommandMimeDetector<'a> {
                 format!("file exited with code {:?}", output.exit_code),
             ));
         }
-        let text =
-            require_complete_stdout(&output).map_err(|reason| MimeError::detector_backend(Self::COMMAND, reason))?;
+        let text = require_complete_stdout(&output)
+            .map_err(|reason| MimeError::detector_backend(Self::COMMAND, reason))?;
         let result = text.trim();
         if result.is_empty() {
             Ok(Vec::new())
@@ -417,12 +473,12 @@ impl<'a> FileCommandMimeDetector<'a> {
     ) -> Pin<Box<dyn Future<Output = MimeResult<Vec<String>>> + Send + 'b>> {
         Box::pin(async move {
             let mut owned = Vec::new();
-            owned
-                .try_reserve_exact(content.len())
-                .map_err(|source| MimeError::BufferAllocationFailed {
+            owned.try_reserve_exact(content.len()).map_err(|source| {
+                MimeError::BufferAllocationFailed {
                     requested: content.len(),
                     source,
-                })?;
+                }
+            })?;
             owned.extend_from_slice(content);
             let runner = self.command_runner.clone();
             blocking::unblock(move || {
@@ -463,6 +519,102 @@ impl<'a> FileCommandMimeDetector<'a> {
             .arg(Self::BRIEF_ARG)
             .arg("--")
             .sensitive_arg_os(path)
+    }
+}
+
+impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
+    fn content_requirement(&self) -> crate::ContentRequirement {
+        crate::ContentRequirement::Complete
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
+    fn guess_content_in<'b>(
+        &'b self,
+        scope: &'b qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'b>,
+        options: &'b MimeOperationOptions,
+    ) -> MimeFuture<'b, MimeCandidates> {
+        Box::pin(async move {
+            let owned = match input {
+                BorrowedMimeInput::Bytes {
+                    content,
+                    extent,
+                    filename,
+                } => {
+                    if extent != InputExtent::Complete {
+                        return Err(MimeError::CompleteContentRequired);
+                    }
+                    OwnedMimeInput::Bytes {
+                        content: Arc::from(content),
+                        extent,
+                        filename: filename.map(str::to_owned),
+                    }
+                }
+                BorrowedMimeInput::Provider { file_system, path } => OwnedMimeInput::Provider {
+                    file_system: Arc::new(file_system.clone()),
+                    path: path.clone(),
+                },
+            };
+            let services = self
+                .execution_services
+                .as_ref()
+                .ok_or(MimeError::ExecutionServicesRequired)?;
+            let max_bytes = options
+                .max_staging_bytes
+                .unwrap_or(256 * 1024 * 1024)
+                .min(256 * 1024 * 1024);
+            let worker = MimeExecutionWorker::new(Arc::clone(&services.execution));
+            let read_tree = services.read_tree_for_operation(scope.id())?;
+            let staged = stage_owned_in(
+                scope,
+                owned,
+                ManagedStagingLimits {
+                    max_bytes,
+                    budget: services.staging_budget(),
+                    worker: worker.clone(),
+                },
+                read_tree,
+            )
+            .await?;
+            let command = ManagedMimeCommand::new(
+                self.command_runner.clone(),
+                Self::command_for_path(&staged.path()?),
+                services.root_group.clone(),
+            );
+            let output = ManagedCommandExecutor::new(worker)
+                .run_in(scope, command, staged)
+                .await?;
+            if output.exit_code != Some(0) {
+                return Err(MimeError::detector_backend(
+                    Self::COMMAND,
+                    format!("file exited with code {:?}", output.exit_code),
+                ));
+            }
+            let value = require_complete_stdout(&output)
+                .map_err(|reason| MimeError::detector_backend(Self::COMMAND, reason))?
+                .trim();
+            let candidates = if value.is_empty() {
+                Vec::new()
+            } else if is_mime_name(value) {
+                vec![MimeCandidate {
+                    mime_type: value.to_owned(),
+                    rank: 0,
+                }]
+            } else {
+                return Err(MimeError::detector_backend(
+                    Self::COMMAND,
+                    "file returned an invalid MIME type",
+                ));
+            };
+            Ok(MimeCandidates {
+                candidates,
+                inspected_extent: InspectedExtent::Complete,
+                retained_prefix: Vec::new(),
+            })
+        })
     }
 }
 

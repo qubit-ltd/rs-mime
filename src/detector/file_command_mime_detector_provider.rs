@@ -16,10 +16,12 @@ use qubit_spi::error::ProviderFailure;
 use qubit_spi::provider_descriptor;
 
 use super::MimeDetectorSpec;
+use crate::AsyncMimeDetectorBackend;
 use crate::FileCommandMimeDetector;
 use crate::MimeConfig;
 use crate::MimeDetector;
 use crate::MimeError;
+use crate::MimeExecutionServices;
 
 /// Provider for the built-in system `file` command detector.
 ///
@@ -36,6 +38,20 @@ use crate::MimeError;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FileCommandMimeDetectorProvider;
 
+impl FileCommandMimeDetectorProvider {
+    /// Creates the explicit async backend using caller-prepared MIME services.
+    pub fn create_async_backend(
+        &self,
+        config: &MimeConfig,
+        services: MimeExecutionServices,
+    ) -> Arc<dyn AsyncMimeDetectorBackend> {
+        Arc::new(
+            FileCommandMimeDetector::from_mime_config(config.clone())
+                .with_execution_services(services),
+        )
+    }
+}
+
 impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
     /// Creates a detector backed by the system `file` command.
     ///
@@ -51,14 +67,21 @@ impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
     /// # Errors
     /// Returns an unavailable provider failure if the system `file` command
     /// cannot be executed in the current environment.
-    fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    fn create_configured(
+        &self,
+        config: &MimeConfig,
+    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         if !FileCommandMimeDetector::is_available_with_config(config) {
-            return Err(ProviderFailure::unavailable(MimeError::DetectorUnavailable {
-                name: "file".to_owned(),
-                reason: "`file` command is not available".to_owned(),
-            }));
+            return Err(ProviderFailure::unavailable(
+                MimeError::DetectorUnavailable {
+                    name: "file".to_owned(),
+                    reason: "`file` command is not available".to_owned(),
+                },
+            ));
         }
-        Ok(Arc::new(FileCommandMimeDetector::from_mime_config(config.clone())))
+        Ok(Arc::new(FileCommandMimeDetector::from_mime_config(
+            config.clone(),
+        )))
     }
 }
 
