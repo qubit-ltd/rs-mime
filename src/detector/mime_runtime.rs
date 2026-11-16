@@ -6,10 +6,18 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use std::sync::Arc;
+use qubit_operation::OperationScope;
+use std::{fmt, sync::Arc};
 
+use super::internal::mime_submission;
 pub use super::mime_detector_context::MimeDetectorContext;
 use super::owned_repository_mime_detector::OwnedRepositoryMimeDetector;
+use super::{
+    mime_execution_services::MimeExecutionServices,
+    mime_input::OwnedMimeInput,
+    mime_operation::{AsyncMimeOperation, MimeOperation, MimeSubmitFailure, MimeSubmitRejection},
+    mime_operation_options::MimeOperationOptions,
+};
 use crate::MimeConfig;
 use crate::MimeDetector;
 use crate::MimeRepository;
@@ -27,11 +35,21 @@ use crate::MimeResult;
 /// assert_eq!(detector.detect_by_filename("document.pdf")?, Some("application/pdf".to_owned()));
 /// # Ok::<(), qubit_mime::MimeError>(())
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MimeRuntime {
     /// Configuration and repository shared by detectors created by this
     /// runtime.
     context: MimeDetectorContext,
+    execution_services: Option<Arc<MimeExecutionServices>>,
+}
+
+impl fmt::Debug for MimeRuntime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MimeRuntime")
+            .field("context", &self.context)
+            .field("has_execution_services", &self.execution_services.is_some())
+            .finish()
+    }
 }
 
 impl MimeRuntime {
@@ -54,6 +72,7 @@ impl MimeRuntime {
     pub fn new(config: MimeConfig, repository: Arc<MimeRepository>) -> Self {
         Self {
             context: MimeDetectorContext::new(Arc::new(config), repository),
+            execution_services: None,
         }
     }
 
@@ -70,7 +89,242 @@ impl MimeRuntime {
     /// values and returns `Ok`. The result type is retained for consistency
     /// with detector creation APIs.
     pub fn builtin() -> MimeResult<Self> {
-        Ok(Self::new(MimeConfig::default(), MimeRepository::bundled_shared()))
+        Ok(Self::new(
+            MimeConfig::default(),
+            MimeRepository::bundled_shared(),
+        ))
+    }
+
+    /// Attaches shared operation and MIME execution services without starting workers.
+    #[must_use]
+    pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
+        self.execution_services = Some(Arc::new(services));
+        self
+    }
+
+    /// Submits detection to the MIME root group.
+    pub fn try_submit_detection(
+        &self,
+        input: OwnedMimeInput,
+        options: MimeOperationOptions,
+    ) -> Result<AsyncMimeOperation, MimeSubmitFailure> {
+        self.submit_async(None, input, options)
+    }
+
+    /// Submits detection as a child of the given operation.
+    pub fn try_submit_detection_in(
+        &self,
+        parent: &OperationScope,
+        input: OwnedMimeInput,
+        options: MimeOperationOptions,
+    ) -> Result<AsyncMimeOperation, MimeSubmitFailure> {
+        self.submit_async(Some(parent), input, options)
+    }
+
+    fn submit_async(
+        &self,
+        parent: Option<&OperationScope>,
+        input: OwnedMimeInput,
+        options: MimeOperationOptions,
+    ) -> Result<AsyncMimeOperation, MimeSubmitFailure> {
+        let Some(services) = self.execution_services.as_ref().cloned() else {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::ExecutionServicesRequired,
+                input,
+            });
+        };
+        let _submission = services.submission_guard();
+        let can_submit = if parent.is_some() {
+            services.accepts_children()
+        } else {
+            services.is_prepared()
+        };
+        if !can_submit {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::ExecutionServicesRequired,
+                input,
+            });
+        }
+        if options.max_buffer_bytes == Some(0)
+            || options.max_staging_bytes == Some(0)
+            || options.max_read_bytes == Some(0)
+        {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::InvalidOptions("a request budget is zero".into()),
+                input,
+            });
+        }
+        let detector = match self.create_detector() {
+            Ok(detector) => detector,
+            Err(_) => {
+                return Err(MimeSubmitFailure {
+                    reason: MimeSubmitRejection::InvalidOptions(
+                        "detector construction failed".into(),
+                    ),
+                    input,
+                });
+            }
+        };
+        let permit = match &input {
+            OwnedMimeInput::Bytes { content, .. } => services.reserve_allocation(content),
+            OwnedMimeInput::Provider { .. } => services.reserve_owned(0),
+        };
+        let Some(permit) = permit else {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::BudgetExceeded,
+                input,
+            });
+        };
+        if let (OwnedMimeInput::Bytes { content, .. }, Some(limit)) =
+            (&input, options.max_buffer_bytes)
+        {
+            if content.len() > limit {
+                return Err(MimeSubmitFailure {
+                    reason: MimeSubmitRejection::BudgetExceeded,
+                    input,
+                });
+            }
+        }
+        let cell = mime_submission::cell(input);
+        let body_cell = Arc::clone(&cell);
+        let body_services = Arc::clone(&services);
+        let body_options = options.clone();
+        let body = move |scope| {
+            mime_submission::detect(
+                scope,
+                mime_submission::take(&body_cell),
+                body_services,
+                detector,
+                body_options,
+                Some(permit),
+            )
+        };
+        let result = if let Some(parent) = parent {
+            match parent.manager().with_group(&services.root_group) {
+                Ok(manager) => manager.as_async().try_submit(options.operation, body),
+                Err(error) => {
+                    return Err(MimeSubmitFailure {
+                        reason: MimeSubmitRejection::GroupBinding(error),
+                        input: mime_submission::return_input(&cell),
+                    });
+                }
+            }
+        } else {
+            services
+                .async_root_group
+                .try_submit(options.operation, body)
+        };
+        match result {
+            Ok(handle) => {
+                services.track_observer(handle.observer());
+                Ok(handle)
+            }
+            Err(error) => {
+                let (reason, _) = error.into_parts();
+                Err(MimeSubmitFailure {
+                    reason: MimeSubmitRejection::Admission(reason),
+                    input: mime_submission::return_input(&cell),
+                })
+            }
+        }
+    }
+
+    /// Submits a synchronous child operation using the parent's manager view.
+    pub fn try_submit_detection_sync_in(
+        &self,
+        parent: &OperationScope,
+        input: OwnedMimeInput,
+        options: MimeOperationOptions,
+    ) -> Result<MimeOperation, MimeSubmitFailure> {
+        let Some(services) = self.execution_services.as_ref().cloned() else {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::ExecutionServicesRequired,
+                input,
+            });
+        };
+        let _submission = services.submission_guard();
+        if !services.accepts_children() {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::ExecutionServicesRequired,
+                input,
+            });
+        }
+        let detector = match self.create_detector() {
+            Ok(detector) => detector,
+            Err(_) => {
+                return Err(MimeSubmitFailure {
+                    reason: MimeSubmitRejection::InvalidOptions(
+                        "detector construction failed".into(),
+                    ),
+                    input,
+                });
+            }
+        };
+        let permit = match &input {
+            OwnedMimeInput::Bytes { content, .. } => services.reserve_allocation(content),
+            OwnedMimeInput::Provider { .. } => services.reserve_owned(0),
+        };
+        let Some(permit) = permit else {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::BudgetExceeded,
+                input,
+            });
+        };
+        let cell = mime_submission::cell(input);
+        let body_cell = Arc::clone(&cell);
+        let body = move |scope| {
+            let input = mime_submission::take(&body_cell);
+            let result = match input {
+                OwnedMimeInput::Bytes {
+                    content,
+                    extent,
+                    filename,
+                } => {
+                    let mime_type =
+                        detector.detect(&content, filename.as_deref(), options.policy)?;
+                    let inspected_extent = match extent {
+                        super::mime_input::InputExtent::Prefix => {
+                            super::mime_input::InspectedExtent::Prefix(content.len())
+                        }
+                        super::mime_input::InputExtent::Complete => {
+                            super::mime_input::InspectedExtent::Complete
+                        }
+                    };
+                    Ok(crate::MimeDetectionReport {
+                        mime_type,
+                        backend_id: "repository".into(),
+                        inspected_extent,
+                        budget: Default::default(),
+                    })
+                }
+                OwnedMimeInput::Provider { .. } => Err(crate::MimeError::AsyncUnsupported),
+            };
+            let _scope = scope;
+            let _permit = permit;
+            result
+        };
+        let manager = match parent.manager().with_group(&services.root_group) {
+            Ok(manager) => manager,
+            Err(error) => {
+                return Err(MimeSubmitFailure {
+                    reason: MimeSubmitRejection::GroupBinding(error),
+                    input: mime_submission::return_input(&cell),
+                });
+            }
+        };
+        match manager.try_submit(options.operation, body) {
+            Ok(handle) => {
+                services.track_observer(handle.observer().as_async());
+                Ok(handle)
+            }
+            Err(error) => {
+                let (reason, _) = error.into_parts();
+                Err(MimeSubmitFailure {
+                    reason: MimeSubmitRejection::Admission(reason),
+                    input: mime_submission::return_input(&cell),
+                })
+            }
+        }
     }
 
     /// Returns the immutable configuration and repository shared by this

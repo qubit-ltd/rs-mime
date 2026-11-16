@@ -36,6 +36,12 @@ pub enum MimeError {
     /// A MIME operation could not bind to its configured operation group.
     #[error("failed to bind MIME operation group: {0}")]
     GroupBinding(#[source] GroupBindingError),
+    /// MIME shutdown observation is not ready for the requested stage.
+    #[error("MIME operation shutdown is still pending")]
+    OperationShutdownPending,
+    /// An operation group could not complete its requested shutdown.
+    #[error("MIME operation group shutdown failed: {0}")]
+    OperationShutdown(#[source] qubit_operation::ObservationError),
     /// A cumulative or per-request operation budget is invalid.
     #[error("invalid MIME operation budget")]
     InvalidOperationBudget,
