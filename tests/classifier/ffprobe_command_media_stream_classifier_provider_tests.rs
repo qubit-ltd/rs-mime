@@ -50,7 +50,8 @@ fn test_ffprobe_provider_applies_probe_output_and_timeout_budgets() {
             .expect("fake ffprobe metadata should be readable")
             .permissions();
         permissions.set_mode(0o755);
-        std::fs::set_permissions(&executable, permissions).expect("fake ffprobe should be executable");
+        std::fs::set_permissions(&executable, permissions)
+            .expect("fake ffprobe should be executable");
     };
     let provider = FfprobeCommandMediaStreamClassifierProvider;
 
@@ -59,7 +60,8 @@ fn test_ffprobe_provider_applies_probe_output_and_timeout_budgets() {
     source
         .set(CONFIG_COMMAND_OUTPUT_MAX_BYTES, 1_u64)
         .expect("small output cap should be accepted");
-    let small_output_config = MimeConfig::from_config(&source).expect("small output config should parse");
+    let small_output_config =
+        MimeConfig::from_config(&source).expect("small output config should parse");
     assert_eq!(
         ProviderFailureKind::Unavailable,
         provider
@@ -73,7 +75,8 @@ fn test_ffprobe_provider_applies_probe_output_and_timeout_budgets() {
     source
         .set(CONFIG_COMMAND_TIMEOUT, "30ms")
         .expect("short timeout should be accepted");
-    let short_timeout_config = MimeConfig::from_config(&source).expect("short timeout config should parse");
+    let short_timeout_config =
+        MimeConfig::from_config(&source).expect("short timeout config should parse");
     assert_eq!(
         ProviderFailureKind::Unavailable,
         provider

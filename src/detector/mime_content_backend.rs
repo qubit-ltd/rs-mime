@@ -108,7 +108,11 @@ pub trait MimeContentBackend: Debug + Send + Sync {
     /// detection fails.
     fn detect_reader(&self, reader: &mut dyn ReadSeek) -> MimeResult<Vec<String>> {
         let position = reader.stream_position()?;
-        let read_result = read_required(reader, self.content_requirement(), self.max_reader_buffer_size());
+        let read_result = read_required(
+            reader,
+            self.content_requirement(),
+            self.max_reader_buffer_size(),
+        );
         let restore_result = reader.seek(SeekFrom::Start(position));
         match (read_result, restore_result) {
             (Ok(bytes), Ok(_)) => self.detect_bytes(&bytes),
@@ -148,7 +152,11 @@ fn read_retry_interrupted(reader: &mut dyn ReadSeek, buffer: &mut [u8]) -> std::
 /// when the request exceeds the budget, or
 /// [`MimeError::BufferAllocationFailed`] when allocation fails. Complete reads
 /// probe one extra byte to detect input exceeding the budget.
-fn read_required(reader: &mut dyn ReadSeek, requirement: ContentRequirement, budget: usize) -> MimeResult<Vec<u8>> {
+fn read_required(
+    reader: &mut dyn ReadSeek,
+    requirement: ContentRequirement,
+    budget: usize,
+) -> MimeResult<Vec<u8>> {
     if let ContentRequirement::Prefix(limit) = requirement
         && limit > budget
     {

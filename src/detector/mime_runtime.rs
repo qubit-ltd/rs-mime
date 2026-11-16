@@ -160,7 +160,9 @@ impl MimeRuntime {
             Ok(permit) => permit,
             Err(reason) => return Err(MimeSubmitFailure { reason, input }),
         };
-        let tree_limit = options.max_read_bytes.unwrap_or(services.max_read_bytes)
+        let tree_limit = options
+            .max_read_bytes
+            .unwrap_or(services.max_read_bytes)
             .min(services.max_read_bytes);
         let read_tree = parent.map_or_else(
             || services.new_read_tree(tree_limit),
@@ -247,7 +249,9 @@ impl MimeRuntime {
             Ok(permit) => permit,
             Err(reason) => return Err(MimeSubmitFailure { reason, input }),
         };
-        let tree_limit = options.max_read_bytes.unwrap_or(services.max_read_bytes)
+        let tree_limit = options
+            .max_read_bytes
+            .unwrap_or(services.max_read_bytes)
             .min(services.max_read_bytes);
         let read_tree = services.read_tree_for_parent(parent.id(), tree_limit, tree_limit);
         let cell = mime_submission::cell(input);

@@ -188,8 +188,12 @@ pub trait MimeDetector: Debug + Send + Sync {
     /// # Errors
     /// Returns a backend or media-classifier error when detection cannot
     /// complete.
-    fn detect(&self, content: &[u8], filename: Option<&str>, policy: MimeDetectionPolicy)
-    -> MimeResult<Option<String>>;
+    fn detect(
+        &self,
+        content: &[u8],
+        filename: Option<&str>,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>>;
 
     /// Gets the largest prefix buffer this detector may allocate.
     ///
@@ -328,7 +332,8 @@ impl MimeDetector for Box<dyn MimeDetector> {
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> Pin<Box<dyn Future<Output = MimeResult<Option<String>>> + Send + 'a>> {
-        self.as_ref().detect_async_path(file_system, path, max_bytes, policy)
+        self.as_ref()
+            .detect_async_path(file_system, path, max_bytes, policy)
     }
 
     /// Delegates filename detection to the boxed detector.
@@ -412,7 +417,8 @@ impl MimeDetector for Box<dyn MimeDetector> {
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        self.as_ref().detect_path(file_system, path, max_bytes, policy)
+        self.as_ref()
+            .detect_path(file_system, path, max_bytes, policy)
     }
 }
 
@@ -454,7 +460,8 @@ impl MimeDetector for Arc<dyn MimeDetector> {
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> Pin<Box<dyn Future<Output = MimeResult<Option<String>>> + Send + 'a>> {
-        self.as_ref().detect_async_path(file_system, path, max_bytes, policy)
+        self.as_ref()
+            .detect_async_path(file_system, path, max_bytes, policy)
     }
 
     /// Delegates filename detection to the shared detector.
@@ -538,6 +545,7 @@ impl MimeDetector for Arc<dyn MimeDetector> {
         max_bytes: usize,
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
-        self.as_ref().detect_path(file_system, path, max_bytes, policy)
+        self.as_ref()
+            .detect_path(file_system, path, max_bytes, policy)
     }
 }

@@ -8,8 +8,8 @@ use crate::detector::{
     mime_detection_report::MimeBudgetSummary,
     mime_execution_services::MimeExecutionServices,
     mime_input::{InputExtent, InspectedExtent, OwnedMimeInput},
-    mime_operation_options::MimeOperationOptions,
     mime_operation::MimeSubmitRejection,
+    mime_operation_options::MimeOperationOptions,
 };
 use crate::{ContentRequirement, MimeDetectionReport, MimeError, MimeResult};
 
@@ -45,9 +45,13 @@ pub(in crate::detector) fn preflight(
         || options.max_staging_bytes == Some(0)
         || options.max_read_bytes == Some(0)
     {
-        return Err(MimeSubmitRejection::InvalidOptions("a request budget is zero".into()));
+        return Err(MimeSubmitRejection::InvalidOptions(
+            "a request budget is zero".into(),
+        ));
     }
-    let limit = options.max_buffer_bytes.unwrap_or_else(|| detector.max_buffer_size())
+    let limit = options
+        .max_buffer_bytes
+        .unwrap_or_else(|| detector.max_buffer_size())
         .min(detector.max_buffer_size());
     match input {
         OwnedMimeInput::Bytes { content, .. } => {
@@ -57,7 +61,9 @@ pub(in crate::detector) fn preflight(
             services.reserve_allocation(content)
         }
         OwnedMimeInput::Provider { .. } => {
-            let read_limit = options.max_read_bytes.unwrap_or(services.max_read_bytes)
+            let read_limit = options
+                .max_read_bytes
+                .unwrap_or(services.max_read_bytes)
                 .min(services.max_read_bytes)
                 .min(u64::try_from(limit).unwrap_or(u64::MAX));
             let read_limit = usize::try_from(read_limit).unwrap_or(usize::MAX);
@@ -104,16 +110,27 @@ pub(in crate::detector) async fn detect(
             if matches!(detector.content_requirement(), ContentRequirement::Complete) {
                 return Err(MimeError::CompleteContentRequired);
             }
-            let max_bytes = options.max_buffer_bytes.unwrap_or_else(|| detector.max_buffer_size())
+            let max_bytes = options
+                .max_buffer_bytes
+                .unwrap_or_else(|| detector.max_buffer_size())
                 .min(detector.max_buffer_size())
-                .min(usize::try_from(options.max_read_bytes.unwrap_or(services.max_read_bytes).min(services.max_read_bytes)).unwrap_or(usize::MAX));
-            let read_permit = read_tree
-                .reserve(max_bytes as u64)
-                .ok_or(MimeError::BudgetExceeded {
-                    kind: "read",
-                    requested: max_bytes as u64,
-                    limit: read_tree.remaining(),
-                })?;
+                .min(
+                    usize::try_from(
+                        options
+                            .max_read_bytes
+                            .unwrap_or(services.max_read_bytes)
+                            .min(services.max_read_bytes),
+                    )
+                    .unwrap_or(usize::MAX),
+                );
+            let read_permit =
+                read_tree
+                    .reserve(max_bytes as u64)
+                    .ok_or(MimeError::BudgetExceeded {
+                        kind: "read",
+                        requested: max_bytes as u64,
+                        limit: read_tree.remaining(),
+                    })?;
             let read_outcome = file_system
                 .read_prefix(&path, qubit_fs::read::ReadOptions::default(), max_bytes)
                 .await;
