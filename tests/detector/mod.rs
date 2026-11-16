@@ -19,6 +19,7 @@ mod mime_detector_registry_tests;
 mod mime_detector_spec_tests;
 mod mime_detector_tests;
 mod mime_runtime_tests;
+mod operation_runtime_tests;
 mod repository_mime_detector_provider_tests;
 mod repository_mime_detector_tests;
 mod stream_based_mime_detector_tests;
