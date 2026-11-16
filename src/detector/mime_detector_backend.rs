@@ -90,9 +90,9 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
 
     /// Guesses MIME candidates from content asynchronously.
     ///
-    /// The compatibility default calls [`Self::guess_from_content`] inline.
-    /// Custom backends that may block must override this hook to avoid
-    /// blocking their executor. Built-in file detection owns its input and
+    /// The default rejects asynchronous use. A backend must opt into async
+    /// execution explicitly by overriding this hook; synchronous inspection
+    /// is never run inline on an async executor. Built-in file detection owns its input and
     /// runs staging and command execution on the blocking pool. Dropping its
     /// future does not guarantee cancellation after the worker starts. The
     /// worker copy and provider prefix may coexist, each bounded by the
@@ -108,9 +108,9 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// Propagates content-inspection errors.
     fn guess_from_content_async<'a>(
         &'a self,
-        content: &'a [u8],
+        _content: &'a [u8],
     ) -> Pin<Box<dyn Future<Output = MimeResult<Vec<String>>> + Send + 'a>> {
-        Box::pin(async move { self.guess_from_content(content) })
+        Box::pin(async { Err(crate::MimeError::AsyncUnsupported) })
     }
 
     /// Guesses MIME type names from a seekable reader.

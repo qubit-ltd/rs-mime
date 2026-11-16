@@ -82,8 +82,9 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     /// Returns an error when a backend cannot inspect the supplied content.
     fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>>;
 
-    /// Guesses candidates asynchronously, using the synchronous hook inline
-    /// by default. Implementations that may block should override this method.
+    /// Guesses candidates asynchronously. The default rejects asynchronous
+    /// use; implementations must opt in explicitly and never execute the
+    /// synchronous hook inline.
     ///
     /// # Parameters
     /// - `content`: Content bytes to inspect.
@@ -95,9 +96,9 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     /// Propagates content-inspection errors.
     fn guess_from_content_bytes_async<'a>(
         &'a self,
-        content: &'a [u8],
+        _content: &'a [u8],
     ) -> Pin<Box<dyn Future<Output = MimeResult<Vec<String>>> + Send + 'a>> {
-        Box::pin(async move { self.guess_from_content_bytes(content) })
+        Box::pin(async { Err(crate::MimeError::AsyncUnsupported) })
     }
 
     /// Guesses MIME type names from a seekable reader.

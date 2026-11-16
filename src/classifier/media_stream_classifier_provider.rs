@@ -8,8 +8,10 @@
 //! Provider contract for pluggable media stream classifiers.
 
 use qubit_spi::ProviderDefinition;
+use std::sync::Arc;
 
 use super::MediaStreamClassifierSpec;
+use crate::{AsyncMediaStreamClassifierBackend, MimeConfig, MimeError, MimeExecutionServices};
 
 /// Marker trait for media stream classifier providers.
 ///
@@ -28,7 +30,19 @@ use super::MediaStreamClassifierSpec;
 /// assert_provider::<FfprobeCommandMediaStreamClassifierProvider>();
 /// ```
 pub trait MediaStreamClassifierProvider: ProviderDefinition<MediaStreamClassifierSpec> {
-    // empty
+    /// Constructs the provider's explicit async classifier. Sync-only
+    /// providers reject this operation without invoking synchronous
+    /// construction or classification.
+    fn create_operation_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMediaStreamClassifierBackend>, MimeError> {
+        Err(MimeError::AsyncUnsupported)
+    }
 }
 
-impl<T> MediaStreamClassifierProvider for T where T: ProviderDefinition<MediaStreamClassifierSpec> + ?Sized {}
+impl<T> MediaStreamClassifierProvider for T where
+    T: ProviderDefinition<MediaStreamClassifierSpec> + ?Sized
+{
+}
