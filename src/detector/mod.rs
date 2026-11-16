@@ -7,7 +7,13 @@
 // =============================================================================
 //! MIME detector implementations.
 
+pub mod async_mime_detector_backend;
 pub mod content_requirement;
+pub mod mime_detection_report;
+pub mod mime_execution_services;
+pub mod mime_input;
+pub mod mime_operation;
+pub mod mime_operation_options;
 pub(crate) mod detection_source;
 pub(crate) mod file_based_mime_detector;
 pub(crate) mod file_command_mime_detector;
@@ -33,7 +39,17 @@ pub(crate) mod repository_mime_detector;
 pub(crate) mod repository_mime_detector_provider;
 pub(crate) mod stream_based_mime_detector;
 
+pub use async_mime_detector_backend::{AsyncMimeDetectorBackend, MimeFuture};
 pub use content_requirement::ContentRequirement;
+pub use mime_detection_report::{
+    MimeBudgetSummary, MimeCandidate, MimeCandidates, MimeDetectionReport,
+};
+pub use mime_execution_services::{MimeExecutionPort, MimeExecutionServices};
+pub use mime_input::{BorrowedMimeInput, InputExtent, InspectedExtent, OwnedMimeInput};
+pub use mime_operation::{
+    AsyncMimeOperation, MimeOperation, MimeSubmitFailure, MimeSubmitRejection,
+};
+pub use mime_operation_options::MimeOperationOptions;
 pub use detection_source::DetectionSource;
 pub use file_based_mime_detector::FileBasedMimeDetector;
 pub use file_command_mime_detector::FileCommandMimeDetector;

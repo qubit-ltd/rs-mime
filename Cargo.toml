@@ -39,6 +39,7 @@ thiserror = "^2.0"
 blocking = "^1.6"
 
 qubit-io = "^0.19"
+qubit-operation = "^0.3"
 
 qubit-fs = { version = "^0.3", default-features = false, features = ["async"] }
 
@@ -60,6 +61,10 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
 [[test]]
 name = "mod"
 path = "tests/mod_tests.rs"
+
+[[test]]
+name = "operation_api_consumer"
+path = "tests/operation_api_consumer_tests.rs"
 
 [[bench]]
 name = "command_backends"

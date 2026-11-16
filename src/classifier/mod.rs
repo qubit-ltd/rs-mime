@@ -7,6 +7,7 @@
 // =============================================================================
 //! Media stream classifier implementations.
 
+pub mod async_media_stream_classifier_backend;
 pub(crate) mod ffprobe_command_media_stream_classifier;
 pub(crate) mod ffprobe_command_media_stream_classifier_provider;
 pub(crate) mod file_based_media_stream_classifier;
@@ -20,6 +21,7 @@ pub(crate) mod media_stream_classifier_registry;
 pub(crate) mod media_stream_classifier_spec;
 mod media_stream_type;
 
+pub use async_media_stream_classifier_backend::AsyncMediaStreamClassifierBackend;
 pub use ffprobe_command_media_stream_classifier::FfprobeCommandMediaStreamClassifier;
 pub use ffprobe_command_media_stream_classifier_provider::FfprobeCommandMediaStreamClassifierProvider;
 pub use file_based_media_stream_classifier::FileBasedMediaStreamClassifier;

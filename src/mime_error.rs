@@ -11,6 +11,7 @@ use qubit_command::CommandError;
 use qubit_config::ConfigError;
 use qubit_fs::FsError;
 use qubit_local_files::LocalFileError;
+use qubit_operation::GroupBindingError;
 use roxmltree::Error as XmlError;
 use thiserror::Error;
 
@@ -26,6 +27,27 @@ use thiserror::Error;
 #[must_use]
 #[derive(Debug, Error)]
 pub enum MimeError {
+    /// A synchronous-only backend was selected for an asynchronous request.
+    #[error("selected MIME backend does not support asynchronous execution")]
+    AsyncUnsupported,
+    /// Managed asynchronous execution requires explicitly configured services.
+    #[error("MIME execution services are required for this operation")]
+    ExecutionServicesRequired,
+    /// A MIME operation could not bind to its configured operation group.
+    #[error("failed to bind MIME operation group: {0}")]
+    GroupBinding(#[source] GroupBindingError),
+    /// A cumulative or per-request operation budget is invalid.
+    #[error("invalid MIME operation budget")]
+    InvalidOperationBudget,
+    /// Input does not provide the extent required by the selected backend.
+    #[error("MIME input range is insufficient: required {required} bytes, available {available}")]
+    InputRange { required: usize, available: usize },
+    /// Input changed while the operation was inspecting the opened object.
+    #[error("MIME input changed during inspection")]
+    InputChanged,
+    /// An input or staging budget was exceeded.
+    #[error("MIME {kind} budget exceeded: requested {requested}, limit {limit}")]
+    BudgetExceeded { kind: &'static str, requested: u64, limit: u64 },
     /// The detector requires the complete resource rather than a prefix.
     #[error("complete content is required for MIME detection")]
     CompleteContentRequired,
