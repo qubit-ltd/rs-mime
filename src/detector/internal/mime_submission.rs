@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use qubit_fs::read::ReadOptions;
 use qubit_operation::OperationScope;
 
 use crate::AsyncMimeDetectorBackend;
@@ -165,7 +166,7 @@ pub(in crate::detector) async fn detect(
                     limit: read_tree.remaining(),
                 })?;
                 let outcome = file_system
-                    .read_prefix(&path, qubit_fs::read::ReadOptions::default(), max_bytes)
+                    .read_prefix(&path, ReadOptions::default(), max_bytes)
                     .await;
                 let content = match outcome {
                     Ok(outcome) => outcome.into_bytes(),

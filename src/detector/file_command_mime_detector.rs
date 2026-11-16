@@ -25,6 +25,8 @@ use std::sync::Arc;
 use qubit_command::Command;
 use qubit_command::CommandRunner;
 use qubit_io::std_io::ReadSeek;
+use qubit_operation::OperationScope;
+use qubit_operation::StopReport;
 
 use super::repository_mime_detector::default_repository;
 use crate::FileBasedMimeDetector;
@@ -489,13 +491,13 @@ impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
 
     fn guess_content_in<'b>(
         &'b self,
-        scope: &'b qubit_operation::OperationScope,
+        scope: &'b OperationScope,
         input: BorrowedMimeInput<'b>,
         options: &'b MimeOperationOptions,
     ) -> MimeFuture<'b, MimeCandidates> {
         Box::pin(async move {
             if let Some(reason) = scope.context().stop_reason() {
-                return Err(MimeError::OperationStopped(qubit_operation::StopReport {
+                return Err(MimeError::OperationStopped(StopReport {
                     reason,
                     accepted_at: None,
                 }));
@@ -550,7 +552,7 @@ impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
                 }
             };
             if let Some(reason) = scope.context().stop_reason() {
-                return Err(MimeError::OperationStopped(qubit_operation::StopReport {
+                return Err(MimeError::OperationStopped(StopReport {
                     reason,
                     accepted_at: None,
                 }));
@@ -639,6 +641,7 @@ mod file_operation_tests {
     use qubit_fs::FsResult;
     use qubit_fs::Path as FsPath;
     use qubit_fs::metadata::FileSystemCapabilities;
+    use qubit_fs::metadata::FileSystemCapability;
     use qubit_fs::metadata::FileSystemId;
     use qubit_fs::metadata::FileSystemInfo;
     use qubit_fs::metadata::FileSystemLimits;
@@ -656,11 +659,39 @@ mod file_operation_tests {
     use qubit_fs::spi::StatRequest;
     use qubit_fs::spi::StatResponse;
     use qubit_io::AsyncInput;
+    use qubit_operation::AsyncOperationHandle;
+    use qubit_operation::GroupOptions;
+    use qubit_operation::OperationContext;
+    use qubit_operation::OperationGroup;
+    use qubit_operation::OperationManager;
     use qubit_operation::OperationOutcome;
     use qubit_operation::ResourceRef;
+    use qubit_operation::SettlementStatus;
     use qubit_operation::StopReason;
 
-    use super::*;
+    use super::AsyncMimeDetectorBackend;
+    use super::FileBasedMimeDetector;
+    use super::FileCommandMimeDetector;
+    use super::ManagedStagingLimits;
+    use super::MimeCandidates;
+    use super::MimeConfig;
+    use super::MimeDetectionPolicy;
+    use super::MimeDetector;
+    use super::MimeDetectorCore;
+    use super::MimeError;
+    use super::MimeExecutionServices;
+    use super::MimeFuture;
+    use super::MimeOperationOptions;
+    use super::MimeRepository;
+    use super::MimeResult;
+    use super::RandomAccessCapability;
+    use super::ManagedCommandExecutor;
+    use super::ManagedMimeCommand;
+    use super::MimeExecutionWorker;
+    use super::SystemMimeCommandExecutor;
+    use super::require_complete_stdout;
+    use super::stage_borrowed_bytes_in;
+    use super::stage_owned_in;
     use crate::MimeExecutionPort;
     use crate::MimeOperationOptions;
     use crate::command_execution::MimeCommandOutput;
@@ -702,7 +733,7 @@ mod file_operation_tests {
         properties: ProviderProperties,
         bytes: Vec<u8>,
         reads: Arc<AtomicUsize>,
-        stop_context: Option<Arc<std::sync::Mutex<Option<qubit_operation::OperationContext>>>>,
+        stop_context: Option<Arc<std::sync::Mutex<Option<OperationContext>>>>,
     }
 
     impl ProviderFs {
@@ -716,7 +747,7 @@ mod file_operation_tests {
         ) -> (
             Arc<AsyncFileSystem>,
             Arc<AtomicUsize>,
-            Arc<std::sync::Mutex<Option<qubit_operation::OperationContext>>>,
+            Arc<std::sync::Mutex<Option<OperationContext>>>,
         ) {
             let stop_context = Arc::new(std::sync::Mutex::new(None));
             let (filesystem, reads, stop_context) = Self::with_optional_stop(bytes, Some(stop_context));
@@ -725,11 +756,11 @@ mod file_operation_tests {
 
         fn with_optional_stop(
             bytes: &[u8],
-            stop_context: Option<Arc<std::sync::Mutex<Option<qubit_operation::OperationContext>>>>,
+            stop_context: Option<Arc<std::sync::Mutex<Option<OperationContext>>>>,
         ) -> (
             Arc<AsyncFileSystem>,
             Arc<AtomicUsize>,
-            Option<Arc<std::sync::Mutex<Option<qubit_operation::OperationContext>>>>,
+            Option<Arc<std::sync::Mutex<Option<OperationContext>>>>,
         ) {
             let properties = ProviderProperties::new(
                 FileSystemInfo::new(
@@ -738,7 +769,7 @@ mod file_operation_tests {
                     PathSemantics::Hierarchical,
                 ),
                 ProviderOperations::new().with(ProviderOperation::OpenReader),
-                FileSystemCapabilities::new().with_guaranteed(qubit_fs::metadata::FileSystemCapability::Read),
+                FileSystemCapabilities::new().with_guaranteed(FileSystemCapability::Read),
                 FileSystemLimits::unknown(),
                 PathConstraints::absolute(),
                 SymlinkPolicy::Reject,
@@ -789,7 +820,7 @@ mod file_operation_tests {
         bytes: Vec<u8>,
         offset: usize,
         reads: Arc<AtomicUsize>,
-        stop_context: Option<Arc<std::sync::Mutex<Option<qubit_operation::OperationContext>>>>,
+        stop_context: Option<Arc<std::sync::Mutex<Option<OperationContext>>>>,
     }
 
     impl AsyncInput for ProviderInput {
@@ -841,7 +872,7 @@ mod file_operation_tests {
     impl AsyncMimeCommandExecutor for RecordingExecutor {
         fn run_in<'a>(
             &'a self,
-            _scope: &'a qubit_operation::OperationScope,
+            _scope: &'a OperationScope,
             request: ManagedMimeCommand,
             input: ResourceRef<StagedMimeInput>,
         ) -> MimeFuture<'a, MimeCommandOutput> {
@@ -864,12 +895,12 @@ mod file_operation_tests {
     struct Harness {
         detector: FileCommandMimeDetector<'static>,
         services: MimeExecutionServices,
-        group: qubit_operation::OperationGroup,
+        group: OperationGroup,
     }
 
     fn harness(executor: Arc<RecordingExecutor>) -> Harness {
-        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
         let services =
             MimeExecutionServices::new(manager.clone(), group.clone(), Arc::new(ImmediatePort), 1024).unwrap();
         services.prepare().unwrap();
@@ -906,7 +937,7 @@ mod file_operation_tests {
         options: MimeOperationOptions,
         cancelled: bool,
     ) -> (
-        qubit_operation::AsyncOperationHandle<MimeCandidates, MimeError>,
+        AsyncOperationHandle<MimeCandidates, MimeError>,
         OperationOutcome<MimeCandidates, MimeError>,
     ) {
         let detector = harness.detector.clone();
@@ -941,9 +972,9 @@ mod file_operation_tests {
         harness: &Harness,
         filesystem: Arc<AsyncFileSystem>,
         options: MimeOperationOptions,
-        stop_context: Option<Arc<std::sync::Mutex<Option<qubit_operation::OperationContext>>>>,
+        stop_context: Option<Arc<std::sync::Mutex<Option<OperationContext>>>>,
     ) -> (
-        qubit_operation::AsyncOperationHandle<MimeCandidates, MimeError>,
+        AsyncOperationHandle<MimeCandidates, MimeError>,
         OperationOutcome<MimeCandidates, MimeError>,
         Arc<crate::detector::ReadTreeContext>,
     ) {
@@ -1003,8 +1034,8 @@ mod file_operation_tests {
             }
         }
 
-        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
         let dispatches = Arc::new(AtomicUsize::new(0));
         let port = Arc::new(CountingPort(Arc::clone(&dispatches)));
         let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
@@ -1202,7 +1233,7 @@ mod file_operation_tests {
     fn file_operation_executor_error_keeps_typed_timeout_error() {
         let held = Arc::new(std::sync::Mutex::new(None));
         let fake = Arc::new(RecordingExecutor {
-            output: std::sync::Mutex::new(Some(Err(MimeError::OperationStopped(qubit_operation::StopReport {
+            output: std::sync::Mutex::new(Some(Err(MimeError::OperationStopped(StopReport {
                 reason: StopReason::Timeout,
                 accepted_at: None,
             })))),
@@ -1219,7 +1250,7 @@ mod file_operation_tests {
         );
         assert!(matches!(
             outcome,
-            OperationOutcome::Failed(MimeError::OperationStopped(qubit_operation::StopReport {
+            OperationOutcome::Failed(MimeError::OperationStopped(StopReport {
                 reason: StopReason::Timeout,
                 ..
             }))
@@ -1235,7 +1266,7 @@ mod file_operation_tests {
         let settlement = block_on(handle.wait_settlement());
         assert_eq!(
             settlement.status,
-            qubit_operation::SettlementStatus::RecoveryRequired,
+            SettlementStatus::RecoveryRequired,
             "cleanup failure is reported separately from the primary timeout"
         );
         assert!(!path.exists());

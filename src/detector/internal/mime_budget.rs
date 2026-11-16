@@ -396,7 +396,9 @@ impl Drop for PermitInner {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::Limits;
+    use super::MimeBudget;
+    use super::ReadTreeContext;
 
     #[test]
     fn operation_runtime_budget_shared_across_refinement() {
