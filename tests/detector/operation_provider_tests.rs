@@ -1,6 +1,8 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::mpsc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::task::Context;
@@ -43,6 +45,261 @@ use qubit_spi::ProviderMetadata;
 use qubit_spi::ServiceProvider;
 use qubit_spi::error::ProviderFailure;
 use qubit_spi::provider_descriptor;
+
+#[test]
+fn operation_provider_same_object_and_path_replacement_uses_open_snapshot() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 2 })
+        .unwrap();
+    let services = MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 2)),
+        1024,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+
+    let content = Arc::new(Mutex::new(b"%PDF".to_vec()));
+    let opens = Arc::new(AtomicUsize::new(0));
+    let (read_started_tx, read_started_rx) = mpsc::channel();
+    let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let read_waker = Arc::new(Mutex::new(None));
+    let file_system = qubit_fs::AsyncFileSystem::from_spi(SnapshotGateFileSystem::new(
+        Arc::clone(&content),
+        Arc::clone(&opens),
+        read_started_tx,
+        Arc::clone(&released),
+        Arc::clone(&read_waker),
+    ))
+    .unwrap();
+
+    let registry = MimeDetectorRegistry::default();
+    registry.register_async_provider(SnapshotProvider).unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("snapshot").unwrap(),
+        )
+        .unwrap();
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::Provider {
+                file_system: Arc::new(file_system),
+                path: qubit_fs::Path::parse("/input").unwrap(),
+            },
+            MimeOperationOptions::default(),
+        )
+        .unwrap_or_else(|_| panic!("prepared snapshot operation should be admitted"));
+
+    read_started_rx
+        .recv()
+        .expect("provider read should reach its deterministic gate");
+    *content.lock().unwrap() = b"NOPE".to_vec();
+    released.store(true, Ordering::SeqCst);
+    read_waker
+        .lock()
+        .unwrap()
+        .take()
+        .expect("pending provider read should register a waker")
+        .wake();
+
+    match block_on(operation.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(report) => {
+            assert_eq!(report.mime_type.as_deref(), Some("application/x-snapshot"));
+            assert_eq!(report.budget.bytes_read, 4);
+        }
+        other => panic!("operation should inspect the already-open object: {other:?}"),
+    }
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        1,
+        "replacement must not reopen the path"
+    );
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).is_ok());
+    assert!(shutdown.stop_services().is_ok());
+}
+
+#[derive(Debug)]
+struct SnapshotProvider;
+
+impl ProviderMetadata for SnapshotProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("snapshot").unwrap())
+    }
+}
+
+impl AsyncMimeDetectorProvider for SnapshotProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(SnapshotBackend))
+    }
+}
+
+#[derive(Debug)]
+struct SnapshotBackend;
+
+impl AsyncMimeDetectorBackend for SnapshotBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(4)
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        _scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        _options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        Box::pin(async move {
+            let content = match input {
+                BorrowedMimeInput::Bytes { content, .. } => content,
+                BorrowedMimeInput::Provider { .. } => {
+                    panic!("prefix input should be read once by runtime")
+                }
+            };
+            assert_eq!(
+                content, b"%PDF",
+                "the opened reader must retain its original snapshot"
+            );
+            Ok(MimeCandidates {
+                candidates: vec![MimeCandidate {
+                    mime_type: "application/x-snapshot".into(),
+                    rank: 0,
+                }],
+                inspected_extent: InspectedExtent::Prefix(content.len()),
+                retained_prefix: content.to_vec(),
+            })
+        })
+    }
+}
+
+struct SnapshotGateFileSystem {
+    properties: qubit_fs::spi::ProviderProperties,
+    content: Arc<Mutex<Vec<u8>>>,
+    opens: Arc<AtomicUsize>,
+    read_started: mpsc::Sender<()>,
+    released: Arc<std::sync::atomic::AtomicBool>,
+    read_waker: Arc<Mutex<Option<Waker>>>,
+}
+
+impl SnapshotGateFileSystem {
+    fn new(
+        content: Arc<Mutex<Vec<u8>>>,
+        opens: Arc<AtomicUsize>,
+        read_started: mpsc::Sender<()>,
+        released: Arc<std::sync::atomic::AtomicBool>,
+        read_waker: Arc<Mutex<Option<Waker>>>,
+    ) -> Self {
+        use qubit_fs::metadata::FileSystemCapabilities;
+        use qubit_fs::metadata::FileSystemCapability;
+        use qubit_fs::metadata::FileSystemId;
+        use qubit_fs::metadata::FileSystemInfo;
+        use qubit_fs::metadata::FileSystemLimits;
+        use qubit_fs::metadata::SymlinkPolicy;
+        use qubit_fs::path::PathConstraints;
+        use qubit_fs::path::PathSemantics;
+        use qubit_fs::spi::ProviderOperation;
+        use qubit_fs::spi::ProviderOperations;
+        let properties = qubit_fs::spi::ProviderProperties::new(
+            FileSystemInfo::new(
+                FileSystemId::new("mime-operation-snapshot").unwrap(),
+                "mime-operation-snapshot",
+                PathSemantics::Hierarchical,
+            ),
+            ProviderOperations::new().with(ProviderOperation::OpenReader),
+            FileSystemCapabilities::new().with_guaranteed(FileSystemCapability::Read),
+            FileSystemLimits::unknown(),
+            PathConstraints::absolute(),
+            SymlinkPolicy::Reject,
+        )
+        .unwrap();
+        Self {
+            properties,
+            content,
+            opens,
+            read_started,
+            released,
+            read_waker,
+        }
+    }
+}
+
+impl qubit_fs::spi::AsyncFileSystemSpi for SnapshotGateFileSystem {
+    fn properties(&self) -> qubit_fs::spi::ProviderProperties {
+        self.properties.clone()
+    }
+
+    fn stat<'a>(
+        &'a self,
+        _request: qubit_fs::spi::StatRequest<'a>,
+    ) -> qubit_fs::spi::SpiFuture<'a, qubit_fs::FsResult<qubit_fs::spi::StatResponse>> {
+        Box::pin(async { panic!("runtime prefix reading must not stat provider input") })
+    }
+
+    fn open_reader<'a>(
+        &'a self,
+        request: qubit_fs::spi::OpenReaderRequest<'a>,
+    ) -> qubit_fs::spi::SpiFuture<'a, qubit_fs::FsResult<qubit_fs::spi::OpenedAsyncReader>> {
+        self.opens.fetch_add(1, Ordering::SeqCst);
+        let snapshot = self.content.lock().unwrap().clone();
+        let info = qubit_fs::metadata::OpenedFileInfo::new(
+            qubit_fs::metadata::FileSystemId::new("mime-operation-snapshot").unwrap(),
+            request.path().clone(),
+        );
+        let input = SnapshotGateInput {
+            bytes: snapshot,
+            read_started: Some(self.read_started.clone()),
+            released: Arc::clone(&self.released),
+            read_waker: Arc::clone(&self.read_waker),
+        };
+        Box::pin(async move { Ok(qubit_fs::spi::OpenedAsyncReader::new(info, Box::new(input))) })
+    }
+}
+
+struct SnapshotGateInput {
+    bytes: Vec<u8>,
+    read_started: Option<mpsc::Sender<()>>,
+    released: Arc<std::sync::atomic::AtomicBool>,
+    read_waker: Arc<Mutex<Option<Waker>>>,
+}
+
+impl qubit_io::AsyncInput for SnapshotGateInput {
+    type Item = u8;
+
+    unsafe fn poll_read_unchecked(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        output: &mut [u8],
+        index: usize,
+        count: usize,
+    ) -> Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        if !this.released.load(Ordering::SeqCst) {
+            *this.read_waker.lock().unwrap() = Some(context.waker().clone());
+            if let Some(sender) = this.read_started.take() {
+                sender
+                    .send(())
+                    .expect("test should observe the blocked read");
+            }
+            return Poll::Pending;
+        }
+        let length = count.min(this.bytes.len());
+        output[index..index + length].copy_from_slice(&this.bytes[..length]);
+        Poll::Ready(Ok(length))
+    }
+}
+
 
 struct ThreadWake(std::thread::Thread);
 impl Wake for ThreadWake {
