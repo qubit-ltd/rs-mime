@@ -11,7 +11,10 @@ use qubit_command::CommandError;
 use qubit_config::ConfigError;
 use qubit_fs::FsError;
 use qubit_local_files::LocalFileError;
-use qubit_operation::GroupBindingError;
+use qubit_operation::{
+    AdmissionError, ChildFailureSummary, ExecutionFailure, GroupBindingError, PanicSummary,
+    StopReport,
+};
 use roxmltree::Error as XmlError;
 use thiserror::Error;
 
@@ -36,6 +39,21 @@ pub enum MimeError {
     /// A MIME operation could not bind to its configured operation group.
     #[error("failed to bind MIME operation group: {0}")]
     GroupBinding(#[source] GroupBindingError),
+    /// A MIME command child was rejected by the shared operation manager.
+    #[error("MIME command operation was rejected: {0}")]
+    OperationAdmission(#[source] AdmissionError),
+    /// A MIME command child stopped before producing a result.
+    #[error("MIME command operation stopped: {0:?}")]
+    OperationStopped(StopReport),
+    /// A MIME command child panicked while executing.
+    #[error("MIME command operation panicked: {0:?}")]
+    OperationPanicked(PanicSummary),
+    /// The shared executor failed to run a MIME command child.
+    #[error("MIME command operation could not execute: {0:?}")]
+    OperationExecutionFailed(ExecutionFailure),
+    /// A required MIME command child failed.
+    #[error("required MIME command child failed: {0:?}")]
+    ChildOperationFailed(ChildFailureSummary),
     /// MIME shutdown observation is not ready for the requested stage.
     #[error("MIME operation shutdown is still pending")]
     OperationShutdownPending,

@@ -12,7 +12,7 @@ use std::sync::{
 };
 
 use super::internal::mime_budget::{
-    BudgetPermit, Limits, MimeBudget, ReadTreeContext, ReadTreeRegistry,
+    BudgetPermit, Limits, MimeBudget, ReadTreeContext, ReadTreeRegistry, StagingBudget,
 };
 use qubit_operation::{
     AsyncOperationGroup, AsyncOperationManager, AsyncOperationObserver, AsyncShutdownHandle,
@@ -24,6 +24,14 @@ use qubit_operation::{
 pub trait MimeExecutionPort: Debug + Send + Sync + 'static {
     /// Explicitly starts fixed-capacity workers, if required.
     fn prepare(&self) -> Result<(), crate::MimeError>;
+    /// Tries to dispatch one owned command or I/O job without blocking.
+    /// Returning the job on rejection preserves captured resources.
+    fn try_dispatch(
+        &self,
+        job: Box<dyn FnOnce() + Send + 'static>,
+    ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+        Err(job)
+    }
     /// Stops accepting new work and observes actual worker exit.
     fn shutdown(&self) -> Result<(), crate::MimeError>;
 }
@@ -207,6 +215,10 @@ impl MimeExecutionServices {
     #[allow(dead_code)]
     pub(in crate::detector) fn reserve_staging(&self, bytes: u64) -> Option<BudgetPermit> {
         self.budget.reserve_staging(bytes)
+    }
+
+    pub(crate) fn staging_budget(&self) -> StagingBudget {
+        StagingBudget::from_budget(Arc::clone(&self.budget))
     }
 }
 

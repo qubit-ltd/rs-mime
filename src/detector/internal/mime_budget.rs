@@ -21,6 +21,29 @@ pub(in crate::detector) struct MimeBudget {
     counters: Mutex<Counters>,
 }
 
+/// Opaque cloneable access to the service-wide staging budget.
+#[derive(Clone)]
+pub(crate) struct StagingBudget {
+    budget: Arc<MimeBudget>,
+}
+
+/// RAII reservation held for as long as the staged resource remains owned.
+pub(crate) struct StagingPermit {
+    _permit: BudgetPermit,
+}
+
+impl StagingBudget {
+    pub(in crate::detector) fn from_budget(budget: Arc<MimeBudget>) -> Self {
+        Self { budget }
+    }
+
+    pub(crate) fn try_reserve(&self, bytes: u64) -> Option<StagingPermit> {
+        self.budget
+            .reserve_staging(bytes)
+            .map(|permit| StagingPermit { _permit: permit })
+    }
+}
+
 #[derive(Debug, Default)]
 struct ReadCounters {
     consumed: u64,

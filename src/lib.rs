@@ -109,10 +109,12 @@ mod constants;
 mod mime_config;
 mod mime_error;
 mod mime_result;
+mod managed_temp_staging;
 mod temp_staging;
 #[cfg(test)]
 mod tests;
 
+pub use command_execution::FixedMimeExecutionPort;
 pub use classifier::AsyncMediaStreamClassifierBackend;
 pub use classifier::FfprobeCommandMediaStreamClassifier;
 pub use classifier::FfprobeCommandMediaStreamClassifierProvider;
