@@ -79,6 +79,7 @@ fn test_operation_provider_same_object_and_path_replacement_uses_open_snapshot()
         read_started_tx,
         Arc::clone(&released),
         Arc::clone(&read_waker),
+        None,
     ))
     .unwrap();
 
@@ -126,6 +127,93 @@ fn test_operation_provider_same_object_and_path_replacement_uses_open_snapshot()
         1,
         "replacement must not reopen the path"
     );
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).is_ok());
+    assert!(shutdown.stop_services().is_ok());
+}
+
+#[test]
+fn operation_provider_driver_loss_is_pending() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 2 })
+        .unwrap();
+    let services = MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 2)),
+        1024,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+
+    let content = Arc::new(Mutex::new(b"%PDF".to_vec()));
+    let opens = Arc::new(AtomicUsize::new(0));
+    let (read_started_tx, read_started_rx) = mpsc::channel();
+    let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let owner_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let read_waker = Arc::new(Mutex::new(None));
+    let file_system = qubit_fs::AsyncFileSystem::from_spi(SnapshotGateFileSystem::new(
+        content,
+        opens,
+        read_started_tx,
+        Arc::clone(&released),
+        Arc::clone(&read_waker),
+        Some(Arc::clone(&owner_dropped)),
+    ))
+    .unwrap();
+
+    let registry = MimeDetectorRegistry::default();
+    registry.register_async_provider(SnapshotProvider).unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("snapshot").unwrap(),
+        )
+        .unwrap();
+    let operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::Provider {
+                file_system: Arc::new(file_system),
+                path: qubit_fs::Path::parse("/input").unwrap(),
+            },
+            MimeOperationOptions::default(),
+        )
+        .unwrap_or_else(|_| panic!("prepared provider operation should be admitted"));
+    let observer = operation.observer().as_sync();
+
+    read_started_rx
+        .recv()
+        .expect("provider read should reach its deterministic gate");
+    drop(operation);
+
+    let snapshot = observer.snapshot();
+    assert!(
+        snapshot.settlement.is_none(),
+        "settlement must remain pending"
+    );
+    assert!(
+        !owner_dropped.load(Ordering::SeqCst),
+        "the provider reader owner must survive loss of the caller handle"
+    );
+
+    released.store(true, Ordering::SeqCst);
+    read_waker
+        .lock()
+        .unwrap()
+        .take()
+        .expect("pending provider read should register a waker")
+        .wake();
+    observer
+        .wait_settlement()
+        .expect("observer should see worker settlement");
+    assert!(
+        owner_dropped.load(Ordering::SeqCst),
+        "the provider reader owner should be released after worker settlement"
+    );
+
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).is_ok());
     assert!(shutdown.stop_services().is_ok());
@@ -198,6 +286,7 @@ struct SnapshotGateFileSystem {
     read_started: mpsc::Sender<()>,
     released: Arc<std::sync::atomic::AtomicBool>,
     read_waker: Arc<Mutex<Option<Waker>>>,
+    owner_dropped: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl SnapshotGateFileSystem {
@@ -207,6 +296,7 @@ impl SnapshotGateFileSystem {
         read_started: mpsc::Sender<()>,
         released: Arc<std::sync::atomic::AtomicBool>,
         read_waker: Arc<Mutex<Option<Waker>>>,
+        owner_dropped: Option<Arc<std::sync::atomic::AtomicBool>>,
     ) -> Self {
         use qubit_fs::metadata::FileSystemCapabilities;
         use qubit_fs::metadata::FileSystemCapability;
@@ -238,6 +328,7 @@ impl SnapshotGateFileSystem {
             read_started,
             released,
             read_waker,
+            owner_dropped,
         }
     }
 }
@@ -269,6 +360,7 @@ impl qubit_fs::spi::AsyncFileSystemSpi for SnapshotGateFileSystem {
             read_started: Some(self.read_started.clone()),
             released: Arc::clone(&self.released),
             read_waker: Arc::clone(&self.read_waker),
+            owner_dropped: self.owner_dropped.as_ref().map(Arc::clone),
         };
         Box::pin(async move { Ok(qubit_fs::spi::OpenedAsyncReader::new(info, Box::new(input))) })
     }
@@ -279,6 +371,15 @@ struct SnapshotGateInput {
     read_started: Option<mpsc::Sender<()>>,
     released: Arc<std::sync::atomic::AtomicBool>,
     read_waker: Arc<Mutex<Option<Waker>>>,
+    owner_dropped: Option<Arc<std::sync::atomic::AtomicBool>>,
+}
+
+impl Drop for SnapshotGateInput {
+    fn drop(&mut self) {
+        if let Some(owner_dropped) = &self.owner_dropped {
+            owner_dropped.store(true, Ordering::SeqCst);
+        }
+    }
 }
 
 impl qubit_io::AsyncInput for SnapshotGateInput {
