@@ -1,3 +1,10 @@
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Shared bounded MIME-owned memory and staging counters.
 
 #[path = "mime_budget/counters.rs"]
@@ -58,11 +65,8 @@ mod tests {
     use super::ReadTreeContext;
 
     #[test]
-    fn operation_runtime_budget_shared_across_refinement() {
-        let budget = MimeBudget::new(Limits {
-            owned: 16,
-            staging: 8,
-        });
+    fn test_refinement_shares_owned_memory_and_staging_budgets() {
+        let budget = MimeBudget::new(Limits { owned: 16, staging: 8 });
         let first: Arc<[u8]> = Arc::from([1u8; 8]);
         let alias = Arc::clone(&first);
         let permit_a = budget.reserve_allocation(&first).unwrap();
@@ -80,7 +84,7 @@ mod tests {
     }
 
     #[test]
-    fn operation_runtime_read_tree_counts_actual_bytes_and_rolls_back_reservations() {
+    fn test_read_tree_counts_committed_bytes_and_releases_rolled_back_reservations() {
         let root = ReadTreeContext::new(6);
         let tighter_child = root.child(3);
         let sibling = root.child(6);

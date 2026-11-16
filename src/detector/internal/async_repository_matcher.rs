@@ -2,6 +2,8 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Bounded cooperative matcher for immutable MIME repository rules.
 
@@ -22,6 +24,18 @@ pub(super) const RULES_PER_BATCH: usize = 32;
 
 /// Match content rules in bounded batches while preserving the synchronous
 /// repository's highest-priority and insertion-order behavior.
+///
+/// # Parameters
+/// - `scope`: Operation scope used to detect cancellation between batches.
+/// - `repository`: Immutable MIME rules to evaluate.
+/// - `bytes`: Content prefix tested against repository magic rules.
+///
+/// # Returns
+/// Matching MIME candidates at the highest matching priority, in repository
+/// order.
+///
+/// # Errors
+/// Returns a detector backend error if the operation is stopped.
 pub(in crate::detector) async fn match_content(
     scope: &OperationScope,
     repository: &MimeRepository,
@@ -81,6 +95,15 @@ pub(in crate::detector) async fn match_content(
 
 /// Apply the repository's synchronous filename/content policy to a bounded
 /// content candidate list.
+///
+/// # Parameters
+/// - `repository`: Repository used for filename lookup and MIME relationships.
+/// - `content`: Candidates produced by content matching.
+/// - `filename`: Optional filename used by the synchronous policy.
+/// - `policy`: Rule for combining filename and content candidates.
+///
+/// # Returns
+/// The selected candidate, or an empty list when no candidate is selected.
 pub(in crate::detector) fn select_candidates(
     repository: &MimeRepository,
     content: Vec<MimeCandidate>,
@@ -111,6 +134,7 @@ pub(in crate::detector) fn select_candidates(
     .unwrap_or_default()
 }
 
+/// Gives the current executor an opportunity to poll another task.
 async fn yield_to_executor() {
     // Yield to the current executor after each finite chunk. No timer or
     // blocking wait is involved.

@@ -1,3 +1,10 @@
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 //! Submission helpers that preserve input ownership until admission succeeds.
 
 use std::sync::Arc;
@@ -19,12 +26,27 @@ use crate::detector::mime_input::OwnedMimeInput;
 use crate::detector::mime_operation::MimeSubmitRejection;
 use crate::detector::mime_operation_options::MimeOperationOptions;
 
+/// Shared one-time ownership cell used to return an input after rejection.
 pub(in crate::detector) type InputCell = Arc<Mutex<Option<OwnedMimeInput>>>;
 
+/// Places an owned MIME input into a shared one-time cell.
+///
+/// # Parameters
+/// - `input`: Input whose ownership is transferred into the cell.
+///
+/// # Returns
+/// A cloneable cell containing the input.
 pub(in crate::detector) fn cell(input: OwnedMimeInput) -> InputCell {
     Arc::new(Mutex::new(Some(input)))
 }
 
+/// Takes the input from a cell after a submission has been accepted.
+///
+/// # Parameters
+/// - `cell`: Shared cell from which to take the input.
+///
+/// # Panics
+/// Panics if the input has already been taken.
 pub(in crate::detector) fn take(cell: &InputCell) -> OwnedMimeInput {
     cell.lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -32,6 +54,13 @@ pub(in crate::detector) fn take(cell: &InputCell) -> OwnedMimeInput {
         .expect("MIME input is taken once")
 }
 
+/// Retrieves the input when a submission is rejected before body execution.
+///
+/// # Parameters
+/// - `cell`: Shared cell containing the unconsumed input.
+///
+/// # Panics
+/// Panics if the rejected input is no longer present.
 pub(in crate::detector) fn return_input(cell: &InputCell) -> OwnedMimeInput {
     cell.lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -41,6 +70,21 @@ pub(in crate::detector) fn return_input(cell: &InputCell) -> OwnedMimeInput {
 
 /// Applies identical option, buffer and shared-memory checks to sync and async
 /// submissions before either operation is admitted.
+///
+/// # Parameters
+/// - `input`: Input to validate and reserve.
+/// - `options`: Per-operation byte limits.
+/// - `requirement`: Whether the backend needs a prefix or complete content.
+/// - `random_access`: Provider's random-access capability.
+/// - `max_buffer_size`: Service-wide maximum buffer size.
+/// - `services`: Shared execution budgets and service limits.
+///
+/// # Returns
+/// The reservation held for the accepted operation.
+///
+/// # Errors
+/// Returns the submission rejection when options are invalid or required
+/// memory exceeds the available budget.
 pub(in crate::detector) fn preflight(
     input: &OwnedMimeInput,
     options: &MimeOperationOptions,
@@ -83,6 +127,24 @@ pub(in crate::detector) fn preflight(
     .ok_or(MimeSubmitRejection::BudgetExceeded)
 }
 
+/// Runs an admitted detection request and assembles its result report.
+///
+/// # Parameters
+/// - `scope`: Operation scope used for cancellation and read-tree binding.
+/// - `input`: Owned bytes or provider path submitted for detection.
+/// - `services`: Shared execution services and byte limits.
+/// - `backend`: Detector implementation to invoke.
+/// - `backend_id`: Identifier recorded in the returned report.
+/// - `max_buffer_size`: Service-wide maximum content buffer.
+/// - `options`: Per-operation detection and resource limits.
+/// - `permit`: Owned-memory reservation retained during detection.
+/// - `read_tree`: Read accounting context for provider-backed input.
+///
+/// # Returns
+/// The MIME result report with the detected type and resource usage.
+///
+/// # Errors
+/// Propagates backend, input-provider, and configured-limit errors.
 pub(in crate::detector) async fn detect(
     scope: OperationScope,
     input: OwnedMimeInput,
@@ -165,9 +227,7 @@ pub(in crate::detector) async fn detect(
                     requested: max_bytes as u64,
                     limit: read_tree.remaining(),
                 })?;
-                let outcome = file_system
-                    .read_prefix(&path, ReadOptions::default(), max_bytes)
-                    .await;
+                let outcome = file_system.read_prefix(&path, ReadOptions::default(), max_bytes).await;
                 let content = match outcome {
                     Ok(outcome) => outcome.into_bytes(),
                     Err(error) => {

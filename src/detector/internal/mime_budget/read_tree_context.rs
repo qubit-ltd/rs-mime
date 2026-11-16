@@ -2,6 +2,8 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
 use std::sync::Arc;
@@ -15,7 +17,9 @@ use super::ScopeCounters;
 /// Read accounting context inherited by MIME descendants.
 #[derive(Debug)]
 pub(crate) struct ReadTreeContext {
+    /// Root-level allowance shared across related contexts.
     pub(super) tree: Arc<ReadTreeBudget>,
+    /// Allowance and counters for this operation scope.
     pub(super) scope: Arc<ReadScopeBudget>,
     /// Keeps an external-parent anchor alive while a child operation is held.
     #[allow(dead_code)]
@@ -23,6 +27,13 @@ pub(crate) struct ReadTreeContext {
 }
 
 impl ReadTreeContext {
+    /// Creates an independent root context with the given byte allowance.
+    ///
+    /// # Parameters
+    /// - `limit`: Maximum bytes readable by the root and its descendants.
+    ///
+    /// # Returns
+    /// A reference-counted root context.
     pub(crate) fn new(limit: u64) -> Arc<Self> {
         Arc::new(Self {
             tree: ReadTreeBudget::new(limit),
@@ -35,6 +46,14 @@ impl ReadTreeContext {
         })
     }
 
+    /// Creates a child scope that shares the root and is bounded by its parent.
+    ///
+    /// # Parameters
+    /// - `limit`: Requested child allowance, capped by the parent's scope
+    ///   limit.
+    ///
+    /// # Returns
+    /// A child context whose reads charge the ancestor scopes.
     pub(in crate::detector) fn child(self: &Arc<Self>, limit: u64) -> Arc<Self> {
         Arc::new(Self {
             tree: Arc::clone(&self.tree),
@@ -47,6 +66,13 @@ impl ReadTreeContext {
         })
     }
 
+    /// Reserves read capacity across the root tree and every ancestor scope.
+    ///
+    /// # Parameters
+    /// - `bytes`: Maximum number of bytes expected from the read.
+    ///
+    /// # Returns
+    /// A permit when every applicable limit has capacity; otherwise `None`.
     pub(crate) fn reserve(&self, bytes: u64) -> Option<ReadPermit> {
         let mut tree = self.tree.counters.lock().unwrap_or_else(|e| e.into_inner());
         if bytes
@@ -71,17 +97,9 @@ impl ReadTreeContext {
             {
                 drop(counters);
                 for reserved in &scopes {
-                    reserved
-                        .counters
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .reserved -= bytes;
+                    reserved.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= bytes;
                 }
-                self.tree
-                    .counters
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .reserved -= bytes;
+                self.tree.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= bytes;
                 return None;
             }
             counters.reserved += bytes;
@@ -97,6 +115,7 @@ impl ReadTreeContext {
         })
     }
 
+    /// Returns the smallest remaining allowance across this scope's ancestors.
     pub(crate) fn remaining(&self) -> u64 {
         let tree = self.tree.counters.lock().unwrap_or_else(|e| e.into_inner());
         let mut remaining = self
@@ -120,10 +139,6 @@ impl ReadTreeContext {
 
     /// Returns bytes committed in this operation's inherited read tree.
     pub(crate) fn consumed(&self) -> u64 {
-        self.scope
-            .counters
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .consumed
+        self.scope.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
     }
 }
