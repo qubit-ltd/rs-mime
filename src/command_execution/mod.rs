@@ -7,13 +7,15 @@
 // =============================================================================
 //! Private execution boundary shared by command-backed MIME components.
 mod async_mime_command_executor;
+mod internal;
+mod managed_command_executor;
 mod managed_mime_command;
 mod mime_command_executor;
 mod mime_command_output;
 mod mime_execution_worker;
 mod system_mime_command_executor;
 pub(crate) use async_mime_command_executor::AsyncMimeCommandExecutor;
-pub(crate) use async_mime_command_executor::ManagedCommandExecutor;
+pub(crate) use managed_command_executor::ManagedCommandExecutor;
 pub(crate) use managed_mime_command::ManagedMimeCommand;
 pub(crate) use mime_command_executor::MimeCommandExecutor;
 pub(crate) use mime_command_output::MimeCommandOutput;

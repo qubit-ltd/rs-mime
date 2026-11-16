@@ -62,6 +62,11 @@ pub struct FfprobeCommandMediaStreamClassifier {
 }
 
 impl std::fmt::Debug for FfprobeCommandMediaStreamClassifier {
+    /// Formats classifier configuration while omitting command service
+    /// internals.
+    ///
+    /// # Parameters
+    /// - `f`: Formatter receiving the classifier configuration.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FfprobeCommandMediaStreamClassifier")
             .field("working_directory", &self.working_directory)
@@ -109,6 +114,10 @@ impl FfprobeCommandMediaStreamClassifier {
     }
 
     /// Associates services required to run the asynchronous command path.
+    ///
+    /// # Parameters
+    /// - `services`: Prepared operation services that own asynchronous command
+    ///   execution and staging budgets.
     pub(crate) fn with_execution_services(mut self, services: Arc<MimeExecutionServices>) -> Self {
         self.execution_services = Some(services);
         self
@@ -395,6 +404,19 @@ impl FileBasedMediaStreamClassifier for FfprobeCommandMediaStreamClassifier {
 }
 
 impl AsyncMediaStreamClassifierBackend for FfprobeCommandMediaStreamClassifier {
+    /// Classifies media through the managed FFprobe path within an operation.
+    ///
+    /// # Parameters
+    /// - `scope`: Operation scope that owns the staged input and command.
+    /// - `input`: Borrowed complete input or provider reference to stage.
+    /// - `options`: Per-operation staging limits and detection options.
+    ///
+    /// # Returns
+    /// A future for the media stream classification.
+    ///
+    /// # Errors
+    /// Returns an error when services are unavailable, the input is incomplete,
+    /// staging exceeds its budget, or command execution fails.
     fn classify_in<'a>(
         &'a self,
         scope: &'a qubit_operation::OperationScope,
@@ -507,9 +529,20 @@ mod async_operation_tests {
     use qubit_io::AsyncInput;
     use qubit_operation::ResourceRef;
 
-    use super::*;
+    use super::FfprobeCommandMediaStreamClassifier;
+    use crate::AsyncMediaStreamClassifierBackend;
+    use crate::BorrowedMimeInput;
+    use crate::InputExtent;
+    use crate::MediaStreamType;
+    use crate::MimeConfig;
+    use crate::MimeError;
     use crate::MimeExecutionPort;
+    use crate::MimeFuture;
+    use crate::MimeOperationOptions;
+    use crate::command_execution::AsyncMimeCommandExecutor;
+    use crate::command_execution::ManagedMimeCommand;
     use crate::command_execution::MimeCommandOutput;
+    use crate::detector::MimeExecutionServices;
     use crate::managed_temp_staging::StagedMimeInput;
 
     #[derive(Debug)]
@@ -717,7 +750,7 @@ mod async_operation_tests {
     }
 
     #[test]
-    fn refinement_operation_ffprobe_stages_and_cleans_input() {
+    fn test_refinement_operation_ffprobe_stages_and_cleans_input() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
         let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
         let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());
@@ -765,7 +798,7 @@ mod async_operation_tests {
     }
 
     #[test]
-    fn refinement_operation_zero_staging_budget_does_not_launch_command() {
+    fn test_refinement_operation_zero_staging_budget_does_not_launch_command() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
         let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
         let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());
@@ -811,7 +844,7 @@ mod async_operation_tests {
     }
 
     #[test]
-    fn refinement_operation_staging_overlimit_does_not_launch_command() {
+    fn test_refinement_operation_staging_overlimit_does_not_launch_command() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
         let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
         let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());
@@ -857,7 +890,7 @@ mod async_operation_tests {
     }
 
     #[test]
-    fn refinement_operation_stop_retains_staged_input_until_command_returns() {
+    fn test_refinement_operation_stop_retains_staged_input_until_command_returns() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
         let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
         let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());
@@ -917,7 +950,7 @@ mod async_operation_tests {
     }
 
     #[test]
-    fn refinement_operation_reuses_staging_budget() {
+    fn test_refinement_operation_reuses_staging_budget() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
         let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
         let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());
@@ -973,7 +1006,7 @@ mod async_operation_tests {
 
     #[cfg(unix)]
     #[test]
-    fn refinement_operation_double_error_retains_and_recovers_staging_owner() {
+    fn test_refinement_operation_double_error_retains_and_recovers_staging_owner() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
         let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
         let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());

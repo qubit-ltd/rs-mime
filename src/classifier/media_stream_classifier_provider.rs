@@ -32,13 +32,3 @@ pub trait MediaStreamClassifierProvider: ProviderDefinition<MediaStreamClassifie
 }
 
 impl<T> MediaStreamClassifierProvider for T where T: ProviderDefinition<MediaStreamClassifierSpec> + ?Sized {}
-
-/// Explicit async capability offered by a media classifier provider.
-pub trait AsyncMediaStreamClassifierProvider: qubit_spi::ProviderMetadata + std::fmt::Debug + Send + Sync {
-    /// Creates an async classifier bound to operation execution services.
-    fn create_async_backend(
-        &self,
-        config: &crate::MimeConfig,
-        services: &crate::MimeExecutionServices,
-    ) -> Result<std::sync::Arc<dyn crate::AsyncMediaStreamClassifierBackend>, crate::MimeError>;
-}

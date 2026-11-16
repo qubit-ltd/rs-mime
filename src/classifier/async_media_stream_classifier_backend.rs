@@ -2,6 +2,8 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Explicit asynchronous media stream classifier interface.
 
@@ -18,6 +20,15 @@ use crate::detector::BorrowedMimeInput;
 /// synchronous classifier implicitly.
 pub trait AsyncMediaStreamClassifierBackend: Debug + Send + Sync {
     /// Classifies stream content within this operation's context.
+    ///
+    /// # Parameters
+    /// - `scope`: Operation scope used to observe cancellation and deadlines.
+    /// - `input`: Borrowed MIME input, valid only for the returned future's
+    ///   lifetime.
+    /// - `options`: Detection options that constrain this classification.
+    ///
+    /// # Returns
+    /// A future that resolves to the classified media stream type or an error.
     fn classify_in<'a>(
         &'a self,
         scope: &'a OperationScope,

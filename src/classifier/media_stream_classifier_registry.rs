@@ -88,6 +88,16 @@ impl MediaStreamClassifierRegistry {
 
     /// Registers an explicit async classifier factory without constructing a
     /// classifier or starting its execution resources.
+    ///
+    /// # Type Parameters
+    /// - `P`: Provider type that implements the asynchronous classifier
+    ///   capability and remains owned by this registry.
+    ///
+    /// # Parameters
+    /// - `provider`: Factory whose canonical ID and aliases become selectors.
+    ///
+    /// # Errors
+    /// Returns an error when a canonical ID or alias is already registered.
     pub fn register_async_provider<P>(&self, provider: P) -> Result<(), String>
     where
         P: AsyncMediaStreamClassifierProvider + 'static,
@@ -114,6 +124,18 @@ impl MediaStreamClassifierRegistry {
     }
 
     /// Creates a classifier using an explicit async-capable provider choice.
+    ///
+    /// # Parameters
+    /// - `selection`: Explicit provider selector or ordered fallback chain.
+    /// - `config`: MIME settings passed to the selected provider.
+    /// - `services`: Execution services used to construct the backend.
+    ///
+    /// # Returns
+    /// The selected provider ID and its asynchronous classifier backend.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::AsyncUnsupported`] when no async-capable provider
+    /// matches, or the provider error when backend construction fails.
     pub fn create_async_backend(
         &self,
         selection: &ProviderSelection,

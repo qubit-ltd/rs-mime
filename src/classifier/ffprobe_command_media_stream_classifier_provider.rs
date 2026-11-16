@@ -72,6 +72,13 @@ impl ServiceProvider<MediaStreamClassifierSpec> for FfprobeCommandMediaStreamCla
 
 impl FfprobeCommandMediaStreamClassifierProvider {
     /// Creates an FFprobe classifier configured for explicit async operations.
+    ///
+    /// # Parameters
+    /// - `config`: MIME configuration used to set classifier staging limits.
+    /// - `services`: Shared execution services retained by the classifier.
+    ///
+    /// # Returns
+    /// An asynchronous backend that uses the supplied operation services.
     pub(crate) fn create_async_configured(
         &self,
         config: &MimeConfig,
@@ -99,6 +106,17 @@ impl ProviderMetadata for FfprobeCommandMediaStreamClassifierProvider {
 }
 
 impl super::AsyncMediaStreamClassifierProvider for FfprobeCommandMediaStreamClassifierProvider {
+    /// Creates the FFprobe async backend for the supplied operation services.
+    ///
+    /// # Parameters
+    /// - `config`: MIME limits used to configure the classifier.
+    /// - `services`: Operation execution and staging services.
+    ///
+    /// # Returns
+    /// The configured asynchronous classifier backend.
+    ///
+    /// # Errors
+    /// This provider currently constructs without additional fallible work.
     fn create_async_backend(
         &self,
         config: &MimeConfig,
