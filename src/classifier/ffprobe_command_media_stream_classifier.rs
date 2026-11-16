@@ -498,6 +498,7 @@ impl AsyncMediaStreamClassifierBackend for FfprobeCommandMediaStreamClassifier {
 mod async_operation_tests {
     use std::future::Future;
     use std::pin::Pin;
+    use std::sync::Arc;
     use std::sync::Condvar;
     use std::sync::Mutex;
     use std::sync::atomic::AtomicUsize;
