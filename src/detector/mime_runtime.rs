@@ -19,6 +19,7 @@ use super::{
     mime_operation::{AsyncMimeOperation, MimeOperation, MimeSubmitFailure, MimeSubmitRejection},
     mime_operation_options::MimeOperationOptions,
 };
+use crate::MediaStreamClassifierRegistry;
 use crate::MimeConfig;
 use crate::MimeDetector;
 use crate::MimeRepository;
@@ -126,6 +127,34 @@ impl MimeRuntime {
             .ok_or(crate::MimeError::ExecutionServicesRequired)?;
         self.async_backend =
             Some(registry.create_async_backend(selection, self.context.config(), services)?);
+        Ok(self)
+    }
+
+    /// Selects async detector and classifier providers for managed operation
+    /// submission. The selected classifier is attached to detector backends
+    /// that implement async MIME refinement.
+    pub fn with_async_provider_selection_and_classifier(
+        mut self,
+        detector_registry: &MimeDetectorRegistry,
+        detector_selection: &ProviderSelection,
+        classifier_registry: &MediaStreamClassifierRegistry,
+        classifier_selection: &ProviderSelection,
+    ) -> MimeResult<Self> {
+        let services = self
+            .execution_services
+            .as_ref()
+            .ok_or(crate::MimeError::ExecutionServicesRequired)?;
+        let (_, classifier) = classifier_registry.create_async_backend(
+            classifier_selection,
+            self.context.config(),
+            services,
+        )?;
+        self.async_backend = Some(detector_registry.create_async_backend_with_classifier(
+            detector_selection,
+            self.context.config(),
+            services,
+            Some(classifier),
+        )?);
         Ok(self)
     }
 

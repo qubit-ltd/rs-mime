@@ -13,10 +13,10 @@ use qubit_mime::detector::MimeRuntime;
 use qubit_mime::{
     AsyncMediaStreamClassifierBackend, AsyncMediaStreamClassifierProvider,
     AsyncMimeDetectorBackend, AsyncMimeDetectorProvider, BorrowedMimeInput, ContentRequirement,
-    FixedMimeExecutionPort, InputExtent, InspectedExtent, MediaStreamType, MimeCandidates,
-    MimeConfig, MimeDetector, MimeDetectorBackend, MimeDetectorRegistry, MimeError,
-    MimeExecutionServices, MimeFuture, MimeOperationOptions, MimeRepository, OwnedMimeInput,
-    RandomAccessCapability,
+    FixedMimeExecutionPort, InputExtent, InspectedExtent, MediaStreamClassifier, MediaStreamType,
+    MimeCandidate, MimeCandidates, MimeConfig, MimeDetectionPolicy, MimeDetector,
+    MimeDetectorBackend, MimeDetectorCore, MimeDetectorRegistry, MimeError, MimeExecutionServices,
+    MimeFuture, MimeOperationOptions, MimeRepository, OwnedMimeInput, RandomAccessCapability,
 };
 use qubit_spi::error::ProviderFailure;
 use qubit_spi::{
@@ -258,6 +258,221 @@ fn operation_provider_runtime_keeps_injected_repository() {
         }
         other => panic!("runtime should use its injected repository: {other:?}"),
     }
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).is_ok());
+    assert!(shutdown.stop_services().is_ok());
+}
+
+#[derive(Debug)]
+struct RefinementProvider;
+
+impl ProviderMetadata for RefinementProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("async-refinement").unwrap())
+    }
+}
+
+impl AsyncMimeDetectorProvider for RefinementProvider {
+    fn create_async_backend(
+        &self,
+        config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(RefinementBackend::new(config.clone(), None)))
+    }
+
+    fn create_async_backend_with_classifier(
+        &self,
+        config: &MimeConfig,
+        _services: &MimeExecutionServices,
+        classifier: Option<Arc<dyn AsyncMediaStreamClassifierBackend>>,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(RefinementBackend::new(config.clone(), classifier)))
+    }
+}
+
+#[derive(Debug)]
+struct RefinementBackend {
+    core: MimeDetectorCore,
+}
+
+impl RefinementBackend {
+    fn new(
+        config: MimeConfig,
+        classifier: Option<Arc<dyn AsyncMediaStreamClassifierBackend>>,
+    ) -> Self {
+        let mut core = MimeDetectorCore::new(config);
+        core.set_media_stream_classifier(Some(Arc::new(PanicSyncClassifier)));
+        core.set_async_media_stream_classifier(classifier);
+        Self { core }
+    }
+}
+
+impl AsyncMimeDetectorBackend for RefinementBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(4)
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        Box::pin(async move {
+            let filename = match input {
+                BorrowedMimeInput::Bytes { filename, .. } => filename,
+                BorrowedMimeInput::Provider { path, .. } => path.file_name(),
+            };
+            let from_filename = filename
+                .filter(|name| name.ends_with(".webm"))
+                .map(|_| vec!["video/webm".to_owned()])
+                .unwrap_or_default();
+            let selected = self
+                .core
+                .select_result_in(
+                    scope,
+                    &from_filename,
+                    &["video/webm".to_owned()],
+                    input,
+                    options,
+                )
+                .await?;
+            Ok(MimeCandidates {
+                candidates: selected
+                    .into_iter()
+                    .map(|mime_type| MimeCandidate { mime_type, rank: 0 })
+                    .collect(),
+                inspected_extent: InspectedExtent::Prefix(4),
+                retained_prefix: Vec::new(),
+            })
+        })
+    }
+}
+
+#[derive(Debug)]
+struct PanicSyncClassifier;
+
+impl MediaStreamClassifier for PanicSyncClassifier {
+    fn classify_file(&self, _file: &std::path::Path) -> Result<MediaStreamType, MimeError> {
+        panic!("async managed refinement must not call sync classifier")
+    }
+
+    fn classify_reader(
+        &self,
+        _reader: &mut dyn std::io::Read,
+    ) -> Result<MediaStreamType, MimeError> {
+        panic!("async managed refinement must not call sync classifier")
+    }
+}
+
+#[test]
+fn operation_selected_async_classifier_refines_managed_runtime_without_sync_call() {
+    let mut raw_config = qubit_config::Config::new();
+    raw_config
+        .set(qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)
+        .unwrap();
+    raw_config
+        .set(qubit_mime::CONFIG_MIME_PRECISE_DETECTION_PATTERNS, "webm")
+        .unwrap();
+    raw_config
+        .set(
+            qubit_mime::CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+            "webm:video/webm,audio/webm",
+        )
+        .unwrap();
+    let config = MimeConfig::from_config(&raw_config).unwrap();
+
+    let detector_registry = MimeDetectorRegistry::default();
+    detector_registry.register(SyncPanicProvider).unwrap();
+    detector_registry
+        .register_async_provider(RefinementProvider)
+        .unwrap();
+    let classifier_calls = Arc::new(AtomicUsize::new(0));
+    let classifier_registry = MediaStreamClassifierRegistry::default();
+    classifier_registry
+        .register_async_provider(AsyncClassifierProvider(Arc::clone(&classifier_calls)))
+        .unwrap();
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 8 })
+        .unwrap();
+    let services = MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 8)),
+        1024,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+
+    let runtime = MimeRuntime::new(config, Arc::new(MimeRepository::bundled().clone()))
+        .with_execution_services(services.clone());
+    let detector_selection = qubit_spi::ProviderSelection::named("async-refinement").unwrap();
+    let classifier_selection = qubit_spi::ProviderSelection::named("async-classifier").unwrap();
+    let selected = runtime
+        .clone()
+        .with_async_provider_selection_and_classifier(
+            &detector_registry,
+            &detector_selection,
+            &classifier_registry,
+            &classifier_selection,
+        )
+        .unwrap_or_else(|_| panic!("selected providers should build async backend"));
+
+    let mut preferred = selected
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(&b"webm"[..]), InputExtent::Complete)
+                .with_filename("sample.webm"),
+            MimeOperationOptions {
+                policy: MimeDetectionPolicy::PreferFilename,
+                ..MimeOperationOptions::default()
+            },
+        )
+        .unwrap_or_else(|_| panic!("preferred runtime should admit operation"));
+    assert!(matches!(
+        block_on(preferred.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(ref report)
+            if report.mime_type.as_deref() == Some("video/webm")
+    ));
+    assert_eq!(classifier_calls.load(Ordering::SeqCst), 0);
+
+    let mut refined = selected
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(&b"webm"[..]), InputExtent::Complete)
+                .with_filename("sample.webm"),
+            MimeOperationOptions::default(),
+        )
+        .unwrap_or_else(|_| panic!("refining runtime should admit operation"));
+    assert!(matches!(
+        block_on(refined.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(ref report)
+            if report.mime_type.as_deref() == Some("audio/webm")
+    ));
+    assert_eq!(classifier_calls.load(Ordering::SeqCst), 1);
+
+    let no_classifier = runtime
+        .with_async_provider_selection(&detector_registry, &detector_selection)
+        .unwrap_or_else(|_| panic!("runtime without classifier should admit operation"));
+    let mut unchanged = no_classifier
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(&b"webm"[..]), InputExtent::Complete)
+                .with_filename("sample.webm"),
+            MimeOperationOptions::default(),
+        )
+        .unwrap_or_else(|_| panic!("runtime without classifier should admit operation"));
+    assert!(matches!(
+        block_on(unchanged.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(ref report)
+            if report.mime_type.as_deref() == Some("video/webm")
+    ));
+    assert_eq!(classifier_calls.load(Ordering::SeqCst), 1);
+
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).is_ok());
     assert!(shutdown.stop_services().is_ok());

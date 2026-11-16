@@ -8,6 +8,7 @@
 //! Repository-backed MIME detector.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use qubit_io::std_io::ReadSeek;
 
@@ -20,7 +21,7 @@ use crate::MimeRepository;
 use crate::MimeResult;
 use crate::StreamBasedMimeDetector;
 use crate::{AsyncMimeDetectorBackend, BorrowedMimeInput, ContentRequirement, InputExtent};
-use crate::{InspectedExtent, MimeCandidates, MimeError, MimeOperationOptions};
+use crate::{InspectedExtent, MimeCandidate, MimeCandidates, MimeError, MimeOperationOptions};
 
 /// MIME detector backed by a [`MimeRepository`].
 ///
@@ -102,6 +103,15 @@ impl<'a> RepositoryMimeDetector<'a> {
         let mut core = MimeDetectorCore::from_mime_config(config);
         core.set_mime_relations(repository.relations());
         Self { core, repository }
+    }
+
+    /// Adds explicit async stream refinement to this detector's selection core.
+    pub(crate) fn with_async_media_stream_classifier(
+        mut self,
+        classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
+    ) -> Self {
+        self.core.set_async_media_stream_classifier(classifier);
+        self
     }
 
     /// Gets the shared detector core.
@@ -311,12 +321,25 @@ impl AsyncMimeDetectorBackend for RepositoryMimeDetector<'_> {
                 content,
             )
             .await?;
-            let candidates = super::internal::async_repository_matcher::select_candidates(
-                self.repository,
-                matched,
-                filename,
-                options.policy,
-            );
+            let from_filename = filename.map_or_else(Vec::new, |filename| {
+                self.repository
+                    .detect_by_filename(filename)
+                    .into_iter()
+                    .map(|mime| mime.name().to_owned())
+                    .collect()
+            });
+            let from_content = matched
+                .into_iter()
+                .map(|candidate| candidate.mime_type)
+                .collect::<Vec<_>>();
+            let selected = self
+                .core
+                .select_result_in(scope, &from_filename, &from_content, input, options)
+                .await?;
+            let candidates = selected
+                .into_iter()
+                .map(|mime_type| MimeCandidate { mime_type, rank: 0 })
+                .collect();
             let inspected = content.len().min(self.repository.max_test_bytes());
             Ok(MimeCandidates {
                 candidates,

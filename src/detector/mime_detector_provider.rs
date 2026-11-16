@@ -48,4 +48,15 @@ pub trait AsyncMimeDetectorProvider:
         config: &crate::MimeConfig,
         services: &crate::MimeExecutionServices,
     ) -> Result<std::sync::Arc<dyn crate::AsyncMimeDetectorBackend>, crate::MimeError>;
+
+    /// Creates an async detector with an optional async media-stream
+    /// classifier attached to its selection core.
+    fn create_async_backend_with_classifier(
+        &self,
+        config: &crate::MimeConfig,
+        services: &crate::MimeExecutionServices,
+        _classifier: Option<std::sync::Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
+    ) -> Result<std::sync::Arc<dyn crate::AsyncMimeDetectorBackend>, crate::MimeError> {
+        self.create_async_backend(config, services)
+    }
 }

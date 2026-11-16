@@ -98,4 +98,15 @@ impl super::AsyncMimeDetectorProvider for RepositoryMimeDetectorProvider {
             self, config,
         ))
     }
+
+    fn create_async_backend_with_classifier(
+        &self,
+        config: &MimeConfig,
+        _services: &crate::MimeExecutionServices,
+        classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        let detector = RepositoryMimeDetector::from_mime_config(config.clone())
+            .with_async_media_stream_classifier(classifier);
+        Ok(Arc::new(detector))
+    }
 }

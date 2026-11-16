@@ -138,6 +138,18 @@ impl MimeDetectorRegistry {
         config: &crate::MimeConfig,
         services: &crate::MimeExecutionServices,
     ) -> Result<(String, Arc<dyn crate::AsyncMimeDetectorBackend>), crate::MimeError> {
+        self.create_async_backend_with_classifier(selection, config, services, None)
+    }
+
+    /// Resolves an async detector and attaches an optional async stream
+    /// classifier to providers that support operation-backed refinement.
+    pub fn create_async_backend_with_classifier(
+        &self,
+        selection: &ProviderSelection,
+        config: &crate::MimeConfig,
+        services: &crate::MimeExecutionServices,
+        classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
+    ) -> Result<(String, Arc<dyn crate::AsyncMimeDetectorBackend>), crate::MimeError> {
         let selectors: Vec<&str> = match selection.target() {
             ProviderSelectionTargetRef::Auto => vec!["repository"],
             ProviderSelectionTargetRef::Named(selector) => vec![selector.as_str()],
@@ -155,7 +167,11 @@ impl MimeDetectorRegistry {
                 continue;
             };
             let id = provider.descriptor().id().as_str().to_owned();
-            let backend = provider.create_async_backend(config, services)?;
+            let backend = provider.create_async_backend_with_classifier(
+                config,
+                services,
+                classifier.clone(),
+            )?;
             return Ok((id, backend));
         }
         drop(providers);
