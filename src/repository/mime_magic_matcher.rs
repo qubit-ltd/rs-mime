@@ -7,10 +7,12 @@
 // =============================================================================
 //! MIME content magic matcher.
 
-use super::internal::MAX_MAGIC_DEPTH;
 use crate::MagicValueType;
 use crate::MimeError;
 use crate::MimeResult;
+
+/// Maximum number of nested magic matchers, counting each root as level one.
+pub(super) const MAX_MAGIC_DEPTH: usize = 128;
 
 /// A single MIME magic matcher, optionally with nested sub-matchers.
 ///

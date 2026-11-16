@@ -15,10 +15,14 @@ use qubit_operation::AdmissionError;
 use qubit_operation::ChildFailureSummary;
 use qubit_operation::ExecutionFailure;
 use qubit_operation::GroupBindingError;
+use qubit_operation::ObservationError;
 use qubit_operation::PanicSummary;
 use qubit_operation::StopReport;
 use roxmltree::Error as XmlError;
 use thiserror::Error;
+
+mod mime_capability;
+pub use mime_capability::MimeCapability;
 
 /// Error type for MIME repository parsing and I/O backed detection.
 ///
@@ -61,7 +65,7 @@ pub enum MimeError {
     OperationShutdownPending,
     /// An operation group could not complete its requested shutdown.
     #[error("MIME operation group shutdown failed: {0}")]
-    OperationShutdown(#[source] qubit_operation::ObservationError),
+    OperationShutdown(#[source] ObservationError),
     /// A cumulative or per-request operation budget is invalid.
     #[error("invalid MIME operation budget")]
     InvalidOperationBudget,
@@ -350,16 +354,6 @@ pub enum MimeError {
     ),
 }
 
-/// MIME capability that an operation may require from its backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MimeCapability {
-    /// Random sampling of offsets within the same opened logical object.
-    RandomAccessSampling,
-    /// Refinement can inspect the exact staged object without reopening a
-    /// mutable provider path.
-    SameObjectRefinement,
-}
-
 impl MimeError {
     /// Builds a detector backend error.
     ///
@@ -386,8 +380,14 @@ impl MimeError {
     /// - `reason`: Why the value is invalid.
     ///
     /// # Returns
-    /// A [`MimeError::InvalidXmlAttribute`](crate::MimeError::InvalidXmlAttribute) value.
-    pub(crate) fn invalid_attr(element: &str, attribute: &str, value: &str, reason: impl Into<String>) -> Self {
+    /// A [`MimeError::InvalidXmlAttribute`](crate::MimeError::InvalidXmlAttribute)
+    /// value.
+    pub(crate) fn invalid_attr(
+        element: &str,
+        attribute: &str,
+        value: &str,
+        reason: impl Into<String>,
+    ) -> Self {
         Self::InvalidXmlAttribute {
             element: element.to_owned(),
             attribute: attribute.to_owned(),
@@ -418,9 +418,12 @@ impl MimeError {
     /// - `reason`: Why the matcher is invalid.
     ///
     /// # Returns
-    /// A [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher) value.
+    /// A [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher)
+    /// value.
     pub(crate) fn invalid_matcher(reason: impl Into<String>) -> Self {
-        Self::InvalidMagicMatcher { reason: reason.into() }
+        Self::InvalidMagicMatcher {
+            reason: reason.into(),
+        }
     }
 
     /// Builds an invalid classifier input error.
@@ -431,6 +434,8 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) value.
     pub(crate) fn invalid_classifier_input(reason: impl Into<String>) -> Self {
-        Self::InvalidClassifierInput { reason: reason.into() }
+        Self::InvalidClassifierInput {
+            reason: reason.into(),
+        }
     }
 }

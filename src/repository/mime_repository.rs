@@ -20,7 +20,7 @@ use roxmltree::NS_XML_URI;
 use roxmltree::Node;
 
 use super::glob_index::GlobIndex;
-use super::internal::MAX_MAGIC_DEPTH;
+use super::mime_magic_matcher::MAX_MAGIC_DEPTH;
 use super::magic_index::MagicIndex;
 use super::mime_relations::MimeRelations;
 use super::xml_parser::strip_doctype;
