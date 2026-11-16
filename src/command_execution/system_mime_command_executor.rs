@@ -7,8 +7,10 @@
 // =============================================================================
 //! Adapter from the managed runner to MIME-specific execution facts.
 use qubit_command::Command;
+use qubit_command::CommandCancellation;
 use qubit_command::CommandError;
 use qubit_command::CommandErrorKind;
+use qubit_command::CommandRunOptions;
 use qubit_command::CommandRunner;
 
 use super::MimeCommandExecutor;
@@ -16,6 +18,44 @@ use super::MimeCommandOutput;
 
 /// Production executor that delegates process ownership to CommandRunner.
 pub(crate) struct SystemMimeCommandExecutor;
+impl SystemMimeCommandExecutor {
+    /// Runs with worker cancellation while retaining MIME's exit-code policy.
+    pub(crate) fn run_cancellable(
+        &self,
+        runner: &CommandRunner,
+        command: Command,
+        cancellation: CommandCancellation,
+    ) -> Result<MimeCommandOutput, CommandError> {
+        Self::run_with_options(
+            runner,
+            command,
+            CommandRunOptions::new().cancellation(cancellation),
+        )
+    }
+
+    fn run_with_options(
+        runner: &CommandRunner,
+        command: Command,
+        options: CommandRunOptions,
+    ) -> Result<MimeCommandOutput, CommandError> {
+        match runner.run_with(command, options) {
+            Ok(output) => Ok(MimeCommandOutput::from_output(output)),
+            Err(error)
+                if error.kind() == CommandErrorKind::UnexpectedExit
+                    && error.cleanup_failures().is_empty()
+                    && error.output().is_some() =>
+            {
+                Ok(MimeCommandOutput::from_output(
+                    error
+                        .into_output()
+                        .expect("checked command output must exist"),
+                ))
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
 impl MimeCommandExecutor for SystemMimeCommandExecutor {
     /// Preserves execution errors and restores output only for clean unexpected
     /// exits.
@@ -30,19 +70,11 @@ impl MimeCommandExecutor for SystemMimeCommandExecutor {
     /// # Errors
     /// Returns execution and cleanup failures that cannot be safely represented
     /// as command output.
-    fn run(&self, runner: &CommandRunner, command: Command) -> Result<MimeCommandOutput, CommandError> {
-        match runner.run(command) {
-            Ok(output) => Ok(MimeCommandOutput::from_output(output)),
-            Err(error)
-                if error.kind() == CommandErrorKind::UnexpectedExit
-                    && error.cleanup_failures().is_empty()
-                    && error.output().is_some() =>
-            {
-                Ok(MimeCommandOutput::from_output(
-                    error.into_output().expect("checked command output must exist"),
-                ))
-            }
-            Err(error) => Err(error),
-        }
+    fn run(
+        &self,
+        runner: &CommandRunner,
+        command: Command,
+    ) -> Result<MimeCommandOutput, CommandError> {
+        Self::run_with_options(runner, command, CommandRunOptions::new())
     }
 }
