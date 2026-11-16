@@ -321,6 +321,7 @@ async fn write_chunk_in(
     let job = Box::new(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let result = staged.write_chunk(&bytes, permit);
+            drop(bytes);
             drop(owned_permit);
             result
         }))
