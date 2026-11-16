@@ -1,0 +1,12 @@
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+// =============================================================================
+
+use super::BudgetPermit;
+
+/// RAII reservation held for as long as the staged resource remains owned.
+pub(crate) struct StagingPermit {
+    pub(super) _permit: BudgetPermit,
+}

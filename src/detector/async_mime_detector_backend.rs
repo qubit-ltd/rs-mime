@@ -17,14 +17,9 @@ use super::mime_operation_options::MimeOperationOptions;
 use crate::ContentRequirement;
 use crate::MimeResult;
 
-/// Random-access provider capability declared by an async backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RandomAccessCapability {
-    /// Backend cannot inspect provider content at arbitrary offsets.
-    Unsupported,
-    /// Backend can sample arbitrary offsets on the same opened logical object.
-    SamplesSameObject,
-}
+mod random_access_capability;
+
+pub use self::random_access_capability::RandomAccessCapability;
 
 /// Boxed, sendable future returned by MIME domain backends.
 pub type MimeFuture<'a, T> = Pin<Box<dyn Future<Output = MimeResult<T>> + Send + 'a>>;
