@@ -7,17 +7,21 @@
 // =============================================================================
 //! Runtime Registry and process-wide facade for MIME detector providers.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::RwLock;
 
 use qubit_spi::ProviderDefinition;
 use qubit_spi::ProviderId;
 use qubit_spi::ProviderRegistry;
 use qubit_spi::ProviderSelection;
+use qubit_spi::ProviderSelectionTargetRef;
 use qubit_spi::ResolvingServiceProvider;
 use qubit_spi::error::ProviderResolutionError;
 use qubit_spi::error::RegistryMutationError;
 
+use super::AsyncMimeDetectorProvider;
 use super::FileCommandMimeDetectorProvider;
 use super::MimeDetectorProvider;
 use super::MimeDetectorSpec;
@@ -44,6 +48,8 @@ static GLOBAL_MIME_DETECTOR_REGISTRY: LazyLock<MimeDetectorRegistry> =
 pub struct MimeDetectorRegistry {
     /// Typed provider Registry owning synchronized runtime state.
     providers: ProviderRegistry<MimeDetectorSpec>,
+    /// Explicit operation-capable factories, indexed by canonical ID/alias.
+    async_providers: Arc<RwLock<HashMap<String, Arc<dyn AsyncMimeDetectorProvider>>>>,
 }
 
 impl MimeDetectorRegistry {
@@ -62,6 +68,7 @@ impl MimeDetectorRegistry {
         let registry = Self {
             providers: super::mime_detector_inventory::build_registry()
                 .expect("submitted MIME detector providers should register"),
+            async_providers: Arc::new(RwLock::new(HashMap::new())),
         };
         #[cfg(not(feature = "inventory"))]
         let registry = Self::default();
@@ -78,6 +85,87 @@ impl MimeDetectorRegistry {
             )
             .expect("built-in selection should be accepted");
         registry
+            .register_async_provider(RepositoryMimeDetectorProvider)
+            .expect("built-in repository async provider should register");
+        registry
+            .register_async_provider(FileCommandMimeDetectorProvider)
+            .expect("built-in file async provider should register");
+        registry
+    }
+
+    /// Registers explicit async construction for a provider already available
+    /// through the synchronous catalog. This registration performs no service
+    /// creation, I/O, or executor startup.
+    pub fn register_async_provider<P>(&self, provider: P) -> Result<(), String>
+    where
+        P: AsyncMimeDetectorProvider + 'static,
+    {
+        let descriptor = provider.descriptor();
+        let id = descriptor.id().as_str().to_owned();
+        let provider: Arc<dyn AsyncMimeDetectorProvider> = Arc::new(provider);
+        let mut providers = self
+            .async_providers
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut selectors = Vec::with_capacity(1 + descriptor.aliases().len());
+        selectors.push(id.clone());
+        selectors.extend(
+            descriptor
+                .aliases()
+                .iter()
+                .map(|alias| alias.as_str().to_owned()),
+        );
+        for selector in &selectors {
+            if let Some(existing) = providers.get(selector) {
+                return Err(format!(
+                    "async provider selector `{selector}` is already owned by `{}` (attempted `{id}`)",
+                    existing.descriptor().id().as_str(),
+                ));
+            }
+        }
+        for selector in selectors {
+            providers.insert(selector, Arc::clone(&provider));
+        }
+        Ok(())
+    }
+
+    /// Resolves an operation-capable detector backend from an explicit
+    /// selection. A synchronous-only provider selected from the sync registry
+    /// produces `AsyncUnsupported` and its synchronous factory is not invoked.
+    pub fn create_async_backend(
+        &self,
+        selection: &ProviderSelection,
+        config: &crate::MimeConfig,
+        services: &crate::MimeExecutionServices,
+    ) -> Result<(String, Arc<dyn crate::AsyncMimeDetectorBackend>), crate::MimeError> {
+        let selectors: Vec<&str> = match selection.target() {
+            ProviderSelectionTargetRef::Auto => vec!["repository"],
+            ProviderSelectionTargetRef::Named(selector) => vec![selector.as_str()],
+            ProviderSelectionTargetRef::Chain { selectors, .. } => {
+                selectors.iter().map(|selector| selector.as_str()).collect()
+            }
+            _ => return Err(crate::MimeError::AsyncUnsupported),
+        };
+        let providers = self
+            .async_providers
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        for selector in selectors {
+            let Some(provider) = providers.get(selector) else {
+                continue;
+            };
+            let id = provider.descriptor().id().as_str().to_owned();
+            let backend = provider.create_async_backend(config, services)?;
+            return Ok((id, backend));
+        }
+        drop(providers);
+        // Confirm a known synchronous selector is an unsupported capability,
+        // while keeping unknown-selection diagnosis on the existing resolver.
+        if self.resolve_selected(selection).is_ok() {
+            Err(crate::MimeError::AsyncUnsupported)
+        } else {
+            Err(crate::MimeError::AsyncUnsupported)
+        }
     }
 
     /// Returns the process-wide MIME detector Registry.
@@ -258,6 +346,7 @@ impl Default for MimeDetectorRegistry {
     fn default() -> Self {
         Self {
             providers: ProviderRegistry::default(),
+            async_providers: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }

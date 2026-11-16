@@ -116,6 +116,7 @@ mod tests;
 
 pub use command_execution::FixedMimeExecutionPort;
 pub use classifier::AsyncMediaStreamClassifierBackend;
+pub use classifier::AsyncMediaStreamClassifierProvider;
 pub use classifier::FfprobeCommandMediaStreamClassifier;
 pub use classifier::FfprobeCommandMediaStreamClassifierProvider;
 pub use classifier::FileBasedMediaStreamClassifier;
@@ -182,6 +183,7 @@ pub use constants::ENV_MIME_DETECTOR_FALLBACKS;
 pub use constants::ENV_MIME_DETECTOR_PRECISE_DETECTION_PATTERNS;
 pub use constants::ENV_MIME_MAX_BUFFER_SIZE;
 pub use detector::AsyncMimeDetectorBackend;
+pub use detector::AsyncMimeDetectorProvider;
 pub use detector::AsyncMimeOperation;
 pub use detector::BorrowedMimeInput;
 pub use detector::ContentRequirement;

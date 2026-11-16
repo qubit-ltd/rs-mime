@@ -11,6 +11,7 @@ use std::{fmt, sync::Arc};
 
 use super::internal::mime_submission;
 pub use super::mime_detector_context::MimeDetectorContext;
+use super::mime_detector_registry::MimeDetectorRegistry;
 use super::owned_repository_mime_detector::OwnedRepositoryMimeDetector;
 use super::{
     mime_execution_services::MimeExecutionServices,
@@ -22,6 +23,7 @@ use crate::MimeConfig;
 use crate::MimeDetector;
 use crate::MimeRepository;
 use crate::MimeResult;
+use qubit_spi::ProviderSelection;
 
 /// Process-local runtime owning shared MIME configuration and repository.
 ///
@@ -41,6 +43,7 @@ pub struct MimeRuntime {
     /// runtime.
     context: MimeDetectorContext,
     execution_services: Option<Arc<MimeExecutionServices>>,
+    async_backend: Option<(String, Arc<dyn crate::AsyncMimeDetectorBackend>)>,
 }
 
 impl fmt::Debug for MimeRuntime {
@@ -48,6 +51,7 @@ impl fmt::Debug for MimeRuntime {
         f.debug_struct("MimeRuntime")
             .field("context", &self.context)
             .field("has_execution_services", &self.execution_services.is_some())
+            .field("has_async_backend", &self.async_backend.is_some())
             .finish()
     }
 }
@@ -73,6 +77,7 @@ impl MimeRuntime {
         Self {
             context: MimeDetectorContext::new(Arc::new(config), repository),
             execution_services: None,
+            async_backend: None,
         }
     }
 
@@ -98,8 +103,35 @@ impl MimeRuntime {
     /// Attaches shared operation and MIME execution services without starting workers.
     #[must_use]
     pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
+        let registry = MimeDetectorRegistry::builtin();
+        let async_backend = registry
+            .create_async_backend(
+                &ProviderSelection::named("repository")
+                    .expect("built-in provider selector is valid"),
+                self.context.config(),
+                &services,
+            )
+            .ok();
+        self.async_backend = async_backend;
         self.execution_services = Some(Arc::new(services));
         self
+    }
+
+    /// Selects an explicitly async-capable provider for managed submissions.
+    /// The synchronous detector facade continues to use the repository-backed
+    /// implementation retained by this runtime.
+    pub fn with_async_provider_selection(
+        mut self,
+        registry: &MimeDetectorRegistry,
+        selection: &ProviderSelection,
+    ) -> MimeResult<Self> {
+        let services = self
+            .execution_services
+            .as_ref()
+            .ok_or(crate::MimeError::ExecutionServicesRequired)?;
+        self.async_backend =
+            Some(registry.create_async_backend(selection, self.context.config(), services)?);
+        Ok(self)
     }
 
     /// Submits detection to the MIME root group.
@@ -145,18 +177,21 @@ impl MimeRuntime {
                 input,
             });
         }
-        let detector = match self.create_detector() {
-            Ok(detector) => detector,
-            Err(_) => {
-                return Err(MimeSubmitFailure {
-                    reason: MimeSubmitRejection::InvalidOptions(
-                        "detector construction failed".into(),
-                    ),
-                    input,
-                });
-            }
+        let Some((backend_id, backend)) = self.async_backend.as_ref().cloned() else {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::AsyncUnsupported,
+                input,
+            });
         };
-        let permit = match mime_submission::preflight(&input, &options, &*detector, &services) {
+        let max_buffer_size = self.context.config().max_buffer_size();
+        let permit = match mime_submission::preflight(
+            &input,
+            &options,
+            backend.content_requirement(),
+            backend.random_access_capability(),
+            max_buffer_size,
+            &services,
+        ) {
             Ok(permit) => permit,
             Err(reason) => return Err(MimeSubmitFailure { reason, input }),
         };
@@ -173,12 +208,16 @@ impl MimeRuntime {
         let body_services = Arc::clone(&services);
         let body_options = options.clone();
         let body_tree = Arc::clone(&read_tree);
+        let body_backend_id = backend_id.clone();
+        let body_max_buffer_size = max_buffer_size;
         let body = move |scope: OperationScope| {
             mime_submission::detect(
                 scope,
                 mime_submission::take(&body_cell),
                 body_services,
-                detector,
+                backend,
+                body_backend_id,
+                body_max_buffer_size,
                 body_options,
                 Some(permit),
                 body_tree,
@@ -245,7 +284,14 @@ impl MimeRuntime {
                 });
             }
         };
-        let permit = match mime_submission::preflight(&input, &options, &*detector, &services) {
+        let permit = match mime_submission::preflight(
+            &input,
+            &options,
+            detector.content_requirement(),
+            crate::RandomAccessCapability::Unsupported,
+            detector.max_buffer_size(),
+            &services,
+        ) {
             Ok(permit) => permit,
             Err(reason) => return Err(MimeSubmitFailure { reason, input }),
         };

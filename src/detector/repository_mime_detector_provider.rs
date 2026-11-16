@@ -87,3 +87,15 @@ impl ProviderMetadata for RepositoryMimeDetectorProvider {
         provider_descriptor!("repository", aliases: ["repository-mime-detector"])
     }
 }
+
+impl super::AsyncMimeDetectorProvider for RepositoryMimeDetectorProvider {
+    fn create_async_backend(
+        &self,
+        config: &MimeConfig,
+        _services: &crate::MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(RepositoryMimeDetectorProvider::create_async_backend(
+            self, config,
+        ))
+    }
+}

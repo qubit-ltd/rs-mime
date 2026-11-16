@@ -7,20 +7,26 @@
 // =============================================================================
 //! Runtime Registry and global facade for media stream classifier providers.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::RwLock;
 
 use qubit_spi::ProviderDefinition;
 use qubit_spi::ProviderId;
 use qubit_spi::ProviderRegistry;
 use qubit_spi::ProviderSelection;
+use qubit_spi::ProviderSelectionTargetRef;
 use qubit_spi::ResolvingServiceProvider;
 use qubit_spi::error::ProviderResolutionError;
 use qubit_spi::error::RegistryMutationError;
 
+use super::AsyncMediaStreamClassifierProvider;
 use super::FfprobeCommandMediaStreamClassifierProvider;
 use super::MediaStreamClassifierProvider;
 use super::MediaStreamClassifierSpec;
+use crate::MimeConfig;
+use crate::MimeError;
 
 /// Process-wide classifier Registry initialized with the built-in provider.
 static GLOBAL_MEDIA_STREAM_CLASSIFIER_REGISTRY: LazyLock<MediaStreamClassifierRegistry> =
@@ -43,6 +49,8 @@ static GLOBAL_MEDIA_STREAM_CLASSIFIER_REGISTRY: LazyLock<MediaStreamClassifierRe
 pub struct MediaStreamClassifierRegistry {
     /// Typed provider Registry owning synchronized runtime state.
     providers: ProviderRegistry<MediaStreamClassifierSpec>,
+    /// Explicit async classifier factories, indexed by canonical ID/alias.
+    async_providers: Arc<RwLock<HashMap<String, Arc<dyn AsyncMediaStreamClassifierProvider>>>>,
 }
 
 impl MediaStreamClassifierRegistry {
@@ -60,6 +68,7 @@ impl MediaStreamClassifierRegistry {
         let registry = Self {
             providers: super::media_stream_classifier_inventory::build_registry()
                 .expect("submitted media stream classifier providers should register"),
+            async_providers: Arc::new(RwLock::new(HashMap::new())),
         };
         #[cfg(not(feature = "inventory"))]
         let registry = Self::default();
@@ -68,10 +77,77 @@ impl MediaStreamClassifierRegistry {
             .expect("built-in FFprobe classifier provider should register");
         registry
             .set_default_selection(
-                ProviderSelection::named("ffprobe").expect("built-in FFprobe selection should be valid"),
+                ProviderSelection::named("ffprobe")
+                    .expect("built-in FFprobe selection should be valid"),
             )
             .expect("built-in selection should be accepted");
         registry
+            .register_async_provider(FfprobeCommandMediaStreamClassifierProvider)
+            .expect("built-in FFprobe async provider should register");
+        registry
+    }
+
+    /// Registers an explicit async classifier factory without constructing a
+    /// classifier or starting its execution resources.
+    pub fn register_async_provider<P>(&self, provider: P) -> Result<(), String>
+    where
+        P: AsyncMediaStreamClassifierProvider + 'static,
+    {
+        let descriptor = provider.descriptor();
+        let id = descriptor.id().as_str().to_owned();
+        let provider: Arc<dyn AsyncMediaStreamClassifierProvider> = Arc::new(provider);
+        let mut providers = self
+            .async_providers
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut selectors = Vec::with_capacity(1 + descriptor.aliases().len());
+        selectors.push(id.clone());
+        selectors.extend(
+            descriptor
+                .aliases()
+                .iter()
+                .map(|alias| alias.as_str().to_owned()),
+        );
+        for selector in &selectors {
+            if let Some(existing) = providers.get(selector) {
+                return Err(format!(
+                    "async classifier selector `{selector}` is already owned by `{}` (attempted `{id}`)",
+                    existing.descriptor().id().as_str()
+                ));
+            }
+        }
+        for selector in selectors {
+            providers.insert(selector, Arc::clone(&provider));
+        }
+        Ok(())
+    }
+
+    /// Creates a classifier using an explicit async-capable provider choice.
+    pub fn create_async_backend(
+        &self,
+        selection: &ProviderSelection,
+        config: &MimeConfig,
+        services: &crate::detector::MimeExecutionServices,
+    ) -> Result<(String, Arc<dyn crate::AsyncMediaStreamClassifierBackend>), MimeError> {
+        let selectors: Vec<&str> = match selection.target() {
+            ProviderSelectionTargetRef::Auto => vec!["ffprobe"],
+            ProviderSelectionTargetRef::Named(selector) => vec![selector.as_str()],
+            ProviderSelectionTargetRef::Chain { selectors, .. } => {
+                selectors.iter().map(|selector| selector.as_str()).collect()
+            }
+            _ => return Err(MimeError::AsyncUnsupported),
+        };
+        let providers = self
+            .async_providers
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        for selector in selectors {
+            if let Some(provider) = providers.get(selector) {
+                let id = provider.descriptor().id().as_str().to_owned();
+                return Ok((id, provider.create_async_backend(config, services)?));
+            }
+        }
+        Err(MimeError::AsyncUnsupported)
     }
 
     /// Returns the process-wide media stream classifier Registry.
@@ -162,7 +238,10 @@ impl MediaStreamClassifierRegistry {
     ///
     /// * `selection` - Validated selection and creation fallback policy.
     #[inline]
-    pub fn set_default_selection(&self, selection: ProviderSelection) -> Result<(), RegistryMutationError> {
+    pub fn set_default_selection(
+        &self,
+        selection: ProviderSelection,
+    ) -> Result<(), RegistryMutationError> {
         self.providers.set_default_selection(selection)
     }
 
@@ -208,7 +287,9 @@ impl MediaStreamClassifierRegistry {
     /// Returns [`ProviderResolutionError`] when the stored default matches no
     /// registered provider.
     #[inline]
-    pub fn resolve(&self) -> Result<ResolvingServiceProvider<MediaStreamClassifierSpec>, ProviderResolutionError> {
+    pub fn resolve(
+        &self,
+    ) -> Result<ResolvingServiceProvider<MediaStreamClassifierSpec>, ProviderResolutionError> {
         self.providers.resolve()
     }
 }
@@ -223,6 +304,7 @@ impl Default for MediaStreamClassifierRegistry {
     fn default() -> Self {
         Self {
             providers: ProviderRegistry::default(),
+            async_providers: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }

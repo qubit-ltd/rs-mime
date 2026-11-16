@@ -8,9 +8,15 @@ use std::{
     task::{Context, Poll, Wake, Waker},
 };
 
+use qubit_mime::MediaStreamClassifierRegistry;
+use qubit_mime::detector::MimeRuntime;
 use qubit_mime::{
-    FixedMimeExecutionPort, MimeConfig, MimeDetector, MimeDetectorBackend, MimeDetectorProvider,
-    MimeDetectorRegistry, MimeError, MimeExecutionServices,
+    AsyncMediaStreamClassifierBackend, AsyncMediaStreamClassifierProvider,
+    AsyncMimeDetectorBackend, AsyncMimeDetectorProvider, BorrowedMimeInput, ContentRequirement,
+    FixedMimeExecutionPort, InputExtent, InspectedExtent, MediaStreamType, MimeCandidates,
+    MimeConfig, MimeDetector, MimeDetectorBackend, MimeDetectorRegistry, MimeError,
+    MimeExecutionServices, MimeFuture, MimeOperationOptions, OwnedMimeInput,
+    RandomAccessCapability,
 };
 use qubit_spi::error::ProviderFailure;
 use qubit_spi::{
@@ -85,6 +91,8 @@ impl ProviderMetadata for CountedProvider {
 #[test]
 fn operation_provider_sync_only_is_rejected() {
     let provider = SyncPanicProvider;
+    let registry = MimeDetectorRegistry::default();
+    registry.register(provider).unwrap();
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager
         .group(qubit_operation::GroupOptions { capacity: 1 })
@@ -96,7 +104,8 @@ fn operation_provider_sync_only_is_rejected() {
         1024,
     )
     .unwrap();
-    let result = provider.create_operation_backend(&MimeConfig::default(), services);
+    let selection = qubit_spi::ProviderSelection::named("sync-panic").unwrap();
+    let result = registry.create_async_backend(&selection, &MimeConfig::default(), &services);
     assert!(matches!(
         result,
         Err(qubit_mime::MimeError::AsyncUnsupported)
@@ -108,6 +117,110 @@ fn operation_provider_sync_only_is_rejected() {
         result,
         Err(qubit_mime::MimeError::AsyncUnsupported)
     ));
+}
+
+#[derive(Debug)]
+struct AsyncTestProvider(Arc<AtomicUsize>);
+
+impl ProviderMetadata for AsyncTestProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("sync-panic").unwrap())
+    }
+}
+
+impl AsyncMimeDetectorProvider for AsyncTestProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(AsyncTestBackend(Arc::clone(&self.0))) as Arc<dyn AsyncMimeDetectorBackend>)
+    }
+}
+
+#[derive(Debug)]
+struct AsyncTestBackend(Arc<AtomicUsize>);
+
+impl AsyncMimeDetectorBackend for AsyncTestBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(4)
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        _scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        _options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        Box::pin(async move {
+            let inspected = match input {
+                BorrowedMimeInput::Bytes { content, .. } => content.len(),
+                BorrowedMimeInput::Provider { .. } => {
+                    panic!("prefix provider input must be read once")
+                }
+            };
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(MimeCandidates {
+                candidates: vec![qubit_mime::MimeCandidate {
+                    mime_type: "application/x-async".into(),
+                    rank: 0,
+                }],
+                inspected_extent: InspectedExtent::Prefix(inspected),
+                retained_prefix: vec![],
+            })
+        })
+    }
+}
+
+#[test]
+fn operation_provider_selected_backend_runs_async_without_sync_factory() {
+    let registry = MimeDetectorRegistry::default();
+    registry.register(SyncPanicProvider).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    registry
+        .register_async_provider(AsyncTestProvider(Arc::clone(&calls)))
+        .unwrap();
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 4 })
+        .unwrap();
+    let services = MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 4)),
+        1024,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+    let selection = qubit_spi::ProviderSelection::named("sync-panic").unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(&registry, &selection)
+        .unwrap();
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(&b"data"[..]), InputExtent::Complete),
+            MimeOperationOptions::default(),
+        )
+        .unwrap_or_else(|_| panic!("selected async provider should accept root operation"));
+    let outcome = block_on(operation.wait_outcome()).unwrap();
+    match outcome {
+        qubit_operation::OperationOutcome::Succeeded(report) => {
+            assert_eq!(report.mime_type.as_deref(), Some("application/x-async"));
+            assert_eq!(report.backend_id, "sync-panic");
+        }
+        other => panic!("async backend operation failed: {other:?}"),
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).is_ok());
+    assert!(shutdown.stop_services().is_ok());
 }
 
 #[derive(Debug)]
@@ -126,4 +239,88 @@ impl ProviderMetadata for SyncPanicProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor::new(ProviderId::new("sync-panic").unwrap())
     }
+}
+
+#[derive(Debug)]
+struct AsyncClassifierProvider(Arc<AtomicUsize>);
+
+impl ProviderMetadata for AsyncClassifierProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("async-classifier").unwrap())
+    }
+}
+
+impl AsyncMediaStreamClassifierProvider for AsyncClassifierProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMediaStreamClassifierBackend>, MimeError> {
+        Ok(Arc::new(AsyncTestClassifier(Arc::clone(&self.0))))
+    }
+}
+
+#[derive(Debug)]
+struct AsyncTestClassifier(Arc<AtomicUsize>);
+
+impl AsyncMediaStreamClassifierBackend for AsyncTestClassifier {
+    fn classify_in<'a>(
+        &'a self,
+        _scope: &'a qubit_operation::OperationScope,
+        _input: BorrowedMimeInput<'a>,
+        _options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MediaStreamType> {
+        Box::pin(async move {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(MediaStreamType::AudioOnly)
+        })
+    }
+}
+
+#[test]
+fn operation_classifier_async_factory_is_selected_and_invoked() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let registry = MediaStreamClassifierRegistry::default();
+    registry
+        .register_async_provider(AsyncClassifierProvider(Arc::clone(&calls)))
+        .unwrap();
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 2 })
+        .unwrap();
+    let services = MimeExecutionServices::new(
+        manager,
+        group.clone(),
+        Arc::new(FixedMimeExecutionPort::new(1, 2)),
+        1024,
+    )
+    .unwrap();
+    let selection = qubit_spi::ProviderSelection::named("async-classifier").unwrap();
+    let (_, backend) = registry
+        .create_async_backend(&selection, &MimeConfig::default(), &services)
+        .unwrap();
+    let mut operation = group
+        .as_async()
+        .try_submit(Default::default(), move |scope| {
+            let backend = Arc::clone(&backend);
+            async move {
+                backend
+                    .classify_in(
+                        &scope,
+                        BorrowedMimeInput::Bytes {
+                            content: b"sample",
+                            extent: InputExtent::Complete,
+                            filename: None,
+                        },
+                        &MimeOperationOptions::default(),
+                    )
+                    .await
+            }
+        })
+        .unwrap();
+    assert!(matches!(
+        block_on(operation.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(MediaStreamType::AudioOnly)
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }

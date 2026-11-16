@@ -99,3 +99,16 @@ impl ProviderMetadata for FileCommandMimeDetectorProvider {
         )
     }
 }
+
+impl super::AsyncMimeDetectorProvider for FileCommandMimeDetectorProvider {
+    fn create_async_backend(
+        &self,
+        config: &MimeConfig,
+        services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(
+            FileCommandMimeDetector::from_mime_config(config.clone())
+                .with_execution_services(services.clone()),
+        ))
+    }
+}

@@ -100,3 +100,13 @@ impl ProviderMetadata for FfprobeCommandMediaStreamClassifierProvider {
         )
     }
 }
+
+impl super::AsyncMediaStreamClassifierProvider for FfprobeCommandMediaStreamClassifierProvider {
+    fn create_async_backend(
+        &self,
+        config: &MimeConfig,
+        services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMediaStreamClassifierBackend>, MimeError> {
+        Ok(self.create_async_configured(config, Arc::new(services.clone())))
+    }
+}

@@ -11,11 +11,8 @@
 //! implement [`qubit_spi::ProviderDefinition<MimeDetectorSpec>`], which
 //! combines detector creation with self-described registration metadata.
 
-use qubit_spi::ProviderDefinition;
-use std::sync::Arc;
-
 use super::MimeDetectorSpec;
-use crate::{AsyncMimeDetectorBackend, MimeConfig, MimeError, MimeExecutionServices};
+use qubit_spi::ProviderDefinition;
 
 /// Marker trait for MIME detector providers.
 ///
@@ -36,16 +33,19 @@ use crate::{AsyncMimeDetectorBackend, MimeConfig, MimeError, MimeExecutionServic
 /// require_mime_detector_provider::<RepositoryMimeDetectorProvider>();
 /// ```
 pub trait MimeDetectorProvider: ProviderDefinition<MimeDetectorSpec> {
-    /// Constructs the provider's explicit operation backend. Sync-only
-    /// providers retain registration compatibility and reject async selection
-    /// without invoking their synchronous service factory.
-    fn create_operation_backend(
-        &self,
-        _config: &MimeConfig,
-        _services: MimeExecutionServices,
-    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
-        Err(MimeError::AsyncUnsupported)
-    }
+    // empty
 }
 
 impl<T> MimeDetectorProvider for T where T: ProviderDefinition<MimeDetectorSpec> + ?Sized {}
+
+/// Explicit async capability offered by a detector provider.
+pub trait AsyncMimeDetectorProvider:
+    qubit_spi::ProviderMetadata + std::fmt::Debug + Send + Sync
+{
+    /// Creates an async backend bound to this operation service set.
+    fn create_async_backend(
+        &self,
+        config: &crate::MimeConfig,
+        services: &crate::MimeExecutionServices,
+    ) -> Result<std::sync::Arc<dyn crate::AsyncMimeDetectorBackend>, crate::MimeError>;
+}

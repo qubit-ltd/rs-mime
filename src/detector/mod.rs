@@ -62,6 +62,7 @@ pub use mime_detector_backend::MimeDetectorBackend;
 pub use mime_detector_context::MimeDetectorContext;
 pub use mime_detector_core::MimeDetectorCore;
 pub use mime_detector_provider::MimeDetectorProvider;
+pub use mime_detector_provider::AsyncMimeDetectorProvider;
 pub use mime_detector_registry::MimeDetectorRegistry;
 pub use mime_detector_spec::MimeDetectorSpec;
 pub use mime_execution_services::{MimeExecutionPort, MimeExecutionServices};

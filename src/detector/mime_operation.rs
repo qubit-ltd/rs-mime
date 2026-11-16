@@ -21,6 +21,8 @@ pub enum MimeSubmitRejection {
     Admission(qubit_operation::AdmissionError),
     /// No execution services were configured.
     ExecutionServicesRequired,
+    /// Selected provider has no explicit asynchronous backend capability.
+    AsyncUnsupported,
     /// Request options were invalid.
     InvalidOptions(String),
     /// A finite request budget would be exceeded.
