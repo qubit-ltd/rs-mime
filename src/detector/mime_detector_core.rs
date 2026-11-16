@@ -13,11 +13,15 @@ use std::sync::Arc;
 use qubit_io::std_io::ReadSeek;
 
 use super::detection_source::DetectionSource;
+use crate::AsyncMediaStreamClassifierBackend;
+use crate::BorrowedMimeInput;
 use crate::MediaStreamClassifier;
 use crate::MediaStreamType;
 use crate::MimeConfig;
 use crate::MimeDetectionPolicy;
 use crate::MimeError;
+use crate::MimeFuture;
+use crate::MimeOperationOptions;
 use crate::MimeRepository;
 use crate::MimeResult;
 use crate::candidate_selection::select_candidate;
@@ -39,6 +43,8 @@ pub struct MimeDetectorCore {
     config: MimeConfig,
     /// Media stream classifier.
     media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>,
+    /// Explicit asynchronous media stream classifier.
+    async_media_stream_classifier: Option<Arc<dyn AsyncMediaStreamClassifierBackend>>,
     /// Repository relation context, injected by repository-backed detectors.
     mime_relations: Option<Arc<MimeRelations>>,
 }
@@ -56,6 +62,7 @@ impl MimeDetectorCore {
         Self {
             config,
             media_stream_classifier: None,
+            async_media_stream_classifier: None,
             mime_relations: None,
         }
     }
@@ -99,8 +106,60 @@ impl MimeDetectorCore {
     /// # Parameters
     /// - `media_stream_classifier`: Classifier to use, or `None` to disable
     ///   runtime media stream refinement.
-    pub fn set_media_stream_classifier(&mut self, media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>) {
+    pub fn set_media_stream_classifier(
+        &mut self,
+        media_stream_classifier: Option<Arc<dyn MediaStreamClassifier>>,
+    ) {
         self.media_stream_classifier = media_stream_classifier;
+    }
+
+    /// Sets the classifier used by operation-backed asynchronous refinement.
+    pub fn set_async_media_stream_classifier(
+        &mut self,
+        classifier: Option<Arc<dyn AsyncMediaStreamClassifierBackend>>,
+    ) {
+        self.async_media_stream_classifier = classifier;
+    }
+
+    /// Selects candidates and refines the result through the explicit async
+    /// classifier. This path never invokes the synchronous classifier.
+    pub fn select_result_in<'a>(
+        &'a self,
+        scope: &'a qubit_operation::OperationScope,
+        from_filename: &'a [String],
+        from_content: &'a [String],
+        input: BorrowedMimeInput<'a>,
+        options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, Option<String>> {
+        Box::pin(async move {
+            let Some(result) = self
+                .select_candidates(from_filename, from_content, options.policy)
+                .cloned()
+            else {
+                return Ok(None);
+            };
+            if from_filename.len() == 1 && options.policy == MimeDetectionPolicy::PreferFilename {
+                return Ok(Some(result));
+            }
+            let filename = match input {
+                BorrowedMimeInput::Bytes { filename, .. } => filename,
+                BorrowedMimeInput::Provider { path, .. } => path.file_name(),
+            };
+            let Some([video_type, audio_type]) = self.precise_detection_mapping(&result, filename)
+            else {
+                return Ok(Some(result));
+            };
+            let Some(classifier) = &self.async_media_stream_classifier else {
+                return Ok(Some(result));
+            };
+            match classifier.classify_in(scope, input, options).await? {
+                MediaStreamType::AudioOnly => Ok(Some(audio_type.clone())),
+                MediaStreamType::VideoOnly | MediaStreamType::VideoWithAudio => {
+                    Ok(Some(video_type.clone()))
+                }
+                MediaStreamType::None => Ok(Some(result)),
+            }
+        })
     }
 
     /// Installs the relations for the repository this core uses.
@@ -120,9 +179,17 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Selected MIME type name, or `None`.
-    pub fn merge_results(&self, from_filename: &[String], from_content: &[String]) -> Option<String> {
-        self.select_candidates(from_filename, from_content, MimeDetectionPolicy::Freedesktop)
-            .cloned()
+    pub fn merge_results(
+        &self,
+        from_filename: &[String],
+        from_content: &[String],
+    ) -> Option<String> {
+        self.select_candidates(
+            from_filename,
+            from_content,
+            MimeDetectionPolicy::Freedesktop,
+        )
+        .cloned()
     }
 
     /// Selects a MIME type from filename/content candidates and refines it.
@@ -144,14 +211,17 @@ impl MimeDetectorCore {
         policy: MimeDetectionPolicy,
         source: DetectionSource<'_>,
     ) -> MimeResult<Option<String>> {
-        let result = self.select_candidates(from_filename, from_content, policy).cloned();
+        let result = self
+            .select_candidates(from_filename, from_content, policy)
+            .cloned();
         let Some(result) = result else {
             return Ok(None);
         };
         if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
             return Ok(Some(result));
         }
-        self.refine_detected_mime_type(&result, filename, source).map(Some)
+        self.refine_detected_mime_type(&result, filename, source)
+            .map(Some)
     }
 
     /// Selects candidates using the policy's equality or inheritance rule.
@@ -171,9 +241,9 @@ impl MimeDetectorCore {
     ) -> Option<&'a String> {
         let relations = (policy == MimeDetectionPolicy::Freedesktop).then(|| self.mime_relations());
         select_candidate(from_filename, from_content, policy, |filename, content| {
-            relations
-                .as_ref()
-                .map_or(filename == content, |relations| relations.is_a(filename, content))
+            relations.as_ref().map_or(filename == content, |relations| {
+                relations.is_a(filename, content)
+            })
         })
     }
 
@@ -214,7 +284,13 @@ impl MimeDetectorCore {
         policy: MimeDetectionPolicy,
         reader: &mut dyn ReadSeek,
     ) -> MimeResult<Option<String>> {
-        let Some(result) = self.select_result(from_filename, from_content, filename, policy, DetectionSource::None)?
+        let Some(result) = self.select_result(
+            from_filename,
+            from_content,
+            filename,
+            policy,
+            DetectionSource::None,
+        )?
         else {
             return Ok(None);
         };
@@ -252,7 +328,9 @@ impl MimeDetectorCore {
         filename: Option<&str>,
         source: DetectionSource<'_>,
     ) -> MimeResult<String> {
-        let Some([video_type, audio_type]) = self.precise_detection_mapping(detected_mime_type, filename) else {
+        let Some([video_type, audio_type]) =
+            self.precise_detection_mapping(detected_mime_type, filename)
+        else {
             return Ok(detected_mime_type.to_owned());
         };
         let Some(classifier) = &self.media_stream_classifier else {
@@ -295,7 +373,9 @@ impl MimeDetectorCore {
         filename: Option<&str>,
         reader: &mut dyn ReadSeek,
     ) -> MimeResult<String> {
-        let Some([video_type, audio_type]) = self.precise_detection_mapping(detected_mime_type, filename) else {
+        let Some([video_type, audio_type]) =
+            self.precise_detection_mapping(detected_mime_type, filename)
+        else {
             return Ok(detected_mime_type.to_owned());
         };
         let Some(classifier) = &self.media_stream_classifier else {
@@ -330,7 +410,11 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Video/audio MIME pair when precise detection should run.
-    fn precise_detection_mapping(&self, detected_mime_type: &str, filename: Option<&str>) -> Option<&[String; 2]> {
+    fn precise_detection_mapping(
+        &self,
+        detected_mime_type: &str,
+        filename: Option<&str>,
+    ) -> Option<&[String; 2]> {
         let mapping_key = self.precise_detection_mapping_key(detected_mime_type, filename)?;
         self.config.ambiguous_mime_mapping().get(&mapping_key)
     }
@@ -343,7 +427,11 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Extension mapping key when precise detection should run.
-    fn precise_detection_mapping_key(&self, detected_mime_type: &str, filename: Option<&str>) -> Option<String> {
+    fn precise_detection_mapping_key(
+        &self,
+        detected_mime_type: &str,
+        filename: Option<&str>,
+    ) -> Option<String> {
         if !self.config.enable_precise_detection() || detected_mime_type.is_empty() {
             return None;
         }
@@ -363,8 +451,16 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Mapping key when the extension and MIME type are ambiguous.
-    fn precise_detection_mapping_key_by_filename(&self, detected_mime_type: &str, extension: String) -> Option<String> {
-        if !self.config.precise_detection_patterns().contains(&extension) {
+    fn precise_detection_mapping_key_by_filename(
+        &self,
+        detected_mime_type: &str,
+        extension: String,
+    ) -> Option<String> {
+        if !self
+            .config
+            .precise_detection_patterns()
+            .contains(&extension)
+        {
             return None;
         }
         let possible_mime_types = self.config.ambiguous_mime_mapping().get(&extension)?;
@@ -387,10 +483,16 @@ impl MimeDetectorCore {
     /// Mapping key when the MIME type is part of an unambiguous set of
     /// matching pairs. Returns `None` when matching extensions map the MIME
     /// type to different pairs, so detection preserves the original MIME type.
-    fn precise_detection_mapping_key_by_mime_type(&self, detected_mime_type: &str) -> Option<String> {
+    fn precise_detection_mapping_key_by_mime_type(
+        &self,
+        detected_mime_type: &str,
+    ) -> Option<String> {
         let mut selected: Option<(&String, &[String; 2])> = None;
         for (extension, pair) in self.config.ambiguous_mime_mapping() {
-            if !pair.iter().any(|name| name.eq_ignore_ascii_case(detected_mime_type)) {
+            if !pair
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(detected_mime_type))
+            {
                 continue;
             }
             if let Some((best_extension, best_pair)) = selected {

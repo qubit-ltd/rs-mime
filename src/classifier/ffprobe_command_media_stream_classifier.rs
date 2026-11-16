@@ -8,18 +8,32 @@
 //! FFprobe-backed media stream classifier.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use qubit_command::Command;
 use qubit_command::CommandRunner;
 
+use crate::AsyncMediaStreamClassifierBackend;
+use crate::BorrowedMimeInput;
 use crate::FileBasedMediaStreamClassifier;
+use crate::InputExtent;
 use crate::MediaStreamType;
 use crate::MimeConfig;
 use crate::MimeError;
+use crate::MimeFuture;
+use crate::MimeOperationOptions;
 use crate::MimeResult;
+use crate::command_execution::AsyncMimeCommandExecutor;
+use crate::command_execution::ManagedCommandExecutor;
+use crate::command_execution::ManagedMimeCommand;
 use crate::command_execution::MimeCommandExecutor;
+use crate::command_execution::MimeExecutionWorker;
 use crate::command_execution::SystemMimeCommandExecutor;
 use crate::command_execution::require_complete_stdout;
+use crate::detector::MimeExecutionServices;
+use crate::detector::mime_input::OwnedMimeInput;
+use crate::detector::stream_type_from_output;
+use crate::managed_temp_staging::{ManagedStagingLimits, stage_owned_in};
 
 /// Media stream classifier backed by the `ffprobe` command.
 ///
@@ -30,7 +44,7 @@ use crate::command_execution::require_complete_stdout;
 /// let classifier = FfprobeCommandMediaStreamClassifier::new();
 /// assert!(classifier.max_staging_size() > 0);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FfprobeCommandMediaStreamClassifier {
     /// The working directory used to execute FFprobe.
     working_directory: Option<String>,
@@ -38,6 +52,19 @@ pub struct FfprobeCommandMediaStreamClassifier {
     command_runner: CommandRunner,
     /// Maximum bytes staged from reader/content input.
     max_staging_size: u64,
+    /// Optional operation services for explicit asynchronous classification.
+    execution_services: Option<Arc<MimeExecutionServices>>,
+}
+
+impl std::fmt::Debug for FfprobeCommandMediaStreamClassifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FfprobeCommandMediaStreamClassifier")
+            .field("working_directory", &self.working_directory)
+            .field("command_runner", &self.command_runner)
+            .field("max_staging_size", &self.max_staging_size)
+            .field("has_execution_services", &self.execution_services.is_some())
+            .finish()
+    }
 }
 
 impl FfprobeCommandMediaStreamClassifier {
@@ -70,7 +97,14 @@ impl FfprobeCommandMediaStreamClassifier {
             working_directory: None,
             command_runner: Self::default_command_runner(&config),
             max_staging_size: config.media_stream_max_staging_size(),
+            execution_services: None,
         }
+    }
+
+    /// Associates services required to run the asynchronous command path.
+    pub(crate) fn with_execution_services(mut self, services: Arc<MimeExecutionServices>) -> Self {
+        self.execution_services = Some(services);
+        self
     }
 
     /// Gets the command runner used by this classifier.
@@ -213,13 +247,18 @@ impl FfprobeCommandMediaStreamClassifier {
     ///
     /// # Returns
     /// `true` when the probe succeeds and its output is complete.
-    pub(crate) fn is_available_with_executor(config: &MimeConfig, executor: &dyn MimeCommandExecutor) -> bool {
+    pub(crate) fn is_available_with_executor(
+        config: &MimeConfig,
+        executor: &dyn MimeCommandExecutor,
+    ) -> bool {
         executor
             .run(
                 &Self::default_command_runner(config),
                 Command::new(Self::COMMAND).arg("-version"),
             )
-            .is_ok_and(|output| output.exit_code == Some(0) && require_complete_stdout(&output).is_ok())
+            .is_ok_and(|output| {
+                output.exit_code == Some(0) && require_complete_stdout(&output).is_ok()
+            })
     }
 
     /// Executes FFprobe for one local file.
@@ -265,9 +304,11 @@ impl FfprobeCommandMediaStreamClassifier {
         let output = executor.run(&self.command_runner, command)?;
         match output.exit_code {
             Some(0) => {
-                let stdout = require_complete_stdout(&output).map_err(|reason| MimeError::ClassifierBackend {
-                    backend: Self::COMMAND.to_owned(),
-                    reason: reason.to_owned(),
+                let stdout = require_complete_stdout(&output).map_err(|reason| {
+                    MimeError::ClassifierBackend {
+                        backend: Self::COMMAND.to_owned(),
+                        reason: reason.to_owned(),
+                    }
                 })?;
                 Ok(Self::classify_stream_listing(stdout))
             }
@@ -344,5 +385,77 @@ impl FileBasedMediaStreamClassifier for FfprobeCommandMediaStreamClassifier {
     /// execution itself fails.
     fn classify_by_local_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
         self.classify_with_ffprobe(file)
+    }
+}
+
+impl AsyncMediaStreamClassifierBackend for FfprobeCommandMediaStreamClassifier {
+    fn classify_in<'a>(
+        &'a self,
+        scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MediaStreamType> {
+        Box::pin(async move {
+            let services = self
+                .execution_services
+                .as_ref()
+                .ok_or(MimeError::ExecutionServicesRequired)?;
+            let read_tree = services.read_tree_for_operation(scope.id())?;
+            let (owned_input, filename) = match input {
+                BorrowedMimeInput::Bytes {
+                    content,
+                    extent,
+                    filename,
+                } => {
+                    if extent != InputExtent::Complete {
+                        return Err(MimeError::CompleteContentRequired);
+                    }
+                    (
+                        OwnedMimeInput::bytes(Arc::from(content), extent),
+                        filename.map(str::to_owned),
+                    )
+                }
+                BorrowedMimeInput::Provider { file_system, path } => (
+                    OwnedMimeInput::Provider {
+                        file_system: Arc::new(file_system.clone()),
+                        path: path.clone(),
+                    },
+                    path.file_name().map(str::to_owned),
+                ),
+            };
+            let owned_input = if let Some(name) = filename {
+                owned_input.with_filename(name)
+            } else {
+                owned_input
+            };
+            let max_staging_size = options
+                .max_staging_bytes
+                .unwrap_or(self.max_staging_size)
+                .min(self.max_staging_size);
+            let worker = MimeExecutionWorker::new(Arc::clone(&services.execution));
+            let limits = ManagedStagingLimits {
+                max_bytes: max_staging_size,
+                budget: services.staging_budget(),
+                worker: worker.clone(),
+            };
+            let staged = stage_owned_in(scope, owned_input, limits, read_tree).await?;
+            let mut command = Self::command_for_path(&staged.path()?);
+            if let Some(working_directory) = &self.working_directory {
+                command = command.working_directory(working_directory);
+            }
+            let executor = ManagedCommandExecutor::new(worker);
+            let output = executor
+                .run_in(
+                    scope,
+                    ManagedMimeCommand::new(
+                        self.command_runner.clone(),
+                        command,
+                        services.root_group.clone(),
+                    ),
+                    staged,
+                )
+                .await?;
+            stream_type_from_output(&output)
+        })
     }
 }

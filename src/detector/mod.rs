@@ -50,6 +50,7 @@ pub use detection_source::DetectionSource;
 pub use file_based_mime_detector::FileBasedMimeDetector;
 pub use file_command_mime_detector::FileCommandMimeDetector;
 pub use file_command_mime_detector_provider::FileCommandMimeDetectorProvider;
+pub(crate) use internal::async_mime_refinement::stream_type_from_output;
 pub use mime_content_backend::MimeContentBackend;
 pub use mime_content_backend::MimeDetectorAdapter;
 pub use mime_detection_policy::MimeDetectionPolicy;

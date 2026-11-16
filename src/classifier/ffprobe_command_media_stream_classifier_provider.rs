@@ -16,10 +16,12 @@ use qubit_spi::error::ProviderFailure;
 use qubit_spi::provider_descriptor;
 
 use super::MediaStreamClassifierSpec;
+use crate::AsyncMediaStreamClassifierBackend;
 use crate::FfprobeCommandMediaStreamClassifier;
 use crate::MediaStreamClassifier;
 use crate::MimeConfig;
 use crate::MimeError;
+use crate::detector::MimeExecutionServices;
 
 /// Provider for the built-in FFprobe-backed media stream classifier.
 ///
@@ -57,14 +59,30 @@ impl ServiceProvider<MediaStreamClassifierSpec> for FfprobeCommandMediaStreamCla
         config: &MimeConfig,
     ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderFailure<MimeError>> {
         if !FfprobeCommandMediaStreamClassifier::is_available_with_config(config) {
-            return Err(ProviderFailure::unavailable(MimeError::ClassifierUnavailable {
-                name: "ffprobe".to_owned(),
-                reason: "`ffprobe` command is not available".to_owned(),
-            }));
+            return Err(ProviderFailure::unavailable(
+                MimeError::ClassifierUnavailable {
+                    name: "ffprobe".to_owned(),
+                    reason: "`ffprobe` command is not available".to_owned(),
+                },
+            ));
         }
-        Ok(Arc::new(FfprobeCommandMediaStreamClassifier::from_mime_config(
-            config.clone(),
-        )))
+        Ok(Arc::new(
+            FfprobeCommandMediaStreamClassifier::from_mime_config(config.clone()),
+        ))
+    }
+}
+
+impl FfprobeCommandMediaStreamClassifierProvider {
+    /// Creates an FFprobe classifier configured for explicit async operations.
+    pub(crate) fn create_async_configured(
+        &self,
+        config: &MimeConfig,
+        services: Arc<MimeExecutionServices>,
+    ) -> Arc<dyn AsyncMediaStreamClassifierBackend> {
+        Arc::new(
+            FfprobeCommandMediaStreamClassifier::from_mime_config(config.clone())
+                .with_execution_services(services),
+        )
     }
 }
 
