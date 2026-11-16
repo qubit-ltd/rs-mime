@@ -96,6 +96,20 @@ pub(crate) fn stage_owned_in<'a>(
     })
 }
 
+fn ensure_not_stopped(scope: &OperationScope) -> MimeResult<()> {
+    if let Some(reason) = scope.context().stop_reason() {
+        return Err(stopped_error(reason));
+    }
+    Ok(())
+}
+
+fn stopped_error(reason: qubit_operation::StopReason) -> MimeError {
+    MimeError::OperationStopped(qubit_operation::StopReport {
+        reason,
+        accepted_at: None,
+    })
+}
+
 pub(crate) fn stage_borrowed_bytes_in<'a>(
     scope: &'a OperationScope,
     content: &'a [u8],
@@ -123,11 +137,13 @@ async fn stage_byte_slice_in(
             limit: limits.max_bytes,
         });
     }
+    ensure_not_stopped(scope)?;
     let reservation = scope
         .reserve_resource()
         .map_err(|_| MimeError::ExecutionServicesRequired)?;
-    let staged = create_empty_staged(reservation, &limits).await?;
+    let staged = create_empty_staged(scope, reservation, &limits).await?;
     for bytes in content.chunks(8 * 1024) {
+        ensure_not_stopped(scope)?;
         let chunk_size = u64::try_from(bytes.len()).map_err(|_| MimeError::BudgetExceeded {
             kind: "staging",
             requested: u64::MAX,
@@ -152,6 +168,7 @@ async fn stage_byte_slice_in(
                     limit: 16 * 1024 * 1024,
                 })?;
         write_chunk_in(
+            scope,
             &limits.worker,
             staged.clone(),
             bytes.to_vec(),
@@ -172,16 +189,20 @@ async fn stage_provider_in(
 ) -> MimeResult<ResourceRef<StagedMimeInput>> {
     use qubit_fs::read::ReadOptions;
 
+    ensure_not_stopped(scope)?;
+
     // Exactly one open binds every sequential read to the same provider
     // object. No metadata/stat call or path-based reopen is used.
     let mut reader = file_system
         .open_reader(&path, ReadOptions::default())
         .await
         .map_err(MimeError::FileSystem)?;
+    ensure_not_stopped(scope)?;
     let reservation = scope
         .reserve_resource()
         .map_err(|_| MimeError::ExecutionServicesRequired)?;
-    let staged = create_empty_staged(reservation, &limits).await?;
+    ensure_not_stopped(scope)?;
+    let staged = create_empty_staged(scope, reservation, &limits).await?;
     let _chunk_buffer_permit =
         limits
             .budget
@@ -194,6 +215,7 @@ async fn stage_provider_in(
     let mut total = 0_u64;
     let mut chunk = vec![0_u8; 8 * 1024];
     loop {
+        ensure_not_stopped(scope)?;
         let staging_remaining = limits.max_bytes.saturating_sub(total);
         // Read no more than the remaining staged allowance. Once it reaches
         // zero, reserve exactly one additional byte to prove EOF; that byte
@@ -220,6 +242,7 @@ async fn stage_provider_in(
                 limit: tree_remaining,
             })?;
         let ask = usize::try_from(ask_u64).expect("request is capped by fixed chunk size");
+        ensure_not_stopped(scope)?;
         let count = reader
             .read_async(&mut chunk[..ask])
             .await
@@ -235,6 +258,7 @@ async fn stage_provider_in(
             limit: ask_u64,
         })?;
         permit.commit(count_u64);
+        ensure_not_stopped(scope)?;
         if count == 0 {
             return Ok(staged);
         }
@@ -270,19 +294,33 @@ async fn stage_provider_in(
                     limit: 16 * 1024 * 1024,
                 })?;
         let bytes = chunk[..count].to_vec();
-        write_chunk_in(&limits.worker, staged.clone(), bytes, permit, owned_permit).await?;
+        write_chunk_in(
+            scope,
+            &limits.worker,
+            staged.clone(),
+            bytes,
+            permit,
+            owned_permit,
+        )
+        .await?;
         total = new_total;
     }
 }
 
 async fn create_empty_staged(
+    scope: &OperationScope,
     reservation: qubit_operation::ResourceReservation,
     limits: &ManagedStagingLimits,
 ) -> MimeResult<ResourceRef<StagedMimeInput>> {
+    ensure_not_stopped(scope)?;
+    let context = scope.context().clone();
     let (sender, receiver) = completion_pair();
     let worker = limits.worker.clone();
     let job = Box::new(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Some(reason) = context.stop_reason() {
+                return Err(stopped_error(reason));
+            }
             let fs = LocalFileSystem::host().map_err(|e| MimeError::Io(e.into_io_error()))?;
             let temp = fs
                 .create_temp_file()
@@ -311,16 +349,23 @@ async fn create_empty_staged(
 }
 
 async fn write_chunk_in(
+    scope: &OperationScope,
     worker: &MimeExecutionWorker,
     staged: ResourceRef<StagedMimeInput>,
     bytes: Vec<u8>,
     permit: StagingPermit,
     owned_permit: OwnedMemoryPermit,
 ) -> MimeResult<()> {
+    ensure_not_stopped(scope)?;
+    let context = scope.context().clone();
     let (sender, receiver) = completion_pair();
     let job = Box::new(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let result = staged.write_chunk(&bytes, permit);
+            let result = if let Some(reason) = context.stop_reason() {
+                Err(stopped_error(reason))
+            } else {
+                staged.write_chunk(&bytes, permit)
+            };
             drop(bytes);
             drop(owned_permit);
             result

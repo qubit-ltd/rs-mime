@@ -606,6 +606,12 @@ impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
                     .await?
                 }
             };
+            if let Some(reason) = scope.context().stop_reason() {
+                return Err(MimeError::OperationStopped(qubit_operation::StopReport {
+                    reason,
+                    accepted_at: None,
+                }));
+            }
             let command = ManagedMimeCommand::new(
                 self.command_runner.clone(),
                 Self::command_for_path(&staged.path()?),
@@ -683,7 +689,10 @@ mod file_operation_tests {
     use std::task::{Context, Poll, Wake, Waker};
 
     use crate::command_execution::MimeCommandOutput;
-    use crate::managed_temp_staging::StagedMimeInput;
+    use crate::command_execution::MimeExecutionWorker;
+    use crate::managed_temp_staging::{
+        ManagedStagingLimits, StagedMimeInput, stage_borrowed_bytes_in,
+    };
     use crate::{MimeExecutionPort, MimeOperationOptions};
     use qubit_fs::metadata::{
         FileSystemCapabilities, FileSystemId, FileSystemInfo, FileSystemLimits, OpenedFileInfo,
@@ -731,10 +740,36 @@ mod file_operation_tests {
         properties: ProviderProperties,
         bytes: Vec<u8>,
         reads: Arc<AtomicUsize>,
+        stop_context: Option<Arc<std::sync::Mutex<Option<qubit_operation::OperationContext>>>>,
     }
 
     impl ProviderFs {
         fn new(bytes: &[u8]) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>) {
+            let (filesystem, reads, _) = Self::with_optional_stop(bytes, None);
+            (filesystem, reads)
+        }
+
+        fn stopping(
+            bytes: &[u8],
+        ) -> (
+            Arc<AsyncFileSystem>,
+            Arc<AtomicUsize>,
+            Arc<std::sync::Mutex<Option<qubit_operation::OperationContext>>>,
+        ) {
+            let stop_context = Arc::new(std::sync::Mutex::new(None));
+            let (filesystem, reads, stop_context) =
+                Self::with_optional_stop(bytes, Some(stop_context));
+            (filesystem, reads, stop_context.unwrap())
+        }
+
+        fn with_optional_stop(
+            bytes: &[u8],
+            stop_context: Option<Arc<std::sync::Mutex<Option<qubit_operation::OperationContext>>>>,
+        ) -> (
+            Arc<AsyncFileSystem>,
+            Arc<AtomicUsize>,
+            Option<Arc<std::sync::Mutex<Option<qubit_operation::OperationContext>>>>,
+        ) {
             let properties = ProviderProperties::new(
                 FileSystemInfo::new(
                     FileSystemId::new("mime-file-operation-test").unwrap(),
@@ -754,9 +789,10 @@ mod file_operation_tests {
                 properties,
                 bytes: bytes.to_vec(),
                 reads: Arc::clone(&reads),
+                stop_context: stop_context.clone(),
             })
             .unwrap();
-            (Arc::new(filesystem), reads)
+            (Arc::new(filesystem), reads, stop_context)
         }
     }
 
@@ -777,6 +813,7 @@ mod file_operation_tests {
             let info = OpenedFileInfo::new(id, request.path().clone());
             let bytes = self.bytes.clone();
             let reads = Arc::clone(&self.reads);
+            let stop_context = self.stop_context.as_ref().map(Arc::clone);
             Box::pin(async move {
                 Ok(OpenedAsyncReader::new(
                     info,
@@ -784,6 +821,7 @@ mod file_operation_tests {
                         bytes,
                         offset: 0,
                         reads,
+                        stop_context,
                     }),
                 ))
             })
@@ -794,6 +832,7 @@ mod file_operation_tests {
         bytes: Vec<u8>,
         offset: usize,
         reads: Arc<AtomicUsize>,
+        stop_context: Option<Arc<std::sync::Mutex<Option<qubit_operation::OperationContext>>>>,
     }
 
     impl AsyncInput for ProviderInput {
@@ -810,6 +849,13 @@ mod file_operation_tests {
             output[index..index + count]
                 .copy_from_slice(&self.bytes[self.offset..self.offset + count]);
             self.offset += count;
+            if let Some(context) = self
+                .stop_context
+                .as_ref()
+                .and_then(|slot| slot.lock().unwrap().take())
+            {
+                let _ = context.request_stop(StopReason::UserCancelled);
+            }
             Poll::Ready(Ok(count))
         }
     }
@@ -955,18 +1001,24 @@ mod file_operation_tests {
         harness: &Harness,
         filesystem: Arc<AsyncFileSystem>,
         options: MimeOperationOptions,
+        stop_context: Option<Arc<std::sync::Mutex<Option<qubit_operation::OperationContext>>>>,
     ) -> (
         qubit_operation::AsyncOperationHandle<MimeCandidates, MimeError>,
         OperationOutcome<MimeCandidates, MimeError>,
+        Arc<crate::detector::ReadTreeContext>,
     ) {
         let detector = harness.detector.clone();
         let services = harness.services.clone();
         let tree = services.new_read_tree(1024);
+        let tree_result = Arc::clone(&tree);
         let mut handle = harness
             .group
             .as_async()
             .try_submit(Default::default(), move |scope| async move {
                 services.bind_read_tree(scope.id(), &tree);
+                if let Some(stop_context) = stop_context {
+                    *stop_context.lock().unwrap() = Some(scope.context().clone());
+                }
                 let path = FsPath::parse("/input").unwrap();
                 detector
                     .guess_content_in(
@@ -981,11 +1033,69 @@ mod file_operation_tests {
             })
             .unwrap();
         let outcome = block_on(handle.wait_outcome()).unwrap();
-        (handle, outcome)
+        (handle, outcome, tree_result)
     }
 
     fn cleanup(harness: &Harness) {
         let shutdown = harness.services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+    }
+
+    #[test]
+    fn file_operation_staging_stopped_before_create_dispatches_no_work() {
+        #[derive(Debug)]
+        struct CountingPort(Arc<AtomicUsize>);
+        impl MimeExecutionPort for CountingPort {
+            fn prepare(&self) -> Result<(), MimeError> {
+                Ok(())
+            }
+            fn try_dispatch(
+                &self,
+                job: Box<dyn FnOnce() + Send + 'static>,
+            ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                job();
+                Ok(())
+            }
+            fn shutdown(&self) -> Result<(), MimeError> {
+                Ok(())
+            }
+        }
+
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager
+            .group(qubit_operation::GroupOptions { capacity: 2 })
+            .unwrap();
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let port = Arc::new(CountingPort(Arc::clone(&dispatches)));
+        let services =
+            MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
+        services.prepare().unwrap();
+        let worker = MimeExecutionWorker::new(port);
+        let budget = services.staging_budget();
+        let limits = ManagedStagingLimits {
+            max_bytes: 16,
+            budget: budget.clone(),
+            worker,
+        };
+        let mut handle = group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                let _ = scope.request_stop(StopReason::UserCancelled);
+                stage_borrowed_bytes_in(&scope, b"input", InputExtent::Complete, limits)
+                    .await
+                    .map(|_| ())
+            })
+            .unwrap();
+        assert!(matches!(
+            block_on(handle.wait_outcome()).unwrap(),
+            OperationOutcome::Stopped(_)
+        ));
+        assert_eq!(dispatches.load(Ordering::SeqCst), 0);
+        assert_eq!(budget.used_bytes(), 0);
+        assert!(block_on(handle.wait_settlement()).all_released());
+        let shutdown = services.shutdown();
         block_on(shutdown.wait_services_settled()).unwrap();
         shutdown.stop_services().unwrap();
     }
@@ -1124,7 +1234,7 @@ mod file_operation_tests {
         let (filesystem, reads) = ProviderFs::new(b"12345");
         let mut options = MimeOperationOptions::default();
         options.max_staging_bytes = Some(4);
-        let (handle, outcome) = submit_provider(&harness, filesystem, options);
+        let (handle, outcome, _read_tree) = submit_provider(&harness, filesystem, options, None);
         assert!(matches!(
             outcome,
             OperationOutcome::Failed(MimeError::BudgetExceeded {
@@ -1140,6 +1250,28 @@ mod file_operation_tests {
             "data and L+1 sentinel are read"
         );
         block_on(handle.wait_settlement());
+        cleanup(&harness);
+    }
+
+    #[test]
+    fn file_operation_provider_stop_after_read_commits_bytes_and_prevents_next_read() {
+        let fake = executor(b"application/pdf", false, None);
+        let harness = harness(Arc::clone(&fake));
+        let (filesystem, reads, stop_context) = ProviderFs::stopping(&vec![b'x'; 32]);
+        let mut options = MimeOperationOptions::default();
+        options.max_staging_bytes = Some(2);
+        let (handle, outcome, read_tree) =
+            submit_provider(&harness, filesystem, options, Some(stop_context));
+        assert!(matches!(outcome, OperationOutcome::Stopped(_)));
+        assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(reads.load(Ordering::SeqCst), 1, "no read begins after stop");
+        assert_eq!(
+            read_tree.remaining(),
+            1022,
+            "the returned bytes remain charged"
+        );
+        assert!(block_on(handle.wait_settlement()).all_released());
+        assert_eq!(harness.services.staging_budget().used_bytes(), 0);
         cleanup(&harness);
     }
 
