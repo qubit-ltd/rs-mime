@@ -197,6 +197,8 @@ pub use detector::MimeOperationOptions;
 pub use detector::MimeSubmitFailure;
 pub use detector::MimeSubmitRejection;
 pub use detector::OwnedMimeInput;
+pub use detector::RandomAccessCapability;
+pub use mime_error::MimeCapability;
 pub use detector::DetectionSource;
 pub use detector::FileBasedMimeDetector;
 pub use detector::FileCommandMimeDetector;

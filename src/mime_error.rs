@@ -51,6 +51,12 @@ pub enum MimeError {
     /// Input changed while the operation was inspecting the opened object.
     #[error("MIME input changed during inspection")]
     InputChanged,
+    /// The requested backend capability is not supported.
+    #[error("MIME backend does not support capability: {capability:?}")]
+    UnsupportedCapability {
+        /// Capability required by the attempted operation.
+        capability: MimeCapability,
+    },
     /// An input or staging budget was exceeded.
     #[error("MIME {kind} budget exceeded: requested {requested}, limit {limit}")]
     BudgetExceeded { kind: &'static str, requested: u64, limit: u64 },
@@ -318,6 +324,13 @@ pub enum MimeError {
         #[from]
         ConfigError,
     ),
+}
+
+/// MIME capability that an operation may require from its backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MimeCapability {
+    /// Random sampling of offsets within the same opened logical object.
+    RandomAccessSampling,
 }
 
 impl MimeError {

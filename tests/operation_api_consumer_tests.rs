@@ -3,7 +3,8 @@ use std::sync::Arc;
 use qubit_mime::{
     AsyncMediaStreamClassifierBackend, AsyncMimeDetectorBackend, BorrowedMimeInput,
     ContentRequirement, InputExtent, InspectedExtent, MediaStreamType, MimeCandidates,
-    MimeDetectionReport, MimeError, MimeFuture, MimeOperationOptions, OwnedMimeInput,
+    MimeCapability, MimeDetectionReport, MimeError, MimeFuture, MimeOperationOptions,
+    OwnedMimeInput, RandomAccessCapability,
 };
 use qubit_operation::OperationScope;
 
@@ -14,6 +15,11 @@ impl AsyncMimeDetectorBackend for Detector {
     fn content_requirement(&self) -> ContentRequirement {
         ContentRequirement::Prefix(8)
     }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
     fn guess_content_in<'a>(
         &'a self,
         _scope: &'a OperationScope,
@@ -51,7 +57,14 @@ fn assert_future_send<'a, T: Send + 'a>(_: MimeFuture<'a, T>) {}
 fn public_operation_api_is_send_and_owned() {
     assert_send_static::<MimeDetectionReport>();
     assert_send_static::<MimeError>();
+    let _unsupported = MimeError::UnsupportedCapability {
+        capability: MimeCapability::RandomAccessSampling,
+    };
     let _detector: Arc<dyn AsyncMimeDetectorBackend> = Arc::new(Detector);
+    assert_eq!(
+        _detector.random_access_capability(),
+        RandomAccessCapability::Unsupported
+    );
     let _classifier: Arc<dyn AsyncMediaStreamClassifierBackend> = Arc::new(Classifier);
     let _prefix = OwnedMimeInput::bytes(Arc::from(&b"head"[..]), InputExtent::Prefix);
     let _complete = OwnedMimeInput::bytes(Arc::from(&b"whole"[..]), InputExtent::Complete);

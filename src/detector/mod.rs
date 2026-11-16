@@ -39,7 +39,9 @@ pub(crate) mod repository_mime_detector;
 pub(crate) mod repository_mime_detector_provider;
 pub(crate) mod stream_based_mime_detector;
 
-pub use async_mime_detector_backend::{AsyncMimeDetectorBackend, MimeFuture};
+pub use async_mime_detector_backend::{
+    AsyncMimeDetectorBackend, MimeFuture, RandomAccessCapability,
+};
 pub use content_requirement::ContentRequirement;
 pub use mime_detection_report::{
     MimeBudgetSummary, MimeCandidate, MimeCandidates, MimeDetectionReport,
