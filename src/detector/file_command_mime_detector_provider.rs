@@ -111,4 +111,18 @@ impl super::AsyncMimeDetectorProvider for FileCommandMimeDetectorProvider {
                 .with_execution_services(services.clone()),
         ))
     }
+
+    fn create_async_backend_with_classifier(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+        classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        if classifier.is_some() {
+            return Err(MimeError::UnsupportedCapability {
+                capability: crate::MimeCapability::SameObjectRefinement,
+            });
+        }
+        Ok(self.create_async_backend(_config, _services.clone()))
+    }
 }

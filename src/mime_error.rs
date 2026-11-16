@@ -349,6 +349,9 @@ pub enum MimeError {
 pub enum MimeCapability {
     /// Random sampling of offsets within the same opened logical object.
     RandomAccessSampling,
+    /// Refinement can inspect the exact staged object without reopening a
+    /// mutable provider path.
+    SameObjectRefinement,
 }
 
 impl MimeError {

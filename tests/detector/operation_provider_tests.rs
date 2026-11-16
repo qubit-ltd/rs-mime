@@ -14,7 +14,7 @@ use qubit_mime::{
     AsyncMediaStreamClassifierBackend, AsyncMediaStreamClassifierProvider,
     AsyncMimeDetectorBackend, AsyncMimeDetectorProvider, BorrowedMimeInput, ContentRequirement,
     FixedMimeExecutionPort, InputExtent, InspectedExtent, MediaStreamClassifier, MediaStreamType,
-    MimeCandidate, MimeCandidates, MimeConfig, MimeDetectionPolicy, MimeDetector,
+    MimeCandidate, MimeCandidates, MimeCapability, MimeConfig, MimeDetectionPolicy, MimeDetector,
     MimeDetectorBackend, MimeDetectorCore, MimeDetectorRegistry, MimeError, MimeExecutionServices,
     MimeFuture, MimeOperationOptions, MimeRepository, OwnedMimeInput, RandomAccessCapability,
 };
@@ -65,6 +65,47 @@ fn operation_provider_registration_is_pure() {
         "I/O or model initialization"
     );
     assert_eq!(counts[2].load(Ordering::SeqCst), 0, "executor startup");
+}
+
+#[test]
+fn file_provider_rejects_classifier_without_same_object_support() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 2 })
+        .unwrap();
+    let services = MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 2)),
+        1024,
+    )
+    .unwrap();
+    let detector_registry = MimeDetectorRegistry::builtin();
+    let classifier_registry = MediaStreamClassifierRegistry::builtin();
+    let error = detector_registry
+        .create_async_backend_with_classifier(
+            &qubit_spi::ProviderSelection::named("file").unwrap(),
+            &MimeConfig::default(),
+            &services,
+            Some(
+                classifier_registry
+                    .create_async_backend(
+                        &qubit_spi::ProviderSelection::named("ffprobe").unwrap(),
+                        &MimeConfig::default(),
+                        &services,
+                    )
+                    .unwrap()
+                    .1,
+            ),
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        MimeError::UnsupportedCapability {
+            capability: MimeCapability::SameObjectRefinement
+        }
+    ));
 }
 
 #[derive(Debug)]

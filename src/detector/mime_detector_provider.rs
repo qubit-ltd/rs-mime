@@ -55,8 +55,13 @@ pub trait AsyncMimeDetectorProvider:
         &self,
         config: &crate::MimeConfig,
         services: &crate::MimeExecutionServices,
-        _classifier: Option<std::sync::Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
+        classifier: Option<std::sync::Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
     ) -> Result<std::sync::Arc<dyn crate::AsyncMimeDetectorBackend>, crate::MimeError> {
+        if classifier.is_some() {
+            return Err(crate::MimeError::UnsupportedCapability {
+                capability: crate::MimeCapability::SameObjectRefinement,
+            });
+        }
         self.create_async_backend(config, services)
     }
 }
