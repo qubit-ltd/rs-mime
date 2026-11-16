@@ -26,6 +26,26 @@ pub type MimeFuture<'a, T> = Pin<Box<dyn Future<Output = MimeResult<T>> + Send +
 
 /// Asynchronous MIME detector. Implementations must not fall back to a sync
 /// hook implicitly.
+///
+/// The returned future is tied to the backend, operation scope, input, and
+/// options borrows. It cannot be retained as a `'static` task:
+///
+/// ```compile_fail
+/// use qubit_mime::{
+///     AsyncMimeDetectorBackend, BorrowedMimeInput, MimeCandidates, MimeFuture,
+///     MimeOperationOptions,
+/// };
+/// use qubit_operation::OperationScope;
+///
+/// fn escape_to_static(
+///     backend: &impl AsyncMimeDetectorBackend,
+///     scope: &OperationScope,
+///     input: BorrowedMimeInput<'_>,
+///     options: &MimeOperationOptions,
+/// ) -> MimeFuture<'static, MimeCandidates> {
+///     backend.guess_content_in(scope, input, options)
+/// }
+/// ```
 pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     /// Required inspection extent.
     fn content_requirement(&self) -> ContentRequirement;
