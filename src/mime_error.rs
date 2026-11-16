@@ -44,34 +44,63 @@ pub enum MimeError {
     ExecutionServicesRequired,
     /// A MIME operation could not bind to its configured operation group.
     #[error("failed to bind MIME operation group: {0}")]
-    GroupBinding(#[source] GroupBindingError),
+    GroupBinding(
+        /// Binding failure from the shared operation group.
+        #[source]
+        GroupBindingError,
+    ),
     /// A MIME command child was rejected by the shared operation manager.
     #[error("MIME command operation was rejected: {0}")]
-    OperationAdmission(#[source] AdmissionError),
+    OperationAdmission(
+        /// Admission failure returned by the shared operation manager.
+        #[source]
+        AdmissionError,
+    ),
     /// A MIME command child stopped before producing a result.
     #[error("MIME command operation stopped: {0:?}")]
-    OperationStopped(StopReport),
+    OperationStopped(
+        /// Stop reason and acceptance state for the child operation.
+        StopReport,
+    ),
     /// A MIME command child panicked while executing.
     #[error("MIME command operation panicked: {0:?}")]
-    OperationPanicked(PanicSummary),
+    OperationPanicked(
+        /// Panic details reported by the operation executor.
+        PanicSummary,
+    ),
     /// The shared executor failed to run a MIME command child.
     #[error("MIME command operation could not execute: {0:?}")]
-    OperationExecutionFailed(ExecutionFailure),
+    OperationExecutionFailed(
+        /// Execution failure reported by the shared executor.
+        ExecutionFailure,
+    ),
     /// A required MIME command child failed.
     #[error("required MIME command child failed: {0:?}")]
-    ChildOperationFailed(ChildFailureSummary),
+    ChildOperationFailed(
+        /// Summary of a required child operation failure.
+        ChildFailureSummary,
+    ),
     /// MIME shutdown observation is not ready for the requested stage.
     #[error("MIME operation shutdown is still pending")]
     OperationShutdownPending,
     /// An operation group could not complete its requested shutdown.
     #[error("MIME operation group shutdown failed: {0}")]
-    OperationShutdown(#[source] ObservationError),
+    OperationShutdown(
+        /// Observation error returned during group shutdown.
+        #[source]
+        ObservationError,
+    ),
     /// A cumulative or per-request operation budget is invalid.
     #[error("invalid MIME operation budget")]
     InvalidOperationBudget,
     /// Input does not provide the extent required by the selected backend.
     #[error("MIME input range is insufficient: required {required} bytes, available {available}")]
-    InputRange { required: usize, available: usize },
+    InputRange {
+        /// Minimum number of bytes required by the selected backend.
+        required: usize,
+        /// Number of bytes available from the input.
+        available: usize,
+    },
     /// Input changed while the operation was inspecting the opened object.
     #[error("MIME input changed during inspection")]
     InputChanged,
@@ -84,8 +113,11 @@ pub enum MimeError {
     /// An input or staging budget was exceeded.
     #[error("MIME {kind} budget exceeded: requested {requested}, limit {limit}")]
     BudgetExceeded {
+        /// Budget category that was exceeded.
         kind: &'static str,
+        /// Amount requested by the operation.
         requested: u64,
+        /// Maximum amount allowed by the budget.
         limit: u64,
     },
     /// The detector requires the complete resource rather than a prefix.

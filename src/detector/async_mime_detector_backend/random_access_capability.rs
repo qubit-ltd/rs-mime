@@ -2,8 +2,9 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Random-access capability declared by an asynchronous backend.
 
 /// Random-access provider capability declared by an async backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

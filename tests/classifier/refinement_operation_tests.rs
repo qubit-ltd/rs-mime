@@ -1,3 +1,10 @@
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 use std::future::Future;
 use std::io::Read;
 use std::path::Path;
@@ -84,7 +91,9 @@ fn audio_classifier() -> Arc<AsyncClassifier> {
 
 fn refinement_config() -> MimeConfig {
     let mut config = qubit_config::Config::new();
-    config.set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, "true").unwrap();
+    config
+        .set(CONFIG_MIME_ENABLE_PRECISE_DETECTION, "true")
+        .unwrap();
     MimeConfig::from_config(&config).unwrap()
 }
 
@@ -97,7 +106,7 @@ fn complete_bytes<'a>() -> BorrowedMimeInput<'a> {
 }
 
 #[test]
-fn refinement_operation_async_path_never_calls_sync_classifier() {
+fn test_refinement_operation_async_path_never_calls_sync_classifier() {
     let mut core = MimeDetectorCore::new(refinement_config());
     core.set_media_stream_classifier(Some(Arc::new(PanicSyncClassifier)));
     let async_classifier = audio_classifier();
@@ -128,7 +137,7 @@ fn refinement_operation_async_path_never_calls_sync_classifier() {
 }
 
 #[test]
-fn refinement_operation_prefer_filename_fast_path_skips_classifier() {
+fn test_refinement_operation_prefer_filename_fast_path_skips_classifier() {
     let mut core = MimeDetectorCore::new(MimeConfig::default());
     let async_classifier = audio_classifier();
     core.set_async_media_stream_classifier(Some(async_classifier.clone()));
@@ -158,7 +167,7 @@ fn refinement_operation_prefer_filename_fast_path_skips_classifier() {
 }
 
 #[test]
-fn refinement_operation_without_classifier_does_not_launch_work() {
+fn test_refinement_operation_without_classifier_does_not_launch_work() {
     let core = Arc::new(MimeDetectorCore::new(MimeConfig::default()));
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let filename = vec!["video/ogg".to_owned()];

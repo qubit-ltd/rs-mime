@@ -1,3 +1,10 @@
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 use std::sync::Arc;
 
 use qubit_mime::FixedMimeExecutionPort;
@@ -11,7 +18,11 @@ use qubit_operation::OperationScope;
 
 /// Compile-time consumer path for root submission, child submission, both
 /// handle modes, explicit settlement observation, and service shutdown.
-async fn public_operation_flow(runtime: &MimeRuntime, scope: &OperationScope, services: &MimeExecutionServices) {
+async fn public_operation_flow(
+    runtime: &MimeRuntime,
+    scope: &OperationScope,
+    services: &MimeExecutionServices,
+) {
     let mut root = runtime
         .try_submit_detection(
             OwnedMimeInput::bytes(Arc::from(&b"%PDF-1.7"[..]), InputExtent::Complete),
@@ -51,8 +62,13 @@ fn main() {
     let group = manager
         .group(qubit_operation::GroupOptions { capacity: 8 })
         .expect("MIME group");
-    let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 8)), 1024 * 1024)
-        .expect("execution services");
+    let services = MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 8)),
+        1024 * 1024,
+    )
+    .expect("execution services");
     let _ = MimeRuntime::builtin()
         .expect("repository runtime")
         .with_execution_services(services);

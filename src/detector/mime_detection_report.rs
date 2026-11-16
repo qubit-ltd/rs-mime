@@ -2,8 +2,9 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Owned candidate and report values returned by managed detection.
 
 mod mime_budget_summary;
 mod mime_candidate;

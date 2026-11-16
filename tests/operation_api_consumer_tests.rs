@@ -1,3 +1,10 @@
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 use std::sync::Arc;
 
 use qubit_mime::AsyncMediaStreamClassifierBackend;
@@ -63,7 +70,7 @@ fn assert_send_static<T: Send + 'static>() {}
 fn assert_future_send<'a, T: Send + 'a>(_: MimeFuture<'a, T>) {}
 
 #[test]
-fn public_operation_api_is_send_and_owned() {
+fn test_public_operation_api_is_send_and_owned() {
     assert_send_static::<MimeDetectionReport>();
     assert_send_static::<MimeError>();
     let _unsupported = MimeError::UnsupportedCapability {

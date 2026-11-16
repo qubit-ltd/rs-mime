@@ -2,8 +2,9 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Explicit asynchronous MIME detector interface.
 
 use std::fmt::Debug;
 use std::future::Future;
@@ -22,6 +23,9 @@ mod random_access_capability;
 pub use self::random_access_capability::RandomAccessCapability;
 
 /// Boxed, sendable future returned by MIME domain backends.
+///
+/// # Type Parameters
+/// - `T`: Owned value produced by the backend.
 pub type MimeFuture<'a, T> = Pin<Box<dyn Future<Output = MimeResult<T>> + Send + 'a>>;
 
 /// Asynchronous MIME detector. Implementations must not fall back to a sync
@@ -55,6 +59,14 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     fn random_access_capability(&self) -> RandomAccessCapability;
 
     /// Inspects input within this operation's context.
+    ///
+    /// # Parameters
+    /// - `scope`: Operation context that controls cancellation and accounting.
+    /// - `input`: Borrowed MIME input to inspect.
+    /// - `options`: Per-operation limits and selection preferences.
+    ///
+    /// # Returns
+    /// A future that resolves to the backend's candidates or a MIME error.
     fn guess_content_in<'a>(
         &'a self,
         scope: &'a OperationScope,

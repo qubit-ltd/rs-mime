@@ -20,15 +20,40 @@ use super::MimeCommandOutput;
 pub(crate) struct SystemMimeCommandExecutor;
 impl SystemMimeCommandExecutor {
     /// Runs with worker cancellation while retaining MIME's exit-code policy.
+    ///
+    /// # Parameters
+    /// - `runner`: Managed runner responsible for command ownership.
+    /// - `command`: Structured command to execute.
+    /// - `cancellation`: Cancellation token for the worker.
+    ///
+    /// # Returns
+    /// Captured command output, or the command execution error.
     pub(crate) fn run_cancellable(
         &self,
         runner: &CommandRunner,
         command: Command,
         cancellation: CommandCancellation,
     ) -> Result<MimeCommandOutput, CommandError> {
-        Self::run_with_options(runner, command, CommandRunOptions::new().cancellation(cancellation))
+        Self::run_with_options(
+            runner,
+            command,
+            CommandRunOptions::new().cancellation(cancellation),
+        )
     }
 
+    /// Runs a command while applying the supplied runner options.
+    ///
+    /// # Parameters
+    /// - `runner`: Managed runner responsible for command ownership.
+    /// - `command`: Structured command to execute.
+    /// - `options`: Cancellation and output policy for this execution.
+    ///
+    /// # Returns
+    /// Captured output, including clean unexpected exits with output.
+    ///
+    /// # Errors
+    /// Returns execution or cleanup failures that cannot be represented as
+    /// command output.
     fn run_with_options(
         runner: &CommandRunner,
         command: Command,
@@ -42,7 +67,9 @@ impl SystemMimeCommandExecutor {
                     && error.output().is_some() =>
             {
                 Ok(MimeCommandOutput::from_output(
-                    error.into_output().expect("checked command output must exist"),
+                    error
+                        .into_output()
+                        .expect("checked command output must exist"),
                 ))
             }
             Err(error) => Err(error),
@@ -64,7 +91,11 @@ impl MimeCommandExecutor for SystemMimeCommandExecutor {
     /// # Errors
     /// Returns execution and cleanup failures that cannot be safely represented
     /// as command output.
-    fn run(&self, runner: &CommandRunner, command: Command) -> Result<MimeCommandOutput, CommandError> {
+    fn run(
+        &self,
+        runner: &CommandRunner,
+        command: Command,
+    ) -> Result<MimeCommandOutput, CommandError> {
         Self::run_with_options(runner, command, CommandRunOptions::new())
     }
 }

@@ -40,12 +40,22 @@ pub struct FileCommandMimeDetectorProvider;
 
 impl FileCommandMimeDetectorProvider {
     /// Creates the explicit async backend using caller-prepared MIME services.
+    ///
+    /// # Parameters
+    /// - `config`: MIME detector configuration.
+    /// - `services`: Prepared services for managed asynchronous execution.
+    ///
+    /// # Returns
+    /// A backend configured with the supplied MIME services.
     pub fn create_async_backend(
         &self,
         config: &MimeConfig,
         services: MimeExecutionServices,
     ) -> Arc<dyn AsyncMimeDetectorBackend> {
-        Arc::new(FileCommandMimeDetector::from_mime_config(config.clone()).with_execution_services(services))
+        Arc::new(
+            FileCommandMimeDetector::from_mime_config(config.clone())
+                .with_execution_services(services),
+        )
     }
 }
 
@@ -64,14 +74,21 @@ impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
     /// # Errors
     /// Returns an unavailable provider failure if the system `file` command
     /// cannot be executed in the current environment.
-    fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    fn create_configured(
+        &self,
+        config: &MimeConfig,
+    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         if !FileCommandMimeDetector::is_available_with_config(config) {
-            return Err(ProviderFailure::unavailable(MimeError::DetectorUnavailable {
-                name: "file".to_owned(),
-                reason: "`file` command is not available".to_owned(),
-            }));
+            return Err(ProviderFailure::unavailable(
+                MimeError::DetectorUnavailable {
+                    name: "file".to_owned(),
+                    reason: "`file` command is not available".to_owned(),
+                },
+            ));
         }
-        Ok(Arc::new(FileCommandMimeDetector::from_mime_config(config.clone())))
+        Ok(Arc::new(FileCommandMimeDetector::from_mime_config(
+            config.clone(),
+        )))
     }
 }
 
@@ -91,16 +108,40 @@ impl ProviderMetadata for FileCommandMimeDetectorProvider {
 }
 
 impl super::AsyncMimeDetectorProvider for FileCommandMimeDetectorProvider {
+    /// Creates an async backend using the supplied configuration and services.
+    ///
+    /// # Parameters
+    /// - `config`: MIME detector configuration.
+    /// - `services`: Services used for managed asynchronous execution.
+    ///
+    /// # Returns
+    /// The configured backend.
+    ///
+    /// # Errors
+    /// This provider currently has no backend construction errors.
     fn create_async_backend(
         &self,
         config: &MimeConfig,
         services: &MimeExecutionServices,
     ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
         Ok(Arc::new(
-            FileCommandMimeDetector::from_mime_config(config.clone()).with_execution_services(services.clone()),
+            FileCommandMimeDetector::from_mime_config(config.clone())
+                .with_execution_services(services.clone()),
         ))
     }
 
+    /// Creates an async backend and validates optional classifier support.
+    ///
+    /// # Parameters
+    /// - `config`: MIME detector configuration.
+    /// - `services`: Services used for managed asynchronous execution.
+    /// - `classifier`: Optional same-object classifier backend.
+    ///
+    /// # Returns
+    /// The configured backend when no unsupported classifier is requested.
+    ///
+    /// # Errors
+    /// Returns an unsupported-capability error when a classifier is supplied.
     fn create_async_backend_with_classifier(
         &self,
         _config: &MimeConfig,

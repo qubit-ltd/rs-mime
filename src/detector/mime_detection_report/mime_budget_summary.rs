@@ -2,8 +2,9 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-
 /// Summary of bytes retained and read while serving a request.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MimeBudgetSummary {

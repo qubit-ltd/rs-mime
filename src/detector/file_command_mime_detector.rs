@@ -80,7 +80,9 @@ pub struct FileCommandMimeDetector<'a> {
     repository: &'a MimeRepository,
     /// The command runner used for command execution.
     command_runner: CommandRunner,
+    /// Prepared managed operation services for asynchronous detection.
     execution_services: Option<MimeExecutionServices>,
+    /// Maximum bytes that may be staged for command input.
     max_staging_bytes: u64,
     #[cfg(test)]
     test_command_executor: Option<Arc<dyn AsyncMimeCommandExecutor>>,
@@ -200,6 +202,12 @@ impl<'a> FileCommandMimeDetector<'a> {
     }
 
     /// Attaches prepared MIME operation services for explicit async detection.
+    ///
+    /// # Parameters
+    /// - `services`: Services used to submit and account for async work.
+    ///
+    /// # Returns
+    /// The detector configured with those services.
     #[must_use]
     pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
         self.execution_services = Some(services);
@@ -504,14 +512,31 @@ impl<'a> FileCommandMimeDetector<'a> {
 }
 
 impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
+    /// Requires the complete resource before the system command can inspect it.
+    ///
+    /// # Returns
+    /// [`ContentRequirement::Complete`](crate::ContentRequirement::Complete).
     fn content_requirement(&self) -> crate::ContentRequirement {
         crate::ContentRequirement::Complete
     }
 
+    /// Declares that this backend does not sample random ranges.
+    ///
+    /// # Returns
+    /// [`RandomAccessCapability::Unsupported`].
     fn random_access_capability(&self) -> RandomAccessCapability {
         RandomAccessCapability::Unsupported
     }
 
+    /// Runs the system detector within the supplied managed operation scope.
+    ///
+    /// # Parameters
+    /// - `scope`: Operation context controlling execution and cancellation.
+    /// - `input`: Complete MIME input to stage and inspect.
+    /// - `options`: Per-operation resource and output limits.
+    ///
+    /// # Returns
+    /// A future resolving to the candidates and input evidence.
     fn guess_content_in<'b>(
         &'b self,
         scope: &'b OperationScope,
@@ -653,13 +678,13 @@ mod file_operation_tests {
     use std::ffi::OsString;
     use std::future::Future;
     use std::pin::Pin;
+    use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::task::Context;
     use std::task::Poll;
     use std::task::Wake;
     use std::task::Waker;
-    use std::sync::Arc;
 
     use qubit_fs::AsyncFileSystem;
     use qubit_fs::FsResult;
@@ -1047,7 +1072,7 @@ mod file_operation_tests {
     }
 
     #[test]
-    fn file_operation_staging_stopped_before_create_dispatches_no_work() {
+    fn test_file_operation_staging_stopped_before_create_dispatches_no_work() {
         #[derive(Debug)]
         struct CountingPort(Arc<AtomicUsize>);
         impl MimeExecutionPort for CountingPort {
@@ -1103,7 +1128,7 @@ mod file_operation_tests {
     }
 
     #[test]
-    fn file_operation_cancel_before_launch() {
+    fn test_file_operation_cancel_before_launch() {
         let fake = executor(b"application/pdf", false, None);
         let harness = harness(Arc::clone(&fake));
         let (handle, outcome) = submit(
@@ -1119,7 +1144,7 @@ mod file_operation_tests {
     }
 
     #[test]
-    fn file_operation_staged_input_survives_helpers() {
+    fn test_file_operation_staged_input_survives_helpers() {
         let held = Arc::new(std::sync::Mutex::new(None));
         let fake = executor(b"application/pdf\n", false, Some(Arc::clone(&held)));
         let harness_empty = harness(Arc::clone(&fake));
@@ -1144,7 +1169,7 @@ mod file_operation_tests {
     }
 
     #[test]
-    fn file_operation_structured_argv_and_private_temp_path() {
+    fn test_file_operation_structured_argv_and_private_temp_path() {
         let fake = executor(b"application/pdf\n", false, None);
         let observation = Arc::clone(&fake.observation);
         let harness = harness(fake.clone());
@@ -1169,7 +1194,7 @@ mod file_operation_tests {
     }
 
     #[test]
-    fn file_operation_output_policy_checks_truncation_and_empty_result() {
+    fn test_file_operation_output_policy_checks_truncation_and_empty_result() {
         let fake = executor(b"application/pdf", true, None);
         let harness_truncated = harness(Arc::clone(&fake));
         let (handle, outcome) = submit(
@@ -1201,7 +1226,7 @@ mod file_operation_tests {
     }
 
     #[test]
-    fn file_operation_budget_rejects_before_launch_and_zero_options() {
+    fn test_file_operation_budget_rejects_before_launch_and_zero_options() {
         let fake = executor(b"application/pdf", false, None);
         let harness = harness(Arc::clone(&fake));
         let mut options = MimeOperationOptions::default();
@@ -1230,7 +1255,7 @@ mod file_operation_tests {
     }
 
     #[test]
-    fn file_operation_provider_sentinel_rejects_l_plus_one_before_launch() {
+    fn test_file_operation_provider_sentinel_rejects_l_plus_one_before_launch() {
         let fake = executor(b"application/pdf", false, None);
         let harness = harness(Arc::clone(&fake));
         let (filesystem, reads) = ProviderFs::new(b"12345");
@@ -1256,7 +1281,7 @@ mod file_operation_tests {
     }
 
     #[test]
-    fn file_operation_provider_stop_after_read_commits_bytes_and_prevents_next_read() {
+    fn test_file_operation_provider_stop_after_read_commits_bytes_and_prevents_next_read() {
         let fake = executor(b"application/pdf", false, None);
         let harness = harness(Arc::clone(&fake));
         let (filesystem, reads, stop_context) = ProviderFs::stopping(&vec![b'x'; 32]);
@@ -1278,7 +1303,7 @@ mod file_operation_tests {
     }
 
     #[test]
-    fn file_operation_executor_error_keeps_typed_timeout_error() {
+    fn test_file_operation_executor_error_keeps_typed_timeout_error() {
         let held = Arc::new(std::sync::Mutex::new(None));
         let fake = Arc::new(RecordingExecutor {
             output: std::sync::Mutex::new(Some(Err(MimeError::OperationStopped(StopReport {

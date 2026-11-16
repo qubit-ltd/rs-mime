@@ -1,3 +1,10 @@
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -44,7 +51,9 @@ fn run_backend(
     policy: qubit_mime::MimeDetectionPolicy,
 ) -> qubit_mime::MimeCandidates {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 1 })
+        .unwrap();
     let mut handle = group
         .as_async()
         .try_submit(Default::default(), move |scope| async move {
@@ -71,9 +80,10 @@ fn run_backend(
 }
 
 #[test]
-fn repository_async_candidates_equal_sync() {
+fn test_repository_async_candidates_equal_sync() {
     let repository = MimeRepository::bundled();
-    let detector: Arc<dyn AsyncMimeDetectorBackend> = Arc::new(RepositoryMimeDetector::with_repository(repository));
+    let detector: Arc<dyn AsyncMimeDetectorBackend> =
+        Arc::new(RepositoryMimeDetector::with_repository(repository));
     for (input, extent, filename, policy) in [
         (
             Arc::<[u8]>::from(b"%PDF-1.7".as_slice()),
@@ -115,16 +125,21 @@ fn repository_async_candidates_equal_sync() {
                 .collect::<Vec<_>>(),
             expected
         );
-        assert!(matches!(candidates.inspected_extent, InspectedExtent::Prefix(_)));
+        assert!(matches!(
+            candidates.inspected_extent,
+            InspectedExtent::Prefix(_)
+        ));
     }
 }
 
 #[test]
-fn repository_async_yields_and_stops() {
+fn test_repository_async_yields_and_stops() {
     use std::sync::Mutex;
     use std::task::Poll;
 
-    let mut xml = String::from(r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">"#);
+    let mut xml = String::from(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">"#,
+    );
     for index in 0..256 {
         xml.push_str(&format!(
             r#"<mime-type type="application/x-batch-{index}"><magic><match type="byte" value="0x25" offset="0"/></magic></mime-type>"#
@@ -132,14 +147,17 @@ fn repository_async_yields_and_stops() {
     }
     xml.push_str("</mime-info>");
     let repository = Box::leak(Box::new(MimeRepository::from_xml(&xml).unwrap()));
-    let detector: Arc<dyn AsyncMimeDetectorBackend> = Arc::new(RepositoryMimeDetector::with_repository(repository));
+    let detector: Arc<dyn AsyncMimeDetectorBackend> =
+        Arc::new(RepositoryMimeDetector::with_repository(repository));
     assert_eq!(
         detector.content_requirement(),
         qubit_mime::ContentRequirement::Prefix(repository.max_test_bytes())
     );
 
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 4 })
+        .unwrap();
     let target_context = Arc::new(Mutex::new(None));
     let target_context_for_body = Arc::clone(&target_context);
     let input: Arc<[u8]> = Arc::from(b"%".as_slice());
@@ -187,5 +205,7 @@ fn repository_async_yields_and_stops() {
         target_outcome,
         qubit_operation::OperationOutcome::Succeeded(_)
     ));
-    assert!(matches!(heartbeat_outcome, qubit_operation::OperationOutcome::Succeeded(ticks) if ticks > 0));
+    assert!(
+        matches!(heartbeat_outcome, qubit_operation::OperationOutcome::Succeeded(ticks) if ticks > 0)
+    );
 }

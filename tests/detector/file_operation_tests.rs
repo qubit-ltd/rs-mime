@@ -1,3 +1,10 @@
+// =============================================================================
+//    Copyright (c) 2026 Haixing Hu.
+//
+//    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
+// =============================================================================
 use std::future::Future;
 use std::sync::Arc;
 use std::task::Context;
@@ -36,10 +43,12 @@ fn block_on<F: Future>(future: F) -> F::Output {
 }
 
 #[test]
-fn file_operation_complete_only_rejects_prefix() {
+fn test_file_operation_complete_only_rejects_prefix() {
     let detector = FileCommandMimeDetector::new();
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 1 })
+        .unwrap();
     let mut handle = group
         .as_async()
         .try_submit(Default::default(), move |scope| async move {
@@ -65,9 +74,12 @@ fn file_operation_complete_only_rejects_prefix() {
 }
 
 #[test]
-fn file_operation_declares_complete_content_and_no_random_access() {
+fn test_file_operation_declares_complete_content_and_no_random_access() {
     let detector = FileCommandMimeDetector::new();
-    assert_eq!(detector.content_requirement(), qubit_mime::ContentRequirement::Complete);
+    assert_eq!(
+        detector.content_requirement(),
+        qubit_mime::ContentRequirement::Complete
+    );
     assert_eq!(
         detector.random_access_capability(),
         qubit_mime::RandomAccessCapability::Unsupported
