@@ -46,11 +46,21 @@ pub struct MimeRuntime {
     /// Configuration and repository shared by detectors created by this
     /// runtime.
     context: MimeDetectorContext,
+    /// Optional services for managed operations.
     execution_services: Option<Arc<MimeExecutionServices>>,
+    /// Selected async provider identity and detector backend.
     async_backend: Option<(String, Arc<dyn crate::AsyncMimeDetectorBackend>)>,
 }
 
 impl fmt::Debug for MimeRuntime {
+    /// Formats the runtime's shared context and configured backend presence.
+    ///
+    /// # Parameters
+    /// - `self`: Runtime being formatted.
+    /// - `f`: Formatter receiving the debug representation.
+    ///
+    /// # Returns
+    /// The formatter after writing the runtime representation.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MimeRuntime")
             .field("context", &self.context)
@@ -103,6 +113,13 @@ impl MimeRuntime {
 
     /// Attaches shared operation and MIME execution services without starting
     /// workers.
+    ///
+    /// # Parameters
+    /// - `services`: Shared operation manager, group, worker adapter, and
+    ///   limits.
+    ///
+    /// # Returns
+    /// This runtime configured for managed operations.
     #[must_use]
     pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
         let backend = OwnedRepositoryMimeDetector::new(self.context.config().clone(), self.context.repository_arc());
@@ -114,6 +131,16 @@ impl MimeRuntime {
     /// Selects an explicitly async-capable provider for managed submissions.
     /// The synchronous detector facade continues to use the repository-backed
     /// implementation retained by this runtime.
+    ///
+    /// # Parameters
+    /// - `registry`: Registry containing async provider factories.
+    /// - `selection`: Provider selection to resolve.
+    ///
+    /// # Returns
+    /// This runtime with the selected async backend.
+    ///
+    /// # Errors
+    /// Returns an error when execution services are absent or resolution fails.
     pub fn with_async_provider_selection(
         mut self,
         registry: &MimeDetectorRegistry,
@@ -130,6 +157,18 @@ impl MimeRuntime {
     /// Selects async detector and classifier providers for managed operation
     /// submission. The selected classifier is attached to detector backends
     /// that implement async MIME refinement.
+    ///
+    /// # Parameters
+    /// - `detector_registry`: Registry containing async detector providers.
+    /// - `detector_selection`: Detector selection to resolve.
+    /// - `classifier_registry`: Registry containing async classifier providers.
+    /// - `classifier_selection`: Classifier selection to resolve.
+    ///
+    /// # Returns
+    /// This runtime with the selected async detector and classifier.
+    ///
+    /// # Errors
+    /// Returns an error when services are absent or either selection fails.
     pub fn with_async_provider_selection_and_classifier(
         mut self,
         detector_registry: &MimeDetectorRegistry,
@@ -153,6 +192,13 @@ impl MimeRuntime {
     }
 
     /// Submits detection to the MIME root group.
+    ///
+    /// # Parameters
+    /// - `input`: Owned input returned unchanged when submission is rejected.
+    /// - `options`: Detection policy, resource limits, and operation context.
+    ///
+    /// # Returns
+    /// An operation handle, or the rejected input and its reason.
     pub fn try_submit_detection(
         &self,
         input: OwnedMimeInput,
@@ -162,6 +208,14 @@ impl MimeRuntime {
     }
 
     /// Submits detection as a child of the given operation.
+    ///
+    /// # Parameters
+    /// - `parent`: Parent operation that owns this child operation.
+    /// - `input`: Owned input returned unchanged when submission is rejected.
+    /// - `options`: Detection policy, resource limits, and operation context.
+    ///
+    /// # Returns
+    /// An operation handle, or the rejected input and its reason.
     pub fn try_submit_detection_in(
         &self,
         parent: &OperationScope,
@@ -171,6 +225,15 @@ impl MimeRuntime {
         self.submit_async(Some(parent), input, options)
     }
 
+    /// Submits the input through the configured async backend.
+    ///
+    /// # Parameters
+    /// - `parent`: Optional parent operation for child submission.
+    /// - `input`: Owned input returned when admission is rejected.
+    /// - `options`: Detection policy, limits, and operation context.
+    ///
+    /// # Returns
+    /// An operation handle, or the rejected input and its reason.
     fn submit_async(
         &self,
         parent: Option<&OperationScope>,
@@ -270,6 +333,14 @@ impl MimeRuntime {
     }
 
     /// Submits a synchronous child operation using the parent's manager view.
+    ///
+    /// # Parameters
+    /// - `parent`: Parent operation that owns this child operation.
+    /// - `input`: Owned input returned unchanged when submission is rejected.
+    /// - `options`: Detection policy, resource limits, and operation context.
+    ///
+    /// # Returns
+    /// An operation handle, or the rejected input and its reason.
     pub fn try_submit_detection_sync_in(
         &self,
         parent: &OperationScope,

@@ -46,6 +46,12 @@ impl RepositoryMimeDetectorProvider {
     /// Creates the repository backend for callers explicitly selecting the
     /// asynchronous MIME interface. Construction uses the already-loaded
     /// bundled repository and performs no I/O or XML parsing.
+    ///
+    /// # Parameters
+    /// - `config`: MIME settings copied into the detector backend.
+    ///
+    /// # Returns
+    /// An async backend using the bundled MIME repository.
     #[must_use]
     pub fn create_async_backend(&self, config: &MimeConfig) -> Arc<dyn AsyncMimeDetectorBackend> {
         Arc::new(RepositoryMimeDetector::from_mime_config(config.clone()))
@@ -84,6 +90,17 @@ impl ProviderMetadata for RepositoryMimeDetectorProvider {
 }
 
 impl super::AsyncMimeDetectorProvider for RepositoryMimeDetectorProvider {
+    /// Creates the repository backend for managed operations.
+    ///
+    /// # Parameters
+    /// - `config`: MIME settings copied into the backend.
+    /// - `_services`: Shared execution services; unused by this provider.
+    ///
+    /// # Returns
+    /// The repository-backed async detector.
+    ///
+    /// # Errors
+    /// This built-in provider does not currently return an error.
     fn create_async_backend(
         &self,
         config: &MimeConfig,
@@ -92,6 +109,18 @@ impl super::AsyncMimeDetectorProvider for RepositoryMimeDetectorProvider {
         Ok(RepositoryMimeDetectorProvider::create_async_backend(self, config))
     }
 
+    /// Creates the backend and attaches an optional stream classifier.
+    ///
+    /// # Parameters
+    /// - `config`: MIME settings copied into the backend.
+    /// - `_services`: Shared execution services; unused by this provider.
+    /// - `classifier`: Optional classifier used for async refinement.
+    ///
+    /// # Returns
+    /// The configured repository-backed async detector.
+    ///
+    /// # Errors
+    /// This built-in provider does not currently return an error.
     fn create_async_backend_with_classifier(
         &self,
         config: &MimeConfig,

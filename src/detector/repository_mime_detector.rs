@@ -11,6 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use qubit_io::std_io::ReadSeek;
+use qubit_operation::OperationScope;
 
 use super::RandomAccessCapability;
 use crate::AsyncMimeDetectorBackend;
@@ -113,6 +114,12 @@ impl<'a> RepositoryMimeDetector<'a> {
     }
 
     /// Adds explicit async stream refinement to this detector's selection core.
+    ///
+    /// # Parameters
+    /// - `classifier`: Optional operation-backed stream classifier.
+    ///
+    /// # Returns
+    /// This detector with its async classifier configuration replaced.
     pub(crate) fn with_async_media_stream_classifier(
         mut self,
         classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
@@ -290,17 +297,32 @@ impl<'a> RepositoryMimeDetector<'a> {
 }
 
 impl AsyncMimeDetectorBackend for RepositoryMimeDetector<'_> {
+    /// Reports the maximum prefix length required by repository matching.
     fn content_requirement(&self) -> ContentRequirement {
         ContentRequirement::Prefix(self.repository.max_test_bytes())
     }
 
+    /// Reports that repository matching does not perform random access.
     fn random_access_capability(&self) -> RandomAccessCapability {
         RandomAccessCapability::Unsupported
     }
 
+    /// Matches content against the repository and applies configured
+    /// refinement.
+    ///
+    /// # Parameters
+    /// - `scope`: Operation scope used for asynchronous refinement.
+    /// - `input`: Borrowed input available to repository matching.
+    /// - `options`: Per-operation MIME policy and limits.
+    ///
+    /// # Returns
+    /// Candidate MIME names and the extent inspected by the backend.
+    ///
+    /// # Errors
+    /// Returns an error when matching or async refinement fails.
     fn guess_content_in<'a>(
         &'a self,
-        scope: &'a qubit_operation::OperationScope,
+        scope: &'a OperationScope,
         input: BorrowedMimeInput<'a>,
         options: &'a MimeOperationOptions,
     ) -> crate::MimeFuture<'a, MimeCandidates> {

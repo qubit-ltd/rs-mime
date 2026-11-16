@@ -94,6 +94,18 @@ impl MimeDetectorRegistry {
     /// Registers explicit async construction for a provider already available
     /// through the synchronous catalog. This registration performs no service
     /// creation, I/O, or executor startup.
+    ///
+    /// # Parameters
+    /// - `provider`: Async-capable provider whose selector IDs are registered.
+    ///
+    /// # Type Parameters
+    /// - `P`: Concrete async provider type.
+    ///
+    /// # Returns
+    /// `Ok(())` when the provider and its aliases are registered.
+    ///
+    /// # Errors
+    /// Returns an error if any selector is already owned by another provider.
     pub fn register_async_provider<P>(&self, provider: P) -> Result<(), String>
     where
         P: AsyncMimeDetectorProvider + 'static,
@@ -122,6 +134,17 @@ impl MimeDetectorRegistry {
     /// Resolves an operation-capable detector backend from an explicit
     /// selection. A synchronous-only provider selected from the sync registry
     /// produces `AsyncUnsupported` and its synchronous factory is not invoked.
+    ///
+    /// # Parameters
+    /// - `selection`: Provider selector or selector chain to resolve.
+    /// - `config`: MIME detection configuration.
+    /// - `services`: Runtime execution services supplied to the provider.
+    ///
+    /// # Returns
+    /// The selected provider ID and its async detector backend.
+    ///
+    /// # Errors
+    /// Returns an error when the provider is unavailable or async unsupported.
     pub fn create_async_backend(
         &self,
         selection: &ProviderSelection,
@@ -133,6 +156,18 @@ impl MimeDetectorRegistry {
 
     /// Resolves an async detector and attaches an optional async stream
     /// classifier to providers that support operation-backed refinement.
+    ///
+    /// # Parameters
+    /// - `selection`: Provider selector or selector chain to resolve.
+    /// - `config`: MIME detection configuration.
+    /// - `services`: Runtime execution services supplied to the provider.
+    /// - `classifier`: Optional classifier attached to supporting providers.
+    ///
+    /// # Returns
+    /// The selected provider ID and its async detector backend.
+    ///
+    /// # Errors
+    /// Returns an error when the provider is unavailable or async unsupported.
     pub fn create_async_backend_with_classifier(
         &self,
         selection: &ProviderSelection,

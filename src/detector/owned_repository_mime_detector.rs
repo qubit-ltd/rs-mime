@@ -9,6 +9,8 @@
 
 use std::sync::Arc;
 
+use qubit_operation::OperationScope;
+
 use super::mime_detector_core::MimeDetectorCore;
 use super::stream_based_mime_detector::StreamBasedMimeDetector;
 use crate::AsyncMimeDetectorBackend;
@@ -103,17 +105,31 @@ impl StreamBasedMimeDetector for OwnedRepositoryMimeDetector {
 }
 
 impl AsyncMimeDetectorBackend for OwnedRepositoryMimeDetector {
+    /// Reports the maximum prefix needed by repository magic rules.
     fn content_requirement(&self) -> ContentRequirement {
         ContentRequirement::Prefix(self.repository.max_test_bytes())
     }
 
+    /// Reports that the repository backend does not perform random access.
     fn random_access_capability(&self) -> super::RandomAccessCapability {
         super::RandomAccessCapability::Unsupported
     }
 
+    /// Matches repository content and optionally refines the selected result.
+    ///
+    /// # Parameters
+    /// - `scope`: Operation scope used for asynchronous refinement.
+    /// - `input`: Borrowed input available to repository matching.
+    /// - `options`: Per-operation MIME policy and limits.
+    ///
+    /// # Returns
+    /// Candidate MIME names and the extent inspected by the backend.
+    ///
+    /// # Errors
+    /// Returns an error when matching or async refinement fails.
     fn guess_content_in<'a>(
         &'a self,
-        scope: &'a qubit_operation::OperationScope,
+        scope: &'a OperationScope,
         input: BorrowedMimeInput<'a>,
         options: &'a MimeOperationOptions,
     ) -> crate::MimeFuture<'a, MimeCandidates> {

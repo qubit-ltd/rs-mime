@@ -2,6 +2,8 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Per-request policy and budget tightening options.
 
@@ -26,7 +28,9 @@ pub struct MimeOperationOptions {
     pub operation: OperationOptions,
 }
 
+/// Supplies permissive per-request defaults that inherit service budgets.
 impl Default for MimeOperationOptions {
+    /// Creates default detection settings with no additional request limits.
     fn default() -> Self {
         Self {
             policy: MimeDetectionPolicy::default(),

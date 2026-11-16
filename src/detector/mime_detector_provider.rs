@@ -15,6 +15,9 @@ use qubit_spi::ProviderDefinition;
 
 use super::MimeDetectorSpec;
 
+mod async_mime_detector_provider;
+pub use async_mime_detector_provider::AsyncMimeDetectorProvider;
+
 /// Marker trait for MIME detector providers.
 ///
 /// Implement [`ProviderDefinition<MimeDetectorSpec>`] for the concrete
@@ -38,29 +41,3 @@ pub trait MimeDetectorProvider: ProviderDefinition<MimeDetectorSpec> {
 }
 
 impl<T> MimeDetectorProvider for T where T: ProviderDefinition<MimeDetectorSpec> + ?Sized {}
-
-/// Explicit async capability offered by a detector provider.
-pub trait AsyncMimeDetectorProvider: qubit_spi::ProviderMetadata + std::fmt::Debug + Send + Sync {
-    /// Creates an async backend bound to this operation service set.
-    fn create_async_backend(
-        &self,
-        config: &crate::MimeConfig,
-        services: &crate::MimeExecutionServices,
-    ) -> Result<std::sync::Arc<dyn crate::AsyncMimeDetectorBackend>, crate::MimeError>;
-
-    /// Creates an async detector with an optional async media-stream
-    /// classifier attached to its selection core.
-    fn create_async_backend_with_classifier(
-        &self,
-        config: &crate::MimeConfig,
-        services: &crate::MimeExecutionServices,
-        classifier: Option<std::sync::Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
-    ) -> Result<std::sync::Arc<dyn crate::AsyncMimeDetectorBackend>, crate::MimeError> {
-        if classifier.is_some() {
-            return Err(crate::MimeError::UnsupportedCapability {
-                capability: crate::MimeCapability::SameObjectRefinement,
-            });
-        }
-        self.create_async_backend(config, services)
-    }
-}

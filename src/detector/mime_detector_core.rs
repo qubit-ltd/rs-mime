@@ -11,6 +11,7 @@ use std::io::SeekFrom;
 use std::sync::Arc;
 
 use qubit_io::std_io::ReadSeek;
+use qubit_operation::OperationScope;
 
 use super::detection_source::DetectionSource;
 use crate::AsyncMediaStreamClassifierBackend;
@@ -111,6 +112,9 @@ impl MimeDetectorCore {
     }
 
     /// Sets the classifier used by operation-backed asynchronous refinement.
+    ///
+    /// # Parameters
+    /// - `classifier`: Async classifier to use, or `None` to disable it.
     pub fn set_async_media_stream_classifier(
         &mut self,
         classifier: Option<Arc<dyn AsyncMediaStreamClassifierBackend>>,
@@ -120,9 +124,22 @@ impl MimeDetectorCore {
 
     /// Selects candidates and refines the result through the explicit async
     /// classifier. This path never invokes the synchronous classifier.
+    ///
+    /// # Parameters
+    /// - `scope`: Operation scope used for async refinement.
+    /// - `from_filename`: MIME candidates detected from the filename.
+    /// - `from_content`: MIME candidates detected from input content.
+    /// - `input`: Borrowed input available to the classifier backend.
+    /// - `options`: Per-operation MIME policy and limits.
+    ///
+    /// # Returns
+    /// Selected or refined MIME type, if candidates are available.
+    ///
+    /// # Errors
+    /// Returns errors from asynchronous media classification.
     pub fn select_result_in<'a>(
         &'a self,
-        scope: &'a qubit_operation::OperationScope,
+        scope: &'a OperationScope,
         from_filename: &'a [String],
         from_content: &'a [String],
         input: BorrowedMimeInput<'a>,

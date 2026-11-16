@@ -2,18 +2,28 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Managed temporary-file staging for MIME command inputs.
 
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use qubit_fs::AsyncFileSystem;
+use qubit_fs::Path as FsPath;
+use qubit_fs::read::ReadOptions;
 use qubit_io::AsyncInput;
 use qubit_local_files::LocalFileSystem;
-use qubit_local_files::LocalTempFile;
+use qubit_operation::CleanupFailure;
+use qubit_operation::CleanupStage;
+use qubit_operation::DiagnosticSummary;
 use qubit_operation::OperationScope;
 use qubit_operation::ResourceId;
 use qubit_operation::ResourceRef;
+use qubit_operation::ResourceReservation;
+use qubit_operation::StopReason;
+use qubit_operation::StopReport;
 
 use crate::MimeError;
 use crate::MimeFuture;
@@ -22,60 +32,46 @@ use crate::command_execution::MimeExecutionWorker;
 use crate::detector::OwnedMemoryPermit;
 use crate::detector::ReadPermit;
 use crate::detector::ReadTreeContext;
-use crate::detector::StagingBudget;
 use crate::detector::StagingPermit;
 use crate::detector::mime_input::OwnedMimeInput;
 
-/// Per-request staging cap and the shared service accounting handle.
-#[derive(Clone)]
-pub(crate) struct ManagedStagingLimits {
-    pub(crate) max_bytes: u64,
-    pub(crate) budget: StagingBudget,
-    pub(crate) worker: MimeExecutionWorker,
-}
+mod completion;
+mod managed_staging_limits;
+mod managed_temp_cleanup;
+mod staged_mime_input;
 
-/// Shared control port for a staged file. Its resource owner is registered
-/// exactly once by operation; consumers receive only `ResourceRef`s.
-pub(crate) struct StagedMimeInput {
-    owner: Mutex<LocalTempFile>,
-    permits: Mutex<Vec<StagingPermit>>,
-    worker: MimeExecutionWorker,
-    cleanup_id: Arc<Mutex<Option<ResourceId>>>,
-}
-
-impl StagedMimeInput {
-    #[cfg(test)]
-    pub(crate) fn new(owner: LocalTempFile, permit: StagingPermit, worker: MimeExecutionWorker) -> Self {
-        Self {
-            owner: Mutex::new(owner),
-            permits: Mutex::new(vec![permit]),
-            worker,
-            cleanup_id: Arc::new(Mutex::new(None)),
-        }
-    }
-
-    /// Returns a cloned native path for command argument construction.
-    pub(crate) fn path(&self) -> MimeResult<std::path::PathBuf> {
-        let owner = self.owner.lock().unwrap_or_else(|poison| poison.into_inner());
-        Ok(owner.path().to_path_buf())
-    }
-
-    fn write_chunk(&self, bytes: &[u8], permit: StagingPermit) -> MimeResult<()> {
-        // Store the permit before writing: if a partial write fails, the
-        // registered resource continues to account for every reserved byte.
-        self.permits.lock().unwrap_or_else(|p| p.into_inner()).push(permit);
-        use std::io::Write;
-        let mut owner = self.owner.lock().unwrap_or_else(|p| p.into_inner());
-        owner
-            .as_file_mut()
-            .and_then(|file| file.write_all(bytes))
-            .map_err(|error| MimeError::Io(error.into()))
-    }
-}
+use completion::completion_pair;
+pub(crate) use managed_staging_limits::ManagedStagingLimits;
+use managed_temp_cleanup::ManagedTempCleanup;
+pub(crate) use staged_mime_input::StagedMimeInput;
 
 /// Stages owned bytes without performing filesystem work in the caller's
 /// async poll. A rejected worker dispatch returns the job and drops the
 /// reservation before any temporary file is created.
+///
+/// # Parameters
+/// - `scope`: Operation scope that owns the staged resource.
+/// - `input`: Owned bytes or provider-backed input to stage.
+/// - `limits`: Per-request staging and execution limits.
+/// - `read_tree`: Shared provider-read budget context.
+///
+/// # Returns
+/// A future resolving to the operation-owned staged input.
+///
+/// # Errors
+/// Returns an error when staging fails, is stopped, or exceeds its budget.
+///
+/// # Parameters
+/// - `scope`: Operation scope that owns the staged resource.
+/// - `input`: Owned bytes or provider-backed input to stage.
+/// - `limits`: Per-request staging and execution limits.
+/// - `read_tree`: Shared provider-read budget context.
+///
+/// # Returns
+/// A future resolving to the operation-owned staged input.
+///
+/// # Errors
+/// Returns an error when staging fails, is stopped, or exceeds its budget.
 pub(crate) fn stage_owned_in<'a>(
     scope: &'a OperationScope,
     input: OwnedMimeInput,
@@ -92,6 +88,25 @@ pub(crate) fn stage_owned_in<'a>(
     })
 }
 
+/// Rejects the next staging step when the operation context requests stop.
+///
+/// # Parameters
+/// - `scope`: Operation scope whose stop state is checked.
+///
+/// # Returns
+/// `Ok(())` when the operation is still active.
+///
+/// # Errors
+/// Returns the operation stop reason when stopping has begun.
+///
+/// # Parameters
+/// - `scope`: Operation scope whose stop state is checked.
+///
+/// # Returns
+/// `Ok(())` when the operation is still active.
+///
+/// # Errors
+/// Returns the operation stop reason when stopping has begun.
 fn ensure_not_stopped(scope: &OperationScope) -> MimeResult<()> {
     if let Some(reason) = scope.context().stop_reason() {
         return Err(stopped_error(reason));
@@ -99,13 +114,41 @@ fn ensure_not_stopped(scope: &OperationScope) -> MimeResult<()> {
     Ok(())
 }
 
-fn stopped_error(reason: qubit_operation::StopReason) -> MimeError {
-    MimeError::OperationStopped(qubit_operation::StopReport {
+/// Converts the operation's stop signal into the MIME error used by staging.
+///
+/// # Parameters
+/// - `reason`: Stop reason reported by the operation context.
+///
+/// # Returns
+/// A MIME error carrying the operation stop report.
+///
+/// # Parameters
+/// - `reason`: Stop reason reported by the operation context.
+///
+/// # Returns
+/// A MIME error carrying the operation stop report.
+fn stopped_error(reason: StopReason) -> MimeError {
+    MimeError::OperationStopped(StopReport {
         reason,
         accepted_at: None,
     })
 }
 
+/// Stages borrowed bytes while the caller's input borrow remains active.
+///
+/// # Parameters
+/// - `scope`: Operation scope that owns the staged resource.
+/// - `content`: Borrowed bytes to copy into the staged file.
+/// - `extent`: Completeness claim for the input; staging preserves the bounded
+///   byte slice supplied by the caller.
+/// - `limits`: Per-request staging and execution limits.
+///
+/// # Returns
+/// A future resolving to the operation-owned staged input.
+///
+/// # Errors
+/// Returns an error when the operation stops, a budget is exceeded, or staging
+/// work cannot be dispatched or completed.
 pub(crate) fn stage_borrowed_bytes_in<'a>(
     scope: &'a OperationScope,
     content: &'a [u8],
@@ -115,6 +158,35 @@ pub(crate) fn stage_borrowed_bytes_in<'a>(
     Box::pin(stage_byte_slice_in(scope, content, extent, limits))
 }
 
+/// Copies a bounded byte slice to an operation-owned temporary file.
+///
+/// Each chunk reserves staging and temporary owned-memory capacity before a
+/// worker writes it. The resource reservation keeps cleanup responsible for
+/// any partial file if a later chunk fails.
+///
+/// # Parameters
+/// - `scope`: Operation scope that owns the staged resource.
+/// - `content`: Bounded input bytes to copy.
+/// - `_extent`: Completeness claim retained for the staging contract.
+/// - `limits`: Per-request staging and execution limits.
+///
+/// # Returns
+/// The registered staged-file resource.
+///
+/// # Errors
+/// Returns an error when writing, dispatch, or a budget check fails.
+///
+/// # Parameters
+/// - `scope`: Operation scope that owns the staged resource.
+/// - `content`: Bounded input bytes to copy.
+/// - `_extent`: Completeness claim retained for the staging contract.
+/// - `limits`: Per-request staging and execution limits.
+///
+/// # Returns
+/// The registered staged-file resource.
+///
+/// # Errors
+/// Returns an error when writing, dispatch, or a budget check fails.
 async fn stage_byte_slice_in(
     scope: &OperationScope,
     content: &[u8],
@@ -171,15 +243,43 @@ async fn stage_byte_slice_in(
     Ok(staged)
 }
 
+/// Reads one provider object and stages it without reopening its path.
+///
+/// Reads are charged to the shared tree budget, and a one-byte sentinel is
+/// used when needed to prove the per-request staging limit was not exceeded.
+///
+/// # Parameters
+/// - `scope`: Operation scope that owns the staged resource.
+/// - `file_system`: Provider filesystem used to open the input once.
+/// - `path`: Provider path to read.
+/// - `limits`: Per-request staging and execution limits.
+/// - `read_tree`: Shared provider-read budget context.
+///
+/// # Returns
+/// The registered staged-file resource.
+///
+/// # Errors
+/// Returns an error when opening, reading, dispatch, or a budget check fails.
+///
+/// # Parameters
+/// - `scope`: Operation scope that owns the staged resource.
+/// - `file_system`: Provider filesystem used to open the input once.
+/// - `path`: Provider path to read.
+/// - `limits`: Per-request staging and execution limits.
+/// - `read_tree`: Shared provider-read budget context.
+///
+/// # Returns
+/// The registered staged-file resource.
+///
+/// # Errors
+/// Returns an error when opening, reading, dispatch, or a budget check fails.
 async fn stage_provider_in(
     scope: &OperationScope,
-    file_system: Arc<qubit_fs::AsyncFileSystem>,
-    path: qubit_fs::Path,
+    file_system: Arc<AsyncFileSystem>,
+    path: FsPath,
     limits: ManagedStagingLimits,
     read_tree: Arc<ReadTreeContext>,
 ) -> MimeResult<ResourceRef<StagedMimeInput>> {
-    use qubit_fs::read::ReadOptions;
-
     ensure_not_stopped(scope)?;
 
     // Exactly one open binds every sequential read to the same provider
@@ -278,9 +378,34 @@ async fn stage_provider_in(
     }
 }
 
+/// Creates a temporary-file owner on the MIME execution worker and registers
+/// it with the supplied operation reservation before returning a resource
+/// reference.
+///
+/// # Parameters
+/// - `scope`: Operation scope used to register and own the resource.
+/// - `reservation`: Resource reservation committed after file creation.
+/// - `limits`: Worker and budget settings for this request.
+///
+/// # Returns
+/// The registered staged-file resource.
+///
+/// # Errors
+/// Returns an error when the operation stops or the worker rejects creation.
+///
+/// # Parameters
+/// - `scope`: Operation scope used to register and own the resource.
+/// - `reservation`: Resource reservation committed after file creation.
+/// - `limits`: Worker and budget settings for this request.
+///
+/// # Returns
+/// The registered staged-file resource.
+///
+/// # Errors
+/// Returns an error when the operation stops or the worker rejects creation.
 async fn create_empty_staged(
     scope: &OperationScope,
-    reservation: qubit_operation::ResourceReservation,
+    reservation: ResourceReservation,
     limits: &ManagedStagingLimits,
 ) -> MimeResult<ResourceRef<StagedMimeInput>> {
     ensure_not_stopped(scope)?;
@@ -317,6 +442,38 @@ async fn create_empty_staged(
     receiver.await
 }
 
+/// Writes one already-budgeted chunk on the MIME execution worker.
+///
+/// The closure owns the bytes and permits until the write finishes, including
+/// when dispatch is rejected or the operation stops.
+///
+/// # Parameters
+/// - `scope`: Operation scope checked before dispatch.
+/// - `worker`: Worker that performs the write.
+/// - `staged`: Registered staged-file resource.
+/// - `bytes`: Chunk to write.
+/// - `permit`: Staging budget held for the chunk.
+/// - `owned_permit`: Temporary memory budget held for the chunk.
+///
+/// # Returns
+/// `Ok(())` after the chunk is written.
+///
+/// # Errors
+/// Returns an error when stopping, dispatch, or the file write fails.
+///
+/// # Parameters
+/// - `scope`: Operation scope checked before dispatch.
+/// - `worker`: Worker that performs the write.
+/// - `staged`: Registered staged-file resource.
+/// - `bytes`: Chunk to write.
+/// - `permit`: Staging budget held for the chunk.
+/// - `owned_permit`: Temporary memory budget held for the chunk.
+///
+/// # Returns
+/// `Ok(())` after the chunk is written.
+///
+/// # Errors
+/// Returns an error when stopping, dispatch, or the file write fails.
 async fn write_chunk_in(
     scope: &OperationScope,
     worker: &MimeExecutionWorker,
@@ -354,8 +511,20 @@ async fn write_chunk_in(
     receiver.await
 }
 
+/// Commits a staged file and records a cleanup owner for later settlement.
+///
+/// # Parameters
+/// - `reservation`: Operation reservation that will own the staged file.
+/// - `staged`: Temporary-file resource and its associated budget permits.
+///
+/// # Returns
+/// A reference to the committed resource, or an error if commit cannot finish.
+///
+/// # Errors
+/// On commit failure the reservation retains the partial resource for cleanup
+/// before this method returns an error.
 pub(crate) fn commit_staged(
-    reservation: qubit_operation::ResourceReservation,
+    reservation: ResourceReservation,
     staged: StagedMimeInput,
 ) -> MimeResult<ResourceRef<StagedMimeInput>> {
     let cleanup_id = Arc::clone(&staged.cleanup_id);
@@ -376,6 +545,22 @@ pub(crate) fn commit_staged(
     }
 }
 
+/// Returns whether a staged object fits within its byte limit.
+///
+/// # Parameters
+/// - `size`: Requested staged byte count.
+/// - `limit`: Maximum permitted staged byte count.
+///
+/// # Returns
+/// `true` when `size` does not exceed `limit`.
+/// Returns whether a staged object fits within its byte limit.
+///
+/// # Parameters
+/// - `size`: Requested staged byte count.
+/// - `limit`: Maximum permitted staged byte count.
+///
+/// # Returns
+/// `true` when `size` does not exceed `limit`.
 pub(crate) const fn within_staging_limit(size: u64, limit: u64) -> bool {
     size <= limit
 }
@@ -387,74 +572,13 @@ pub(crate) const fn sentinel_read_limit(limit: u64) -> Option<u64> {
     limit.checked_add(1)
 }
 
-struct ManagedTempCleanup {
-    resource_id: Arc<Mutex<Option<ResourceId>>>,
-}
-impl qubit_operation::AsyncCleanup<StagedMimeInput> for ManagedTempCleanup {
-    fn cleanup(
-        self: Arc<Self>,
-        resource: StagedMimeInput,
-        _context: qubit_operation::CleanupContext,
-    ) -> qubit_operation::CleanupFuture<StagedMimeInput> {
-        let worker = resource.worker.clone();
-        let cleanup_id = Arc::clone(&self.resource_id);
-        let retained = Arc::new(Mutex::new(Some(resource)));
-        let for_job = Arc::clone(&retained);
-        let (sender, receiver) = completion_pair();
-        let job = Box::new(move || {
-            let Some(mut resource) = for_job.lock().unwrap_or_else(|poison| poison.into_inner()).take() else {
-                return;
-            };
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                resource
-                    .owner
-                    .get_mut()
-                    .unwrap_or_else(|poison| poison.into_inner())
-                    .cleanup()
-            }));
-            let outcome = match result {
-                Ok(Ok(())) => {
-                    // Return staged-byte capacity only after cleanup has
-                    // confirmed the native owner is gone. Clearing explicitly
-                    // makes budget release coincide with that evidence.
-                    resource
-                        .permits
-                        .get_mut()
-                        .unwrap_or_else(|poison| poison.into_inner())
-                        .clear();
-                    qubit_operation::CleanupOutcome::Released
-                }
-                Ok(Err(error)) => qubit_operation::CleanupOutcome::Failed {
-                    failure: cleanup_failure(&cleanup_id, Arc::new(error)),
-                    resource,
-                },
-                Err(payload) => qubit_operation::CleanupOutcome::Failed {
-                    failure: cleanup_failure(
-                        &cleanup_id,
-                        Arc::new(std::io::Error::other(panic_message(payload.as_ref()))),
-                    ),
-                    resource,
-                },
-            };
-            sender.complete(outcome);
-        });
-        if let Err(job) = worker.try_dispatch(job) {
-            drop(job);
-            let resource = retained
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .take()
-                .expect("rejected cleanup job has not taken ownership");
-            let failure = cleanup_failure(
-                &resource.cleanup_id,
-                Arc::new(std::io::Error::other("MIME worker rejected cleanup job")),
-            );
-            return Box::pin(async move { qubit_operation::CleanupOutcome::Failed { failure, resource } });
-        }
-        Box::pin(async move { receiver.await })
-    }
-}
-
+/// Extracts a readable message from a worker panic payload.
+///
+/// # Parameters
+/// - `payload`: Panic payload captured from a worker callback.
+///
+/// # Returns
+/// The panic string, or a fallback message when it is not a string payload.
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<String>()
@@ -463,13 +587,19 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
         .unwrap_or_else(|| "temporary cleanup panicked".to_owned())
 }
 
+/// Builds a diagnostic that identifies the registered temp resource and
+/// preserves the underlying cleanup error as its source.
+///
+/// # Parameters
+/// - `id`: Shared identity of the registered staged resource.
+/// - `source`: Cleanup error retained as the diagnostic source.
+///
+/// # Returns
+/// A cleanup failure associated with the staged resource.
 fn cleanup_failure(
     id: &Arc<Mutex<Option<ResourceId>>>,
     source: Arc<dyn std::error::Error + Send + Sync>,
-) -> qubit_operation::CleanupFailure {
-    use qubit_operation::CleanupFailure;
-    use qubit_operation::CleanupStage;
-    use qubit_operation::DiagnosticSummary;
+) -> CleanupFailure {
     CleanupFailure {
         resource_id: id
             .lock()
@@ -478,40 +608,5 @@ fn cleanup_failure(
         stage: CleanupStage::Drop,
         summary: DiagnosticSummary::new(&source.to_string()),
         source: Some(source),
-    }
-}
-
-struct Completion<T> {
-    value: Option<T>,
-    waker: Option<std::task::Waker>,
-}
-struct Completer<T>(Arc<Mutex<Completion<T>>>);
-struct CompletionFuture<T>(Arc<Mutex<Completion<T>>>);
-fn completion_pair<T>() -> (Completer<T>, CompletionFuture<T>) {
-    let state = Arc::new(Mutex::new(Completion {
-        value: None,
-        waker: None,
-    }));
-    (Completer(Arc::clone(&state)), CompletionFuture(state))
-}
-impl<T> Completer<T> {
-    fn complete(self, value: T) {
-        let mut state = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
-        state.value = Some(value);
-        if let Some(waker) = state.waker.take() {
-            waker.wake();
-        }
-    }
-}
-impl<T> std::future::Future for CompletionFuture<T> {
-    type Output = T;
-    fn poll(self: std::pin::Pin<&mut Self>, context: &mut std::task::Context<'_>) -> std::task::Poll<T> {
-        let mut state = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
-        if let Some(value) = state.value.take() {
-            std::task::Poll::Ready(value)
-        } else {
-            state.waker = Some(context.waker().clone());
-            std::task::Poll::Pending
-        }
     }
 }
