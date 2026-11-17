@@ -155,6 +155,15 @@ impl MimeDetectorCore {
             if from_filename.len() == 1 && options.policy == MimeDetectionPolicy::PreferFilename {
                 return Ok(Some(result));
             }
+            if matches!(
+                input,
+                BorrowedMimeInput::Bytes {
+                    extent: crate::InputExtent::Prefix,
+                    ..
+                }
+            ) {
+                return Ok(Some(result));
+            }
             let filename = match input {
                 BorrowedMimeInput::Bytes { filename, .. } => filename,
                 BorrowedMimeInput::Provider { path, .. } => path.file_name(),

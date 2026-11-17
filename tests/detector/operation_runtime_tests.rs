@@ -15,10 +15,23 @@ use std::task::Poll;
 use std::task::Wake;
 use std::task::Waker;
 
+use qubit_mime::AsyncMediaStreamClassifierBackend;
+use qubit_mime::AsyncMediaStreamClassifierProvider;
+use qubit_mime::BorrowedMimeInput;
 use qubit_mime::InputExtent;
+use qubit_mime::MediaStreamClassifierRegistry;
+use qubit_mime::MediaStreamType;
+use qubit_mime::MimeConfig;
+use qubit_mime::MimeDetectorRegistry;
+use qubit_mime::MimeError;
+use qubit_mime::MimeExecutionServices;
+use qubit_mime::MimeFuture;
 use qubit_mime::MimeOperationOptions;
 use qubit_mime::OwnedMimeInput;
 use qubit_mime::detector::MimeRuntime;
+use qubit_spi::ProviderDescriptor;
+use qubit_spi::ProviderId;
+use qubit_spi::ProviderMetadata;
 
 #[derive(Debug)]
 struct CountingFileSystem {
@@ -176,6 +189,124 @@ fn test_operation_runtime_reject_returns_owned_input() {
         OwnedMimeInput::Bytes { content, .. } => assert!(Arc::ptr_eq(&bytes, &content)),
         OwnedMimeInput::Provider { .. } => panic!("bytes input changed kind"),
     }
+}
+
+#[derive(Debug)]
+struct PrefixClassifierProvider(Arc<AtomicUsize>);
+
+impl ProviderMetadata for PrefixClassifierProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("prefix-counting-classifier").unwrap())
+    }
+}
+
+impl AsyncMediaStreamClassifierProvider for PrefixClassifierProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMediaStreamClassifierBackend>, MimeError> {
+        Ok(Arc::new(PrefixClassifier(Arc::clone(&self.0))))
+    }
+}
+
+#[derive(Debug)]
+struct PrefixClassifier(Arc<AtomicUsize>);
+
+impl AsyncMediaStreamClassifierBackend for PrefixClassifier {
+    fn classify_in<'a>(
+        &'a self,
+        _scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        _options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MediaStreamType> {
+        Box::pin(async move {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            match input {
+                BorrowedMimeInput::Bytes {
+                    extent: InputExtent::Prefix,
+                    ..
+                } => Err(MimeError::CompleteContentRequired),
+                _ => Ok(MediaStreamType::AudioOnly),
+            }
+        })
+    }
+}
+
+#[test]
+fn test_managed_prefix_skips_complete_media_classifier() {
+    let mut raw_config = qubit_config::Config::new();
+    raw_config
+        .set(qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)
+        .unwrap();
+    raw_config
+        .set(qubit_mime::CONFIG_MIME_PRECISE_DETECTION_PATTERNS, "ogg")
+        .unwrap();
+    raw_config
+        .set(
+            qubit_mime::CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+            "ogg:video/ogg,audio/x-vorbis+ogg",
+        )
+        .unwrap();
+    let config = MimeConfig::from_config(&raw_config).unwrap();
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let services = MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(qubit_mime::FixedMimeExecutionPort::new(1, 4)),
+        1024 * 1024,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let detector_registry = MimeDetectorRegistry::builtin();
+    let classifier_registry = MediaStreamClassifierRegistry::builtin();
+    classifier_registry
+        .register_async_provider(PrefixClassifierProvider(Arc::clone(&calls)))
+        .unwrap();
+    let runtime = MimeRuntime::new(config, Arc::new(qubit_mime::MimeRepository::bundled().clone()))
+        .with_execution_services(services.clone())
+        .with_async_provider_selection_and_classifier(
+            &detector_registry,
+            &qubit_spi::ProviderSelection::named("repository").unwrap(),
+            &classifier_registry,
+            &qubit_spi::ProviderSelection::named("prefix-counting-classifier").unwrap(),
+        )
+        .unwrap();
+    let media: Arc<[u8]> = Arc::from(include_bytes!("../fixtures/real_files/test.ogg").as_slice());
+
+    let mut prefix = runtime
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::clone(&media), InputExtent::Prefix).with_filename("clip.ogg"),
+            MimeOperationOptions::default(),
+        )
+        .unwrap_or_else(|_| panic!("prepared Prefix operation should be admitted"));
+    let prefix_outcome = block_on(prefix.wait_outcome()).unwrap();
+    assert!(matches!(
+        &prefix_outcome,
+        qubit_operation::OperationOutcome::Succeeded(report)
+            if report.mime_type.as_deref() == Some("audio/x-vorbis+ogg")
+    ), "unexpected Prefix outcome: {prefix_outcome:?}");
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "Prefix must skip complete-content classification");
+
+    let mut complete = runtime
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::clone(&media), InputExtent::Complete).with_filename("clip.ogg"),
+            MimeOperationOptions::default(),
+        )
+        .unwrap_or_else(|_| panic!("prepared Complete operation should be admitted"));
+    assert!(matches!(
+        block_on(complete.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(ref report)
+            if report.mime_type.as_deref() == Some("audio/x-vorbis+ogg")
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "Complete input must invoke the classifier");
+
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).is_ok());
+    assert!(shutdown.stop_services().is_ok());
 }
 
 #[test]
