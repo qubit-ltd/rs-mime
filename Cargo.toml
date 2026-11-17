@@ -39,7 +39,7 @@ roxmltree = "^0.21"
 thiserror = "^2.0"
 
 qubit-io = "^0.19.6"
-qubit-operation = { version = "^0.3", path = "../rs-operation" }
+qubit-operation = "^0.3"
 
 qubit-fs = { version = "^0.3", default-features = false, features = ["async"] }
 
@@ -73,3 +73,5 @@ harness = false
 [[bench]]
 name = "repository_matching"
 harness = false
+
+[workspace]
