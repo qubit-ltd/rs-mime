@@ -66,21 +66,29 @@ impl FixedMimeExecutionPort {
         }
     }
 
-    /// Runs shutdown and invokes `on_enter` before acquiring the result lock.
+    /// Runs shutdown and invokes `on_contended` if the result lock is busy.
     ///
-    /// The hook provides a synchronization point for concurrent shutdown tests.
+    /// The hook lets concurrent shutdown tests observe an actual failed lock
+    /// attempt before checking whether the caller returned early.
     ///
     /// # Parameters
-    /// - `on_enter`: Callback invoked before shutdown acquires its result lock.
+    /// - `on_contended`: Callback invoked after the result lock is observed
+    ///   busy.
     ///
     /// # Returns
     /// The shared shutdown result.
     ///
     /// # Errors
     /// Returns `ExecutionServicesRequired` if a worker thread panicked.
-    fn shutdown_inner(&self, on_enter: impl FnOnce()) -> Result<(), MimeError> {
-        on_enter();
-        let mut shutdown_failed = self.shutdown_failed.lock().unwrap_or_else(|e| e.into_inner());
+    fn shutdown_inner(&self, on_contended: impl FnOnce()) -> Result<(), MimeError> {
+        let mut shutdown_failed = match self.shutdown_failed.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                on_contended();
+                self.shutdown_failed.lock().unwrap_or_else(|e| e.into_inner())
+            }
+        };
         if let Some(panicked) = *shutdown_failed {
             return if panicked {
                 Err(MimeError::ExecutionServicesRequired)
@@ -341,14 +349,16 @@ mod tests {
             std::thread::yield_now();
         }
 
-        let (second_started_tx, second_started_rx) = mpsc::channel();
+        let (second_contended_tx, second_contended_rx) = mpsc::channel();
         let (second_done_tx, second_done_rx) = mpsc::channel();
         let second_port = Arc::clone(&port);
         let second = std::thread::spawn(move || {
-            let result = second_port.shutdown_inner(|| second_started_tx.send(()).unwrap());
+            let result = second_port.shutdown_inner(|| second_contended_tx.send(()).unwrap());
             second_done_tx.send(result).unwrap();
         });
-        second_started_rx.recv().unwrap();
+        let observed_lock_contention = second_contended_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .is_ok();
         let second_returned_early = second_done_rx
             .recv_timeout(std::time::Duration::from_millis(100))
             .is_ok();
@@ -371,6 +381,10 @@ mod tests {
         assert!(
             reached_worker_join,
             "shutdown did not reach worker join before the timeout"
+        );
+        assert!(
+            observed_lock_contention,
+            "second shutdown did not contend on the first shutdown result lock"
         );
         assert!(
             !second_returned_early,
