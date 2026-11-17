@@ -14,7 +14,7 @@ use super::ReadPermit;
 use super::ReadScopeBudget;
 use super::ReadTreeBudget;
 use super::ScopeCounters;
-use super::read_tree_registration::Registration;
+use super::registration::Registration;
 
 /// Read accounting context inherited by MIME descendants.
 #[derive(Debug)]
@@ -26,6 +26,7 @@ pub(crate) struct ReadTreeContext {
     /// Keeps an external-parent anchor alive while a child operation is held.
     #[allow(dead_code)]
     parent: Option<Arc<ReadTreeContext>>,
+    /// Operation IDs that must be unregistered when this context is dropped.
     registrations: Mutex<Vec<Registration>>,
 }
 
@@ -71,12 +72,16 @@ impl ReadTreeContext {
         })
     }
 
+    /// Records one weak registry entry for final-drop cleanup.
+    ///
+    /// # Parameters
+    /// - `registration`: Weak roots map and operation ID to remove on drop.
     pub(super) fn register(&self, registration: Registration) {
         let mut registrations = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
-        if !registrations.iter().any(|item| {
-            item.operation == registration.operation
-                && Weak::ptr_eq(&item.roots, &registration.roots)
-        }) {
+        if !registrations
+            .iter()
+            .any(|item| item.operation == registration.operation && Weak::ptr_eq(&item.roots, &registration.roots))
+        {
             registrations.push(registration);
         }
     }
@@ -158,10 +163,11 @@ impl ReadTreeContext {
     }
 }
 
+/// Removes only registry entries that still point to this context.
 impl Drop for ReadTreeContext {
+    /// Unregisters this context from each weak operation index.
     fn drop(&mut self) {
-        let registrations =
-            std::mem::take(&mut *self.registrations.lock().unwrap_or_else(|e| e.into_inner()));
+        let registrations = std::mem::take(&mut *self.registrations.lock().unwrap_or_else(|e| e.into_inner()));
         let context = std::ptr::from_ref(self);
         for registration in registrations {
             let Some(roots) = registration.roots.upgrade() else {
@@ -180,7 +186,58 @@ impl Drop for ReadTreeContext {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::task::Context;
+    use std::task::Poll;
+    use std::task::Wake;
+    use std::task::Waker;
+
+    use qubit_operation::OperationId;
+    use qubit_operation::OperationOutcome;
+
+    use super::super::registration::Registration;
     use super::ReadTreeContext;
+
+    struct ThreadWake(std::thread::Thread);
+
+    impl Wake for ThreadWake {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        let mut future = Box::pin(future);
+        loop {
+            match Pin::as_mut(&mut future).poll(&mut context) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => std::thread::park(),
+            }
+        }
+    }
+
+    fn operation_id() -> OperationId {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        let mut operation = group
+            .as_async()
+            .try_submit(Default::default(), |scope| async move { Ok::<_, ()>(scope.id()) })
+            .unwrap();
+        match block_on(operation.wait_outcome()).unwrap() {
+            OperationOutcome::Succeeded(id) => id,
+            other => panic!("operation should return its own identity: {other:?}"),
+        }
+    }
 
     #[test]
     fn test_read_tree_reservation_and_commit_recover_poisoned_scope_counters() {
@@ -296,5 +353,90 @@ mod tests {
         assert_eq!(sibling.reserve(5).unwrap().commit(5), 5);
         assert_eq!(root.consumed(), 5);
         assert_eq!(root.remaining(), 0);
+    }
+
+    #[test]
+    fn test_drop_handles_registry_expiring_before_read_context() {
+        let operation = operation_id();
+        let roots = Arc::new(Mutex::new(HashMap::new()));
+        let context = ReadTreeContext::new(8);
+        context.register(Registration {
+            roots: Arc::downgrade(&roots),
+            operation,
+        });
+
+        drop(roots);
+        drop(context);
+    }
+
+    #[test]
+    fn test_register_deduplicates_cleanup_entries() {
+        let operation = operation_id();
+        let roots = Arc::new(Mutex::new(HashMap::new()));
+        let context = ReadTreeContext::new(8);
+        let registration = || Registration {
+            roots: Arc::downgrade(&roots),
+            operation,
+        };
+
+        context.register(registration());
+        context.register(registration());
+        assert_eq!(
+            1,
+            context
+                .registrations
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .len()
+        );
+    }
+
+    #[test]
+    fn test_drop_preserves_replacement_registry_entry() {
+        let operation = operation_id();
+        let roots = Arc::new(Mutex::new(HashMap::new()));
+        let old = ReadTreeContext::new(8);
+        let replacement = ReadTreeContext::new(16);
+        roots.lock().unwrap().insert(operation, Arc::downgrade(&replacement));
+        old.register(Registration {
+            roots: Arc::downgrade(&roots),
+            operation,
+        });
+
+        drop(old);
+
+        assert!(Arc::ptr_eq(
+            &replacement,
+            &roots.lock().unwrap().get(&operation).unwrap().upgrade().unwrap()
+        ));
+    }
+
+    #[test]
+    fn test_register_recovers_poisoned_cleanup_lock() {
+        let operation = operation_id();
+        let roots = Arc::new(Mutex::new(HashMap::new()));
+        let context = ReadTreeContext::new(8);
+        let poisoned = Arc::clone(&context);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = poisoned.registrations.lock().unwrap();
+                panic!("poison read-tree registrations lock");
+            })
+            .join()
+            .is_err()
+        );
+
+        context.register(Registration {
+            roots: Arc::downgrade(&roots),
+            operation,
+        });
+        assert_eq!(
+            1,
+            context
+                .registrations
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .len()
+        );
     }
 }

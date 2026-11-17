@@ -9,6 +9,7 @@
 
 use qubit_operation::AdmissionError;
 use qubit_operation::GroupBindingError;
+use qubit_operation::ResourceManageErrorKind;
 
 /// Local and manager admission reasons for a not-yet-started submission.
 ///
@@ -19,6 +20,8 @@ use qubit_operation::GroupBindingError;
 /// - `InvalidOptions`: Request options could not be applied.
 /// - `BudgetExceeded`: A configured request budget would be exceeded.
 /// - `GroupBinding`: The child operation could not bind to the MIME group.
+/// - `ReadBudgetBinding`: The parent scope could not retain the cumulative
+///   read-budget context for its child operations.
 #[derive(Debug)]
 pub enum MimeSubmitRejection {
     /// Admission rejected by operation's manager.
@@ -33,4 +36,9 @@ pub enum MimeSubmitRejection {
     BudgetExceeded,
     /// The selected operation group could not be bound.
     GroupBinding(#[doc = "The operation manager's group-binding error."] GroupBindingError),
+    /// The parent could not retain the cumulative read-budget context.
+    ///
+    /// The submitted input remains in [`super::MimeSubmitFailure`] and can be
+    /// retried or handled by the caller.
+    ReadBudgetBinding(#[doc = "The operation resource-scope failure."] ResourceManageErrorKind),
 }

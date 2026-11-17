@@ -280,10 +280,18 @@ impl MimeRuntime {
             .max_read_bytes
             .unwrap_or(services.max_read_bytes)
             .min(services.max_read_bytes);
-        let read_tree = parent.map_or_else(
-            || services.new_read_tree(tree_limit),
-            |parent| services.read_tree_for_parent(parent.id(), tree_limit, tree_limit),
-        );
+        let read_tree = match parent {
+            Some(parent) => match services.read_tree_for_parent(parent, tree_limit, tree_limit) {
+                Ok(tree) => tree,
+                Err(kind) => {
+                    return Err(MimeSubmitFailure {
+                        reason: MimeSubmitRejection::ReadBudgetBinding(kind),
+                        input,
+                    });
+                }
+            },
+            None => services.new_read_tree(tree_limit),
+        };
         let cell = mime_submission::cell(input);
         let body_cell = Arc::clone(&cell);
         let body_services = Arc::clone(&services);
@@ -390,7 +398,15 @@ impl MimeRuntime {
             .max_read_bytes
             .unwrap_or(services.max_read_bytes)
             .min(services.max_read_bytes);
-        let read_tree = services.read_tree_for_parent(parent.id(), tree_limit, tree_limit);
+        let read_tree = match services.read_tree_for_parent(parent, tree_limit, tree_limit) {
+            Ok(tree) => tree,
+            Err(kind) => {
+                return Err(MimeSubmitFailure {
+                    reason: MimeSubmitRejection::ReadBudgetBinding(kind),
+                    input,
+                });
+            }
+        };
         let cell = mime_submission::cell(input);
         let body_cell = Arc::clone(&cell);
         let body_services = Arc::clone(&services);

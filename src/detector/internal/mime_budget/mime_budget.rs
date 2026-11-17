@@ -254,6 +254,30 @@ mod tests {
     }
 
     #[test]
+    fn test_allocation_index_replaces_stale_pointer_identity() {
+        let budget = MimeBudget::new(Limits { owned: 8, staging: 0 });
+        let allocation: Arc<[u8]> = Arc::from([4u8; 4]);
+        let unrelated: Arc<[u8]> = Arc::from([9u8; 4]);
+        let identity = Arc::as_ptr(&allocation) as *const u8 as usize;
+        budget
+            .counters
+            .lock()
+            .unwrap()
+            .allocations
+            .insert(identity, (Arc::downgrade(&unrelated), std::sync::Weak::new()));
+
+        let permit = budget
+            .reserve_allocation(&allocation)
+            .expect("a reused pointer identity should reserve the new allocation");
+        let counters = budget.counters.lock().unwrap();
+        let (registered, _) = counters.allocations.get(&identity).unwrap();
+        assert!(Arc::ptr_eq(&allocation, &registered.upgrade().unwrap()));
+        assert_eq!(4, counters.owned);
+        drop(counters);
+        drop(permit);
+    }
+
+    #[test]
     fn test_concurrent_allocation_reservations_release_their_indexes() {
         let budget = MimeBudget::new(Limits { owned: 64, staging: 0 });
         let barrier = Arc::new(Barrier::new(9));

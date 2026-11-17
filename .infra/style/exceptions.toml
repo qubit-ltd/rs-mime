@@ -11,6 +11,21 @@ path = "src/detector/mime_detector_registry.rs"
 reason = "Use coverage-only lock recovery for poison branches that cannot be triggered reliably through public behavior."
 
 [[exceptions]]
+rule = "coverage-cfg"
+path = "src/detector/internal/mime_budget/read_tree_registry.rs"
+reason = "Use coverage-only lock recovery to exercise the newly added read-tree registration poison branch."
+
+[[exceptions]]
+rule = "coverage-cfg"
+path = "src/detector/mime_execution_services.rs"
+reason = "Expose lock poisoning only in coverage builds so integration coverage can reach read-tree recovery."
+
+[[exceptions]]
+rule = "coverage-cfg"
+path = "tests/detector/operation_runtime_tests.rs"
+reason = "Use a coverage-only lock poison trigger to verify integration recovery through external-parent submission."
+
+[[exceptions]]
 rule = "public-type-layout"
 path = "src/detector/mime_content_backend.rs"
 reason = "Content requirement, backend contract, and adapter form one cohesive public API."

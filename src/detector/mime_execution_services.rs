@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+// qubit-style: allow coverage-cfg
 //! MIME-owned ports and shared operation context for managed execution.
 
 use std::sync::Arc;
@@ -20,8 +21,10 @@ use qubit_operation::AsyncShutdownHandle;
 use qubit_operation::OperationGroup;
 use qubit_operation::OperationId;
 use qubit_operation::OperationManager;
+use qubit_operation::OperationScope;
 use qubit_operation::RecoveryHandle;
 use qubit_operation::RecoveryPhase;
+use qubit_operation::ResourceManageErrorKind;
 
 use super::internal::mime_budget::BudgetPermit;
 use super::internal::mime_budget::Limits;
@@ -79,6 +82,17 @@ pub struct MimeExecutionServices {
 }
 
 impl MimeExecutionServices {
+    /// Poisons read-tree registration so integration coverage can verify lock
+    /// recovery.
+    ///
+    /// This method exists only in coverage builds and is not part of the
+    /// published API.
+    #[cfg(coverage)]
+    #[doc(hidden)]
+    pub fn poison_read_tree_registration_lock_for_coverage(&self) {
+        self.read_trees.poison_registrations_for_coverage();
+    }
+
     /// Creates services with a finite nonzero cumulative read limit.
     ///
     /// # Parameters
@@ -234,18 +248,22 @@ impl MimeExecutionServices {
     /// Creates a child read-budget context for a parent operation.
     ///
     /// # Parameters
-    /// - `parent`: Parent operation identity.
+    /// - `parent`: Parent operation whose resource scope retains the tree.
     /// - `tree_limit`: Cumulative read allowance for the operation tree.
     /// - `scope_limit`: Read allowance for the child operation.
     ///
     /// # Returns
     /// The child context sharing its parent tree's accounting.
+    ///
+    /// # Errors
+    /// Returns the parent's resource-scope error when it cannot retain the
+    /// cumulative read-tree anchor.
     pub(crate) fn read_tree_for_parent(
         &self,
-        parent: OperationId,
+        parent: &OperationScope,
         tree_limit: u64,
         scope_limit: u64,
-    ) -> Arc<ReadTreeContext> {
+    ) -> Result<Arc<ReadTreeContext>, ResourceManageErrorKind> {
         self.read_trees.child_for_parent(parent, tree_limit, scope_limit)
     }
 
@@ -338,9 +356,9 @@ mod tests {
     use std::future::Future;
     use std::sync::Arc;
     use std::sync::Barrier;
-    use std::sync::mpsc;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
+    use std::sync::mpsc;
     use std::task::Context;
     use std::task::Poll;
     use std::task::Wake;
@@ -351,9 +369,9 @@ mod tests {
 
     use super::MimeExecutionServices;
     use crate::MimeError;
+    use crate::detector::InputExtent;
     use crate::detector::MimeExecutionPort;
     use crate::detector::MimeRuntime;
-    use crate::detector::InputExtent;
     use crate::detector::OwnedMimeInput;
 
     struct ThreadWake(std::thread::Thread);
@@ -467,8 +485,14 @@ mod tests {
         let prepare_thread = std::thread::spawn(move || preparing.prepare());
 
         entered.wait();
-        assert!(!services.is_prepared(), "workers are not ready until port preparation completes");
-        assert!(!services.accepts_children(), "children are not admissible during preparation");
+        assert!(
+            !services.is_prepared(),
+            "workers are not ready until port preparation completes"
+        );
+        assert!(
+            !services.accepts_children(),
+            "children are not admissible during preparation"
+        );
 
         release.wait();
         prepare_thread.join().unwrap().unwrap();
@@ -497,7 +521,10 @@ mod tests {
         assert!(!services.is_prepared());
         assert!(!services.accepts_children());
         release.wait();
-        assert!(matches!(prepare_thread.join().unwrap(), Err(MimeError::ExecutionServicesRequired)));
+        assert!(matches!(
+            prepare_thread.join().unwrap(),
+            Err(MimeError::ExecutionServicesRequired)
+        ));
         assert!(!services.is_prepared());
         assert!(!services.accepts_children());
 
@@ -525,7 +552,9 @@ mod tests {
             calls: AtomicUsize::new(0),
         });
         let services = MimeExecutionServices::new(manager, group.clone(), port, 32).unwrap();
-        let runtime = MimeRuntime::builtin().unwrap().with_execution_services(services.clone());
+        let runtime = MimeRuntime::builtin()
+            .unwrap()
+            .with_execution_services(services.clone());
 
         let (scope_tx, scope_rx) = mpsc::sync_channel(0);
         let (parent_release_tx, parent_release_rx) = mpsc::channel();
@@ -557,7 +586,10 @@ mod tests {
                 Ok(_) => panic!("preparation in progress must reject submission"),
                 Err(failure) => failure,
             };
-            assert!(matches!(failure.reason, crate::detector::MimeSubmitRejection::ExecutionServicesRequired));
+            assert!(matches!(
+                failure.reason,
+                crate::detector::MimeSubmitRejection::ExecutionServicesRequired
+            ));
             match failure.input {
                 OwnedMimeInput::Bytes { content, .. } => {
                     assert!(Arc::ptr_eq(&content, &expected));
@@ -569,7 +601,10 @@ mod tests {
         release.wait();
         prepare_thread.join().unwrap().unwrap();
         parent_release_tx.send(()).unwrap();
-        assert!(matches!(block_on(parent.wait_outcome()).unwrap(), qubit_operation::OperationOutcome::Succeeded(())));
+        assert!(matches!(
+            block_on(parent.wait_outcome()).unwrap(),
+            qubit_operation::OperationOutcome::Succeeded(())
+        ));
         assert!(block_on(parent.wait_settlement()).all_released());
         let shutdown = services.shutdown();
         block_on(shutdown.wait_services_settled()).unwrap();
@@ -618,7 +653,10 @@ mod tests {
 
         prepare_thread.join().unwrap().unwrap();
         let shutdown = shutdown_thread.join().unwrap();
-        assert!(!services.is_prepared(), "shutdown must close services after preparation finishes");
+        assert!(
+            !services.is_prepared(),
+            "shutdown must close services after preparation finishes"
+        );
         assert!(matches!(services.prepare(), Err(MimeError::ExecutionServicesRequired)));
         block_on(shutdown.wait_services_settled()).unwrap();
         shutdown.stop_services().unwrap();
@@ -705,7 +743,7 @@ mod tests {
                 body_services.read_tree_for_operation(scope.id()),
                 Err(MimeError::ExecutionServicesRequired)
             ));
-            let tree = body_services.read_tree_for_parent(scope.id(), 16, 16);
+            let tree = body_services.read_tree_for_parent(&scope, 16, 16).unwrap();
             body_services.bind_read_tree(scope.id(), &tree);
             let bound = body_services.read_tree_for_operation(scope.id()).unwrap();
             assert!(Arc::ptr_eq(&tree, &bound));

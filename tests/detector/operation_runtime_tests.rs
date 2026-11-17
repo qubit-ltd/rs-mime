@@ -551,7 +551,7 @@ fn test_operation_runtime_ended_parent_returns_original_input() {
     };
     assert!(matches!(
         failure.reason,
-        qubit_mime::MimeSubmitRejection::GroupBinding(qubit_operation::GroupBindingError::ScopeEnded)
+        qubit_mime::MimeSubmitRejection::ReadBudgetBinding(qubit_operation::ResourceManageErrorKind::ScopeEnded)
     ));
     match failure.input {
         OwnedMimeInput::Bytes { content, .. } => assert!(Arc::ptr_eq(&bytes, &content)),
@@ -888,6 +888,8 @@ fn test_operation_runtime_parallel_children_share_actual_read_budget() {
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
     let services = qubit_mime::MimeExecutionServices::new(manager.clone(), group, port, 6).unwrap();
     services.prepare().unwrap();
+    #[cfg(coverage)]
+    services.poison_read_tree_registration_lock_for_coverage();
     let runtime = MimeRuntime::builtin()
         .unwrap()
         .with_execution_services(services.clone());
@@ -956,6 +958,302 @@ fn test_operation_runtime_parallel_children_share_actual_read_budget() {
         1,
         "the rejected cumulative read must not reach the provider"
     );
+
+    let shutdown = services.shutdown();
+    block_on(shutdown.wait_services_settled()).unwrap();
+    shutdown.stop_services().unwrap();
+    let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_sequential_mime_children_keep_external_parent_read_budget() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+    use qubit_operation::ChildFailurePolicy;
+    use qubit_operation::OperationOutcome;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let port = Arc::new(TestExecution::default());
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(manager.clone(), group, port, 6).unwrap();
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
+    let opens = Arc::new(AtomicUsize::new(0));
+    let opens_body = Arc::clone(&opens);
+    let parent_options = qubit_operation::OperationOptions {
+        child_failure_policy: ChildFailurePolicy::ContinueSiblings,
+        limits: qubit_operation::ScopeLimits {
+            resources: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut parent = manager
+        .as_async()
+        .try_submit(parent_options, move |scope| {
+            let body_runtime = runtime.clone();
+            async move {
+                let new_input = || OwnedMimeInput::Provider {
+                    file_system: Arc::new(
+                        AsyncFileSystem::from_spi(CountingFileSystem::new(Arc::clone(&opens_body))).unwrap(),
+                    ),
+                    path: Path::parse("/document.pdf").unwrap(),
+                };
+                let options = MimeOperationOptions {
+                    max_buffer_bytes: Some(4),
+                    operation: qubit_operation::OperationOptions {
+                        requirement: qubit_operation::ChildRequirement::Optional,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+
+                let mut first = body_runtime
+                    .try_submit_detection_in(&scope, new_input(), options.clone())
+                    .unwrap_or_else(|_| panic!("the first child should be admitted"));
+                let first_succeeded = matches!(first.wait_outcome().await.unwrap(), OperationOutcome::Succeeded(_));
+                let _first_settlement = first.wait_settlement().await;
+                drop(first);
+
+                let mut second = body_runtime
+                    .try_submit_detection_in(&scope, new_input(), options)
+                    .unwrap_or_else(|_| panic!("the second child should be admitted before it reads"));
+                let second_rejected_by_budget = matches!(
+                    second.wait_outcome().await.unwrap(),
+                    OperationOutcome::Failed(qubit_mime::MimeError::BudgetExceeded { kind: "read", .. })
+                );
+                let _second_settlement = second.wait_settlement().await;
+                drop(second);
+
+                Ok::<_, ()>((first_succeeded, second_rejected_by_budget))
+            }
+        })
+        .unwrap();
+    let (first_succeeded, second_rejected_by_budget) = match block_on(parent.wait_outcome()).unwrap() {
+        OperationOutcome::Succeeded(result) => result,
+        other => panic!("external parent should settle successfully: {other:?}"),
+    };
+    block_on(parent.wait_settlement());
+
+    assert!(first_succeeded);
+    assert!(second_rejected_by_budget);
+    assert_eq!(
+        1,
+        opens.load(Ordering::SeqCst),
+        "the second child must be stopped by the shared budget before opening its provider"
+    );
+
+    let shutdown = services.shutdown();
+    block_on(shutdown.wait_services_settled()).unwrap();
+    shutdown.stop_services().unwrap();
+    let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_external_parent_read_budget_binding_failures_return_input() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let port = Arc::new(TestExecution::default());
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(manager.clone(), group, port, 16).unwrap();
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
+
+    let body_runtime = runtime.clone();
+    let capacity_parent_options = qubit_operation::OperationOptions {
+        limits: qubit_operation::ScopeLimits {
+            resources: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut capacity_parent = manager
+        .as_async()
+        .try_submit(capacity_parent_options, move |scope| async move {
+            let _occupied = scope.manage(Arc::new(())).unwrap();
+            let original: Arc<[u8]> = Arc::from(b"%PDF".as_slice());
+            let result = body_runtime.try_submit_detection_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::clone(&original), InputExtent::Complete),
+                MimeOperationOptions::default(),
+            );
+            let (capacity_rejected, input_returned) = match result {
+                Err(failure) => {
+                    let capacity_rejected = matches!(
+                        failure.reason,
+                        qubit_mime::MimeSubmitRejection::ReadBudgetBinding(
+                            qubit_operation::ResourceManageErrorKind::CapacityExceeded
+                        )
+                    );
+                    let input_returned = match failure.input {
+                        OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(&original, &content),
+                        OwnedMimeInput::Provider { .. } => false,
+                    };
+                    (capacity_rejected, input_returned)
+                }
+                Ok(_) => (false, false),
+            };
+            Ok::<_, ()>((capacity_rejected, input_returned))
+        })
+        .unwrap();
+    let (capacity_rejected, capacity_input_returned) = match block_on(capacity_parent.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(result) => result,
+        _ => panic!("capacity test parent should complete"),
+    };
+    block_on(capacity_parent.wait_settlement());
+    assert!(capacity_rejected);
+    assert!(capacity_input_returned);
+
+    let body_runtime = runtime.clone();
+    let mut ended_parent = manager
+        .as_async()
+        .try_submit(
+            Default::default(),
+            move |scope| async move { Ok::<_, ()>(Arc::new(scope)) },
+        )
+        .unwrap();
+    let ended_scope = match block_on(ended_parent.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(scope) => scope,
+        _ => panic!("ended-scope test parent should complete"),
+    };
+    block_on(ended_parent.wait_settlement());
+
+    let original: Arc<[u8]> = Arc::from(b"%PDF".as_slice());
+    let failure = match body_runtime.try_submit_detection_in(
+        &ended_scope,
+        OwnedMimeInput::bytes(Arc::clone(&original), InputExtent::Complete),
+        MimeOperationOptions::default(),
+    ) {
+        Ok(_) => panic!("an ended parent must not start a child with a fresh budget"),
+        Err(failure) => failure,
+    };
+    assert!(matches!(
+        failure.reason,
+        qubit_mime::MimeSubmitRejection::ReadBudgetBinding(qubit_operation::ResourceManageErrorKind::ScopeEnded)
+    ));
+    match failure.input {
+        OwnedMimeInput::Bytes { content, .. } => assert!(Arc::ptr_eq(&original, &content)),
+        OwnedMimeInput::Provider { .. } => panic!("the rejected input changed kind"),
+    }
+
+    let body_runtime = runtime.clone();
+    let stopped_rejection = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped_rejection_body = Arc::clone(&stopped_rejection);
+    let mut stopped_parent = manager
+        .as_async()
+        .try_submit(Default::default(), move |scope| async move {
+            assert_eq!(
+                scope.request_stop(qubit_operation::StopReason::UserCancelled),
+                qubit_operation::StopRequestStatus::Accepted
+            );
+            let original: Arc<[u8]> = Arc::from(b"%PDF".as_slice());
+            let result = body_runtime.try_submit_detection_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::clone(&original), InputExtent::Complete),
+                MimeOperationOptions::default(),
+            );
+            let rejected = match result {
+                Err(failure) => {
+                    let stopped = matches!(
+                        failure.reason,
+                        qubit_mime::MimeSubmitRejection::ReadBudgetBinding(
+                            qubit_operation::ResourceManageErrorKind::Stopped
+                        )
+                    );
+                    let returned = match failure.input {
+                        OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(&original, &content),
+                        OwnedMimeInput::Provider { .. } => false,
+                    };
+                    stopped && returned
+                }
+                Ok(_) => false,
+            };
+            stopped_rejection_body.store(rejected, Ordering::SeqCst);
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+    let _stopped_outcome = block_on(stopped_parent.wait_outcome()).unwrap();
+    block_on(stopped_parent.wait_settlement());
+    assert!(stopped_rejection.load(Ordering::SeqCst));
+
+    let shutdown = services.shutdown();
+    block_on(shutdown.wait_services_settled()).unwrap();
+    shutdown.stop_services().unwrap();
+    let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_concurrent_external_parent_children_share_one_budget_binding() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let port = Arc::new(TestExecution::default());
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(manager.clone(), group, port, 16).unwrap();
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
+    let parent_options = qubit_operation::OperationOptions {
+        limits: qubit_operation::ScopeLimits {
+            child_operations: 4,
+            resources: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut parent = manager
+        .as_async()
+        .try_submit(parent_options, move |scope| {
+            let body_runtime = runtime.clone();
+            async move {
+                let scope = Arc::new(scope);
+                let barrier = Arc::new(std::sync::Barrier::new(3));
+                let first_runtime = body_runtime.clone();
+                let first_scope = Arc::clone(&scope);
+                let first_barrier = Arc::clone(&barrier);
+                let second_runtime = body_runtime.clone();
+                let second_scope = Arc::clone(&scope);
+                let second_barrier = Arc::clone(&barrier);
+                let first = std::thread::spawn(move || {
+                    first_barrier.wait();
+                    first_runtime.try_submit_detection_in(
+                        &first_scope,
+                        OwnedMimeInput::bytes(Arc::from(b"%PDF".as_slice()), InputExtent::Complete),
+                        MimeOperationOptions::default(),
+                    )
+                });
+                let second = std::thread::spawn(move || {
+                    second_barrier.wait();
+                    second_runtime.try_submit_detection_in(
+                        &second_scope,
+                        OwnedMimeInput::bytes(Arc::from(b"text".as_slice()), InputExtent::Complete),
+                        MimeOperationOptions::default(),
+                    )
+                });
+                barrier.wait();
+                let first = first.join().expect("first submission thread should finish");
+                let second = second.join().expect("second submission thread should finish");
+                let (Ok(mut first), Ok(mut second)) = (first, second) else {
+                    return Ok::<_, ()>(false);
+                };
+                let first_outcome = first.wait_outcome().await.unwrap();
+                let second_outcome = second.wait_outcome().await.unwrap();
+                let _first_settlement = first.wait_settlement().await;
+                let _second_settlement = second.wait_settlement().await;
+                Ok::<_, ()>(
+                    matches!(first_outcome, qubit_operation::OperationOutcome::Succeeded(_))
+                        && matches!(second_outcome, qubit_operation::OperationOutcome::Succeeded(_)),
+                )
+            }
+        })
+        .unwrap();
+    assert!(matches!(
+        block_on(parent.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(true)
+    ));
+    block_on(parent.wait_settlement());
 
     let shutdown = services.shutdown();
     block_on(shutdown.wait_services_settled()).unwrap();

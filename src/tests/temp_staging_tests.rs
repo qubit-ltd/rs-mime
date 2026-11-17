@@ -16,6 +16,31 @@ use qubit_local_files::error::LocalFileOperation;
 use crate::MimeError;
 use crate::temp_staging::with_temp_file;
 
+/// Successful staging exposes a closed file during inspection and cleans it
+/// afterward.
+#[test]
+fn test_successful_staging_inspects_and_cleans_temporary_file() {
+    let mut recorded = None;
+    let inspected = with_temp_file(
+        "SuccessfulStaging-",
+        |file| {
+            recorded = Some(file.path().to_path_buf());
+            Output::write_fully(file, b"payload")?;
+            Ok(())
+        },
+        |path| {
+            assert_eq!(b"payload", fs::read(path)?.as_slice());
+            Ok(path.to_path_buf())
+        },
+    )
+    .expect("successful staging and inspection should return the inspected path");
+
+    let path = recorded.expect("staging should record the temporary path");
+    assert_eq!(path, inspected);
+    assert!(!path.exists(), "temporary file should be removed after inspection");
+    assert!(!path.parent().expect("sandbox exists in path").exists());
+}
+
 /// Early staging failures still explicitly release both file and sandbox.
 #[test]
 fn test_failed_staging_cleans_resource_and_skips_inspection() {
