@@ -284,12 +284,19 @@ fn test_managed_prefix_skips_complete_media_classifier() {
         )
         .unwrap_or_else(|_| panic!("prepared Prefix operation should be admitted"));
     let prefix_outcome = block_on(prefix.wait_outcome()).unwrap();
-    assert!(matches!(
-        &prefix_outcome,
-        qubit_operation::OperationOutcome::Succeeded(report)
-            if report.mime_type.as_deref() == Some("audio/x-vorbis+ogg")
-    ), "unexpected Prefix outcome: {prefix_outcome:?}");
-    assert_eq!(calls.load(Ordering::SeqCst), 0, "Prefix must skip complete-content classification");
+    assert!(
+        matches!(
+            &prefix_outcome,
+            qubit_operation::OperationOutcome::Succeeded(report)
+                if report.mime_type.as_deref() == Some("audio/x-vorbis+ogg")
+        ),
+        "unexpected Prefix outcome: {prefix_outcome:?}"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "Prefix must skip complete-content classification"
+    );
 
     let mut complete = runtime
         .try_submit_detection(
@@ -302,7 +309,11 @@ fn test_managed_prefix_skips_complete_media_classifier() {
         qubit_operation::OperationOutcome::Succeeded(ref report)
             if report.mime_type.as_deref() == Some("audio/x-vorbis+ogg")
     ));
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "Complete input must invoke the classifier");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "Complete input must invoke the classifier"
+    );
 
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).is_ok());

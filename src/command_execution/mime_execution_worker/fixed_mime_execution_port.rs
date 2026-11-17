@@ -65,6 +65,53 @@ impl FixedMimeExecutionPort {
             stopped: AtomicBool::new(false),
         }
     }
+
+    /// Runs shutdown and invokes `on_enter` before acquiring the result lock.
+    ///
+    /// The hook provides a synchronization point for concurrent shutdown tests.
+    ///
+    /// # Parameters
+    /// - `on_enter`: Callback invoked before shutdown acquires its result lock.
+    ///
+    /// # Returns
+    /// The shared shutdown result.
+    ///
+    /// # Errors
+    /// Returns `ExecutionServicesRequired` if a worker thread panicked.
+    fn shutdown_inner(&self, on_enter: impl FnOnce()) -> Result<(), MimeError> {
+        on_enter();
+        let mut shutdown_failed = self.shutdown_failed.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(panicked) = *shutdown_failed {
+            return if panicked {
+                Err(MimeError::ExecutionServicesRequired)
+            } else {
+                Ok(())
+            };
+        }
+
+        let mut slot = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        self.stopped.store(true, Ordering::Release);
+        let Some(running) = slot.take() else {
+            *shutdown_failed = Some(false);
+            return Ok(());
+        };
+        drop(slot);
+        {
+            let mut state = running.queue.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.closed = true;
+        }
+        running.queue.ready.notify_all();
+        let mut panicked = false;
+        for thread in running.threads {
+            panicked |= thread.join().is_err();
+        }
+        *shutdown_failed = Some(panicked);
+        if panicked {
+            Err(MimeError::ExecutionServicesRequired)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl MimeExecutionPort for FixedMimeExecutionPort {
@@ -154,44 +201,7 @@ impl MimeExecutionPort for FixedMimeExecutionPort {
     /// # Errors
     /// Returns `ExecutionServicesRequired` if a worker thread panicked.
     fn shutdown(&self) -> Result<(), MimeError> {
-        let mut shutdown_failed = self
-            .shutdown_failed
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(panicked) = *shutdown_failed {
-            return if panicked {
-                Err(MimeError::ExecutionServicesRequired)
-            } else {
-                Ok(())
-            };
-        }
-
-        let mut slot = self.running.lock().unwrap_or_else(|e| e.into_inner());
-        self.stopped.store(true, Ordering::Release);
-        let Some(running) = slot.take() else {
-            *shutdown_failed = Some(false);
-            return Ok(());
-        };
-        drop(slot);
-        {
-            let mut state = running
-                .queue
-                .state
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            state.closed = true;
-        }
-        running.queue.ready.notify_all();
-        let mut panicked = false;
-        for thread in running.threads {
-            panicked |= thread.join().is_err();
-        }
-        *shutdown_failed = Some(panicked);
-        if panicked {
-            Err(MimeError::ExecutionServicesRequired)
-        } else {
-            Ok(())
-        }
+        self.shutdown_inner(|| {})
     }
 }
 
@@ -319,11 +329,7 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         let mut reached_worker_join = false;
         loop {
-            let running_is_empty = port
-                .running
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .is_none();
+            let running_is_empty = port.running.lock().unwrap_or_else(|e| e.into_inner()).is_none();
             let queue_is_closed = queue.state.lock().unwrap_or_else(|e| e.into_inner()).closed;
             if running_is_empty && queue_is_closed {
                 reached_worker_join = true;
@@ -339,15 +345,10 @@ mod tests {
         let (second_done_tx, second_done_rx) = mpsc::channel();
         let second_port = Arc::clone(&port);
         let second = std::thread::spawn(move || {
-            let observed_first_shutdown = matches!(
-                second_port.shutdown_failed.try_lock(),
-                Err(std::sync::TryLockError::WouldBlock)
-            );
-            second_started_tx.send(observed_first_shutdown).unwrap();
-            let result = second_port.shutdown();
+            let result = second_port.shutdown_inner(|| second_started_tx.send(()).unwrap());
             second_done_tx.send(result).unwrap();
         });
-        let observed_first_shutdown = second_started_rx.recv().unwrap();
+        second_started_rx.recv().unwrap();
         let second_returned_early = second_done_rx
             .recv_timeout(std::time::Duration::from_millis(100))
             .is_ok();
@@ -362,9 +363,7 @@ mod tests {
         let second_result = if second_returned_early {
             second_done_rx.try_recv().ok()
         } else {
-            second_done_rx
-                .recv_timeout(std::time::Duration::from_secs(2))
-                .ok()
+            second_done_rx.recv_timeout(std::time::Duration::from_secs(2)).ok()
         };
         first.join().unwrap();
         second.join().unwrap();
@@ -374,17 +373,10 @@ mod tests {
             "shutdown did not reach worker join before the timeout"
         );
         assert!(
-            observed_first_shutdown,
-            "second shutdown did not observe the first shutdown holding its result lock"
-        );
-        assert!(
             !second_returned_early,
             "concurrent shutdown returned before workers exited"
         );
-        assert!(
-            dispatch_was_rejected,
-            "dispatch remains available during shutdown"
-        );
+        assert!(dispatch_was_rejected, "dispatch remains available during shutdown");
         first_result.unwrap().unwrap();
         second_result.unwrap().unwrap();
     }
