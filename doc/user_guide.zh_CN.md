@@ -279,6 +279,8 @@ MIME 父类型继承关系使用迭代方式遍历，因此长继承链不会为
 `MimeExecutionPort` 和有限且非零的累计读取上限；随后通过
 `MimeRuntime::with_execution_services` 注入服务。根操作提交前要显式调用 `prepare()`。
 准备阶段不会由 runtime 构造自动触发。
+`prepare()` 正在执行时，根操作和子操作都会被拒绝；只有 execution port 成功返回后才会
+发布 ready 状态。调用方应等待 `prepare()` 返回 `Ok(())` 后再提交任务。
 
 如需异步实现，使用 `MimeRuntime::with_async_provider_selection` 选择明确支持异步的
 Provider。内置 `repository` 和 `file` Provider 都提供受管异步 backend。`file` 要求完整内容；
@@ -298,6 +300,13 @@ settlement 诊断。`InputExtent` 说明调用方提供的是前缀还是完整�
 已有 `qubit-operation::OperationScope` 时，可调用 `try_submit_detection_in` 创建子操作；它沿用
 父操作的 manager 视图并绑定 MIME 组。同步子操作入口为
 `try_submit_detection_sync_in`。Provider 能力如下：
+
+同一外部父操作下的所有 MIME 子操作共享一个累计 Provider 读取额度；即使前一个子操作已完成
+settlement 且 handle 已释放，后续子操作也会继续使用父操作原有额度。首次子操作将累计树上限固定为
+请求上限与服务上限中的较小值，后续子操作不能扩大它。MIME 会在父操作资源域中保留一个读取预算锚点，
+因此父操作至少需要一个可用资源条目。资源不足、父操作已停止或已结束时，提交会以
+`ReadBudgetBinding` 及对应资源错误种类拒绝，并通过 failure 原样归还输入。独立根操作和不同父操作
+使用彼此独立的累计额度。
 
 | Provider | 受管异步 backend | 输入与精化限制 |
 | --- | --- | --- |

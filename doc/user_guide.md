@@ -361,6 +361,9 @@ use `qubit-operation`. It accepts owned byte inputs with an explicit `Prefix` or
 `OperationManager`, a MIME operation group, a `MimeExecutionPort`, and a finite,
 nonzero cumulative read limit; attach it with `MimeRuntime::with_execution_services`
 and call `prepare()` before root submissions. Preparation is explicit.
+While `prepare()` is running, root and child submissions are rejected; readiness
+is published only after the execution port returns success. Wait for
+`prepare()` to return `Ok(())` before submitting work.
 
 Select an async-capable provider with `MimeRuntime::with_async_provider_selection`
 when the runtime needs an async implementation. The built-in `repository` and
@@ -389,6 +392,17 @@ Use `try_submit_detection_in` to submit beneath an existing
 `qubit-operation::OperationScope`; the child uses the parent's manager view and
 MIME group binding. The synchronous child entry point is
 `try_submit_detection_sync_in`. Provider capabilities are:
+
+All MIME children submitted beneath the same external parent share one
+cumulative provider-read budget for that parent's lifetime, including
+sequential children after earlier handles have settled and been dropped. The
+first child fixes the tree limit to the smaller of its request limit and the
+service limit; later children cannot enlarge it. MIME retains one read-budget
+anchor in the parent resource scope, so the parent needs one available resource
+entry. If that registration fails because the scope is full, stopped, or ended,
+submission returns `ReadBudgetBinding` with the resource error kind and the
+original input. Independent root operations and distinct parents have separate
+budgets.
 
 | Provider | Managed async backend | Input and refinement limits |
 | --- | --- | --- |
