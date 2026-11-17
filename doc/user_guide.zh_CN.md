@@ -290,6 +290,10 @@ Provider。内置 `repository` 和 `file` Provider 都提供受管异步 backend
 `MimeSubmitFailure` 原样返还 `OwnedMimeInput`，调用方可以重试或改走其他入口。任务接纳后
 发生的检测错误则由 operation handle 报告。
 
+受管 `repository` Provider 对标记为 `Prefix` 的输入只执行基础 MIME 匹配；即使精细分类映射命中，
+也不会把此前缀交给异步媒体 classifier。需要媒体流精化时，应以 `Complete` 提交完整字节。
+完整输入的 classifier 错误仍由 operation 报告。
+
 handle 提供两种彼此独立的观察方式。`wait_outcome()` 等待 MIME 业务结果；成功时结果包含
 `MimeDetectionReport`。`wait_settlement()` 观察资源是否已释放或恢复责任是否仍待处理。提前得到
 Stopped 或 Failed 并不能证明暂存文件和后台 helper 已退出；丢弃 handle 或 future 也不代表任务
@@ -323,6 +327,8 @@ Classifier 也需要单独显式选择异步实现并满足同一对象能力要
 `wait_group_shutdown()` 观察组关闭。Pending 表示工作仍未解决，不是资源已释放的确认。
 如果 settlement 报告 `RecoveryRequired`，须先处理或转交其中的 recovery handle；未解决时
 `stop_services()` 会返回 `OperationShutdownPending`，不会自动重试恢复。
+`FixedMimeExecutionPort::shutdown()` 必须从 worker pool 之外的同步上下文调用。并发关闭调用会等待同一批
+worker 实际退出，并观察相同的最终结果。
 0.22.0 目标仍处于验收阶段；已验证行为和未完成的生命周期检查见[验收记录](acceptance-0.22.0-operation-0.2.zh_CN.md)。
 
 ## 错误与诊断

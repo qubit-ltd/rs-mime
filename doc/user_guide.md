@@ -376,6 +376,12 @@ returns `AsyncUnsupported`. Both rejections return the original
 `OwnedMimeInput` in `MimeSubmitFailure`, so the caller can retry or choose another
 path. Once accepted, detection failures are reported by the operation handle.
 
+For the managed `repository` provider, an input marked `Prefix` is used only for
+base MIME matching. It is not passed to an async media classifier, even when a
+precise-detection mapping matches. Submit the complete bytes with extent
+`Complete` when the result needs media-stream refinement; classifier errors for
+complete inputs continue to be reported by the operation.
+
 The handle exposes two independent observations. `wait_outcome()` returns the
 MIME detection result (including `MimeDetectionReport` on success);
 `wait_settlement()` observes release or recovery responsibility. An early stopped
@@ -426,6 +432,10 @@ returns `OperationShutdownPending` while recovery is unresolved and does not
 retry it automatically. The 0.22.0 target remains under acceptance; see the
 [acceptance record](acceptance-0.22.0-operation-0.2.zh_CN.md) for tested behavior
 and outstanding lifecycle checks.
+
+`FixedMimeExecutionPort::shutdown()` must be called from a synchronous context
+outside its worker pool. Concurrent shutdown calls wait for the same workers to
+exit and observe the same final result.
 
 ## Errors and Diagnostics
 
