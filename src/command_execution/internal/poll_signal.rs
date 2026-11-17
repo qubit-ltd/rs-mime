@@ -100,3 +100,48 @@ impl<T> PollSignal<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::task::Context;
+    use std::task::Poll;
+    use std::task::Waker;
+
+    use super::PollSignal;
+
+    #[test]
+    fn test_cloned_observation_does_not_consume_the_published_value() {
+        let signal = PollSignal::new();
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+
+        assert_eq!(None, signal.value());
+        assert!(matches!(signal.poll_clone(&mut context), Poll::Pending));
+        signal.publish(String::from("completed"));
+        assert_eq!(Some(String::from("completed")), signal.value());
+        assert!(matches!(signal.poll_clone(&mut context), Poll::Ready(value) if value == "completed"));
+        assert_eq!(Some(String::from("completed")), signal.value());
+        assert!(matches!(signal.poll_take(&mut context), Poll::Ready(value) if value == "completed"));
+        assert_eq!(None, signal.value());
+    }
+
+    #[test]
+    fn test_poisoned_signal_state_recovers_for_publish_and_poll() {
+        let signal = PollSignal::new();
+        let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut state = signal.state.lock().unwrap();
+            state.value = Some(3_u8);
+            panic!("poison poll signal state");
+        }));
+        assert!(poison.is_err());
+
+        assert_eq!(Some(3), signal.value());
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(matches!(signal.poll_clone(&mut context), Poll::Ready(3)));
+        signal.publish(7);
+        assert_eq!(Some(7), signal.value());
+        assert!(matches!(signal.poll_take(&mut context), Poll::Ready(7)));
+        assert_eq!(None, signal.value());
+    }
+}

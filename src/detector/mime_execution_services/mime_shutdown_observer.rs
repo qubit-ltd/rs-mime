@@ -203,6 +203,192 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_shutdown_observer_reports_empty_service_lifecycle_and_is_idempotent() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let worker_port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let shutdown_calls = Arc::new(AtomicUsize::new(0));
+        let execution = Arc::new(CountingExecutionPort {
+            worker_port,
+            shutdown_calls: Arc::clone(&shutdown_calls),
+        });
+        let services = MimeExecutionServices::new(manager, group, execution, 16).unwrap();
+        let group_shutdown = Arc::clone(&services.group_shutdown);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = group_shutdown.lock().unwrap();
+                panic!("poison group shutdown observer lock");
+            })
+            .join()
+            .is_err()
+        );
+        let shutdown = services.shutdown();
+        let cloned_observer = shutdown.clone();
+
+        assert!(!shutdown.snapshot().operations_settled);
+        assert!(!shutdown.snapshot().services_stopped);
+        assert!(matches!(
+            block_on(shutdown.wait_group_shutdown()),
+            Err(MimeError::OperationShutdownPending)
+        ));
+        assert!(matches!(
+            shutdown.stop_services(),
+            Err(MimeError::OperationShutdownPending)
+        ));
+
+        let settled = block_on(shutdown.wait_services_settled()).unwrap();
+        assert!(settled.operations_settled);
+        assert!(!settled.services_stopped);
+        assert!(settled.group.is_none());
+
+        let stopped = shutdown.stop_services().unwrap();
+        assert!(stopped.services_stopped);
+        assert!(stopped.group.is_some());
+        assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
+        shutdown.stop_services().unwrap();
+        assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
+        assert!(cloned_observer.snapshot().services_stopped);
+        assert!(cloned_observer.stop_services().unwrap().services_stopped);
+
+        let report = block_on(cloned_observer.wait_group_shutdown()).unwrap();
+        assert_eq!(0, report.snapshot.active_operations);
+        assert_eq!(0, report.snapshot.queued_operations);
+        assert_eq!(0, report.snapshot.cleaning_resources);
+    }
+
+    #[test]
+    fn test_services_prepare_and_child_acceptance_follow_shutdown_lifecycle() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let worker_port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let shutdown_calls = Arc::new(AtomicUsize::new(0));
+        let execution = Arc::new(CountingExecutionPort {
+            worker_port,
+            shutdown_calls: Arc::clone(&shutdown_calls),
+        });
+        let services = MimeExecutionServices::new(manager, group, execution, 16).unwrap();
+
+        assert!(!services.is_prepared());
+        assert!(!services.accepts_children());
+        services.prepare().unwrap();
+        assert!(services.is_prepared());
+        assert!(services.accepts_children());
+        services.prepare().unwrap();
+        assert!(services.is_prepared());
+
+        let shutdown = services.shutdown();
+        assert!(!services.is_prepared());
+        assert!(services.accepts_children());
+        block_on(shutdown.wait_services_settled()).unwrap();
+        assert!(!services.accepts_children());
+        shutdown.stop_services().unwrap();
+        assert!(!services.is_prepared());
+        assert!(services.accepts_children());
+        assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_wait_services_settled_remains_pending_until_tracked_operation_finishes() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let worker_port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let shutdown_calls = Arc::new(AtomicUsize::new(0));
+        let execution = Arc::new(CountingExecutionPort {
+            worker_port,
+            shutdown_calls: Arc::clone(&shutdown_calls),
+        });
+        let services = MimeExecutionServices::new(manager, group.clone(), execution, 16).unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let operation = block_on(group.try_submit_async(Default::default(), move |_| async move {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok::<_, ()>(())
+        }))
+        .unwrap();
+        services.track_observer(operation.observer());
+        started_rx.recv().expect("operation should enter its blocked body");
+
+        let shutdown = services.shutdown();
+        let mut settled_future = Box::pin(shutdown.wait_services_settled());
+        let waker = Waker::from(Arc::new(ThreadWaker(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        assert!(matches!(settled_future.as_mut().poll(&mut context), Poll::Pending));
+        assert!(!shutdown.snapshot().operations_settled);
+
+        release_tx.send(()).unwrap();
+        let settled = block_on(settled_future).unwrap();
+        assert!(settled.operations_settled);
+        // Keep the typed outcome in the caller-owned handle: settlement can
+        // complete while group drain still waits for the outcome to be released.
+        shutdown.stop_services().unwrap();
+        let mut group_shutdown = Box::pin(shutdown.wait_group_shutdown());
+        let waker = Waker::from(Arc::new(ThreadWaker(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        assert!(matches!(group_shutdown.as_mut().poll(&mut context), Poll::Pending));
+        drop(operation);
+        let group_report = block_on(group_shutdown).unwrap();
+        assert_eq!(0, group_report.snapshot.active_operations);
+        assert_eq!(0, group_report.snapshot.queued_operations);
+        assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_settlement_waits_for_all_tracked_operations_and_group_drain_releases_handles() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let worker_port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+        let shutdown_calls = Arc::new(AtomicUsize::new(0));
+        let execution = Arc::new(CountingExecutionPort {
+            worker_port,
+            shutdown_calls: Arc::clone(&shutdown_calls),
+        });
+        let services = MimeExecutionServices::new(manager, group.clone(), execution, 16).unwrap();
+
+        let mut completed =
+            block_on(group.try_submit_async(Default::default(), |_| async { Ok::<_, ()>("done") })).unwrap();
+        services.track_observer(completed.observer());
+        assert!(matches!(
+            block_on(completed.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded("done")
+        ));
+        block_on(completed.wait_settlement());
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let pending = block_on(group.try_submit_async(Default::default(), move |_| async move {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok::<_, ()>("released")
+        }))
+        .unwrap();
+        services.track_observer(pending.observer());
+        started_rx.recv().expect("second operation should start");
+
+        let shutdown = services.shutdown();
+        let mut settled_future = Box::pin(shutdown.wait_services_settled());
+        let waker = Waker::from(Arc::new(ThreadWaker(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        assert!(matches!(settled_future.as_mut().poll(&mut context), Poll::Pending));
+        assert!(!shutdown.snapshot().operations_settled);
+
+        release_tx.send(()).unwrap();
+        assert!(block_on(settled_future).unwrap().operations_settled);
+        shutdown.stop_services().unwrap();
+
+        let mut group_shutdown = Box::pin(shutdown.wait_group_shutdown());
+        let waker = Waker::from(Arc::new(ThreadWaker(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        assert!(matches!(group_shutdown.as_mut().poll(&mut context), Poll::Pending));
+        drop(completed);
+        drop(pending);
+        let report = block_on(group_shutdown).unwrap();
+        assert_eq!(0, report.snapshot.active_operations);
+        assert_eq!(0, report.snapshot.queued_operations);
+        assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_shutdown_waits_for_explicit_recovery_before_stopping_workers() {
@@ -242,6 +428,7 @@ mod tests {
         let settlement = block_on(operation.wait_settlement());
         assert_eq!(settlement.status, SettlementStatus::RecoveryRequired);
         assert_eq!(settlement.recoveries.len(), 1);
+        assert!(super::super::is_unresolved_recovery(&settlement.recoveries[0]));
 
         let mut later_operation =
             block_on(group.try_submit_async(Default::default(), |_| async { Ok::<_, ()>(1) })).unwrap();
@@ -255,6 +442,12 @@ mod tests {
         let shutdown = services.shutdown();
         block_on(shutdown.wait_services_settled()).unwrap();
         assert_eq!(shutdown.snapshot().unresolved_recoveries, 1);
+        services.track_recoveries(&settlement.recoveries);
+        assert_eq!(
+            1,
+            shutdown.snapshot().unresolved_recoveries,
+            "tracking the same recovery twice must keep one shutdown blocker"
+        );
         let stopped = shutdown.stop_services();
         assert!(
             matches!(stopped, Err(MimeError::OperationShutdownPending)),
@@ -268,6 +461,7 @@ mod tests {
         let retry = block_on(attempt.wait_async());
         assert!(retry.failures.is_empty());
         assert_eq!(recovery.snapshot().phase, RecoveryPhase::Resolved);
+        assert!(!super::super::is_unresolved_recovery(&recovery));
         assert_eq!(shutdown.snapshot().unresolved_recoveries, 0);
 
         shutdown.stop_services().unwrap();

@@ -109,6 +109,42 @@ fn test_runtime_creates_detectors_using_its_repository_and_configuration() {
 }
 
 #[test]
+fn test_runtime_debug_reports_optional_managed_services() {
+    let runtime = MimeRuntime::builtin().expect("built-in repository must initialize");
+    let debug = format!("{runtime:?}");
+
+    assert!(debug.contains("MimeRuntime"));
+    assert!(debug.contains("has_execution_services: false"));
+    assert!(debug.contains("has_async_backend: false"));
+}
+
+#[test]
+fn test_runtime_debug_reports_configured_execution_services() {
+    #[derive(Debug)]
+    struct NoopExecution;
+
+    impl qubit_mime::MimeExecutionPort for NoopExecution {
+        fn prepare(&self) -> Result<(), qubit_mime::MimeError> {
+            Ok(())
+        }
+
+        fn shutdown(&self) -> Result<(), qubit_mime::MimeError> {
+            Ok(())
+        }
+    }
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(manager, group, Arc::new(NoopExecution), 1024).unwrap();
+    let runtime = MimeRuntime::builtin()
+        .expect("built-in repository must initialize")
+        .with_execution_services(services);
+    let debug = format!("{runtime:?}");
+
+    assert!(debug.contains("has_execution_services: true"));
+}
+
+#[test]
 fn test_runtime_detector_uses_only_its_custom_repository_relations() {
     let repository = MimeRepository::from_xml(
         r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">

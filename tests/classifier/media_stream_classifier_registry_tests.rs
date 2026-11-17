@@ -132,6 +132,25 @@ fn test_global_classifier_registry_exposes_builtin_defaults() {
 }
 
 #[test]
+fn test_classifier_registry_seal_prevents_further_mutation() {
+    let registry = MediaStreamClassifierRegistry::builtin();
+    assert!(!registry.is_sealed());
+
+    registry.seal();
+
+    assert!(registry.is_sealed());
+    assert!(
+        registry
+            .register(TestMediaStreamClassifierProvider::new(
+                "after-seal",
+                0,
+                TestProviderBehavior::Success("unused"),
+            ))
+            .is_err()
+    );
+}
+
+#[test]
 fn test_registry_registers_owned_and_shared_providers_atomically() {
     let registry = MediaStreamClassifierRegistry::default();
     registry

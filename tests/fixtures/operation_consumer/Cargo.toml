@@ -6,4 +6,4 @@ publish = false
 
 [dependencies]
 qubit-mime = { path = "../../.." }
-qubit-operation = "^0.3"
+qubit-operation = { version = "^0.3", path = "../../../../rs-operation" }

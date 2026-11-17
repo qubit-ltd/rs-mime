@@ -52,10 +52,7 @@ impl FileCommandMimeDetectorProvider {
         config: &MimeConfig,
         services: MimeExecutionServices,
     ) -> Arc<dyn AsyncMimeDetectorBackend> {
-        Arc::new(
-            FileCommandMimeDetector::from_mime_config(config.clone())
-                .with_execution_services(services),
-        )
+        Arc::new(FileCommandMimeDetector::from_mime_config(config.clone()).with_execution_services(services))
     }
 }
 
@@ -74,21 +71,14 @@ impl ServiceProvider<MimeDetectorSpec> for FileCommandMimeDetectorProvider {
     /// # Errors
     /// Returns an unavailable provider failure if the system `file` command
     /// cannot be executed in the current environment.
-    fn create_configured(
-        &self,
-        config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         if !FileCommandMimeDetector::is_available_with_config(config) {
-            return Err(ProviderFailure::unavailable(
-                MimeError::DetectorUnavailable {
-                    name: "file".to_owned(),
-                    reason: "`file` command is not available".to_owned(),
-                },
-            ));
+            return Err(ProviderFailure::unavailable(MimeError::DetectorUnavailable {
+                name: "file".to_owned(),
+                reason: "`file` command is not available".to_owned(),
+            }));
         }
-        Ok(Arc::new(FileCommandMimeDetector::from_mime_config(
-            config.clone(),
-        )))
+        Ok(Arc::new(FileCommandMimeDetector::from_mime_config(config.clone())))
     }
 }
 
@@ -125,8 +115,7 @@ impl super::AsyncMimeDetectorProvider for FileCommandMimeDetectorProvider {
         services: &MimeExecutionServices,
     ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
         Ok(Arc::new(
-            FileCommandMimeDetector::from_mime_config(config.clone())
-                .with_execution_services(services.clone()),
+            FileCommandMimeDetector::from_mime_config(config.clone()).with_execution_services(services.clone()),
         ))
     }
 
@@ -154,5 +143,45 @@ impl super::AsyncMimeDetectorProvider for FileCommandMimeDetectorProvider {
             });
         }
         Ok(self.create_async_backend(_config, _services.clone()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FileCommandMimeDetectorProvider;
+    use crate::AsyncMimeDetectorProvider;
+    use crate::ContentRequirement;
+    use crate::FixedMimeExecutionPort;
+    use crate::MimeConfig;
+    use crate::MimeExecutionServices;
+    use crate::RandomAccessCapability;
+
+    fn services() -> MimeExecutionServices {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        MimeExecutionServices::new(
+            manager,
+            group,
+            std::sync::Arc::new(FixedMimeExecutionPort::new(1, 1)),
+            16,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_provider_builds_complete_async_backend_without_command_probe() {
+        let provider = FileCommandMimeDetectorProvider;
+        let config = MimeConfig::default();
+        let services = services();
+
+        let backend = <FileCommandMimeDetectorProvider as AsyncMimeDetectorProvider>::create_async_backend(
+            &provider, &config, &services,
+        )
+        .expect("async factory should configure without running the file command");
+        assert_eq!(ContentRequirement::Complete, backend.content_requirement());
+        assert_eq!(RandomAccessCapability::Unsupported, backend.random_access_capability());
+
+        let inherent_backend = provider.create_async_backend(&config, services);
+        assert_eq!(ContentRequirement::Complete, inherent_backend.content_requirement());
     }
 }

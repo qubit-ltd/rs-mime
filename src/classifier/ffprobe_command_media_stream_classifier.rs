@@ -620,7 +620,7 @@ mod async_operation_tests {
         content: Vec<u8>,
     }
     impl TestProvider {
-        fn new(content: &[u8]) -> Arc<AsyncFileSystem> {
+        fn filesystem(content: &[u8]) -> Arc<AsyncFileSystem> {
             let properties = ProviderProperties::new(
                 FileSystemInfo::new(
                     FileSystemId::new("refinement-test").unwrap(),
@@ -962,7 +962,7 @@ mod async_operation_tests {
                 .with_execution_services(Arc::clone(&services))
                 .with_async_executor(command_executor.clone()),
         );
-        let file_system = TestProvider::new(b"abcd");
+        let file_system = TestProvider::filesystem(b"abcd");
         let path = qubit_fs::Path::parse("/sample.ogg").unwrap();
         let tree = services.new_read_tree(8);
         let body_tree = Arc::clone(&tree);
@@ -1065,5 +1065,106 @@ mod async_operation_tests {
         block_on(shutdown.wait_services_settled()).unwrap();
         shutdown.stop_services().unwrap();
         let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod command_policy_tests {
+    use std::path::Path;
+
+    use qubit_command::Command;
+    use qubit_command::CommandRunner;
+
+    use super::FfprobeCommandMediaStreamClassifier;
+    use crate::MediaStreamType;
+    use crate::MimeConfig;
+    use crate::command_execution::MimeCommandExecutor;
+    use crate::command_execution::MimeCommandOutput;
+
+    struct FixedOutputExecutor {
+        exit_code: Option<i32>,
+        stdout: Vec<u8>,
+        truncated: bool,
+        complete: bool,
+    }
+
+    impl MimeCommandExecutor for FixedOutputExecutor {
+        fn run(
+            &self,
+            _runner: &CommandRunner,
+            _command: Command,
+        ) -> Result<MimeCommandOutput, qubit_command::CommandError> {
+            Ok(MimeCommandOutput {
+                exit_code: self.exit_code,
+                stdout: self.stdout.clone(),
+                stdout_truncated: self.truncated,
+                stdout_complete: self.complete,
+            })
+        }
+    }
+
+    fn executor(exit_code: Option<i32>, stdout: &[u8], truncated: bool, complete: bool) -> FixedOutputExecutor {
+        FixedOutputExecutor {
+            exit_code,
+            stdout: stdout.to_vec(),
+            truncated,
+            complete,
+        }
+    }
+
+    #[test]
+    fn test_local_classifier_maps_status_and_complete_stdout_policy() {
+        let mut classifier = FfprobeCommandMediaStreamClassifier::from_mime_config(MimeConfig::default());
+        classifier.set_working_directory(Some("/recorded/working-dir".to_owned()));
+
+        let audio = classifier
+            .classify_with_executor(
+                Path::new("relative-media-file"),
+                &executor(Some(0), b"audio\n", false, true),
+            )
+            .unwrap();
+        assert_eq!(MediaStreamType::AudioOnly, audio);
+
+        let nonzero = classifier
+            .classify_with_executor(
+                Path::new("relative-media-file"),
+                &executor(Some(1), b"video\n", false, true),
+            )
+            .unwrap();
+        assert_eq!(MediaStreamType::None, nonzero);
+
+        let signal_exit = classifier
+            .classify_with_executor(Path::new("relative-media-file"), &executor(None, b"", false, true))
+            .expect_err("termination without a numeric status is a backend error");
+        assert!(
+            matches!(signal_exit, crate::MimeError::ClassifierBackend { reason, .. } if reason.contains("numeric exit code"))
+        );
+
+        let truncated = classifier
+            .classify_with_executor(
+                Path::new("relative-media-file"),
+                &executor(Some(0), b"video\n", true, true),
+            )
+            .expect_err("truncated stream listings cannot be classified");
+        assert!(
+            matches!(truncated, crate::MimeError::ClassifierBackend { reason, .. } if reason.contains("truncated"))
+        );
+    }
+
+    #[test]
+    fn test_availability_requires_zero_exit_and_complete_output() {
+        let config = MimeConfig::default();
+        assert!(FfprobeCommandMediaStreamClassifier::is_available_with_executor(
+            &config,
+            &executor(Some(0), b"ffprobe version", false, true),
+        ));
+        assert!(!FfprobeCommandMediaStreamClassifier::is_available_with_executor(
+            &config,
+            &executor(Some(1), b"ffprobe version", false, true),
+        ));
+        assert!(!FfprobeCommandMediaStreamClassifier::is_available_with_executor(
+            &config,
+            &executor(Some(0), b"ffprobe version", false, false),
+        ));
     }
 }

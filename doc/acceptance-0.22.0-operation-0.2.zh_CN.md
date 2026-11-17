@@ -1,47 +1,39 @@
-# rs-mime 0.22.0 operation 目标验收记录
+# rs-mime 0.22.0 operation 验收记录
 
-- 核对日期：2026-11-16
-- 状态：部分实现，尚未完成 0.22.0 验收；本文记录当前 checkout 的可见证据，不代表发布或完整接受设计。
-- 范围：仅记录 rs-mime。按设计前提，operation 0.3 是已完成的消费契约；本记录不检查或验收其他仓库。
-- 版本边界：本 checkout 的 `Cargo.toml` 仍为 `qubit-mime` 0.21.1，依赖 `qubit-operation = "^0.3"`。本次文档说明针对源码中已出现的目标 API，不应理解为 0.22.0 已发布。README 和手册中的安装版本继续以当前包元数据和文档版本测试为准。
+- 验收日期：2026-11-17
+- 范围：仅 `rs-mime`；按用户约束，将 `rs-operation` 视为已完成 0.3 重构的公共契约。
+- 版本与依赖：`qubit-mime` 0.22.0；正式清单以 `path = "../rs-operation"` 引用 `qubit-operation ^0.3`，`qubit-io ^0.19.6` 使用 crates.io。隔离 worktree 的 CLI 登记禁止复用先前已清理的 `../rs-operation` 登记路径；隔离验证临时将两个 Cargo manifest 指向本任务登记的同一 rs-operation 提交 `985a8727d93155962831d62aca4594e330c94928`，之后已恢复正式相对路径。未改全局 Cargo 配置。整合到源工作区后仍须按正式路径重新解析并验证。
+- 文档边界：设计文档与实施计划是输入文件，未纳入变更和提交；本记录仅记录实施与验收证据。
 
-## 当前源码与公开入口
+## 实施范围
 
-`src/lib.rs` 重导出 `MimeRuntime`、`MimeExecutionServices`、`MimeExecutionPort`、`FixedMimeExecutionPort`、`MimeOperation`、`AsyncMimeOperation`、`OwnedMimeInput`、`InputExtent`、`MimeOperationOptions`、`MimeDetectionReport`、async detector/classifier traits 等。`MimeRuntime` 提供受管提交、父 scope 子提交和同步子提交入口。`MimeExecutionServices` 要求有限非零累计读取上限，显式 `prepare`，并提供 shutdown observer。
+完成计划 M1—M8 所述 rs-mime 变更：定义 operation 领域 API、runtime 与准入/输入归还/预算；实现 repository async backend；提供受管 staging、worker 和 command 生命周期；迁移 file 与 ffprobe/refinement；扩展 provider 注册与消费接口；更新迁移指南、README、版本和 consumer fixtures。保留同步接口，不增加下游仓库验收。
 
-文档仅描述已从这些源码定义核对的能力。尤其是：托管 API 不代表每个既有 Provider 均实现 async backend。当前 `FileCommandMimeDetector` 声明 `Complete` 输入要求及 `RandomAccessCapability::Unsupported`，并对 Prefix 返回 `CompleteContentRequired`。README 和手册没有承诺 file 或 ffprobe 在所有托管异步路径上可用。
+最终审查修复了两处资源报告错误：托管文件 staging 现在把实际写入字节传递到 `MimeCandidates` 和 `MimeDetectionReport`；同步提交报告现在记录真实 owned 输入长度。后者补有 `test_operation_runtime_sync_submission_uses_parent` 断言，前者由 `test_file_operation_runs_managed_command_through_fixed_worker` 断言 staging 字节等于输入字节数。
 
-## 已有测试证据
+## 验证证据
 
-以下用例在本 checkout 中已经存在；这里只确认源文件和断言存在，不将未运行的测试写成通过：
+命令均在 rs-mime 实施 worktree 执行，`CARGO_HOME=/tmp/rs-mime-99d2bb4b-cargo-home`，不使用全局 Cargo 配置。
 
-| 范围 | 当前用例 | 覆盖内容 |
-| --- | --- | --- |
-| 提交与退还 | `tests/detector/operation_runtime_tests.rs`: `operation_runtime_reject_returns_owned_input`, `operation_runtime_owned_budget_limit_returns_input`, `operation_runtime_wrong_manager_returns_original_input`, `operation_runtime_ended_parent_returns_original_input`, `operation_runtime_closed_group_returns_original_input` | 若干预检、manager/group 拒绝返回原始 owned 输入；拒绝情形未覆盖设计列出的全部错误交错。 |
-| 容量与共享 | 同文件：`operation_runtime_queue_and_budget_boundaries`, `operation_runtime_child_does_not_reserve_root`, `operation_runtime_parallel_children_share_actual_read_budget` | 有限队列边界、子操作与读取额度共享的指定场景。 |
-| shutdown | 同文件：`operation_runtime_group_shutdown_keeps_other_group`, `operation_runtime_shutdown_waits_for_accepted_work` | 测试了旁组可用及已接纳工作等待；不等同完整 shutdown/recovery 门禁。 |
-| repository async | `tests/detector/repository_async_operation_tests.rs`: `repository_async_candidates_equal_sync`, `repository_async_yields_and_stops` | repository 异步候选与同步结果对照、分批让出及停止。 |
-| Provider 能力 | `tests/detector/operation_provider_tests.rs`: `operation_provider_registration_is_pure`, `operation_provider_sync_only_is_rejected`, `operation_provider_selected_backend_runs_async_without_sync_factory` 等 | 注册纯净、sync-only 拒绝及选定 async backend 路径；其余用例包括运行时 repository 注入和 classifier 路由。 |
-| file 输入能力 | `tests/detector/file_operation_tests.rs`: `file_operation_complete_only_rejects_prefix`, `file_operation_declares_complete_content_and_no_random_access` | 验证 Prefix 拒绝，以及 Complete-only/无随机访问的能力声明；不是 file 命令端到端执行验收。 |
-| refinement | `tests/classifier/refinement_operation_tests.rs`: async 路径不调用 sync classifier、PreferFilename 快速路径跳过 classifier、未配置 classifier 不启动工作 | 指定分支的 classifier 行为。 |
-| 暂存生命周期 | `src/tests/managed_staging_tests.rs`: 包括 `managed_staging_cancel_before_create`, `managed_staging_owner_waits_for_scope_end_and_all_references`, `managed_staging_outcome_precedes_helper_input_release`, `managed_staging_cleanup_failure_retains_owner_for_retry`, `managed_staging_commit_failure_retains_partial_owner_and_permit`, `managed_staging_unconsumed_outcome_does_not_hold_temp` | 有限输入/暂存边界、scope 与引用约束、部分 owner、清理重试和不读取 outcome 的指定单测。不能据此声称所有真实 command/provider 组合通过。 |
+| 命令 | 结果 |
+| --- | --- |
+| `CARGO_HOME=... cargo test --lib detector::file_command_mime_detector::file_operation_tests::test_file_operation_runs_managed_command_through_fixed_worker` | 通过，1/1；实际 `file` 命令 staging 量与输入长度相等。 |
+| `CARGO_HOME=... bash .infra/bin/align-ci.sh` | 最终修复轮通过；Rust style、Clippy/check 对齐成功。 |
+| `CARGO_HOME=... bash .infra/bin/ci-check.sh` | 修复 staging 统计轮通过：build、182 unit tests、351 integration tests、42 doctests + 1 compile-fail、feature matrix、package verify、coverage 和 audit 均通过。 |
+| 同轮 coverage 门禁 | functions 95.07% (1137/1196)，lines 95.55%，regions 95.37%，满足仓库阈值。 |
+| 同轮 security audit | 扫描 Cargo.lock 中 89 个 crate 依赖，未报告漏洞。 |
+| 同步报告计量新增修复 | 随后再次运行 `align-ci.sh` 通过；最终 CI 通过；同步报告断言已包含在本轮 182 unit tests 与 351 integration tests 中。 |
 
-## 尚未验证或仍未实现的设计项
+仓库 CI 没有 downstream all-features 测试；未运行上下游仓库测试。文档 consumer 中的 `qubit-mime ^0.22` 在 crates.io 发布前不能直接从 registry 解析；整合验证将以命令级 Cargo patch 将该 consumer 指向本地项目，正式清单和全局配置不作改写。
 
-这些是设计/计划中的明确门禁；本 checkout 的上述测试列表没有提供足够证据，不可宣称已完成：
+## 已验证的主要行为
 
-- Provider 对同一个已打开对象的长度、前缀、随机样本和 refinement 一致性；路径替换与并发原地写入的能力检查。
-- 未知长度在恰好达到上限时必须再取得 EOF 证据的完整组合，以及所有 L-1/L/L+1、`u64::MAX` 和写入前预算边界的端到端证明。
-- MIME command helper 晚释放时真实 file/ffprobe 命令、stdout/stderr、stdin helper 和 temp 的完整集成；真实系统 `file`/`ffprobe` 版本矩阵及错误策略。
-- queue 满时 stop/cleanup 仍能前进；父操作持资源时等待依赖该资源释放的 child settlement 不死锁；cleanup 恢复失败时 shutdown 仍正确等待恢复责任。
-- 所有拒绝分支预算预留均回滚、owned 别名完整分配只计一次、输出收集峰值和服务缓存寿命的完整计量证据。
-- bytes/provider/stream × Prefix/Complete/RandomAccessSamples × sync/async × refinement 的完整消费矩阵，以及独立公开 API consumer 对最终 0.22.0 文档示例的编译验证。
-- 计划要求的最终全套闸门：`cargo test --all-features`、`cargo test --no-default-features`、clippy、rustdoc、文档 consumer 及 MIME consumer。没有本轮运行结果前不得标记通过。
+- Runtime 支持 root/child 与同步/异步受管提交、停止与观察；准入失败保留输入，shared budget 约束内存、读取及 staging。
+- Provider 输入基于已打开对象读取；测试覆盖路径替换快照、driver 丢失保留 pending 与随机访问 extent。
+- Repository 使用有界异步匹配；provider 注册不触发执行器启动，sync-only provider 不静默回退到同步 async hook。
+- Staging/command 生命周期使用 ResourceRef、受管 cleanup 和 recovery；覆盖取消、短读/哨兵、额度边界、parent/child 资源关系、cleanup 重试和未消费 outcome。
+- File backend 明确要求完整内容；ffprobe refinement 使用受管输入并复用 staging 额度，不在 async 路径调用同步 classifier。
 
-上列未验证项不影响文档对当前可见公共接口及已有单测的有限描述，但意味着 0.22.0 operation 目标还不能被完整验收。
+## 有边界的环境说明
 
-## 本次文档检查结果
-
-本节仅填写本次实际运行的文档检查命令与结果。它们不能替代上文列出的完整功能门禁。
-
-- `cargo test --doc`：未运行，Cargo 无法解析 `qubit-operation`（crates.io index 报 `no matching package named qubit-operation found`）。未修改 `Cargo.toml` 或 `Cargo.lock`。
+隔离工作区的正式 `../rs-operation` 位置曾登记并清理；CLI 明确禁止在同一任务中复用已清理登记位置，因此 worktree 中无法直接以正式路径运行 Cargo。验证使用了任务登记的 rs-operation worktree，commit 为 `985a8727d93155962831d62aca4594e330c94928`，并在最终集成源工作区恢复正式相对依赖后再次解析、构建及运行必要 CI。此路径限制不改变交付清单中的正式依赖关系。

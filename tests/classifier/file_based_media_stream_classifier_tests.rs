@@ -7,6 +7,8 @@
 // =============================================================================
 
 use std::path::Path;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 use qubit_mime::FileBasedMediaStreamClassifier;
 use qubit_mime::MediaStreamClassifier;
@@ -42,4 +44,34 @@ fn test_file_based_media_stream_classifier_stages_content_to_temp_file() {
             .classify_file(Path::new("Cargo.toml"))
             .expect("existing file should be classified")
     );
+}
+
+#[derive(Debug, Default)]
+struct LimitedFileOnlyClassifier {
+    calls: AtomicUsize,
+}
+
+impl FileBasedMediaStreamClassifier for LimitedFileOnlyClassifier {
+    fn max_staging_size(&self) -> u64 {
+        3
+    }
+
+    fn classify_by_local_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        assert!(file.is_file());
+        Ok(MediaStreamType::AudioOnly)
+    }
+}
+
+#[test]
+fn test_file_based_classifier_enforces_its_public_staging_limit() {
+    let classifier = LimitedFileOnlyClassifier::default();
+
+    assert!(matches!(
+        classifier.classify_content(b"four"),
+        Err(qubit_mime::MimeError::InvalidClassifierInput { .. })
+    ));
+    assert_eq!(0, classifier.calls.load(Ordering::SeqCst));
+    assert_eq!(MediaStreamType::AudioOnly, classifier.classify_content(b"abc").unwrap());
+    assert_eq!(1, classifier.calls.load(Ordering::SeqCst));
 }

@@ -78,6 +78,8 @@ fn test_default_uses_disabled_logging_runner() {
     let default_config = MimeConfig::default();
     let classifier = FfprobeCommandMediaStreamClassifier::default();
 
+    let debug = format!("{classifier:?}");
+    assert!(debug.contains("FfprobeCommandMediaStreamClassifier"));
     assert!(classifier.command_runner().is_logging_disabled());
     assert_eq!(
         classifier.command_runner().configured_timeout(),
@@ -169,6 +171,20 @@ fn test_max_staging_size_accessors_update_limit() {
 
     let classifier = classifier.with_max_staging_size(4096);
     assert_eq!(4096, classifier.max_staging_size());
+}
+
+#[test]
+fn test_working_directory_accessor_can_clear_override() {
+    let mut classifier = FfprobeCommandMediaStreamClassifier::new();
+    assert_eq!(None, classifier.working_directory());
+
+    classifier.set_working_directory(Some("/tmp/media".to_owned()));
+    assert_eq!(Some("/tmp/media"), classifier.working_directory());
+
+    classifier.set_working_directory(None);
+    assert_eq!(None, classifier.working_directory());
+    let debug = format!("{classifier:?}");
+    assert!(debug.contains("working_directory: None"));
 }
 
 #[test]

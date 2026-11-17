@@ -188,3 +188,72 @@ fn read_required(reader: &mut dyn ReadSeek, requirement: ContentRequirement, bud
     }
     Ok(bytes)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::ContentRequirement;
+    use super::MimeContentBackend;
+    use crate::MimeResult;
+
+    #[derive(Debug)]
+    struct PrefixBackend;
+
+    impl MimeContentBackend for PrefixBackend {
+        fn content_requirement(&self) -> ContentRequirement {
+            ContentRequirement::Prefix(3)
+        }
+
+        fn detect_bytes(&self, bytes: &[u8]) -> MimeResult<Vec<String>> {
+            Ok(vec![String::from_utf8_lossy(bytes).into_owned()])
+        }
+    }
+
+    #[test]
+    fn test_default_reader_buffers_declared_prefix_and_restores_position() {
+        let backend = PrefixBackend;
+        let mut reader = Cursor::new(b"_abcdef".to_vec());
+        reader.set_position(1);
+
+        assert_eq!(backend.max_reader_buffer_size(), crate::DEFAULT_MIME_MAX_BUFFER_SIZE);
+        assert_eq!(backend.detect_reader(&mut reader).unwrap(), ["abc"]);
+        assert_eq!(reader.position(), 1);
+    }
+
+    #[test]
+    fn test_default_reader_rejects_complete_content_over_budget_and_restores() {
+        #[derive(Debug)]
+        struct CompleteBackend;
+
+        impl MimeContentBackend for CompleteBackend {
+            fn content_requirement(&self) -> ContentRequirement {
+                ContentRequirement::Complete
+            }
+
+            fn max_reader_buffer_size(&self) -> usize {
+                3
+            }
+
+            fn detect_bytes(&self, bytes: &[u8]) -> MimeResult<Vec<String>> {
+                Ok(vec![bytes.len().to_string()])
+            }
+        }
+
+        let mut reader = Cursor::new(b"_abcd".to_vec());
+        reader.set_position(1);
+        let error = CompleteBackend
+            .detect_reader(&mut reader)
+            .expect_err("complete input one byte above the limit must fail");
+
+        assert!(matches!(
+            error,
+            crate::MimeError::BufferLimitExceeded { requested: 4, limit: 3 }
+        ));
+        assert_eq!(reader.position(), 1);
+
+        let mut within_limit = Cursor::new(b"xy".to_vec());
+        assert_eq!(CompleteBackend.detect_reader(&mut within_limit).unwrap(), ["2"]);
+        assert_eq!(within_limit.position(), 0);
+    }
+}

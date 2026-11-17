@@ -8,11 +8,12 @@
 //! One-shot completion channel used by staging workers.
 
 mod completer;
-mod completion;
 mod completion_future;
 mod completion_pair;
+#[path = "completion.rs"]
+mod completion_state;
 
 pub(in crate::managed_temp_staging) use completer::Completer;
-pub(in crate::managed_temp_staging) use completion::Completion;
 pub(in crate::managed_temp_staging) use completion_future::CompletionFuture;
 pub(in crate::managed_temp_staging) use completion_pair::completion_pair;
+pub(in crate::managed_temp_staging) use completion_state::Completion;

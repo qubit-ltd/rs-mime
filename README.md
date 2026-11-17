@@ -21,7 +21,7 @@ and [Chinese user guide](doc/user_guide.zh_CN.md) cover the same public behavior
 
 ```toml
 [dependencies]
-qubit-mime = "0.21"
+qubit-mime = "^0.22"
 ```
 
 The crate requires Rust 1.94 or later. The default `repository` detector uses
@@ -72,9 +72,10 @@ allowlist to the returned MIME type.
 For built-in detectors and backends using the crate's blanket `MimeDetector`
 implementation, `detect_prefix` matches filename and content candidates
 without passing the prefix to a complete-media classifier. Types that implement
-`MimeDetector` directly define their own behavior. The default asynchronous
-Prefix path reads at most the requested byte limit; Complete-content backends
-must provide their own asynchronous path hook.
+`MimeDetector` directly define their own behavior. Managed async operations use
+an explicitly selected async backend; a sync-only backend returns
+`AsyncUnsupported` instead of falling back to synchronous work. See the user
+guide for the managed operation lifecycle and provider capability limits.
 
 ## What It Provides
 
@@ -108,13 +109,13 @@ multiple no-filename mappings associate one MIME type with different pairs,
 refinement preserves the original MIME type; pass a matching filename or remove
 the mapping conflict to select a pair.
 
-The built-in `file` provider runs staging, command execution, and cleanup on a
-blocking thread pool through the asynchronous provider path. A custom
-backend's default async content hook calls its synchronous method, so a
-backend that can block should override that hook. Dropping an in-flight future
-does not guarantee cancellation of started work. Prefix reads may temporarily
-keep both the provider buffer and an owned worker copy; `max_buffer_size` limits
-each buffer, not their combined memory use.
+Managed detection uses owned inputs, explicit scopes, finite request budgets,
+and separate outcome and settlement observation. Construction and provider
+registration do not start workers; applications prepare and stop the MIME
+execution services explicitly. Unsupported providers are rejected rather than
+run synchronously from an async operation. Dropping an in-flight future does
+not prove that accepted work has stopped; observe settlement before releasing
+resources.
 
 For the built-in `file` provider, reader detection stages up to
 `MimeConfig::max_buffer_size()` bytes and stops at EOF. Its budget does not
@@ -151,7 +152,7 @@ The example below uses `Config`; applications that also implement custom provide
 
 ```toml
 [dependencies]
-qubit-mime = "0.21"
+qubit-mime = "^0.22"
 qubit-config = "0.15"
 qubit-spi = "0.14"
 ```

@@ -313,3 +313,73 @@ impl Default for MediaStreamClassifierRegistry {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use qubit_spi::ProviderSelection;
+
+    use super::super::FfprobeCommandMediaStreamClassifierProvider;
+    use super::MediaStreamClassifierRegistry;
+    use crate::MimeConfig;
+    use crate::MimeError;
+    use crate::command_execution::FixedMimeExecutionPort;
+    use crate::detector::MimeExecutionServices;
+
+    #[test]
+    fn test_async_registry_resolves_auto_alias_chain_and_unknown_selection() {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+        let services =
+            MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 32).unwrap();
+        let registry = MediaStreamClassifierRegistry::builtin();
+        let config = MimeConfig::default();
+
+        for selection in [
+            ProviderSelection::auto(),
+            ProviderSelection::named("ffprobe-command").unwrap(),
+            ProviderSelection::chain(["not-registered", "ffprobe-command"])
+                .expect("the fallback selector chain should be valid"),
+        ] {
+            let (id, _backend) = registry
+                .create_async_backend(&selection, &config, &services)
+                .expect("the built-in async classifier should resolve its default and aliases");
+            assert_eq!("ffprobe", id);
+        }
+
+        let error = registry
+            .create_async_backend(&ProviderSelection::named("not-registered").unwrap(), &config, &services)
+            .expect_err("unknown async selectors have no backend");
+        assert!(matches!(error, MimeError::AsyncUnsupported));
+
+        let empty = MediaStreamClassifierRegistry::default();
+        assert!(matches!(
+            empty.create_async_backend(&ProviderSelection::auto(), &config, &services),
+            Err(MimeError::AsyncUnsupported)
+        ));
+    }
+
+    #[test]
+    fn test_async_registry_rejects_duplicate_provider_registration() {
+        let registry = MediaStreamClassifierRegistry::builtin();
+        let error = registry
+            .register_async_provider(FfprobeCommandMediaStreamClassifierProvider)
+            .expect_err("canonical selectors must have one owner");
+        assert!(error.contains("ffprobe"));
+
+        // The original alias still resolves after the rejected registration.
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+        let services =
+            MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 32).unwrap();
+        let (id, _backend) = registry
+            .create_async_backend(
+                &ProviderSelection::named("ffprobe-command").unwrap(),
+                &MimeConfig::default(),
+                &services,
+            )
+            .unwrap();
+        assert_eq!("ffprobe", id);
+    }
+}

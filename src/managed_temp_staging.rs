@@ -128,10 +128,10 @@ fn ensure_not_stopped(scope: &OperationScope) -> MimeResult<()> {
 /// # Returns
 /// A MIME error carrying the operation stop report.
 fn stopped_error(reason: StopReason) -> MimeError {
-    MimeError::OperationStopped(StopReport {
+    MimeError::OperationStopped(Box::new(StopReport {
         reason,
         accepted_at: None,
-    })
+    }))
 }
 
 /// Stages borrowed bytes while the caller's input borrow remains active.
@@ -423,6 +423,7 @@ async fn create_empty_staged(
                 owner: Mutex::new(temp),
                 permits: Mutex::new(Vec::new()),
                 worker: worker.clone(),
+                staged_bytes: std::sync::atomic::AtomicU64::new(0),
                 cleanup_id: Arc::new(Mutex::new(None)),
             };
             commit_staged(reservation, staged)
@@ -608,5 +609,376 @@ fn cleanup_failure(
         stage: CleanupStage::Drop,
         summary: DiagnosticSummary::new(&source.to_string()),
         source: Some(source),
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use std::future::Future;
+    use std::sync::Arc;
+    use std::sync::mpsc;
+    use std::task::Context;
+    use std::task::Poll;
+    use std::task::Wake;
+    use std::task::Waker;
+
+    use qubit_operation::GroupOptions;
+    use qubit_operation::OperationManager;
+
+    use super::ManagedStagingLimits;
+    use super::panic_message;
+    use super::stage_borrowed_bytes_in;
+    use super::stopped_error;
+    use crate::InputExtent;
+    use crate::command_execution::FixedMimeExecutionPort;
+    use crate::command_execution::MimeExecutionWorker;
+    use crate::detector::MimeExecutionPort;
+    use crate::detector::MimeExecutionServices;
+
+    struct ThreadWake(std::thread::Thread);
+
+    impl Wake for ThreadWake {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => std::thread::park(),
+            }
+        }
+    }
+
+    #[test]
+    fn test_worker_panic_payloads_become_readable_diagnostics() {
+        let owned_string = String::from("owned worker panic");
+        assert_eq!("owned worker panic", panic_message(&owned_string));
+        assert_eq!("static worker panic", panic_message(&"static worker panic"));
+        assert_eq!("temporary cleanup panicked", panic_message(&42_u8));
+    }
+
+    #[test]
+    fn test_staging_stop_error_preserves_reason_without_acceptance_time() {
+        let error = stopped_error(qubit_operation::StopReason::UserCancelled);
+
+        assert!(matches!(
+            error,
+            crate::MimeError::OperationStopped(ref report)
+                if report.reason == qubit_operation::StopReason::UserCancelled
+                    && report.accepted_at.is_none()
+        ));
+    }
+
+    #[test]
+    fn test_borrowed_staging_copies_multiple_chunks_and_releases_budget_on_cleanup() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        services.prepare().unwrap();
+
+        let content = vec![b'b'; 8 * 1024 + 17];
+        let max_bytes = content.len() as u64;
+        let body_content = content.clone();
+        let limits = ManagedStagingLimits {
+            max_bytes,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port.clone()),
+        };
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            stage_borrowed_bytes_in(&scope, &body_content, InputExtent::Complete, limits).await
+        }))
+        .unwrap();
+
+        let resource = match block_on(operation.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(resource) => resource,
+            _ => panic!("borrowed byte staging should succeed"),
+        };
+        let path = resource.path().unwrap();
+        assert_eq!(content, std::fs::read(&path).unwrap());
+        assert_eq!(max_bytes, services.staging_budget().used_bytes());
+
+        drop(resource);
+        assert!(block_on(operation.wait_settlement()).all_released());
+        assert!(!path.exists(), "the registered owner is deleted after settlement");
+        assert_eq!(0, services.staging_budget().used_bytes());
+
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_empty_borrowed_input_creates_and_releases_an_empty_staged_file() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        services.prepare().unwrap();
+        let limits = ManagedStagingLimits {
+            max_bytes: 0,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port),
+        };
+
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            stage_borrowed_bytes_in(&scope, &[], InputExtent::Complete, limits).await
+        }))
+        .unwrap();
+        let resource = match block_on(operation.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(resource) => resource,
+            _ => panic!("empty input should still stage as an empty file"),
+        };
+        let path = resource.path().unwrap();
+        assert!(path.exists());
+        assert!(std::fs::read(&path).unwrap().is_empty());
+        assert_eq!(0, services.staging_budget().used_bytes());
+
+        drop(resource);
+        assert!(block_on(operation.wait_settlement()).all_released());
+        assert!(!path.exists());
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_borrowed_input_over_staging_limit_fails_before_resource_creation() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        services.prepare().unwrap();
+        let limits = ManagedStagingLimits {
+            max_bytes: 3,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port),
+        };
+        let content = b"four".to_vec();
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            stage_borrowed_bytes_in(&scope, &content, InputExtent::Complete, limits).await
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            qubit_operation::OperationOutcome::Failed(crate::MimeError::BudgetExceeded {
+                kind: "staging",
+                requested: 4,
+                limit: 3,
+            })
+        ));
+        assert!(block_on(operation.wait_settlement()).all_released());
+        assert_eq!(0, services.staging_budget().used_bytes());
+
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_chunk_budget_failure_after_file_creation_is_cleaned_during_settlement() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap());
+        services.prepare().unwrap();
+        let budget = services.staging_budget();
+        let occupied = budget.try_reserve(256 * 1024 * 1024 - 1).unwrap();
+        let limits = ManagedStagingLimits {
+            max_bytes: 2,
+            budget: budget.clone(),
+            worker: MimeExecutionWorker::new(port),
+        };
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            stage_borrowed_bytes_in(&scope, b"xy", InputExtent::Complete, limits).await
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            qubit_operation::OperationOutcome::Failed(crate::MimeError::BudgetExceeded {
+                kind: "staging",
+                requested: 2,
+                limit: 2,
+            })
+        ));
+        assert!(block_on(operation.wait_settlement()).all_released());
+        drop(occupied);
+        assert_eq!(0, budget.used_bytes(), "failed chunk and occupied permits are released");
+
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_unprepared_worker_rejection_releases_resource_reservation() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
+        let budget = services.staging_budget();
+        let limits = ManagedStagingLimits {
+            max_bytes: 16,
+            budget: budget.clone(),
+            worker: MimeExecutionWorker::new(port),
+        };
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            stage_borrowed_bytes_in(&scope, b"queued nowhere", InputExtent::Complete, limits).await
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            qubit_operation::OperationOutcome::Failed(crate::MimeError::ExecutionServicesRequired)
+        ));
+        assert!(block_on(operation.wait_settlement()).all_released());
+        assert_eq!(0, budget.used_bytes());
+    }
+
+    #[test]
+    fn test_cancelled_scope_skips_staging_before_reserving_a_resource() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap());
+        services.prepare().unwrap();
+        let budget = services.staging_budget();
+        let limits = ManagedStagingLimits {
+            max_bytes: 16,
+            budget: budget.clone(),
+            worker: MimeExecutionWorker::new(port),
+        };
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            entered_tx.send(()).unwrap();
+            continue_rx.recv().unwrap();
+            stage_borrowed_bytes_in(&scope, b"cancel before stage", InputExtent::Complete, limits).await
+        }))
+        .unwrap();
+
+        entered_rx.recv().unwrap();
+        let _stop_report = operation.request_stop(qubit_operation::StopReason::UserCancelled);
+        continue_tx.send(()).unwrap();
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            qubit_operation::OperationOutcome::Stopped(ref report)
+                if report.reason == qubit_operation::StopReason::UserCancelled
+        ));
+        assert!(block_on(operation.wait_settlement()).all_released());
+        assert_eq!(
+            0,
+            budget.used_bytes(),
+            "no staging budget is held when cancellation wins first"
+        );
+
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[derive(Debug)]
+    struct DispatchObservedPort {
+        inner: Arc<FixedMimeExecutionPort>,
+        dispatch_started: std::sync::Mutex<Option<mpsc::Sender<()>>>,
+        job_finished: std::sync::Mutex<Option<mpsc::Sender<()>>>,
+    }
+
+    impl MimeExecutionPort for DispatchObservedPort {
+        fn prepare(&self) -> Result<(), crate::MimeError> {
+            self.inner.prepare()
+        }
+
+        fn try_dispatch(
+            &self,
+            job: Box<dyn FnOnce() + Send + 'static>,
+        ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+            if let Some(sender) = self.dispatch_started.lock().unwrap().take() {
+                let _ = sender.send(());
+            }
+            let finished = self.job_finished.lock().unwrap().take();
+            self.inner.try_dispatch(Box::new(move || {
+                job();
+                if let Some(sender) = finished {
+                    let _ = sender.send(());
+                }
+            }))
+        }
+
+        fn shutdown(&self) -> Result<(), crate::MimeError> {
+            self.inner.shutdown()
+        }
+    }
+
+    #[test]
+    fn test_stop_after_create_dispatch_prevents_owner_creation() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let inner = Arc::new(FixedMimeExecutionPort::new(1, 2));
+        let (dispatch_tx, dispatch_rx) = mpsc::channel();
+        let (job_finished_tx, job_finished_rx) = mpsc::channel();
+        let port = Arc::new(DispatchObservedPort {
+            inner: Arc::clone(&inner),
+            dispatch_started: std::sync::Mutex::new(Some(dispatch_tx)),
+            job_finished: std::sync::Mutex::new(Some(job_finished_tx)),
+        });
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        services.prepare().unwrap();
+
+        let (blocker_started_tx, blocker_started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        assert!(
+            inner
+                .try_dispatch(Box::new(move || {
+                    blocker_started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                }))
+                .is_ok()
+        );
+        blocker_started_rx.recv().unwrap();
+
+        let limits = ManagedStagingLimits {
+            max_bytes: 7,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port),
+        };
+        let (body_started_tx, body_started_rx) = mpsc::channel();
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            body_started_tx.send(()).unwrap();
+            stage_borrowed_bytes_in(&scope, b"payload", InputExtent::Complete, limits).await
+        }))
+        .unwrap();
+
+        body_started_rx.recv().unwrap();
+        dispatch_rx.recv().unwrap();
+        let _stop_report = operation.request_stop(qubit_operation::StopReason::UserCancelled);
+        release_tx.send(()).unwrap();
+        job_finished_rx.recv().unwrap();
+
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            qubit_operation::OperationOutcome::Stopped(ref report)
+                if report.reason == qubit_operation::StopReason::UserCancelled
+        ));
+        assert!(block_on(operation.wait_settlement()).all_released());
+        assert_eq!(0, services.staging_budget().used_bytes());
+
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 }

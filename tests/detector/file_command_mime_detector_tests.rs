@@ -96,6 +96,24 @@ fn test_is_available_can_be_called_without_panicking() {
     let _ = FileCommandMimeDetector::is_available();
 }
 
+#[cfg(unix)]
+#[test]
+fn test_is_available_is_false_when_command_cannot_be_resolved() {
+    let empty_path = std::env::temp_dir().join(format!("qubit-mime-empty-command-path-{}", std::process::id()));
+    let _path_guard = PathEnvGuard::set(&empty_path);
+
+    assert!(!FileCommandMimeDetector::is_available());
+}
+
+#[test]
+fn test_default_detector_debug_reports_configuration_without_command_execution() {
+    let detector = FileCommandMimeDetector::default();
+    let debug = format!("{detector:?}");
+
+    assert!(debug.contains("FileCommandMimeDetector"));
+    assert!(debug.contains("execution_services_configured: false"));
+}
+
 #[test]
 fn test_default_file_command_runner_uses_default_timeout() {
     let detector = FileCommandMimeDetector::from_mime_config(

@@ -49,3 +49,96 @@ impl<T> Future for CompletionFuture<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::task::Context;
+    use std::task::Poll;
+    use std::task::Wake;
+    use std::task::Waker;
+
+    use super::super::completion_pair;
+
+    struct WakeCounter(AtomicUsize);
+    impl Wake for WakeCounter {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn test_receiver_wakes_after_a_waiting_poll_and_takes_the_published_value() {
+        let (sender, receiver) = completion_pair();
+        let mut receiver = Box::pin(receiver);
+        let wake_counter = Arc::new(WakeCounter(AtomicUsize::new(0)));
+        let waker = Waker::from(Arc::clone(&wake_counter));
+        let mut context = Context::from_waker(&waker);
+
+        assert!(matches!(receiver.as_mut().poll(&mut context), Poll::Pending));
+        assert_eq!(0, wake_counter.0.load(Ordering::SeqCst));
+        sender.complete("worker result");
+        assert_eq!(1, wake_counter.0.load(Ordering::SeqCst));
+        assert!(matches!(
+            receiver.as_mut().poll(&mut context),
+            Poll::Ready("worker result")
+        ));
+    }
+
+    #[test]
+    fn test_receiver_takes_a_prepublished_value_once() {
+        let (sender, receiver) = completion_pair();
+        sender.complete("already available");
+        let mut receiver = Box::pin(receiver);
+        let waker = Waker::from(Arc::new(WakeCounter(AtomicUsize::new(0))));
+        let mut context = Context::from_waker(&waker);
+
+        assert!(matches!(
+            receiver.as_mut().poll(&mut context),
+            Poll::Ready("already available")
+        ));
+        assert!(matches!(receiver.as_mut().poll(&mut context), Poll::Pending));
+    }
+
+    #[test]
+    fn test_receiver_replaces_stale_waker_with_latest_polling_task() {
+        let (sender, receiver) = completion_pair();
+        let mut receiver = Box::pin(receiver);
+        let first_counter = Arc::new(WakeCounter(AtomicUsize::new(0)));
+        let first_waker = Waker::from(Arc::clone(&first_counter));
+        let mut first_context = Context::from_waker(&first_waker);
+        assert!(matches!(receiver.as_mut().poll(&mut first_context), Poll::Pending));
+
+        let latest_counter = Arc::new(WakeCounter(AtomicUsize::new(0)));
+        let latest_waker = Waker::from(Arc::clone(&latest_counter));
+        let mut latest_context = Context::from_waker(&latest_waker);
+        assert!(matches!(receiver.as_mut().poll(&mut latest_context), Poll::Pending));
+
+        sender.complete("latest waiter");
+        assert_eq!(0, first_counter.0.load(Ordering::SeqCst));
+        assert_eq!(1, latest_counter.0.load(Ordering::SeqCst));
+        assert!(matches!(
+            receiver.as_mut().poll(&mut latest_context),
+            Poll::Ready("latest waiter")
+        ));
+    }
+
+    #[test]
+    fn test_receiver_recovers_published_value_from_a_poisoned_state() {
+        let (_sender, receiver) = completion_pair::<u8>();
+        let state = Arc::clone(&receiver.0);
+        let poisoner = std::thread::spawn(move || {
+            let mut state = state.lock().unwrap();
+            state.value = Some(19);
+            panic!("poison completion state after publishing");
+        });
+        assert!(poisoner.join().is_err());
+
+        let mut receiver = Box::pin(receiver);
+        let waker = Waker::from(Arc::new(WakeCounter(AtomicUsize::new(0))));
+        let mut context = Context::from_waker(&waker);
+        assert!(matches!(receiver.as_mut().poll(&mut context), Poll::Ready(19)));
+    }
+}

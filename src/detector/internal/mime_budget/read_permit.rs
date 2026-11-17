@@ -60,3 +60,71 @@ impl Drop for ReadPermit {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::panic::AssertUnwindSafe;
+
+    use super::super::ReadTreeContext;
+
+    #[test]
+    fn test_short_read_commit_charges_actual_bytes_to_all_ancestors() {
+        let root = ReadTreeContext::new(10);
+        let child = root.child(7);
+        let grandchild = child.child(5);
+        let permit = grandchild.reserve(4).expect("reservation fits each scope");
+        assert_eq!(3, permit.commit(3));
+        assert_eq!(3, root.consumed());
+        assert_eq!(3, child.consumed());
+        assert_eq!(3, grandchild.consumed());
+        assert_eq!(7, root.remaining());
+        assert_eq!(4, child.remaining());
+        assert_eq!(2, grandchild.remaining());
+    }
+
+    #[test]
+    fn test_overreported_read_panics_and_rolls_back_reservation() {
+        let root = ReadTreeContext::new(8);
+        let child = root.child(6);
+        let permit = child.reserve(4).expect("four bytes fit both budgets");
+        assert_eq!(root.remaining(), 4);
+        assert_eq!(child.remaining(), 2);
+
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| permit.commit(5)));
+        assert!(result.is_err(), "a read cannot commit more than it reserved");
+        assert_eq!(root.consumed(), 0);
+        assert_eq!(child.consumed(), 0);
+        assert_eq!(root.remaining(), 8);
+        assert_eq!(child.remaining(), 6);
+    }
+
+    #[test]
+    fn test_dropping_uncommitted_permit_recovers_poisoned_tree_and_scope_locks() {
+        let root = ReadTreeContext::new(10);
+        let child = root.child(5);
+        let permit = child.reserve(4).expect("reservation fits both scopes");
+        let tree = std::sync::Arc::clone(&permit.tree);
+        let scope = std::sync::Arc::clone(&permit.scopes[0]);
+
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = tree.counters.lock().unwrap();
+                panic!("poison shared read-tree counters");
+            })
+            .join()
+            .is_err()
+        );
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = scope.counters.lock().unwrap();
+                panic!("poison child read-scope counters");
+            })
+            .join()
+            .is_err()
+        );
+
+        drop(permit);
+        assert_eq!(10, root.remaining());
+        assert_eq!(5, child.remaining());
+    }
+}

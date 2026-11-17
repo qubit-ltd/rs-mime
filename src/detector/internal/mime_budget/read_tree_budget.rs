@@ -41,3 +41,24 @@ impl ReadTreeBudget {
         self.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ReadTreeBudget;
+
+    #[test]
+    fn test_consumed_recovers_poisoned_counters() {
+        let budget = ReadTreeBudget::new(8);
+        let counters = std::sync::Arc::clone(&budget);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = counters.counters.lock().unwrap();
+                panic!("poison read-tree counters");
+            })
+            .join()
+            .is_err()
+        );
+
+        assert_eq!(0, budget.consumed());
+    }
+}

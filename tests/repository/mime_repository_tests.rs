@@ -488,6 +488,44 @@ fn test_is_a_is_transitive_and_implicit() {
 }
 
 #[test]
+fn test_is_a_resolves_case_insensitive_aliases_for_child_and_parent() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+<mime-type type="application/x-parent"><alias type="application/x-parent-alias"/></mime-type>
+<mime-type type="application/x-child">
+  <alias type="application/x-child-alias"/>
+  <sub-class-of type="application/x-parent-alias"/>
+</mime-type>
+</mime-info>"#,
+    )
+    .expect("repository with aliases and inheritance should parse");
+
+    assert!(repository.is_a("APPLICATION/X-CHILD-ALIAS", "APPLICATION/X-PARENT-ALIAS"));
+    assert!(repository.is_a("application/x-child-alias", "application/x-child"));
+    assert!(!repository.is_a("application/x-parent-alias", "application/x-child-alias"));
+}
+
+#[test]
+fn test_matches_content_searches_cyclic_super_types_without_hiding_parent_magic() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+<mime-type type="application/x-child">
+  <sub-class-of type="application/x-loop"/>
+</mime-type>
+<mime-type type="application/x-loop">
+  <sub-class-of type="application/x-child"/>
+  <magic priority="70"><match type="string" value="CYCLE" offset="0"/></magic>
+</mime-type>
+</mime-info>"#,
+    )
+    .expect("repository with cyclic super types should parse");
+    let child = repository.get("application/x-child").expect("child should exist");
+
+    assert!(child.matches_content(&repository, b"CYCLE signature"));
+    assert!(!child.matches_content(&repository, b"unrelated content"));
+}
+
+#[test]
 fn test_is_a_composes_explicit_and_implicit_text_inheritance() {
     let repository = MimeRepository::from_xml(
         r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">

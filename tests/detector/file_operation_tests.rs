@@ -46,9 +46,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
 fn test_file_operation_complete_only_rejects_prefix() {
     let detector = FileCommandMimeDetector::new();
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 1 })
-        .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
     let mut handle = group
         .as_async()
         .try_submit(Default::default(), move |scope| async move {
@@ -76,12 +74,67 @@ fn test_file_operation_complete_only_rejects_prefix() {
 #[test]
 fn test_file_operation_declares_complete_content_and_no_random_access() {
     let detector = FileCommandMimeDetector::new();
-    assert_eq!(
-        detector.content_requirement(),
-        qubit_mime::ContentRequirement::Complete
-    );
+    assert_eq!(detector.content_requirement(), qubit_mime::ContentRequirement::Complete);
     assert_eq!(
         detector.random_access_capability(),
         qubit_mime::RandomAccessCapability::Unsupported
     );
+}
+
+#[test]
+fn test_file_operation_cancelled_while_queued_releases_all_resources() {
+    let mut manager_options = qubit_operation::ManagerOptions::default();
+    manager_options.limits.active_operations = 2;
+    manager_options.limits.queued_operations = 1;
+    manager_options.async_executor.worker_count = 1;
+    let manager = qubit_operation::OperationManager::new(manager_options).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let mut blocker = group
+        .as_async()
+        .try_submit(Default::default(), move |_| async move {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok::<_, qubit_mime::MimeError>(())
+        })
+        .unwrap();
+    entered_rx.recv().unwrap();
+
+    let detector = FileCommandMimeDetector::new();
+    let mut queued = group
+        .as_async()
+        .try_submit(Default::default(), move |scope| async move {
+            detector
+                .guess_content_in(
+                    &scope,
+                    BorrowedMimeInput::Bytes {
+                        content: b"complete input",
+                        extent: InputExtent::Complete,
+                        filename: None,
+                    },
+                    &MimeOperationOptions::default(),
+                )
+                .await
+                .map(|_| ())
+        })
+        .unwrap();
+    assert_eq!(
+        queued.observer().snapshot().execution,
+        qubit_operation::ExecutionPhase::Queued
+    );
+
+    let _ = queued.request_stop(qubit_operation::StopReason::UserCancelled);
+    release_tx.send(()).unwrap();
+
+    assert!(matches!(
+        block_on(blocker.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(())
+    ));
+    assert!(matches!(
+        block_on(queued.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Stopped(_)
+    ));
+    assert!(block_on(queued.wait_settlement()).all_released());
 }

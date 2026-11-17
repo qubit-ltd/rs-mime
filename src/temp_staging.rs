@@ -72,3 +72,51 @@ pub(crate) fn with_temp_file<T>(
         }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::with_temp_file;
+    use crate::MimeError;
+
+    #[test]
+    fn test_temp_creation_failure_is_mapped_before_staging_or_inspection() {
+        let staged = std::cell::Cell::new(false);
+        let inspected = std::cell::Cell::new(false);
+        let error = with_temp_file::<()>(
+            "invalid/component/",
+            |_| {
+                staged.set(true);
+                Ok(())
+            },
+            |_| {
+                inspected.set(true);
+                Ok(())
+            },
+        )
+        .expect_err("a path separator in the filename prefix must prevent temp creation");
+
+        assert!(matches!(error, MimeError::Io(_)));
+        assert!(!staged.get(), "staging must not run without a created owner");
+        assert!(!inspected.get(), "inspection must not run without a created owner");
+    }
+
+    #[test]
+    fn test_inspection_panic_unwinds_after_best_effort_temp_cleanup() {
+        let mut staged_path = None;
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = with_temp_file::<()>(
+                "InspectionPanic-",
+                |file| {
+                    staged_path = Some(file.path().to_path_buf());
+                    Ok(())
+                },
+                |_| panic!("inspection panic for cleanup test"),
+            );
+        }));
+
+        assert!(panic.is_err(), "inspection panic must keep unwinding");
+        let path = staged_path.expect("staging callback should have recorded the temp path");
+        assert!(!path.exists(), "temporary file guard should clean up during unwind");
+        assert!(!path.parent().expect("temp file path has a parent").exists());
+    }
+}

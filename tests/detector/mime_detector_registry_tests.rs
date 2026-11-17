@@ -8,6 +8,8 @@
 
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 use qubit_mime::MimeConfig;
 use qubit_mime::MimeDetector;
@@ -16,6 +18,9 @@ use qubit_mime::MimeDetectorSpec;
 use qubit_spi::FallbackPolicy;
 use qubit_spi::ProviderCreationTermination;
 use qubit_spi::ProviderDefinition;
+use qubit_spi::ProviderDescriptor;
+use qubit_spi::ProviderId;
+use qubit_spi::ProviderMetadata;
 use qubit_spi::ProviderSelection;
 use qubit_spi::error::ProviderFailureKind;
 
@@ -54,6 +59,25 @@ fn test_global_registry_exposes_builtin_defaults_in_this_process() {
     assert_eq!(
         ProviderSelection::named("repository").expect("repository provider ID should be valid"),
         registry.default_selection(),
+    );
+}
+
+#[test]
+fn test_registry_seal_prevents_further_mutation() {
+    let registry = MimeDetectorRegistry::builtin();
+    assert!(!registry.is_sealed());
+
+    registry.seal();
+
+    assert!(registry.is_sealed());
+    assert!(
+        registry
+            .register(TestMimeDetectorProvider::new(
+                "after-seal",
+                0,
+                TestProviderBehavior::Success("application/x-after-seal"),
+            ))
+            .is_err()
     );
 }
 
@@ -304,4 +328,132 @@ fn test_global_registry_shares_app_provider_with_library_x() {
         .expect("isolated global Registry scenario should start");
 
     assert!(status.success(), "isolated global Registry scenario failed");
+}
+
+#[derive(Debug)]
+struct CountedAsyncRegistryProvider {
+    descriptor: ProviderDescriptor,
+    creations: Arc<AtomicUsize>,
+}
+
+impl ProviderMetadata for CountedAsyncRegistryProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        self.descriptor.clone()
+    }
+}
+
+impl qubit_mime::AsyncMimeDetectorProvider for CountedAsyncRegistryProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &qubit_mime::MimeExecutionServices,
+    ) -> Result<Arc<dyn qubit_mime::AsyncMimeDetectorBackend>, qubit_mime::MimeError> {
+        self.creations.fetch_add(1, Ordering::SeqCst);
+        Err(qubit_mime::MimeError::AsyncUnsupported)
+    }
+}
+
+#[test]
+fn test_async_registry_aliases_are_shared_by_clones_and_failed_registration_is_atomic() {
+    let registry = MimeDetectorRegistry::default();
+    let creations = Arc::new(AtomicUsize::new(0));
+    let provider = CountedAsyncRegistryProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("async-owner").unwrap())
+            .with_aliases(["async-alias"])
+            .unwrap(),
+        creations: Arc::clone(&creations),
+    };
+    registry
+        .register_async_provider(provider)
+        .expect("async provider should register");
+    assert_eq!(
+        0,
+        creations.load(Ordering::SeqCst),
+        "registration must not construct a backend"
+    );
+
+    let clone = registry.clone();
+    let conflicting_provider = CountedAsyncRegistryProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("partial-registration").unwrap())
+            .with_aliases(["async-alias"])
+            .unwrap(),
+        creations: Arc::new(AtomicUsize::new(0)),
+    };
+    assert!(clone.register_async_provider(conflicting_provider).is_err());
+    assert_eq!(
+        0,
+        creations.load(Ordering::SeqCst),
+        "rejected registration must not construct a backend"
+    );
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(qubit_mime::FixedMimeExecutionPort::new(1, 1)),
+        1024,
+    )
+    .unwrap();
+    let alias = ProviderSelection::named("async-alias").unwrap();
+    assert!(matches!(
+        clone.create_async_backend(&alias, &MimeConfig::default(), &services),
+        Err(qubit_mime::MimeError::AsyncUnsupported),
+    ));
+    assert_eq!(
+        1,
+        creations.load(Ordering::SeqCst),
+        "clone should resolve the registered alias"
+    );
+
+    let partial_id = ProviderSelection::named("partial-registration").unwrap();
+    assert!(matches!(
+        registry.create_async_backend(&partial_id, &MimeConfig::default(), &services),
+        Err(qubit_mime::MimeError::AsyncUnsupported),
+    ));
+    assert_eq!(
+        1,
+        creations.load(Ordering::SeqCst),
+        "failed alias collision must not install the attempted provider's canonical ID",
+    );
+}
+
+#[test]
+fn test_registry_default_selection_follows_automatic_priority_and_seal() {
+    let registry = MimeDetectorRegistry::default();
+    registry
+        .register(TestMimeDetectorProvider::new(
+            "first",
+            1,
+            TestProviderBehavior::Success("application/x-first"),
+        ))
+        .expect("first provider should register");
+    registry
+        .register(TestMimeDetectorProvider::new(
+            "preferred",
+            20,
+            TestProviderBehavior::Success("application/x-preferred"),
+        ))
+        .expect("preferred provider should register");
+
+    assert_eq!(ProviderSelection::auto(), registry.default_selection());
+    let selected = registry
+        .resolve()
+        .expect("automatic default should resolve registered providers")
+        .create()
+        .expect("highest-priority provider should create successfully");
+    assert_eq!(
+        Some("application/x-preferred".to_owned()),
+        selected
+            .detect_by_filename("sample.static")
+            .expect("selected provider should handle the request"),
+    );
+
+    registry.seal();
+    assert!(
+        registry
+            .set_default_selection(ProviderSelection::named("first").unwrap())
+            .is_err()
+    );
+    assert_eq!(ProviderSelection::auto(), registry.default_selection());
 }

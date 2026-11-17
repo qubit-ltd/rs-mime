@@ -12,7 +12,6 @@ use qubit_io::std_io::ReadSeek;
 use super::content_requirement::ContentRequirement;
 use super::internal::remaining_content_reader::RemainingContentReader;
 use super::mime_content_backend::MimeContentBackend;
-
 use crate::MimeDetectorBackend;
 use crate::MimeResult;
 

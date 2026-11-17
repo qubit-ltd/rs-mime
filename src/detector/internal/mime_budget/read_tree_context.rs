@@ -142,3 +142,124 @@ impl ReadTreeContext {
         self.scope.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ReadTreeContext;
+
+    #[test]
+    fn test_read_tree_reservation_and_commit_recover_poisoned_scope_counters() {
+        let root = ReadTreeContext::new(10);
+        let child = root.child(8);
+        let tree_counters = std::sync::Arc::clone(&root.tree);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = tree_counters.counters.lock().unwrap();
+                panic!("poison shared read-tree counters");
+            })
+            .join()
+            .is_err()
+        );
+        let root_scope = std::sync::Arc::clone(&root.scope);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = root_scope.counters.lock().unwrap();
+                panic!("poison root read-scope counters");
+            })
+            .join()
+            .is_err()
+        );
+        let child_scope = std::sync::Arc::clone(&child.scope);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = child_scope.counters.lock().unwrap();
+                panic!("poison child read-scope counters");
+            })
+            .join()
+            .is_err()
+        );
+
+        let permit = child.reserve(4).expect("reservation should recover all counters");
+        assert_eq!(3, permit.commit(3));
+        assert_eq!(3, root.consumed());
+        assert_eq!(3, child.consumed());
+        assert_eq!(7, root.remaining());
+        assert_eq!(5, child.remaining());
+    }
+
+    #[test]
+    fn test_child_read_limit_charges_ancestors_and_releases_unused_capacity() {
+        let root = ReadTreeContext::new(10);
+        let child = root.child(5);
+        let permit = child.reserve(4).expect("child read should fit both limits");
+        assert_eq!(root.remaining(), 6);
+        assert_eq!(child.remaining(), 1);
+        assert_eq!(permit.commit(3), 3);
+        assert_eq!(root.consumed(), 3);
+        assert_eq!(child.consumed(), 3);
+        assert_eq!(root.remaining(), 7);
+        assert_eq!(child.remaining(), 2);
+        assert!(child.reserve(3).is_none());
+
+        let provisional = child.reserve(2).expect("remaining child capacity should fit");
+        assert_eq!(root.remaining(), 5);
+        drop(provisional);
+        assert_eq!(root.remaining(), 7);
+        assert_eq!(child.remaining(), 2);
+    }
+
+    #[test]
+    fn test_nested_reservation_failure_restores_every_ancestor() {
+        let root = ReadTreeContext::new(20);
+        let child = root.child(5);
+        let grandchild = child.child(10);
+
+        assert_eq!(child.reserve(4).unwrap().commit(4), 4);
+        assert_eq!(root.remaining(), 16);
+        assert_eq!(child.remaining(), 1);
+        assert_eq!(grandchild.remaining(), 1);
+
+        assert!(grandchild.reserve(2).is_none());
+        assert_eq!(root.consumed(), 4);
+        assert_eq!(child.consumed(), 4);
+        assert_eq!(grandchild.consumed(), 0);
+        assert_eq!(root.remaining(), 16);
+        assert_eq!(child.remaining(), 1);
+        assert_eq!(grandchild.remaining(), 1);
+
+        assert_eq!(grandchild.reserve(1).unwrap().commit(1), 1);
+        assert_eq!(root.consumed(), 5);
+        assert_eq!(child.consumed(), 5);
+        assert_eq!(grandchild.consumed(), 1);
+    }
+
+    #[test]
+    fn test_zero_byte_read_does_not_consume_any_scope_capacity() {
+        let root = ReadTreeContext::new(4);
+        let child = root.child(2);
+        assert_eq!(child.reserve(0).unwrap().commit(0), 0);
+
+        assert_eq!(root.consumed(), 0);
+        assert_eq!(child.consumed(), 0);
+        assert_eq!(root.remaining(), 4);
+        assert_eq!(child.remaining(), 2);
+    }
+
+    #[test]
+    fn test_inflight_sibling_reservations_cannot_overcommit_tree_limit() {
+        let root = ReadTreeContext::new(5);
+        let first = root.child(5);
+        let sibling = root.child(5);
+        let in_flight = first.reserve(4).expect("first reservation fits the root");
+
+        assert_eq!(root.remaining(), 1);
+        assert!(sibling.reserve(2).is_none());
+        assert_eq!(root.remaining(), 1, "failed sibling reservation must roll back");
+
+        drop(in_flight);
+        assert_eq!(root.remaining(), 5);
+        assert_eq!(sibling.reserve(5).unwrap().commit(5), 5);
+        assert_eq!(root.consumed(), 5);
+        assert_eq!(root.remaining(), 0);
+    }
+}

@@ -120,8 +120,8 @@ fn test_user_guides_match_current_package_versions() {
         let contents = read(root.join(guide));
         assert!(
             contents.contains(&format!("qubit-mime` {mime_requirement}"))
-                && contents.contains(&format!("qubit-mime = \"{}", mime_requirement))
-                && contents.contains(&format!("qubit-mime = {{ version = \"{mime_requirement}\"")),
+                && contents.contains(&format!("qubit-mime = \"^{mime_requirement}\""))
+                && contents.contains(&format!("qubit-mime = {{ version = \"^{mime_requirement}\"")),
             "{guide} install or inventory examples are stale"
         );
         assert!(

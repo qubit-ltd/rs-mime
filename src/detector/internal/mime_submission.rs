@@ -127,51 +127,66 @@ pub(in crate::detector) fn preflight(
     .ok_or(MimeSubmitRejection::BudgetExceeded)
 }
 
+/// All state retained for one admitted detection request.
+pub(in crate::detector) struct MimeSubmission {
+    /// Operation scope used for cancellation and read-tree binding.
+    pub scope: OperationScope,
+    /// Owned bytes or provider path submitted for detection.
+    pub input: OwnedMimeInput,
+    /// Shared execution services and byte limits.
+    pub services: Arc<MimeExecutionServices>,
+    /// Detector implementation to invoke.
+    pub backend: Arc<dyn AsyncMimeDetectorBackend>,
+    /// Identifier recorded in the returned report.
+    pub backend_id: String,
+    /// Service-wide maximum content buffer.
+    pub max_buffer_size: usize,
+    /// Per-operation detection and resource limits.
+    pub options: MimeOperationOptions,
+    /// Owned-memory reservation retained during detection.
+    pub permit: Option<crate::detector::internal::mime_budget::BudgetPermit>,
+    /// Read accounting context for provider-backed input.
+    pub read_tree: Arc<crate::detector::internal::mime_budget::ReadTreeContext>,
+}
+
 /// Runs an admitted detection request and assembles its result report.
 ///
 /// # Parameters
-/// - `scope`: Operation scope used for cancellation and read-tree binding.
-/// - `input`: Owned bytes or provider path submitted for detection.
-/// - `services`: Shared execution services and byte limits.
-/// - `backend`: Detector implementation to invoke.
-/// - `backend_id`: Identifier recorded in the returned report.
-/// - `max_buffer_size`: Service-wide maximum content buffer.
-/// - `options`: Per-operation detection and resource limits.
-/// - `permit`: Owned-memory reservation retained during detection.
-/// - `read_tree`: Read accounting context for provider-backed input.
+/// - `request`: State for the accepted input, backend, services, and limits.
 ///
 /// # Returns
 /// The MIME result report with the detected type and resource usage.
 ///
 /// # Errors
 /// Propagates backend, input-provider, and configured-limit errors.
-pub(in crate::detector) async fn detect(
-    scope: OperationScope,
-    input: OwnedMimeInput,
-    services: Arc<MimeExecutionServices>,
-    backend: Arc<dyn AsyncMimeDetectorBackend>,
-    backend_id: String,
-    max_buffer_size: usize,
-    options: MimeOperationOptions,
-    permit: Option<crate::detector::internal::mime_budget::BudgetPermit>,
-    read_tree: Arc<crate::detector::internal::mime_budget::ReadTreeContext>,
-) -> MimeResult<MimeDetectionReport> {
+pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<MimeDetectionReport> {
+    let MimeSubmission {
+        scope,
+        input,
+        services,
+        backend,
+        backend_id,
+        max_buffer_size,
+        options,
+        permit,
+        read_tree,
+    } = request;
     services.bind_read_tree(scope.id(), &read_tree);
     let _scope = scope;
     let _permit = permit;
-    let (mime_type, extent, bytes_read, owned_bytes) = match input {
+    let (mime_type, extent, bytes_read, owned_bytes, staging_bytes) = match input {
         OwnedMimeInput::Bytes {
             content,
             extent,
             filename,
         } => {
-            if let Some(limit) = options.max_buffer_bytes {
-                if content.len() > limit {
-                    return Err(MimeError::BufferLimitExceeded {
-                        requested: content.len(),
-                        limit,
-                    });
-                }
+            if let Some(limit) = options.max_buffer_bytes
+                && content.len() > limit
+            {
+                return Err(MimeError::BufferLimitExceeded {
+                    requested: content.len(),
+                    limit,
+                });
             }
             let candidates = backend
                 .guess_content_in(
@@ -192,6 +207,7 @@ pub(in crate::detector) async fn detect(
                 candidates.inspected_extent,
                 0,
                 content.len(),
+                candidates.staging_bytes,
             )
         }
         OwnedMimeInput::Provider { file_system, path } => {
@@ -258,7 +274,7 @@ pub(in crate::detector) async fn detect(
                     budget: MimeBudgetSummary {
                         owned_bytes: content.len(),
                         bytes_read,
-                        staging_bytes: 0,
+                        staging_bytes: candidates.staging_bytes,
                     },
                 });
             };
@@ -270,6 +286,7 @@ pub(in crate::detector) async fn detect(
                 candidates.inspected_extent,
                 read_tree.consumed(),
                 0,
+                candidates.staging_bytes,
             )
         }
     };
@@ -280,7 +297,156 @@ pub(in crate::detector) async fn detect(
         budget: MimeBudgetSummary {
             owned_bytes,
             bytes_read,
-            staging_bytes: 0,
+            staging_bytes,
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::cell;
+    use super::preflight;
+    use super::return_input;
+    use super::take;
+    use crate::ContentRequirement;
+    use crate::MimeError;
+    use crate::MimeOperationOptions;
+    use crate::RandomAccessCapability;
+    use crate::detector::MimeExecutionPort;
+    use crate::detector::MimeExecutionServices;
+    use crate::detector::mime_input::InputExtent;
+    use crate::detector::mime_input::OwnedMimeInput;
+    use crate::detector::mime_operation::MimeSubmitRejection;
+
+    #[derive(Debug)]
+    struct NoopPort;
+
+    impl MimeExecutionPort for NoopPort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+
+        fn shutdown(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+    }
+
+    fn services() -> Arc<MimeExecutionServices> {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        Arc::new(MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 32).unwrap())
+    }
+
+    fn bytes_input() -> OwnedMimeInput {
+        OwnedMimeInput::bytes(Arc::from(b"payload".as_slice()), InputExtent::Complete).with_filename("report.bin")
+    }
+
+    fn assert_original_input(input: OwnedMimeInput) {
+        match input {
+            OwnedMimeInput::Bytes {
+                content,
+                extent,
+                filename,
+            } => {
+                assert_eq!(b"payload", content.as_ref());
+                assert_eq!(InputExtent::Complete, extent);
+                assert_eq!(Some("report.bin".to_owned()), filename);
+            }
+            OwnedMimeInput::Provider { .. } => panic!("byte input should retain its original variant"),
+        }
+    }
+
+    #[test]
+    fn test_preflight_reserves_valid_bytes_and_rejects_tight_or_zero_limits() {
+        let services = services();
+        let input = OwnedMimeInput::bytes(Arc::from(b"payload".as_slice()), InputExtent::Complete);
+        let permit = preflight(
+            &input,
+            &MimeOperationOptions::default(),
+            ContentRequirement::Prefix(8),
+            RandomAccessCapability::Unsupported,
+            16,
+            &services,
+        )
+        .expect("valid in-memory input should reserve its owned bytes");
+        drop(permit);
+
+        let too_small = MimeOperationOptions {
+            max_buffer_bytes: Some(4),
+            ..Default::default()
+        };
+        assert!(matches!(
+            preflight(
+                &input,
+                &too_small,
+                ContentRequirement::Prefix(8),
+                RandomAccessCapability::Unsupported,
+                16,
+                &services,
+            ),
+            Err(MimeSubmitRejection::BudgetExceeded)
+        ));
+
+        let zero = MimeOperationOptions {
+            max_read_bytes: Some(0),
+            ..Default::default()
+        };
+        assert!(matches!(
+            preflight(
+                &input,
+                &zero,
+                ContentRequirement::Prefix(8),
+                RandomAccessCapability::Unsupported,
+                16,
+                &services,
+            ),
+            Err(MimeSubmitRejection::InvalidOptions(_))
+        ));
+    }
+
+    #[test]
+    fn test_rejected_input_can_be_recovered_after_cell_lock_poisoning() {
+        let input = cell(bytes_input());
+        let other = Arc::clone(&input);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = other.lock().unwrap();
+                panic!("poison input cell for ownership recovery test");
+            })
+            .join()
+            .is_err()
+        );
+        assert_original_input(return_input(&input));
+    }
+
+    #[test]
+    fn test_take_moves_input_out_of_cell_once() {
+        let input = cell(bytes_input());
+        assert_original_input(take(&input));
+        assert!(input.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_accepted_input_can_be_taken_after_cell_lock_poisoning() {
+        let input = cell(bytes_input());
+        let other = Arc::clone(&input);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = other.lock().unwrap();
+                panic!("poison input cell before accepted ownership transfer");
+            })
+            .join()
+            .is_err()
+        );
+        assert_original_input(take(&input));
+    }
+
+    #[test]
+    fn test_return_input_preserves_rejected_request_ownership() {
+        let input = cell(bytes_input());
+        assert_original_input(return_input(&input));
+        assert!(input.lock().unwrap().is_none());
+    }
 }

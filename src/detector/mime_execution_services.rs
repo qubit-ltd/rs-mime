@@ -337,3 +337,341 @@ fn is_unresolved_recovery(recovery: &RecoveryHandle) -> bool {
         RecoveryPhase::Resolved | RecoveryPhase::Transferred
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::task::Context;
+    use std::task::Poll;
+    use std::task::Wake;
+    use std::task::Waker;
+
+    use qubit_operation::GroupOptions;
+    use qubit_operation::OperationManager;
+
+    use super::MimeExecutionServices;
+    use crate::MimeError;
+    use crate::detector::MimeExecutionPort;
+
+    struct ThreadWake(std::thread::Thread);
+    impl Wake for ThreadWake {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => std::thread::park(),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct NoopPort;
+
+    impl MimeExecutionPort for NoopPort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+
+        fn shutdown(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct FailOncePort(AtomicUsize);
+
+    impl MimeExecutionPort for FailOncePort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(MimeError::ExecutionServicesRequired)
+            } else {
+                Ok(())
+            }
+        }
+
+        fn shutdown(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct RetryShutdownPort(AtomicUsize);
+
+    impl MimeExecutionPort for RetryShutdownPort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+
+        fn shutdown(&self) -> Result<(), MimeError> {
+            if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(MimeError::ExecutionServicesRequired)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn test_service_budget_reservations_track_owned_allocations_and_staging() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let services = MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 32).unwrap();
+        let allocation: Arc<[u8]> = Arc::from(b"shared allocation".as_slice());
+
+        let first = services.reserve_allocation(&allocation).expect("allocation should fit");
+        let alias = services
+            .reserve_allocation(&allocation)
+            .expect("same allocation should be shared");
+        assert_eq!(allocation.len(), services.budget.owned_bytes());
+        drop(first);
+        assert_eq!(allocation.len(), services.budget.owned_bytes());
+        drop(alias);
+        assert_eq!(0, services.budget.owned_bytes());
+
+        let staging_limit = 256 * 1024 * 1024;
+        let staging = services
+            .reserve_staging(staging_limit)
+            .expect("exact default staging budget should fit");
+        assert_eq!(staging_limit, services.budget.staging_bytes());
+        assert!(services.reserve_staging(1).is_none());
+        drop(staging);
+        assert_eq!(0, services.budget.staging_bytes());
+
+        let clone = services.clone();
+        let owned = services
+            .reserve_owned(16 * 1024 * 1024)
+            .expect("the full owned-memory budget should be reservable");
+        assert_eq!(16 * 1024 * 1024, clone.budget.owned_bytes());
+        assert!(clone.reserve_owned(1).is_none(), "clones share the same hard limit");
+        drop(owned);
+        assert_eq!(0, clone.budget.owned_bytes());
+        assert!(
+            clone.reserve_owned(1).is_some(),
+            "dropping the permit releases capacity for every clone"
+        );
+    }
+
+    #[test]
+    fn test_service_prepare_failure_rolls_back_and_retry_is_idempotent() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(FailOncePort(AtomicUsize::new(0)));
+        let services = MimeExecutionServices::new(manager, group, port.clone(), 32).unwrap();
+
+        assert!(matches!(services.prepare(), Err(MimeError::ExecutionServicesRequired)));
+        assert!(!services.is_prepared());
+        assert!(!services.accepts_children());
+        services.prepare().unwrap();
+        assert!(services.is_prepared());
+        services.prepare().unwrap();
+        assert_eq!(
+            2,
+            port.0.load(Ordering::SeqCst),
+            "prepared state does not restart the port"
+        );
+
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+        assert!(matches!(services.prepare(), Err(MimeError::ExecutionServicesRequired)));
+        assert_eq!(
+            2,
+            port.0.load(Ordering::SeqCst),
+            "stopped services cannot prepare again"
+        );
+    }
+
+    #[test]
+    fn test_operation_read_tree_must_be_bound_and_keeps_parent_accounting() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), Arc::new(NoopPort), 32).unwrap());
+        let body_services = Arc::clone(&services);
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            assert!(matches!(
+                body_services.read_tree_for_operation(scope.id()),
+                Err(MimeError::ExecutionServicesRequired)
+            ));
+            let tree = body_services.read_tree_for_parent(scope.id(), 16, 16);
+            body_services.bind_read_tree(scope.id(), &tree);
+            let bound = body_services.read_tree_for_operation(scope.id()).unwrap();
+            assert!(Arc::ptr_eq(&tree, &bound));
+            assert_eq!(16, bound.remaining());
+            assert_eq!(4, bound.reserve(4).unwrap().commit(4));
+            assert_eq!(12, tree.remaining(), "bound reads consume the shared parent allowance");
+            Ok::<_, MimeError>(())
+        }))
+        .unwrap();
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            qubit_operation::OperationOutcome::Succeeded(())
+        ));
+        assert!(block_on(operation.wait_settlement()).all_released());
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+    }
+
+    #[test]
+    fn test_service_recovers_poisoned_lifecycle_and_submission_locks() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let services = MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 32).unwrap();
+
+        let lifecycle = Arc::clone(&services.lifecycle_lock);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = lifecycle.lock().unwrap();
+                panic!("poison lifecycle mutex for recovery test");
+            })
+            .join()
+            .is_err()
+        );
+        services.prepare().expect("prepare should recover the poisoned lock");
+        assert!(services.is_prepared());
+
+        let submission = Arc::clone(&services.submission_lock);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = submission.lock().unwrap();
+                panic!("poison submission mutex for recovery test");
+            })
+            .join()
+            .is_err()
+        );
+        drop(services.submission_guard());
+
+        let shutdown = services.shutdown();
+        assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+        assert!(shutdown.stop_services().unwrap().services_stopped);
+    }
+
+    #[test]
+    fn test_service_tracking_and_shutdown_recover_poisoned_tracking_locks() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let services = MimeExecutionServices::new(manager, group.clone(), Arc::new(NoopPort), 32).unwrap();
+
+        for lock in [
+            Arc::clone(&services.lifecycle_lock),
+            Arc::clone(&services.submission_lock),
+        ] {
+            assert!(
+                std::thread::spawn(move || {
+                    let _guard = lock.lock().unwrap();
+                    panic!("poison MIME execution service lock");
+                })
+                .join()
+                .is_err()
+            );
+        }
+        let observers = Arc::clone(&services.observers);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = observers.lock().unwrap();
+                panic!("poison MIME execution observer lock");
+            })
+            .join()
+            .is_err()
+        );
+        let recoveries = Arc::clone(&services.recoveries);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = recoveries.lock().unwrap();
+                panic!("poison MIME execution recovery lock");
+            })
+            .join()
+            .is_err()
+        );
+
+        let mut operation = block_on(group.try_submit_async(Default::default(), |_| async { Ok::<_, MimeError>(()) }))
+            .expect("a no-op operation should be accepted");
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            qubit_operation::OperationOutcome::Succeeded(())
+        ));
+        assert!(block_on(operation.wait_settlement()).all_released());
+        services.track_observer(operation.observer());
+        services.track_recoveries(&[]);
+        assert_eq!(0, services.unresolved_recovery_count());
+
+        let shutdown = services.shutdown();
+        assert!(
+            block_on(shutdown.wait_services_settled())
+                .expect("shutdown should recover poisoned tracking locks")
+                .operations_settled
+        );
+        assert!(shutdown.stop_services().unwrap().services_stopped);
+        assert_eq!(0, services.unresolved_recovery_count());
+    }
+
+    #[test]
+    fn test_service_rejects_zero_cumulative_read_limit() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let result = MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 0);
+        assert!(matches!(result, Err(MimeError::InvalidOperationBudget)));
+    }
+
+    #[test]
+    fn test_shutdown_observer_retries_failed_stop_after_settlement() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(RetryShutdownPort(AtomicUsize::new(0)));
+        let services = MimeExecutionServices::new(manager, group, port.clone(), 32).unwrap();
+        services.prepare().unwrap();
+
+        let observer = services.shutdown();
+        let initial = observer.snapshot();
+        assert!(!initial.operations_settled);
+        assert!(!initial.services_stopped);
+        assert!(initial.group.is_none());
+        assert!(matches!(
+            block_on(observer.wait_group_shutdown()),
+            Err(MimeError::OperationShutdownPending)
+        ));
+        assert!(matches!(
+            observer.stop_services(),
+            Err(MimeError::OperationShutdownPending)
+        ));
+        assert_eq!(port.0.load(Ordering::SeqCst), 0);
+
+        let settled = block_on(observer.wait_services_settled()).unwrap();
+        assert!(settled.operations_settled);
+        assert!(!settled.services_stopped);
+        assert!(settled.group.is_none());
+
+        assert!(matches!(
+            observer.stop_services(),
+            Err(MimeError::ExecutionServicesRequired)
+        ));
+        let failed_stop = observer.snapshot();
+        assert!(failed_stop.operations_settled);
+        assert!(!failed_stop.services_stopped);
+        assert!(failed_stop.group.is_none());
+
+        let stopped = observer.stop_services().unwrap();
+        assert!(stopped.operations_settled);
+        assert!(stopped.services_stopped);
+        assert!(stopped.group.is_some());
+        assert!(observer.stop_services().unwrap().services_stopped);
+        assert_eq!(port.0.load(Ordering::SeqCst), 2);
+        let report = block_on(observer.wait_group_shutdown()).unwrap();
+        assert_eq!(report.snapshot.active_operations, 0);
+        assert_eq!(report.snapshot.queued_operations, 0);
+    }
+}

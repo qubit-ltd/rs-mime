@@ -541,3 +541,89 @@ impl MimeDetector for Arc<dyn MimeDetector> {
         self.as_ref().detect_path(file_system, path, max_bytes, policy)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use qubit_fs::FileSystem;
+    use qubit_fs::Path as FsPath;
+    use qubit_fs_local::LocalFileSystems;
+    use qubit_fs_local::LocalResourcePolicy;
+    use qubit_fs_local::host_path_to_logical;
+
+    use super::MimeDetector;
+    use crate::MimeDetectionPolicy;
+    use crate::RepositoryMimeDetector;
+
+    fn assert_facade_entry_points<D: MimeDetector>(
+        detector: &D,
+        file: &Path,
+        filesystem: &FileSystem,
+        logical_path: &FsPath,
+    ) {
+        let bytes = b"%PDF-1.7\n";
+        let expected = Some("application/pdf".to_owned());
+        assert!(detector.max_buffer_size() > 0);
+        assert!(matches!(
+            detector.content_requirement(),
+            crate::ContentRequirement::Prefix(limit) if limit > 0
+        ));
+        assert_eq!(expected, detector.detect_by_filename("document.pdf").unwrap());
+        assert_eq!(expected, detector.detect_by_content(bytes).unwrap());
+        assert_eq!(
+            expected,
+            detector
+                .detect(bytes, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
+                .unwrap()
+        );
+        assert_eq!(
+            expected,
+            detector
+                .detect_prefix(bytes, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
+                .unwrap()
+        );
+
+        let mut reader = Cursor::new(bytes.to_vec());
+        reader.set_position(3);
+        assert_eq!(
+            expected,
+            detector
+                .detect_reader(&mut reader, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
+                .unwrap()
+        );
+        assert_eq!(3, reader.position(), "reader facade preserves the caller's offset");
+        assert_eq!(
+            expected,
+            detector.detect_file(file, MimeDetectionPolicy::VerifyContent).unwrap()
+        );
+        assert_eq!(
+            expected,
+            detector
+                .detect_path(
+                    filesystem,
+                    logical_path,
+                    detector.max_buffer_size(),
+                    MimeDetectionPolicy::VerifyContent
+                )
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_boxed_and_shared_detector_facades_forward_public_entry_points() {
+        let file = std::env::temp_dir().join(format!("mime-detector-facade-{}.pdf", std::process::id()));
+        std::fs::write(&file, b"%PDF-1.7\n").unwrap();
+        let filesystem = LocalFileSystems::host(LocalResourcePolicy::unbounded()).unwrap();
+        let logical_path = host_path_to_logical(&file).expect("host path should convert losslessly");
+
+        let boxed: Box<dyn MimeDetector> = Box::new(RepositoryMimeDetector::new().unwrap());
+        assert_facade_entry_points(&boxed, &file, &filesystem, &logical_path);
+        let shared: Arc<dyn MimeDetector> = Arc::new(RepositoryMimeDetector::new().unwrap());
+        assert_facade_entry_points(&shared, &file, &filesystem, &logical_path);
+
+        std::fs::remove_file(file).unwrap();
+    }
+}

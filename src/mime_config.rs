@@ -759,3 +759,19 @@ fn build_ambiguous_mime_mapping(entries: Vec<String>) -> MimeResult<HashMap<Stri
     }
     Ok(mapping)
 }
+
+#[cfg(test)]
+mod tests {
+    use qubit_spi::ProviderSelectionTargetRef;
+
+    use super::MimeConfig;
+
+    #[test]
+    fn test_default_classifier_selection_is_accessible_from_config() {
+        let config = MimeConfig::default();
+        assert!(matches!(
+            config.media_stream_classifier_selection().target(),
+            ProviderSelectionTargetRef::Named(selector) if selector.as_str() == "ffprobe"
+        ));
+    }
+}

@@ -56,16 +56,9 @@ use qubit_spi::provider_descriptor;
 #[test]
 fn test_operation_provider_same_object_and_path_replacement_uses_open_snapshot() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 2 })
-        .unwrap();
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 2)),
-        1024,
-    )
-    .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
     services.prepare().unwrap();
 
     let content = Arc::new(Mutex::new(b"%PDF".to_vec()));
@@ -88,10 +81,7 @@ fn test_operation_provider_same_object_and_path_replacement_uses_open_snapshot()
     let runtime = MimeRuntime::builtin()
         .unwrap()
         .with_execution_services(services.clone())
-        .with_async_provider_selection(
-            &registry,
-            &qubit_spi::ProviderSelection::named("snapshot").unwrap(),
-        )
+        .with_async_provider_selection(&registry, &qubit_spi::ProviderSelection::named("snapshot").unwrap())
         .unwrap();
     let mut operation = runtime
         .try_submit_detection(
@@ -122,29 +112,18 @@ fn test_operation_provider_same_object_and_path_replacement_uses_open_snapshot()
         }
         other => panic!("operation should inspect the already-open object: {other:?}"),
     }
-    assert_eq!(
-        opens.load(Ordering::SeqCst),
-        1,
-        "replacement must not reopen the path"
-    );
+    assert_eq!(opens.load(Ordering::SeqCst), 1, "replacement must not reopen the path");
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).is_ok());
     assert!(shutdown.stop_services().is_ok());
 }
 
 #[test]
-fn operation_provider_driver_loss_is_pending() {
+fn test_operation_provider_driver_loss_is_pending() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 2 })
-        .unwrap();
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 2)),
-        1024,
-    )
-    .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
     services.prepare().unwrap();
 
     let content = Arc::new(Mutex::new(b"%PDF".to_vec()));
@@ -168,10 +147,7 @@ fn operation_provider_driver_loss_is_pending() {
     let runtime = MimeRuntime::builtin()
         .unwrap()
         .with_execution_services(services.clone())
-        .with_async_provider_selection(
-            &registry,
-            &qubit_spi::ProviderSelection::named("snapshot").unwrap(),
-        )
+        .with_async_provider_selection(&registry, &qubit_spi::ProviderSelection::named("snapshot").unwrap())
         .unwrap();
     let operation = runtime
         .try_submit_detection(
@@ -190,10 +166,7 @@ fn operation_provider_driver_loss_is_pending() {
     drop(operation);
 
     let snapshot = observer.snapshot();
-    assert!(
-        snapshot.settlement.is_none(),
-        "settlement must remain pending"
-    );
+    assert!(snapshot.settlement.is_none(), "settlement must remain pending");
     assert!(
         !owner_dropped.load(Ordering::SeqCst),
         "the provider reader owner must survive loss of the caller handle"
@@ -214,6 +187,66 @@ fn operation_provider_driver_loss_is_pending() {
         "the provider reader owner should be released after worker settlement"
     );
 
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).is_ok());
+    assert!(shutdown.stop_services().is_ok());
+}
+
+#[test]
+fn test_operation_provider_random_access_backend_preserves_sample_extent() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
+    services.prepare().unwrap();
+
+    let content = Arc::new(Mutex::new(b"sample-object".to_vec()));
+    let opens = Arc::new(AtomicUsize::new(0));
+    let (read_started, _read_started_rx) = mpsc::channel();
+    let released = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let read_waker = Arc::new(Mutex::new(None));
+    let file_system = qubit_fs::AsyncFileSystem::from_spi(SnapshotGateFileSystem::new(
+        content,
+        Arc::clone(&opens),
+        read_started,
+        released,
+        read_waker,
+        None,
+    ))
+    .unwrap();
+
+    let registry = MimeDetectorRegistry::default();
+    registry.register_async_provider(RandomAccessProvider).unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("random-access").unwrap(),
+        )
+        .unwrap();
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::Provider {
+                file_system: Arc::new(file_system),
+                path: qubit_fs::Path::parse("/sample").unwrap(),
+            },
+            MimeOperationOptions::default(),
+        )
+        .unwrap_or_else(|_| panic!("random-access provider operation should be admitted"));
+
+    match block_on(operation.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(report) => {
+            assert_eq!(report.mime_type.as_deref(), Some("application/x-sampled"));
+            assert_eq!(report.inspected_extent, InspectedExtent::RandomAccessSamples);
+        }
+        other => panic!("random-access backend should report its sample extent: {other:?}"),
+    }
+    assert_eq!(
+        opens.load(Ordering::SeqCst),
+        0,
+        "the runtime must not flatten random-access input to a prefix"
+    );
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).is_ok());
     assert!(shutdown.stop_services().is_ok());
@@ -263,10 +296,7 @@ impl AsyncMimeDetectorBackend for SnapshotBackend {
                     panic!("prefix input should be read once by runtime")
                 }
             };
-            assert_eq!(
-                content, b"%PDF",
-                "the opened reader must retain its original snapshot"
-            );
+            assert_eq!(content, b"%PDF", "the opened reader must retain its original snapshot");
             Ok(MimeCandidates {
                 candidates: vec![MimeCandidate {
                     mime_type: "application/x-snapshot".into(),
@@ -274,6 +304,62 @@ impl AsyncMimeDetectorBackend for SnapshotBackend {
                 }],
                 inspected_extent: InspectedExtent::Prefix(content.len()),
                 retained_prefix: content.to_vec(),
+                staging_bytes: 0,
+            })
+        })
+    }
+}
+
+#[derive(Debug)]
+struct RandomAccessProvider;
+
+impl ProviderMetadata for RandomAccessProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("random-access").unwrap())
+    }
+}
+
+impl AsyncMimeDetectorProvider for RandomAccessProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(RandomAccessBackend))
+    }
+}
+
+#[derive(Debug)]
+struct RandomAccessBackend;
+
+impl AsyncMimeDetectorBackend for RandomAccessBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(1)
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::SamplesSameObject
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        _scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        _options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        Box::pin(async move {
+            let BorrowedMimeInput::Provider { file_system, path } = input else {
+                panic!("random-access provider must receive its provider input directly")
+            };
+            let _ = (file_system, path);
+            Ok(MimeCandidates {
+                candidates: vec![MimeCandidate {
+                    mime_type: "application/x-sampled".into(),
+                    rank: 0,
+                }],
+                inspected_extent: InspectedExtent::RandomAccessSamples,
+                retained_prefix: Vec::new(),
+                staging_bytes: 0,
             })
         })
     }
@@ -396,9 +482,7 @@ impl qubit_io::AsyncInput for SnapshotGateInput {
         if !this.released.load(Ordering::SeqCst) {
             *this.read_waker.lock().unwrap() = Some(context.waker().clone());
             if let Some(sender) = this.read_started.take() {
-                sender
-                    .send(())
-                    .expect("test should observe the blocked read");
+                sender.send(()).expect("test should observe the blocked read");
             }
             return Poll::Pending;
         }
@@ -433,38 +517,21 @@ fn block_on<F: Future>(future: F) -> F::Output {
 #[test]
 fn test_operation_provider_registration_is_pure() {
     let registry = MimeDetectorRegistry::default();
-    let counts = Arc::new([
-        AtomicUsize::new(0),
-        AtomicUsize::new(0),
-        AtomicUsize::new(0),
-    ]);
-    registry
-        .register(CountedProvider(Arc::clone(&counts)))
-        .unwrap();
+    let counts = Arc::new([AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0)]);
+    registry.register(CountedProvider(Arc::clone(&counts))).unwrap();
     let _resolved = registry.resolve().unwrap();
     assert_eq!(registry.provider_ids().len(), 1);
     assert_eq!(counts[0].load(Ordering::SeqCst), 0, "factory calls");
-    assert_eq!(
-        counts[1].load(Ordering::SeqCst),
-        0,
-        "I/O or model initialization"
-    );
+    assert_eq!(counts[1].load(Ordering::SeqCst), 0, "I/O or model initialization");
     assert_eq!(counts[2].load(Ordering::SeqCst), 0, "executor startup");
 }
 
 #[test]
 fn test_file_provider_rejects_classifier_without_same_object_support() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 2 })
-        .unwrap();
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 2)),
-        1024,
-    )
-    .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
     let detector_registry = MimeDetectorRegistry::builtin();
     let classifier_registry = MediaStreamClassifierRegistry::builtin();
     let error = detector_registry
@@ -520,29 +587,16 @@ fn test_operation_provider_sync_only_is_rejected() {
     let registry = MimeDetectorRegistry::default();
     registry.register(provider).unwrap();
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 1 })
-        .unwrap();
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 1)),
-        1024,
-    )
-    .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 1024).unwrap();
     let selection = qubit_spi::ProviderSelection::named("sync-panic").unwrap();
     let result = registry.create_async_backend(&selection, &MimeConfig::default(), &services);
-    assert!(matches!(
-        result,
-        Err(qubit_mime::MimeError::AsyncUnsupported)
-    ));
+    assert!(matches!(result, Err(qubit_mime::MimeError::AsyncUnsupported)));
 
     let detector = crate::support::DirectBackendDetector::new();
     let result = block_on(detector.guess_from_content_async(b"hello"));
-    assert!(matches!(
-        result,
-        Err(qubit_mime::MimeError::AsyncUnsupported)
-    ));
+    assert!(matches!(result, Err(qubit_mime::MimeError::AsyncUnsupported)));
 }
 
 #[derive(Debug)]
@@ -597,6 +651,7 @@ impl AsyncMimeDetectorBackend for AsyncTestBackend {
                 }],
                 inspected_extent: InspectedExtent::Prefix(inspected),
                 retained_prefix: vec![],
+                staging_bytes: 0,
             })
         })
     }
@@ -612,16 +667,9 @@ fn test_operation_provider_selected_backend_runs_async_without_sync_factory() {
         .unwrap();
 
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 4 })
-        .unwrap();
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 4)),
-        1024,
-    )
-    .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 4)), 1024).unwrap();
     services.prepare().unwrap();
     let selection = qubit_spi::ProviderSelection::named("sync-panic").unwrap();
     let runtime = MimeRuntime::builtin()
@@ -650,6 +698,71 @@ fn test_operation_provider_selected_backend_runs_async_without_sync_factory() {
 }
 
 #[test]
+fn test_operation_provider_sync_child_keeps_repository_backend_after_async_selection() {
+    let registry = MimeDetectorRegistry::default();
+    registry.register(SyncPanicProvider).unwrap();
+    registry
+        .register_async_provider(AsyncTestProvider(Arc::new(AtomicUsize::new(0))))
+        .unwrap();
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services = MimeExecutionServices::new(
+        manager.clone(),
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 2)),
+        1024,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(&registry, &qubit_spi::ProviderSelection::named("sync-panic").unwrap())
+        .unwrap();
+
+    let child_slot = Arc::new(Mutex::new(None));
+    let body_slot = Arc::clone(&child_slot);
+    let body_runtime = runtime.clone();
+    let mut parent = manager
+        .try_submit(Default::default(), move |scope| {
+            let child = body_runtime.try_submit_detection_sync_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::from(&b"%PDF-1.7"[..]), InputExtent::Complete),
+                MimeOperationOptions::default(),
+            );
+            match child {
+                Ok(child) => {
+                    *body_slot.lock().unwrap() = Some(child);
+                    Ok::<_, MimeError>(true)
+                }
+                Err(_) => Ok(false),
+            }
+        })
+        .unwrap();
+    assert!(matches!(
+        parent.wait_outcome().unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(true)
+    ));
+    let mut child = child_slot
+        .lock()
+        .unwrap()
+        .take()
+        .expect("sync child should be accepted");
+    match child.wait_outcome().unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(report) => {
+            assert_eq!(report.mime_type.as_deref(), Some("application/pdf"));
+            assert_eq!(report.backend_id, "repository");
+        }
+        other => panic!("sync child should use the runtime repository backend: {other:?}"),
+    }
+
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).is_ok());
+    assert!(shutdown.stop_services().is_ok());
+}
+
+#[test]
 fn test_operation_provider_runtime_keeps_injected_repository() {
     let repository = MimeRepository::from_xml(
         r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
@@ -661,16 +774,9 @@ fn test_operation_provider_runtime_keeps_injected_repository() {
     .expect("custom runtime repository should parse");
     let runtime = MimeRuntime::new(MimeConfig::default(), Arc::new(repository));
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 4 })
-        .unwrap();
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 4)),
-        1024,
-    )
-    .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 4)), 1024).unwrap();
     services.prepare().unwrap();
     let runtime = runtime.with_execution_services(services.clone());
     let mut operation = runtime
@@ -682,10 +788,7 @@ fn test_operation_provider_runtime_keeps_injected_repository() {
     let outcome = block_on(operation.wait_outcome()).unwrap();
     match outcome {
         qubit_operation::OperationOutcome::Succeeded(report) => {
-            assert_eq!(
-                report.mime_type.as_deref(),
-                Some("application/x-runtime-only")
-            );
+            assert_eq!(report.mime_type.as_deref(), Some("application/x-runtime-only"));
         }
         other => panic!("runtime should use its injected repository: {other:?}"),
     }
@@ -728,10 +831,7 @@ struct RefinementBackend {
 }
 
 impl RefinementBackend {
-    fn new(
-        config: MimeConfig,
-        classifier: Option<Arc<dyn AsyncMediaStreamClassifierBackend>>,
-    ) -> Self {
+    fn new(config: MimeConfig, classifier: Option<Arc<dyn AsyncMediaStreamClassifierBackend>>) -> Self {
         let mut core = MimeDetectorCore::new(config);
         core.set_media_stream_classifier(Some(Arc::new(PanicSyncClassifier)));
         core.set_async_media_stream_classifier(classifier);
@@ -765,13 +865,7 @@ impl AsyncMimeDetectorBackend for RefinementBackend {
                 .unwrap_or_default();
             let selected = self
                 .core
-                .select_result_in(
-                    scope,
-                    &from_filename,
-                    &["video/webm".to_owned()],
-                    input,
-                    options,
-                )
+                .select_result_in(scope, &from_filename, &["video/webm".to_owned()], input, options)
                 .await?;
             Ok(MimeCandidates {
                 candidates: selected
@@ -780,6 +874,7 @@ impl AsyncMimeDetectorBackend for RefinementBackend {
                     .collect(),
                 inspected_extent: InspectedExtent::Prefix(4),
                 retained_prefix: Vec::new(),
+                staging_bytes: 0,
             })
         })
     }
@@ -793,10 +888,7 @@ impl MediaStreamClassifier for PanicSyncClassifier {
         panic!("async managed refinement must not call sync classifier")
     }
 
-    fn classify_reader(
-        &self,
-        _reader: &mut dyn std::io::Read,
-    ) -> Result<MediaStreamType, MimeError> {
+    fn classify_reader(&self, _reader: &mut dyn std::io::Read) -> Result<MediaStreamType, MimeError> {
         panic!("async managed refinement must not call sync classifier")
     }
 }
@@ -820,9 +912,7 @@ fn test_operation_selected_async_classifier_refines_managed_runtime_without_sync
 
     let detector_registry = MimeDetectorRegistry::default();
     detector_registry.register(SyncPanicProvider).unwrap();
-    detector_registry
-        .register_async_provider(RefinementProvider)
-        .unwrap();
+    detector_registry.register_async_provider(RefinementProvider).unwrap();
     let classifier_calls = Arc::new(AtomicUsize::new(0));
     let classifier_registry = MediaStreamClassifierRegistry::default();
     classifier_registry
@@ -830,20 +920,13 @@ fn test_operation_selected_async_classifier_refines_managed_runtime_without_sync
         .unwrap();
 
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 8 })
-        .unwrap();
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 8)),
-        1024,
-    )
-    .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 8 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 8)), 1024).unwrap();
     services.prepare().unwrap();
 
-    let runtime = MimeRuntime::new(config, Arc::new(MimeRepository::bundled().clone()))
-        .with_execution_services(services.clone());
+    let runtime =
+        MimeRuntime::new(config, Arc::new(MimeRepository::bundled().clone())).with_execution_services(services.clone());
     let detector_selection = qubit_spi::ProviderSelection::named("async-refinement").unwrap();
     let classifier_selection = qubit_spi::ProviderSelection::named("async-classifier").unwrap();
     let selected = runtime
@@ -858,8 +941,7 @@ fn test_operation_selected_async_classifier_refines_managed_runtime_without_sync
 
     let mut preferred = selected
         .try_submit_detection(
-            OwnedMimeInput::bytes(Arc::from(&b"webm"[..]), InputExtent::Complete)
-                .with_filename("sample.webm"),
+            OwnedMimeInput::bytes(Arc::from(&b"webm"[..]), InputExtent::Complete).with_filename("sample.webm"),
             MimeOperationOptions {
                 policy: MimeDetectionPolicy::PreferFilename,
                 ..MimeOperationOptions::default()
@@ -875,8 +957,7 @@ fn test_operation_selected_async_classifier_refines_managed_runtime_without_sync
 
     let mut refined = selected
         .try_submit_detection(
-            OwnedMimeInput::bytes(Arc::from(&b"webm"[..]), InputExtent::Complete)
-                .with_filename("sample.webm"),
+            OwnedMimeInput::bytes(Arc::from(&b"webm"[..]), InputExtent::Complete).with_filename("sample.webm"),
             MimeOperationOptions::default(),
         )
         .unwrap_or_else(|_| panic!("refining runtime should admit operation"));
@@ -892,8 +973,7 @@ fn test_operation_selected_async_classifier_refines_managed_runtime_without_sync
         .unwrap_or_else(|_| panic!("runtime without classifier should admit operation"));
     let mut unchanged = no_classifier
         .try_submit_detection(
-            OwnedMimeInput::bytes(Arc::from(&b"webm"[..]), InputExtent::Complete)
-                .with_filename("sample.webm"),
+            OwnedMimeInput::bytes(Arc::from(&b"webm"[..]), InputExtent::Complete).with_filename("sample.webm"),
             MimeOperationOptions::default(),
         )
         .unwrap_or_else(|_| panic!("runtime without classifier should admit operation"));
@@ -913,10 +993,7 @@ fn test_operation_selected_async_classifier_refines_managed_runtime_without_sync
 struct SyncPanicProvider;
 
 impl ServiceProvider<qubit_mime::MimeDetectorSpec> for SyncPanicProvider {
-    fn create_configured(
-        &self,
-        _config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    fn create_configured(&self, _config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         panic!("sync-only async selection called sync factory")
     }
 }
@@ -971,9 +1048,7 @@ fn test_operation_classifier_async_factory_is_selected_and_invoked() {
         .register_async_provider(AsyncClassifierProvider(Arc::clone(&calls)))
         .unwrap();
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 2 })
-        .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
     let services = MimeExecutionServices::new(
         manager,
         group.clone(),

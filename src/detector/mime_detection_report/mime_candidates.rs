@@ -17,4 +17,6 @@ pub struct MimeCandidates {
     pub inspected_extent: InspectedExtent,
     /// Retained prefix, bounded by runtime policy.
     pub retained_prefix: Vec<u8>,
+    /// Peak temporary storage charged while detecting this input.
+    pub staging_bytes: u64,
 }

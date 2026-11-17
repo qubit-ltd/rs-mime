@@ -3,7 +3,7 @@
 [中文用户手册](user_guide.zh_CN.md) · [README](../README.md) ·
 [API documentation](https://docs.rs/qubit-mime)
 
-This guide targets Rust applications using `qubit-mime` 0.21 to inspect
+This guide targets Rust applications using `qubit-mime` 0.22 to inspect
 uploaded files, filesystem resources, or media streams. It explains the
 supported detection paths and the operational boundaries that callers must
 handle.
@@ -82,7 +82,7 @@ Add the crate to `Cargo.toml`:
 
 ```toml
 [dependencies]
-qubit-mime = "0.21"
+qubit-mime = "^0.22"
 ```
 
 `RepositoryMimeDetector::new()` uses the embedded repository and needs no
@@ -93,7 +93,7 @@ The example below uses `Config`; implementing application providers also uses `S
 
 ```toml
 [dependencies]
-qubit-mime = "0.21"
+qubit-mime = "^0.22"
 qubit-config = "0.15"
 qubit-spi = "0.14"
 ```
@@ -167,7 +167,7 @@ guide:
 
 ```toml
 [dependencies]
-qubit-mime = "0.21"
+qubit-mime = "^0.22"
 qubit-config = "0.15"
 qubit-spi = "0.14"
 ```
@@ -248,15 +248,13 @@ method is not overridden. It returns `CompleteContentRequired` when the backend
 declares `Complete`. A backend requiring the whole resource must override
 `guess_from_reader`, implement bounded reading and position restoration, and
 override `guess_from_file` when local file handling needs special behavior.
-Through the asynchronous provider path, the built-in `file`
-provider runs staging, command execution, and cleanup on a blocking thread pool.
-A custom backend's default async content hook calls its synchronous method, so
-backends that may block should override it. Dropping an in-flight future does
-not guarantee cancellation of started work. Prefix reads may temporarily keep
-both the provider buffer and an owned worker copy; `max_buffer_size` limits each
-buffer, not their combined memory use. `MimeDetectorAdapter` delegates to that reader hook through
-a view whose offset zero is the caller's current position; a custom
-random-access override remains supported. The adapter uses
+Managed async operations select an explicit async backend; a sync-only backend
+returns `AsyncUnsupported` instead of falling back to synchronous work. The
+managed path requires configured execution services and finite budgets, and
+separates business outcome from resource settlement. Dropping an in-flight
+future does not prove that accepted work has stopped. `MimeDetectorAdapter`
+delegates to its reader hook through a view whose offset zero is the caller's
+current position; a custom random-access override remains supported. The adapter uses
 `MimeConfig::max_buffer_size()` for prefix requests. If no filename is supplied
 and matching precise-detection mappings associate a MIME type with different
 pairs, refinement preserves the original MIME type without classification.
@@ -303,7 +301,7 @@ Link-time provider discovery is opt-in. An application can enable it with:
 
 ```toml
 [dependencies]
-qubit-mime = { version = "0.21", features = ["inventory"] }
+qubit-mime = { version = "^0.22", features = ["inventory"] }
 qubit-magika = { version = "0.18", features = ["inventory"] }
 ```
 
@@ -395,7 +393,10 @@ submission or that `ffprobe` is available through every async selection.
 observer. Observe operation settlements, stop MIME execution services from an
 external synchronous context with `stop_services()`, then observe group shutdown
 with `wait_group_shutdown()`. A pending settlement is unresolved work, not a
-release confirmation. The 0.22.0 target remains under acceptance; see the
+release confirmation. If a settlement reports `RecoveryRequired`, resolve or
+transfer its recovery handles before stopping services; `stop_services()`
+returns `OperationShutdownPending` while recovery is unresolved and does not
+retry it automatically. The 0.22.0 target remains under acceptance; see the
 [acceptance record](acceptance-0.22.0-operation-0.2.zh_CN.md) for tested behavior
 and outstanding lifecycle checks.
 

@@ -36,3 +36,28 @@ impl<T> Completer<T> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::task::Context;
+    use std::task::Poll;
+
+    use super::super::completion_pair;
+
+    #[test]
+    fn test_completion_sender_recovers_a_poisoned_shared_state() {
+        let (sender, receiver) = completion_pair::<u8>();
+        let state = Arc::clone(&sender.0);
+        let poisoner = std::thread::spawn(move || {
+            let _state = state.lock().unwrap();
+            panic!("poison completion state before publishing");
+        });
+        assert!(poisoner.join().is_err());
+
+        sender.complete(27);
+        let mut receiver = Box::pin(receiver);
+        let mut context = Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(receiver.as_mut().poll(&mut context), Poll::Ready(27)));
+    }
+}

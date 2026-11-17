@@ -47,6 +47,7 @@ impl AsyncMimeDetectorBackend for Detector {
                 candidates: vec![],
                 inspected_extent: InspectedExtent::Prefix(0),
                 retained_prefix: vec![],
+                staging_bytes: 0,
             })
         })
     }

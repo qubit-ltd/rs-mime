@@ -75,3 +75,99 @@ impl ReadTreeRegistry {
             .and_then(Weak::upgrade)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::task::Context;
+    use std::task::Poll;
+    use std::task::Wake;
+    use std::task::Waker;
+
+    use qubit_operation::OperationId;
+    use qubit_operation::OperationOutcome;
+
+    use super::ReadTreeContext;
+    use super::ReadTreeRegistry;
+
+    struct ThreadWake(std::thread::Thread);
+
+    impl Wake for ThreadWake {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        let mut future = Box::pin(future);
+        loop {
+            match Pin::as_mut(&mut future).poll(&mut context) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => std::thread::park(),
+            }
+        }
+    }
+
+    fn operation_id() -> OperationId {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        let mut operation = group
+            .as_async()
+            .try_submit(Default::default(), |scope| async move { Ok::<_, ()>(scope.id()) })
+            .unwrap();
+
+        match block_on(operation.wait_outcome()).unwrap() {
+            OperationOutcome::Succeeded(id) => id,
+            other => panic!("operation should return its own identity: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_bound_operation_reuses_parent_tree_and_expires_weak_registration() {
+        let registry = ReadTreeRegistry::default();
+        let operation = operation_id();
+        let root = ReadTreeContext::new(8);
+
+        assert!(registry.for_operation(operation).is_none());
+        registry.bind(operation, &root);
+        assert!(Arc::ptr_eq(
+            &root,
+            &registry
+                .for_operation(operation)
+                .expect("bound root should be discoverable")
+        ));
+
+        let child = registry.child_for_parent(operation, 100, 5);
+        assert!(Arc::ptr_eq(&root.tree, &child.tree));
+        assert_eq!(child.reserve(5).unwrap().commit(5), 5);
+        assert_eq!(root.consumed(), 5);
+
+        drop(root);
+        assert!(registry.for_operation(operation).is_some());
+        drop(child);
+        assert!(registry.for_operation(operation).is_none());
+    }
+
+    #[test]
+    fn test_expired_operation_tree_is_replaced_with_new_limits() {
+        let registry = ReadTreeRegistry::default();
+        let operation = operation_id();
+
+        let first = registry.child_for_parent(operation, 3, 3);
+        assert_eq!(first.reserve(3).unwrap().commit(3), 3);
+        drop(first);
+        assert!(registry.for_operation(operation).is_none());
+
+        let replacement = registry.child_for_parent(operation, 6, 6);
+        assert_eq!(replacement.reserve(6).unwrap().commit(6), 6);
+        assert_eq!(replacement.tree.consumed(), 6);
+    }
+}

@@ -7,6 +7,7 @@
 // =============================================================================
 //! MIME detector implementations.
 
+/// Asynchronous MIME backend contracts and random-access capability.
 pub mod async_mime_detector_backend;
 pub mod content_requirement;
 pub(crate) mod detection_source;
@@ -14,6 +15,7 @@ pub(crate) mod file_based_mime_detector;
 pub(crate) mod file_command_mime_detector;
 pub(crate) mod file_command_mime_detector_provider;
 mod internal;
+/// Owned results and byte-accounting summaries produced by managed detection.
 pub mod mime_detection_report;
 pub mod mime_execution_services;
 pub mod mime_input;

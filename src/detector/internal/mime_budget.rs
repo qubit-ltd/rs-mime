@@ -11,8 +11,8 @@
 mod counters;
 use counters::Counters;
 #[path = "mime_budget/mime_budget.rs"]
-mod mime_budget;
-pub(in crate::detector) use mime_budget::MimeBudget;
+mod budget;
+pub(in crate::detector) use budget::MimeBudget;
 #[path = "mime_budget/staging_budget.rs"]
 mod staging_budget;
 pub(crate) use staging_budget::StagingBudget;
@@ -84,6 +84,44 @@ mod tests {
     }
 
     #[test]
+    fn test_mime_budget_overflow_preserves_counters_and_exact_limits_release() {
+        let budget = MimeBudget::new(Limits {
+            owned: usize::MAX,
+            staging: u64::MAX,
+        });
+        let owned = budget.reserve_owned(usize::MAX).unwrap();
+        assert_eq!(budget.owned_bytes(), usize::MAX);
+        assert!(budget.reserve_owned(1).is_none());
+        assert_eq!(budget.owned_bytes(), usize::MAX);
+        drop(owned);
+        assert_eq!(budget.owned_bytes(), 0);
+
+        let staging = budget.reserve_staging(u64::MAX).unwrap();
+        assert_eq!(budget.staging_bytes(), u64::MAX);
+        assert!(budget.reserve_staging(1).is_none());
+        assert_eq!(budget.staging_bytes(), u64::MAX);
+        drop(staging);
+        assert_eq!(budget.staging_bytes(), 0);
+    }
+
+    #[test]
+    fn test_mime_budget_alias_permits_share_reservation_until_last_drop() {
+        let budget = MimeBudget::new(Limits { owned: 8, staging: 0 });
+        let allocation: Arc<[u8]> = Arc::from([7u8; 8]);
+        let alias = Arc::clone(&allocation);
+        let permit = budget.reserve_allocation(&allocation).unwrap();
+        let alias_permit = budget.reserve_allocation(&alias).unwrap();
+
+        assert_eq!(budget.owned_bytes(), 8);
+        drop(permit);
+        assert_eq!(budget.owned_bytes(), 8);
+        assert!(budget.reserve_owned(1).is_none());
+        drop(alias_permit);
+        assert_eq!(budget.owned_bytes(), 0);
+        assert!(budget.reserve_owned(8).is_some());
+    }
+
+    #[test]
     fn test_read_tree_counts_committed_bytes_and_releases_rolled_back_reservations() {
         let root = ReadTreeContext::new(6);
         let tighter_child = root.child(3);
@@ -106,5 +144,39 @@ mod tests {
         let independent = ReadTreeContext::new(4);
         assert_eq!(independent.reserve(4).unwrap().commit(4), 4);
         assert_eq!(root.tree.consumed(), 5);
+    }
+
+    #[test]
+    fn test_read_permit_enforces_exact_boundaries_and_releases_unused_capacity() {
+        let root = ReadTreeContext::new(u64::MAX);
+        let child = root.child(5);
+        let permit = child.reserve(5).unwrap();
+        assert_eq!(child.remaining(), 0);
+        assert!(child.reserve(1).is_none());
+
+        assert_eq!(permit.commit(2), 2);
+        assert_eq!(root.tree.consumed(), 2);
+        assert_eq!(child.consumed(), 2);
+        assert_eq!(child.remaining(), 3);
+        assert_eq!(child.reserve(3).unwrap().commit(3), 3);
+        assert_eq!(child.remaining(), 0);
+        assert_eq!(root.tree.consumed(), 5);
+    }
+
+    #[test]
+    fn test_read_reservation_rollback_restores_tree_and_ancestor_capacity() {
+        let root = ReadTreeContext::new(6);
+        let child = root.child(4);
+        {
+            let pending = child.reserve(4).unwrap();
+            assert_eq!(child.remaining(), 0);
+            assert_eq!(root.tree.consumed(), 0);
+            drop(pending);
+        }
+        assert_eq!(child.remaining(), 4);
+        assert_eq!(child.reserve(4).unwrap().commit(4), 4);
+        assert_eq!(child.remaining(), 0);
+        assert_eq!(root.tree.consumed(), 4);
+        assert_eq!(root.remaining(), 2);
     }
 }

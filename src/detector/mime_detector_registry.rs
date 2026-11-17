@@ -195,11 +195,8 @@ impl MimeDetectorRegistry {
         drop(providers);
         // Confirm a known synchronous selector is an unsupported capability,
         // while keeping unknown-selection diagnosis on the existing resolver.
-        if self.resolve_selected(selection).is_ok() {
-            Err(crate::MimeError::AsyncUnsupported)
-        } else {
-            Err(crate::MimeError::AsyncUnsupported)
-        }
+        let _ = self.resolve_selected(selection);
+        Err(crate::MimeError::AsyncUnsupported)
     }
 
     /// Returns the process-wide MIME detector Registry.
@@ -377,5 +374,208 @@ impl Default for MimeDetectorRegistry {
             providers: ProviderRegistry::default(),
             async_providers: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use qubit_spi::ProviderDefinition;
+    use qubit_spi::ProviderSelection;
+
+    use super::MimeDetectorRegistry;
+    use super::MimeDetectorSpec;
+    use super::RepositoryMimeDetectorProvider;
+
+    fn services() -> crate::MimeExecutionServices {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        crate::MimeExecutionServices::new(manager, group, Arc::new(crate::FixedMimeExecutionPort::new(1, 1)), 1024)
+            .unwrap()
+    }
+
+    #[test]
+    fn test_shared_provider_registration_drives_default_resolution() {
+        let registry = MimeDetectorRegistry::default();
+        let shared: Arc<dyn ProviderDefinition<MimeDetectorSpec>> = Arc::new(RepositoryMimeDetectorProvider);
+        registry
+            .register_shared(shared)
+            .expect("shared provider should register in an empty registry");
+        registry
+            .set_default_selection(ProviderSelection::named("repository").unwrap())
+            .expect("registered provider should be selectable as the default");
+
+        let selection = registry.default_selection();
+        assert_eq!(ProviderSelection::named("repository").unwrap(), selection);
+        assert_eq!("repository", registry.provider_ids()[0].as_str());
+        let detector = registry
+            .resolve()
+            .expect("stored default should resolve")
+            .create()
+            .expect("shared repository provider should create a detector");
+        assert_eq!(
+            Some("application/pdf".to_owned()),
+            detector
+                .detect_by_filename("document.pdf")
+                .expect("resolved detector should serve filename requests")
+        );
+
+        let clone = registry.clone();
+        assert_eq!(registry.provider_ids(), clone.provider_ids());
+        assert_eq!(registry.default_selection(), clone.default_selection());
+        registry.seal();
+        assert!(registry.is_sealed());
+    }
+
+    #[test]
+    fn test_default_registry_starts_empty_and_auto_selection_is_unresolved() {
+        let registry = MimeDetectorRegistry::default();
+
+        assert!(registry.provider_ids().is_empty());
+        assert!(registry.resolve().is_err());
+        assert!(!registry.is_sealed());
+        assert_eq!(ProviderSelection::auto(), registry.default_selection());
+
+        registry
+            .register(RepositoryMimeDetectorProvider)
+            .expect("an empty default registry should accept its first provider");
+        let detector = registry
+            .resolve()
+            .expect("auto selection should resolve after registration")
+            .create()
+            .expect("registered repository provider should construct");
+        assert_eq!(
+            Some("application/pdf".to_owned()),
+            detector.detect_by_filename("document.pdf").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_global_registry_returns_process_stable_facade() {
+        let first = MimeDetectorRegistry::global();
+        let second = MimeDetectorRegistry::global();
+        assert!(std::ptr::eq(first, second));
+        assert!(first.provider_ids().iter().any(|id| id.as_str() == "repository"));
+    }
+
+    #[test]
+    fn test_builtin_async_providers_create_backends_without_spawning_commands() {
+        let registry = MimeDetectorRegistry::builtin();
+        let services = services();
+        let config = crate::MimeConfig::default();
+
+        let (auto_id, auto_backend) = registry
+            .create_async_backend(&ProviderSelection::auto(), &config, &services)
+            .expect("automatic async selection should use the stable repository default");
+        assert_eq!("repository", auto_id);
+        assert!(matches!(
+            auto_backend.content_requirement(),
+            crate::ContentRequirement::Prefix(_)
+        ));
+
+        let (repository_id, repository_backend) = registry
+            .create_async_backend(&ProviderSelection::named("repository").unwrap(), &config, &services)
+            .expect("repository async provider should construct without external services");
+        assert_eq!("repository", repository_id);
+        assert!(matches!(
+            repository_backend.content_requirement(),
+            crate::ContentRequirement::Prefix(_)
+        ));
+
+        let (file_id, file_backend) = registry
+            .create_async_backend(&ProviderSelection::named("file").unwrap(), &config, &services)
+            .expect("file async backend construction should not probe the command");
+        assert_eq!("file", file_id);
+        assert_eq!(crate::ContentRequirement::Complete, file_backend.content_requirement());
+    }
+
+    #[test]
+    fn test_async_provider_chain_skips_unknown_selector_and_uses_first_registered_backend() {
+        let registry = MimeDetectorRegistry::builtin();
+        let selection = ProviderSelection::chain(["not-registered", "file", "repository"])
+            .expect("chain selectors should be valid");
+
+        let (id, backend) = registry
+            .create_async_backend(&selection, &crate::MimeConfig::default(), &services())
+            .expect("chain should continue to the first available async provider");
+
+        assert_eq!("file", id);
+        assert_eq!(crate::ContentRequirement::Complete, backend.content_requirement());
+    }
+
+    #[test]
+    fn test_duplicate_shared_provider_registration_is_atomic() {
+        let registry = MimeDetectorRegistry::default();
+        let provider: Arc<dyn ProviderDefinition<MimeDetectorSpec>> = Arc::new(RepositoryMimeDetectorProvider);
+        registry
+            .register_shared(provider)
+            .expect("first shared provider registration should succeed");
+        let duplicate: Arc<dyn ProviderDefinition<MimeDetectorSpec>> = Arc::new(RepositoryMimeDetectorProvider);
+
+        assert!(registry.register_shared(duplicate).is_err());
+        assert_eq!(1, registry.provider_ids().len());
+        assert_eq!("repository", registry.provider_ids()[0].as_str());
+    }
+
+    #[test]
+    fn test_registry_selection_errors_and_seal_preserve_catalog_state() {
+        let registry = MimeDetectorRegistry::builtin();
+        let missing = ProviderSelection::named("missing-provider").unwrap();
+        registry
+            .set_default_selection(missing.clone())
+            .expect("selection mutation is separate from provider resolution");
+        assert_eq!(missing, registry.default_selection());
+        assert!(registry.resolve().is_err());
+        assert!(registry.resolve_selected(&missing).is_err());
+        registry
+            .set_default_selection(ProviderSelection::named("repository").unwrap())
+            .unwrap();
+        registry.seal();
+        assert!(registry.is_sealed());
+        assert!(
+            registry
+                .set_default_selection(ProviderSelection::named("file").unwrap())
+                .is_err()
+        );
+        assert!(registry.register(RepositoryMimeDetectorProvider).is_err());
+        assert_eq!(2, registry.provider_ids().len());
+    }
+
+    #[test]
+    fn test_duplicate_async_provider_selector_is_rejected_without_replacing_builtin() {
+        let registry = MimeDetectorRegistry::builtin();
+        assert!(
+            registry
+                .register_async_provider(RepositoryMimeDetectorProvider)
+                .is_err()
+        );
+        let (id, backend) = registry
+            .create_async_backend(
+                &ProviderSelection::named("repository").unwrap(),
+                &crate::MimeConfig::default(),
+                &services(),
+            )
+            .unwrap();
+        assert_eq!("repository", id);
+        assert!(matches!(
+            backend.content_requirement(),
+            crate::ContentRequirement::Prefix(_)
+        ));
+    }
+
+    #[test]
+    fn test_async_resolution_of_unknown_selector_returns_unsupported() {
+        let registry = MimeDetectorRegistry::builtin();
+        let services = services();
+
+        assert!(matches!(
+            registry.create_async_backend(
+                &ProviderSelection::named("not-registered").unwrap(),
+                &crate::MimeConfig::default(),
+                &services
+            ),
+            Err(crate::MimeError::AsyncUnsupported)
+        ));
     }
 }

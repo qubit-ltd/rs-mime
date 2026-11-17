@@ -54,31 +54,31 @@ pub enum MimeError {
     OperationAdmission(
         /// Admission failure returned by the shared operation manager.
         #[source]
-        AdmissionError,
+        Box<AdmissionError>,
     ),
     /// A MIME command child stopped before producing a result.
     #[error("MIME command operation stopped: {0:?}")]
     OperationStopped(
         /// Stop reason and acceptance state for the child operation.
-        StopReport,
+        Box<StopReport>,
     ),
     /// A MIME command child panicked while executing.
     #[error("MIME command operation panicked: {0:?}")]
     OperationPanicked(
         /// Panic details reported by the operation executor.
-        PanicSummary,
+        Box<PanicSummary>,
     ),
     /// The shared executor failed to run a MIME command child.
     #[error("MIME command operation could not execute: {0:?}")]
     OperationExecutionFailed(
         /// Execution failure reported by the shared executor.
-        ExecutionFailure,
+        Box<ExecutionFailure>,
     ),
     /// A required MIME command child failed.
     #[error("required MIME command child failed: {0:?}")]
     ChildOperationFailed(
         /// Summary of a required child operation failure.
-        ChildFailureSummary,
+        Box<ChildFailureSummary>,
     ),
     /// MIME shutdown observation is not ready for the requested stage.
     #[error("MIME operation shutdown is still pending")]
@@ -414,12 +414,7 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::InvalidXmlAttribute`](crate::MimeError::InvalidXmlAttribute)
     /// value.
-    pub(crate) fn invalid_attr(
-        element: &str,
-        attribute: &str,
-        value: &str,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub(crate) fn invalid_attr(element: &str, attribute: &str, value: &str, reason: impl Into<String>) -> Self {
         Self::InvalidXmlAttribute {
             element: element.to_owned(),
             attribute: attribute.to_owned(),
@@ -453,9 +448,7 @@ impl MimeError {
     /// A [`MimeError::InvalidMagicMatcher`](crate::MimeError::InvalidMagicMatcher)
     /// value.
     pub(crate) fn invalid_matcher(reason: impl Into<String>) -> Self {
-        Self::InvalidMagicMatcher {
-            reason: reason.into(),
-        }
+        Self::InvalidMagicMatcher { reason: reason.into() }
     }
 
     /// Builds an invalid classifier input error.
@@ -466,8 +459,6 @@ impl MimeError {
     /// # Returns
     /// A [`MimeError::InvalidClassifierInput`](crate::MimeError::InvalidClassifierInput) value.
     pub(crate) fn invalid_classifier_input(reason: impl Into<String>) -> Self {
-        Self::InvalidClassifierInput {
-            reason: reason.into(),
-        }
+        Self::InvalidClassifierInput { reason: reason.into() }
     }
 }

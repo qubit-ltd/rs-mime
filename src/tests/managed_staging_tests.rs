@@ -422,6 +422,23 @@ fn test_managed_staging_cancel_before_create() {
 }
 
 #[test]
+fn test_managed_staging_worker_debug_reports_lifecycle_state() {
+    let worker = FixedMimeExecutionPort::new(2, 3);
+    let configured = format!("{worker:?}");
+    assert!(configured.contains("worker_count: 2"));
+    assert!(configured.contains("prepared: false"));
+    assert!(configured.contains("stopped: false"));
+
+    worker.prepare().unwrap();
+    let prepared = format!("{worker:?}");
+    assert!(prepared.contains("prepared: true"));
+
+    worker.shutdown().unwrap();
+    let stopped = format!("{worker:?}");
+    assert!(stopped.contains("stopped: true"));
+}
+
+#[test]
 fn test_managed_staging_worker_queue_is_bounded_and_shutdown_joins() {
     let worker = FixedMimeExecutionPort::new(1, 1);
     worker.prepare().unwrap();
@@ -513,6 +530,57 @@ fn test_managed_staging_owner_waits_for_scope_end_and_all_references() {
 }
 
 #[test]
+fn test_managed_staging_open_scope_does_not_clean_after_last_reference_drops() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
+    let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap();
+    services.prepare().unwrap();
+    let limits = ManagedStagingLimits {
+        max_bytes: 128,
+        budget: services.staging_budget(),
+        worker: MimeExecutionWorker::new(port),
+    };
+    let read_tree = services.new_read_tree(128);
+    let body_read_tree = Arc::clone(&read_tree);
+    let input = OwnedMimeInput::bytes(Arc::from(b"scope still open".as_slice()), InputExtent::Complete);
+    let path_slot = Arc::new(std::sync::Mutex::new(None));
+    let body_path_slot = Arc::clone(&path_slot);
+    let scope_open = Arc::new(Barrier::new(2));
+    let body_scope_open = Arc::clone(&scope_open);
+    let scope_release = Arc::new(Barrier::new(2));
+    let body_scope_release = Arc::clone(&scope_release);
+    let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+        let staged = stage_owned_in(&scope, input, limits, body_read_tree).await?;
+        *body_path_slot.lock().unwrap() = Some(staged.path()?);
+        drop(staged);
+
+        // Keep the operation scope open after its final resource reference is
+        // gone so cleanup cannot be mistaken for an ordinary reference drop.
+        body_scope_open.wait();
+        body_scope_release.wait();
+        Ok::<(), crate::MimeError>(())
+    }))
+    .unwrap();
+
+    scope_open.wait();
+    let path = path_slot.lock().unwrap().as_ref().unwrap().clone();
+    assert!(path.exists(), "an open scope retains the registered temp owner");
+    assert_eq!(16, services.staging_budget().used_bytes());
+    scope_release.wait();
+    assert!(matches!(
+        block_on(handle.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(())
+    ));
+    assert!(block_on(handle.wait_settlement()).all_released());
+    assert!(!path.exists(), "scope end triggers cleanup after references are gone");
+    assert_eq!(0, services.staging_budget().used_bytes());
+    let shutdown = services.shutdown();
+    block_on(shutdown.wait_services_settled()).unwrap();
+    shutdown.stop_services().unwrap();
+}
+
+#[test]
 fn test_managed_staging_parent_can_wait_for_child_settlement_while_holding_resource() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
@@ -526,47 +594,42 @@ fn test_managed_staging_parent_can_wait_for_child_settlement_while_holding_resou
     };
     let read_tree = services.new_read_tree(128);
     let body_read_tree = Arc::clone(&read_tree);
-    let input = OwnedMimeInput::bytes(
-        Arc::from(b"parent held resource".as_slice()),
-        InputExtent::Complete,
-    );
+    let input = OwnedMimeInput::bytes(Arc::from(b"parent held resource".as_slice()), InputExtent::Complete);
     let child_entered = Arc::new(Barrier::new(2));
     let child_release = Arc::new(Barrier::new(2));
     let body_child_entered = Arc::clone(&child_entered);
     let body_child_release = Arc::clone(&child_release);
-    let mut handle = block_on(
-        group.try_submit_async(Default::default(), move |scope| async move {
-            let staged = stage_owned_in(&scope, input, limits, body_read_tree).await?;
-            let path = staged.path()?;
-            let child_resource = staged.clone();
-            let child_entered = Arc::clone(&body_child_entered);
-            let child_release = Arc::clone(&body_child_release);
-            let child = scope
-                .manager()
-                .as_async()
-                .try_submit(Default::default(), move |_child_scope| async move {
-                    child_entered.wait();
-                    child_release.wait();
-                    drop(child_resource);
-                    Ok::<(), crate::MimeError>(())
-                })
-                .unwrap();
+    let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+        let staged = stage_owned_in(&scope, input, limits, body_read_tree).await?;
+        let path = staged.path()?;
+        let child_resource = staged.clone();
+        let child_entered = Arc::clone(&body_child_entered);
+        let child_release = Arc::clone(&body_child_release);
+        let child = scope
+            .manager()
+            .as_async()
+            .try_submit(Default::default(), move |_child_scope| async move {
+                child_entered.wait();
+                child_release.wait();
+                drop(child_resource);
+                Ok::<(), crate::MimeError>(())
+            })
+            .unwrap();
 
-            // Barriers explicitly order child execution and release while the
-            // parent continues to hold its resource reference.
-            let release_entered = body_child_entered;
-            let release = body_child_release;
-            let release_thread = std::thread::spawn(move || {
-                release_entered.wait();
-                release.wait();
-            });
-            let child_report = child.wait_settlement().await;
-            release_thread.join().unwrap();
-            assert!(child_report.all_released());
-            assert!(path.exists(), "the parent reference keeps its resource alive");
-            Ok::<_, crate::MimeError>(staged)
-        }),
-    )
+        // Barriers explicitly order child execution and release while the
+        // parent continues to hold its resource reference.
+        let release_entered = body_child_entered;
+        let release = body_child_release;
+        let release_thread = std::thread::spawn(move || {
+            release_entered.wait();
+            release.wait();
+        });
+        let child_report = child.wait_settlement().await;
+        release_thread.join().unwrap();
+        assert!(child_report.all_released());
+        assert!(path.exists(), "the parent reference keeps its resource alive");
+        Ok::<_, crate::MimeError>(staged)
+    }))
     .unwrap();
     let resource = match block_on(handle.wait_outcome()).unwrap() {
         qubit_operation::OperationOutcome::Succeeded(resource) => resource,

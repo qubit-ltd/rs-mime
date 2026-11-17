@@ -292,17 +292,17 @@ impl MimeRuntime {
         let body_backend_id = backend_id.clone();
         let body_max_buffer_size = max_buffer_size;
         let body = move |scope: OperationScope| {
-            mime_submission::detect(
+            mime_submission::detect(mime_submission::MimeSubmission {
                 scope,
-                mime_submission::take(&body_cell),
-                body_services,
+                input: mime_submission::take(&body_cell),
+                services: body_services,
                 backend,
-                body_backend_id,
-                body_max_buffer_size,
-                body_options,
-                Some(permit),
-                body_tree,
-            )
+                backend_id: body_backend_id,
+                max_buffer_size: body_max_buffer_size,
+                options: body_options,
+                permit: Some(permit),
+                read_tree: body_tree,
+            })
         };
         let result = if let Some(parent) = parent {
             match parent.manager().with_group(&services.root_group) {
@@ -360,6 +360,12 @@ impl MimeRuntime {
                 input,
             });
         }
+        if matches!(&input, OwnedMimeInput::Provider { .. }) {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::AsyncUnsupported,
+                input,
+            });
+        }
         let detector = match self.create_detector() {
             Ok(detector) => detector,
             Err(_) => {
@@ -409,10 +415,13 @@ impl MimeRuntime {
                         mime_type,
                         backend_id: "repository".into(),
                         inspected_extent,
-                        budget: Default::default(),
+                        budget: super::mime_detection_report::MimeBudgetSummary {
+                            owned_bytes: content.len(),
+                            ..Default::default()
+                        },
                     })
                 }
-                OwnedMimeInput::Provider { .. } => Err(crate::MimeError::AsyncUnsupported),
+                OwnedMimeInput::Provider { .. } => unreachable!("provider input is rejected before admission"),
             };
             let _scope = scope;
             let _permit = permit;

@@ -3,7 +3,7 @@
 [English user guide](user_guide.md) · [README](../README.zh_CN.md) ·
 [API 文档](https://docs.rs/qubit-mime)
 
-本手册面向使用 `qubit-mime` 0.21 检查上传文件、文件系统资源或媒体流的 Rust 应用。
+本手册面向使用 `qubit-mime` 0.22 检查上传文件、文件系统资源或媒体流的 Rust 应用。
 内容覆盖可用的检测入口，以及调用方需要自行处理的运行边界。
 
 ## 手册目标与读者
@@ -66,7 +66,7 @@ fn main() -> qubit_mime::MimeResult<()> {
 
 ```toml
 [dependencies]
-qubit-mime = "0.21"
+qubit-mime = "^0.22"
 ```
 
 `RepositoryMimeDetector::new()` 使用内置仓库，不需要外部命令。若要显式选择 Provider，
@@ -76,7 +76,7 @@ qubit-mime = "0.21"
 
 ```toml
 [dependencies]
-qubit-mime = "0.21"
+qubit-mime = "^0.22"
 qubit-config = "0.15"
 qubit-spi = "0.14"
 ```
@@ -142,7 +142,7 @@ classifier。
 
 ```toml
 [dependencies]
-qubit-mime = "0.21"
+qubit-mime = "^0.22"
 qubit-config = "0.15"
 qubit-spi = "0.14"
 ```
@@ -234,7 +234,7 @@ EOF 时停止。该上限来自 MIME 配置；所选文件名仓库中的 magic 
 
 ```toml
 [dependencies]
-qubit-mime = { version = "0.21", features = ["inventory"] }
+qubit-mime = { version = "^0.22", features = ["inventory"] }
 qubit-magika = { version = "0.18", features = ["inventory"] }
 ```
 
@@ -302,6 +302,8 @@ settlement 诊断。
 调用 `MimeExecutionServices::shutdown()` 会关闭新的根提交并返回 observer。之后应等待已提交
 操作的 settlement，在外部同步上下文调用 `stop_services()` 停止 MIME 执行服务，再通过
 `wait_group_shutdown()` 观察组关闭。Pending 表示工作仍未解决，不是资源已释放的确认。
+如果 settlement 报告 `RecoveryRequired`，须先处理或转交其中的 recovery handle；未解决时
+`stop_services()` 会返回 `OperationShutdownPending`，不会自动重试恢复。
 0.22.0 目标仍处于验收阶段；已验证行为和未完成的生命周期检查见[验收记录](acceptance-0.22.0-operation-0.2.zh_CN.md)。
 
 ## 错误与诊断
@@ -332,10 +334,11 @@ settlement 诊断。
 classifier；直接实现 `MimeDetector` 的类型自行决定其行为。异步路径入口默认读取请求的内容
 前缀。前缀后端可以在不加载完整资源的情况下检查大文件；声明
 `ContentRequirement::Complete` 后端不能使用前缀入口。自定义完整内容后端可以通过覆盖独立的
-`guess_from_async_provider_path` hook 检查异步 Provider 路径。通过异步 Provider 路径调用时，内置
-`file` provider 会在线程池执行暂存、命令和清理。自定义 backend 的默认异步内容 hook 会调用同步
-方法；可能阻塞的 backend 应覆盖该 hook。丢弃 future 不保证取消已启动的任务。前缀读取期间可能同时
-保留 Provider 缓冲区和 worker 的 owned 副本；`max_buffer_size` 限制单个缓冲区，不限制两者合计内存。
+`guess_from_async_provider_path` hook 检查异步 Provider 路径。受管异步操作必须显式选择异步 backend；仅支持同步的 backend 会返回
+`AsyncUnsupported`，不会在异步流程中回退到同步执行。受管路径要求注入执行服务和有限预算，并将业务
+结果与资源 settlement 分开观察。丢弃进行中的 future 不能证明已接纳工作停止；释放资源前应观察
+settlement。前缀读取期间可能同时保留 Provider 缓冲区和 worker 的 owned 副本；`max_buffer_size`
+限制单个缓冲区，不限制两者合计内存。
 Native command 检测可能需要
 暂存输入，并受命令超时、保留输出大小和媒体暂存大小限制。
 默认 `file` 和 `ffprobe` runner 还会限制 stdout 与 stderr 的总量，上限为

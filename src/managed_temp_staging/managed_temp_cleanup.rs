@@ -53,6 +53,7 @@ impl AsyncCleanup<StagedMimeInput> for ManagedTempCleanup {
                     .get_mut()
                     .unwrap_or_else(|poison| poison.into_inner())
                     .cleanup()
+                    .map_err(Box::new)
             }));
             let outcome = match result {
                 Ok(Ok(())) => {
@@ -93,6 +94,258 @@ impl AsyncCleanup<StagedMimeInput> for ManagedTempCleanup {
             );
             return Box::pin(async move { CleanupOutcome::Failed { failure, resource } });
         }
-        Box::pin(async move { receiver.await })
+        Box::pin(receiver)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::sync::Arc;
+    use std::task::Context;
+    use std::task::Poll;
+    use std::task::Wake;
+    use std::task::Waker;
+
+    use qubit_local_files::LocalFileSystem;
+    use qubit_operation::AsyncCleanup;
+    use qubit_operation::CleanupContext;
+    use qubit_operation::CleanupOutcome;
+    use qubit_operation::ContextOptions;
+
+    use super::ManagedTempCleanup;
+    use crate::MimeError;
+    use crate::command_execution::FixedMimeExecutionPort;
+    use crate::command_execution::MimeExecutionWorker;
+    use crate::detector::MimeExecutionPort;
+    use crate::detector::MimeExecutionServices;
+    use crate::managed_temp_staging::StagedMimeInput;
+    use crate::managed_temp_staging::commit_staged;
+
+    struct ThreadWake(std::thread::Thread);
+
+    impl Wake for ThreadWake {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => std::thread::park(),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    struct RejectingPort;
+
+    impl MimeExecutionPort for RejectingPort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+
+        fn shutdown(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_rejected_cleanup_dispatch_preserves_resource_and_identity() {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        let accepting_port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        accepting_port.prepare().unwrap();
+        let worker = MimeExecutionWorker::new(accepting_port.clone());
+        let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
+        let staged = StagedMimeInput {
+            owner: std::sync::Mutex::new(owner),
+            permits: std::sync::Mutex::new(Vec::new()),
+            worker,
+            staged_bytes: std::sync::atomic::AtomicU64::new(0),
+            cleanup_id: Arc::new(std::sync::Mutex::new(None)),
+        };
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let reservation = scope.reserve_resource().unwrap();
+            commit_staged(reservation, staged)
+        }))
+        .unwrap();
+        let registered = match block_on(operation.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(resource) => resource,
+            _ => panic!("staged resource registration failed"),
+        };
+        let resource_id = registered.id();
+        let cleanup_id = Arc::clone(&registered.cleanup_id);
+
+        let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
+        let retained_path = owner.path().to_path_buf();
+        let rejecting_port = Arc::new(RejectingPort);
+        rejecting_port.prepare().unwrap();
+        rejecting_port.shutdown().unwrap();
+        let rejecting_worker = MimeExecutionWorker::new(rejecting_port);
+        let rejected_resource = StagedMimeInput {
+            owner: std::sync::Mutex::new(owner),
+            permits: std::sync::Mutex::new(Vec::new()),
+            worker: rejecting_worker,
+            staged_bytes: std::sync::atomic::AtomicU64::new(0),
+            cleanup_id: Arc::clone(&cleanup_id),
+        };
+        let cleanup = Arc::new(ManagedTempCleanup {
+            resource_id: cleanup_id,
+        });
+        let outcome = block_on(cleanup.cleanup(
+            rejected_resource,
+            CleanupContext::new(ContextOptions::default()).unwrap(),
+        ));
+
+        match outcome {
+            CleanupOutcome::Failed { failure, mut resource } => {
+                assert_eq!(resource_id, failure.resource_id);
+                assert_eq!(qubit_operation::CleanupStage::Drop, failure.stage);
+                assert!(failure.summary.to_string().contains("worker rejected cleanup job"));
+                assert!(failure.source.is_some());
+                assert!(retained_path.exists(), "rejected cleanup must retain the native file");
+                resource
+                    .owner
+                    .get_mut()
+                    .unwrap()
+                    .cleanup()
+                    .expect("test must explicitly remove the retained temp file");
+            }
+            _ => panic!("rejected worker dispatch must return the resource for recovery"),
+        }
+
+        drop(registered);
+        assert!(block_on(operation.wait_settlement()).all_released());
+        accepting_port.shutdown().unwrap();
+    }
+
+    #[test]
+    fn test_successful_cleanup_removes_file_before_releasing_staging_budget() {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let services = MimeExecutionServices::new(manager, group, port.clone(), 16).unwrap();
+        services.prepare().unwrap();
+        let budget = services.staging_budget();
+        let permit = budget.try_reserve(7).unwrap();
+        let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
+        let path = owner.path().to_path_buf();
+        std::fs::write(&path, b"payload").unwrap();
+        let resource = StagedMimeInput {
+            owner: std::sync::Mutex::new(owner),
+            permits: std::sync::Mutex::new(vec![permit]),
+            worker: MimeExecutionWorker::new(port.clone()),
+            staged_bytes: std::sync::atomic::AtomicU64::new(0),
+            cleanup_id: Arc::new(std::sync::Mutex::new(None)),
+        };
+        let cleanup = Arc::new(ManagedTempCleanup {
+            resource_id: Arc::clone(&resource.cleanup_id),
+        });
+
+        assert_eq!(7, budget.used_bytes());
+        assert!(path.exists());
+        assert!(matches!(
+            block_on(cleanup.cleanup(resource, CleanupContext::new(ContextOptions::default()).unwrap(),)),
+            CleanupOutcome::Released
+        ));
+        assert!(!path.exists(), "cleanup releases the native file");
+        assert_eq!(0, budget.used_bytes(), "permit release follows file cleanup");
+
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_sandbox_cleanup_failure_retains_resource_and_releases_on_retry() {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap());
+        services.prepare().unwrap();
+        let worker = MimeExecutionWorker::new(port.clone());
+        let registered_cleanup_id = Arc::new(std::sync::Mutex::new(None));
+        let registered_worker = worker.clone();
+        let registered_id = Arc::clone(&registered_cleanup_id);
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
+            commit_staged(
+                scope.reserve_resource().unwrap(),
+                StagedMimeInput {
+                    owner: std::sync::Mutex::new(owner),
+                    permits: std::sync::Mutex::new(Vec::new()),
+                    worker: registered_worker,
+                    staged_bytes: std::sync::atomic::AtomicU64::new(0),
+                    cleanup_id: registered_id,
+                },
+            )
+        }))
+        .unwrap();
+        let registered = match block_on(operation.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(resource) => resource,
+            _ => panic!("registered identity resource should succeed"),
+        };
+
+        let budget = services.staging_budget();
+        let permit = budget.try_reserve(5).unwrap();
+        let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
+        let path = owner.path().to_path_buf();
+        let sandbox = path.parent().unwrap().to_path_buf();
+        let blocker = sandbox.join("cleanup-blocker");
+        std::fs::write(&path, b"payload").unwrap();
+        std::fs::write(&blocker, b"keep sandbox non-empty").unwrap();
+        let resource = StagedMimeInput {
+            owner: std::sync::Mutex::new(owner),
+            permits: std::sync::Mutex::new(vec![permit]),
+            worker,
+            staged_bytes: std::sync::atomic::AtomicU64::new(0),
+            cleanup_id: Arc::new(std::sync::Mutex::new(Some(registered.id()))),
+        };
+        let cleanup = Arc::new(ManagedTempCleanup {
+            resource_id: Arc::clone(&resource.cleanup_id),
+        });
+
+        match block_on(Arc::clone(&cleanup).cleanup(resource, CleanupContext::new(ContextOptions::default()).unwrap()))
+        {
+            CleanupOutcome::Failed { failure, resource } => {
+                assert_eq!(registered.id(), failure.resource_id);
+                assert!(failure.source.is_some());
+                assert!(
+                    !path.exists(),
+                    "the staged file is removed before sandbox cleanup fails"
+                );
+                assert!(blocker.exists(), "the unrelated blocker keeps the sandbox recoverable");
+                assert_eq!(
+                    5,
+                    budget.used_bytes(),
+                    "failed cleanup retains the permit with its resource"
+                );
+                std::fs::remove_file(&blocker).unwrap();
+                assert!(matches!(
+                    block_on(
+                        Arc::clone(&cleanup)
+                            .cleanup(resource, CleanupContext::new(ContextOptions::default()).unwrap(),)
+                    ),
+                    CleanupOutcome::Released
+                ));
+            }
+            _ => panic!("cleanup must report the retained non-empty sandbox"),
+        }
+        assert_eq!(0, budget.used_bytes(), "successful retry releases the permit");
+        assert!(!sandbox.exists(), "successful retry removes the empty sandbox");
+
+        drop(registered);
+        assert!(block_on(operation.wait_settlement()).all_released());
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 }

@@ -63,12 +63,11 @@ impl MimeBudget {
     pub(in crate::detector) fn reserve_allocation(self: &Arc<Self>, allocation: &Arc<[u8]>) -> Option<BudgetPermit> {
         let identity = Arc::as_ptr(allocation) as *const u8 as usize;
         let mut counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((registered, permit)) = counters.allocations.get(&identity) {
-            if Weak::ptr_eq(registered, &Arc::downgrade(allocation)) {
-                if let Some(permit) = permit.upgrade() {
-                    return Some(BudgetPermit { _inner: permit });
-                }
-            }
+        if let Some((registered, permit)) = counters.allocations.get(&identity)
+            && Weak::ptr_eq(registered, &Arc::downgrade(allocation))
+            && let Some(permit) = permit.upgrade()
+        {
+            return Some(BudgetPermit { _inner: permit });
         }
         counters.allocations.remove(&identity);
         let next = counters.owned.checked_add(allocation.len())?;
@@ -142,5 +141,90 @@ impl MimeBudget {
     #[allow(dead_code)]
     pub(in crate::detector) fn staging_bytes(&self) -> u64 {
         self.counters.lock().unwrap_or_else(|e| e.into_inner()).staging
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::Limits;
+    use super::MimeBudget;
+
+    #[test]
+    fn test_owned_and_staging_counters_follow_live_permits() {
+        let budget = MimeBudget::new(Limits { owned: 4, staging: 6 });
+        let owned = budget.reserve_owned(4).expect("exact owned limit should fit");
+        assert_eq!(budget.owned_bytes(), 4);
+        assert!(budget.reserve_owned(1).is_none());
+
+        let staging = budget.reserve_staging(6).expect("exact staging limit should fit");
+        assert_eq!(budget.staging_bytes(), 6);
+        assert!(budget.reserve_staging(1).is_none());
+
+        drop(owned);
+        drop(staging);
+        assert_eq!(budget.owned_bytes(), 0);
+        assert_eq!(budget.staging_bytes(), 0);
+    }
+
+    #[test]
+    fn test_budget_reservation_recovers_poisoned_counter_lock() {
+        let budget = MimeBudget::new(Limits { owned: 5, staging: 5 });
+        let poisoned = std::sync::Arc::clone(&budget);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = poisoned.counters.lock().unwrap();
+                panic!("poison MIME budget counter lock");
+            })
+            .join()
+            .is_err()
+        );
+
+        let owned = budget.reserve_owned(3).expect("reserve should recover counters");
+        let staging = budget
+            .reserve_staging(4)
+            .expect("staging should share the recovered lock");
+        assert_eq!(3, budget.owned_bytes());
+        assert_eq!(4, budget.staging_bytes());
+        drop((owned, staging));
+        assert_eq!(0, budget.owned_bytes());
+        assert_eq!(0, budget.staging_bytes());
+    }
+
+    #[test]
+    fn test_shared_allocation_can_be_reserved_again_after_final_owner_drops() {
+        let budget = MimeBudget::new(Limits { owned: 8, staging: 0 });
+        let allocation: Arc<[u8]> = Arc::from(b"data".as_slice());
+        let first = budget.reserve_allocation(&allocation).unwrap();
+        let alias = budget.reserve_allocation(&allocation).unwrap();
+        assert_eq!(4, budget.owned_bytes(), "aliases share one live reservation");
+        drop((first, alias));
+        assert_eq!(0, budget.owned_bytes());
+
+        let next = budget
+            .reserve_allocation(&allocation)
+            .expect("the still-live allocation may reserve again after its last permit drops");
+        assert_eq!(4, budget.owned_bytes());
+        drop(next);
+        assert_eq!(0, budget.owned_bytes());
+    }
+
+    #[test]
+    fn test_zero_byte_reservations_fit_zero_limits_without_changing_usage() {
+        let budget = MimeBudget::new(Limits { owned: 0, staging: 0 });
+
+        let owned = budget.reserve_owned(0).expect("zero-byte owned reservation should fit");
+        let staging = budget
+            .reserve_staging(0)
+            .expect("zero-byte staging reservation should fit");
+        assert_eq!(0, budget.owned_bytes());
+        assert_eq!(0, budget.staging_bytes());
+        assert!(budget.reserve_owned(1).is_none());
+        assert!(budget.reserve_staging(1).is_none());
+
+        drop((owned, staging));
+        assert_eq!(0, budget.owned_bytes());
+        assert_eq!(0, budget.staging_bytes());
     }
 }

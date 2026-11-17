@@ -10,6 +10,7 @@
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::process::Command;
+use std::sync::Arc;
 
 #[cfg(unix)]
 use qubit_config::Config;
@@ -19,9 +20,15 @@ use qubit_local_files::LocalFileSystem;
 use qubit_local_files::options::LocalTempDirectoryOptions;
 use qubit_mime::CONFIG_COMMAND_OUTPUT_MAX_BYTES;
 use qubit_mime::CONFIG_COMMAND_TIMEOUT;
+use qubit_mime::ContentRequirement;
 use qubit_mime::FileCommandMimeDetector;
 use qubit_mime::FileCommandMimeDetectorProvider;
+use qubit_mime::FixedMimeExecutionPort;
 use qubit_mime::MimeConfig;
+use qubit_mime::MimeExecutionServices;
+use qubit_mime::RandomAccessCapability;
+use qubit_operation::GroupOptions;
+use qubit_operation::OperationManager;
 use qubit_spi::ProviderMetadata;
 use qubit_spi::ServiceProvider;
 #[cfg(unix)]
@@ -49,6 +56,18 @@ fn test_file_command_mime_detector_provider_metadata_and_availability() {
     );
     assert_eq!(10, descriptor.priority());
     assert_eq!(FileCommandMimeDetector::is_available(), creation.is_ok());
+}
+
+#[test]
+fn test_file_provider_builds_explicit_managed_async_backend_without_starting_workers() {
+    let manager = OperationManager::new(Default::default()).expect("operation manager");
+    let group = manager.group(GroupOptions { capacity: 1 }).expect("MIME group");
+    let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 1024)
+        .expect("finite execution services");
+    let backend = FileCommandMimeDetectorProvider.create_async_backend(&MimeConfig::default(), services);
+
+    assert_eq!(ContentRequirement::Complete, backend.content_requirement());
+    assert_eq!(RandomAccessCapability::Unsupported, backend.random_access_capability());
 }
 
 #[cfg(unix)]

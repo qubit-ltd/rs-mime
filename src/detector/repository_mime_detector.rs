@@ -368,6 +368,7 @@ impl AsyncMimeDetectorBackend for RepositoryMimeDetector<'_> {
                     InputExtent::Prefix | InputExtent::Complete => InspectedExtent::Prefix(inspected),
                 },
                 retained_prefix: Vec::new(),
+                staging_bytes: 0,
             })
         })
     }

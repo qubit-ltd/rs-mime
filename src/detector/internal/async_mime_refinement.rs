@@ -38,3 +38,52 @@ pub(crate) fn stream_type_from_output(output: &MimeCommandOutput) -> Result<Medi
         }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::stream_type_from_output;
+    use crate::MimeError;
+    use crate::command_execution::MimeCommandOutput;
+
+    #[test]
+    fn test_nonzero_ffprobe_exit_is_a_successful_no_stream_result() {
+        let output = MimeCommandOutput {
+            exit_code: Some(1),
+            stdout: b"ffprobe could not parse this file".to_vec(),
+            stdout_truncated: false,
+            stdout_complete: true,
+        };
+        assert_eq!(crate::MediaStreamType::None, stream_type_from_output(&output).unwrap());
+    }
+
+    #[test]
+    fn test_incomplete_successful_ffprobe_output_is_rejected() {
+        let output = MimeCommandOutput {
+            exit_code: Some(0),
+            stdout: b"stream listing".to_vec(),
+            stdout_truncated: true,
+            stdout_complete: false,
+        };
+        assert!(matches!(
+            stream_type_from_output(&output),
+            Err(MimeError::ClassifierBackend { backend, reason })
+                if backend == "ffprobe" && reason.contains("truncated")
+        ));
+    }
+
+    #[test]
+    fn test_missing_ffprobe_exit_status_is_a_typed_classifier_error() {
+        let output = MimeCommandOutput {
+            exit_code: None,
+            stdout: Vec::new(),
+            stdout_truncated: false,
+            stdout_complete: true,
+        };
+
+        assert!(matches!(
+            stream_type_from_output(&output),
+            Err(MimeError::ClassifierBackend { backend, reason })
+                if backend == "ffprobe" && reason.contains("without a numeric exit code")
+        ));
+    }
+}

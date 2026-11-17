@@ -132,3 +132,46 @@ impl super::AsyncMimeDetectorProvider for RepositoryMimeDetectorProvider {
         Ok(Arc::new(detector))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::RepositoryMimeDetectorProvider;
+    use crate::AsyncMimeDetectorProvider;
+    use crate::ContentRequirement;
+    use crate::FixedMimeExecutionPort;
+    use crate::MimeConfig;
+    use crate::MimeExecutionServices;
+    use crate::RandomAccessCapability;
+
+    fn services() -> MimeExecutionServices {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        MimeExecutionServices::new(
+            manager,
+            group,
+            std::sync::Arc::new(FixedMimeExecutionPort::new(1, 1)),
+            16,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_repository_provider_constructors_return_prefix_async_backends() {
+        let provider = RepositoryMimeDetectorProvider;
+        let config = MimeConfig::default();
+        let direct = provider.create_async_backend(&config);
+        assert!(matches!(direct.content_requirement(), ContentRequirement::Prefix(bytes) if bytes > 0));
+        assert_eq!(RandomAccessCapability::Unsupported, direct.random_access_capability());
+
+        let services = services();
+        let trait_backend = <RepositoryMimeDetectorProvider as AsyncMimeDetectorProvider>::create_async_backend(
+            &provider, &config, &services,
+        )
+        .expect("trait factory should use the bundled repository without external work");
+        assert_eq!(direct.content_requirement(), trait_backend.content_requirement());
+        assert_eq!(
+            direct.random_access_capability(),
+            trait_backend.random_access_capability()
+        );
+    }
+}

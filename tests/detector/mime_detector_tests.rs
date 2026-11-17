@@ -48,6 +48,7 @@ use qubit_io::AsyncInput;
 use qubit_io::Output;
 use qubit_local_files::LocalFileSystem;
 use qubit_local_files::options::LocalTempFileOptions;
+use qubit_mime::AsyncMimeDetectorBackend;
 use qubit_mime::CONFIG_MIME_AMBIGUOUS_MIME_MAPPING;
 use qubit_mime::CONFIG_MIME_DETECTOR_DEFAULT;
 use qubit_mime::CONFIG_MIME_DETECTOR_FALLBACKS;
@@ -74,6 +75,7 @@ use crate::support::DirectBackendDetector;
 use crate::support::PathEnvGuard;
 use crate::support::PrefixFileSystemSpi;
 use crate::support::StaticEntryPointMimeDetector;
+use crate::support::StaticMimeDetector;
 
 #[derive(Debug)]
 struct EmptyAsyncFileSystemSpi {
@@ -307,6 +309,33 @@ impl MimeDetector for DirectCompleteDetector {
     fn detect_file(&self, _: &Path, _: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         panic!("unexpected detection")
     }
+}
+
+#[test]
+fn test_default_content_requirement_uses_detector_buffer_limit() {
+    let detector = StaticMimeDetector::new("application/x-static");
+    assert_eq!(0, detector.max_buffer_size());
+    assert_eq!(ContentRequirement::Prefix(0), detector.content_requirement());
+}
+
+#[test]
+fn test_default_repository_detector_declares_prefix_only_access() {
+    let detector = RepositoryMimeDetector::default();
+
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        detector
+            .detect_by_filename("document.pdf")
+            .expect("bundled repository should resolve filename"),
+    );
+    assert!(matches!(
+        AsyncMimeDetectorBackend::content_requirement(&detector),
+        ContentRequirement::Prefix(bytes) if bytes > 0,
+    ));
+    assert_eq!(
+        qubit_mime::RandomAccessCapability::Unsupported,
+        AsyncMimeDetectorBackend::random_access_capability(&detector),
+    );
 }
 
 #[derive(Debug)]
@@ -592,7 +621,7 @@ fn test_mime_detector_backend_defaults_read_reader_and_file_prefix() {
 }
 
 #[test]
-fn test_async_prefix_reaches_filesystem_after_buffer_preflight() {
+fn test_legacy_async_prefix_requires_explicit_backend() {
     let detector = DirectBackendDetector::new();
     let spi = PrefixAsyncFileSystemSpi::new(b"hello world");
     let opens = Arc::clone(&spi.opens);
@@ -600,68 +629,11 @@ fn test_async_prefix_reaches_filesystem_after_buffer_preflight() {
     let filesystem = AsyncFileSystem::from_spi(spi).expect("async fixture");
     let path = FsPath::parse("/unused").expect("valid fixture path");
 
-    assert_eq!(
-        Some("text/plain".to_owned()),
-        run_ready(detector.detect_async_path(&filesystem, &path, 5, MimeDetectionPolicy::VerifyContent,))
-            .expect("async prefix detection should succeed")
-    );
+    let error = run_ready(detector.detect_async_path(&filesystem, &path, 5, MimeDetectionPolicy::VerifyContent))
+        .expect_err("legacy async hook must not execute a synchronous-only backend");
+    assert!(matches!(error, MimeError::AsyncUnsupported));
     assert_eq!(1, opens.load(Ordering::Relaxed));
     assert_eq!(5, reads.load(Ordering::Relaxed));
-
-    let oversized = DEFAULT_MIME_MAX_BUFFER_SIZE + 1;
-    let error =
-        run_ready(detector.detect_async_path(&filesystem, &path, oversized, MimeDetectionPolicy::VerifyContent))
-            .expect_err("oversized prefix must be rejected before I/O");
-    assert!(matches!(
-        error,
-        MimeError::BufferLimitExceeded {
-            requested,
-            limit
-        }
-        if requested == oversized && limit == DEFAULT_MIME_MAX_BUFFER_SIZE
-    ));
-    assert_eq!(
-        1,
-        opens.load(Ordering::Relaxed),
-        "oversized read must not open provider resource"
-    );
-    assert_eq!(
-        5,
-        reads.load(Ordering::Relaxed),
-        "oversized read must not consume bytes"
-    );
-
-    let as_dyn: &dyn MimeDetector = &detector;
-    assert_eq!(
-        Some("text/plain".to_owned()),
-        run_ready(as_dyn.detect_async_path(&filesystem, &path, 5, MimeDetectionPolicy::VerifyContent,))
-            .expect("dyn async detection should succeed")
-    );
-    let boxed: Box<dyn MimeDetector> = Box::new(DirectBackendDetector::new());
-    assert_eq!(
-        Some("text/plain".to_owned()),
-        run_ready(boxed.detect_async_path(&filesystem, &path, 5, MimeDetectionPolicy::VerifyContent,))
-            .expect("boxed async detection should succeed")
-    );
-    let shared: Arc<dyn MimeDetector> = Arc::new(DirectBackendDetector::new());
-    assert_eq!(
-        Some("text/plain".to_owned()),
-        run_ready(shared.detect_async_path(&filesystem, &path, 5, MimeDetectionPolicy::VerifyContent,))
-            .expect("shared async detection should succeed")
-    );
-
-    let filename_path = FsPath::parse("/note.txt").expect("valid filename path");
-    let before = opens.load(Ordering::Relaxed);
-    assert_eq!(
-        Some("text/plain".to_owned()),
-        run_ready(detector.detect_async_path(&filesystem, &filename_path, 5, MimeDetectionPolicy::PreferFilename,))
-            .expect("unique filename candidate should short-circuit async content")
-    );
-    assert_eq!(
-        before,
-        opens.load(Ordering::Relaxed),
-        "PreferFilename must not open provider resource"
-    );
 }
 
 #[test]
@@ -697,65 +669,34 @@ fn test_file_command_async_shortcuts_do_not_open_provider_or_start_worker() {
 }
 
 #[test]
-fn test_repository_async_prefix_reads_pdf_from_local_temp_fixture() {
-    let mut file = LocalFileSystem::host()
-        .expect("host filesystem should open")
-        .create_temp_file_with_options(&LocalTempFileOptions::new().with_suffix(".pdf"))
-        .expect("temporary PDF should be created");
-    Output::write_fully(&mut file, b"%PDF-1.7\n").expect("temporary PDF should be writable");
-    let bytes = std::fs::read(file.path()).expect("temporary PDF should be readable");
-    let filesystem = AsyncFileSystem::from_spi(PrefixAsyncFileSystemSpi::new(&bytes))
+fn test_repository_legacy_async_hook_requires_explicit_backend() {
+    let filesystem = AsyncFileSystem::from_spi(PrefixAsyncFileSystemSpi::new(b"%PDF-1.7\n"))
         .expect("async filesystem facade should be created");
     let path = FsPath::parse("/document.pdf").expect("logical PDF path should parse");
     let detector = RepositoryMimeDetector::new().expect("bundled repository should load");
 
-    assert_eq!(
-        Some("application/pdf".to_owned()),
-        run_ready(detector.detect_async_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent))
-            .expect("repository async prefix detection should succeed"),
-    );
-    let as_dyn: &dyn MimeDetector = &detector;
-    assert_eq!(
-        Some("application/pdf".to_owned()),
-        run_ready(as_dyn.detect_async_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent))
-            .expect("dyn repository async prefix detection should succeed"),
-    );
-    let boxed: Box<dyn MimeDetector> = Box::new(RepositoryMimeDetector::new().expect("repository should load"));
-    assert_eq!(
-        Some("application/pdf".to_owned()),
-        run_ready(boxed.detect_async_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent))
-            .expect("boxed repository async prefix detection should succeed"),
-    );
-    let shared: Arc<dyn MimeDetector> = Arc::new(RepositoryMimeDetector::new().expect("repository should load"));
-    assert_eq!(
-        Some("application/pdf".to_owned()),
-        run_ready(shared.detect_async_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent))
-            .expect("shared repository async prefix detection should succeed"),
-    );
+    let error = run_ready(detector.detect_async_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent))
+        .expect_err("legacy async hook must not run the synchronous repository backend");
+    assert!(matches!(error, MimeError::AsyncUnsupported));
 }
 
 #[test]
-fn test_async_prefix_preserves_filesystem_and_backend_errors() {
+fn test_legacy_async_hook_rejects_before_filesystem_or_backend_execution() {
     let path = FsPath::parse("/unused").expect("valid fixture path");
     let detector = DirectBackendDetector::new();
     let spi = PrefixAsyncFileSystemSpi::new(b"hello").failing_open();
+    let opens = Arc::clone(&spi.opens);
     let filesystem = AsyncFileSystem::from_spi(spi).expect("async fixture");
     let error = run_ready(detector.detect_async_path(&filesystem, &path, 5, MimeDetectionPolicy::VerifyContent))
-        .expect_err("filesystem open error should be returned");
-    match error {
-        MimeError::FileSystem(error) => {
-            assert!(error.to_string().contains("sentinel async open failure"))
-        }
-        other => panic!("filesystem error was changed: {other:?}"),
-    }
+        .expect_err("filesystem failure must be preserved");
+    assert!(matches!(error, MimeError::FileSystem(error) if error.to_string().contains("sentinel async open failure")));
+    assert_eq!(1, opens.load(Ordering::Relaxed));
 
     let filesystem = AsyncFileSystem::from_spi(PrefixAsyncFileSystemSpi::new(b"hello")).expect("async fixture");
     let error =
         run_ready(BackendErrorDetector.detect_async_path(&filesystem, &path, 5, MimeDetectionPolicy::VerifyContent))
-            .expect_err("backend error should be returned");
-    assert!(
-        matches!(error, MimeError::DetectorBackend { backend, reason } if backend == "test" && reason == "sentinel")
-    );
+            .expect_err("synchronous-only backend must be rejected before backend execution");
+    assert!(matches!(error, MimeError::AsyncUnsupported));
 }
 
 #[test]
@@ -863,11 +804,9 @@ fn test_prefix_paths_skip_classifier_but_complete_content_uses_it() {
     let async_spi = PrefixAsyncFileSystemSpi::new(b"prefix");
     let async_fs = AsyncFileSystem::from_spi(async_spi).expect("async filesystem fixture");
     let async_path = FsPath::parse("/movie.webm").expect("async path");
-    assert_eq!(
-        Some("video/webm".to_owned()),
-        run_ready(detector.detect_async_path(&async_fs, &async_path, 16, MimeDetectionPolicy::Freedesktop,))
-            .expect("async path prefix detection should succeed")
-    );
+    let error = run_ready(detector.detect_async_path(&async_fs, &async_path, 16, MimeDetectionPolicy::Freedesktop))
+        .expect_err("legacy async hook must not fall back to a synchronous classifier");
+    assert!(matches!(error, MimeError::AsyncUnsupported));
     assert_eq!(
         1,
         calls.load(Ordering::Relaxed),
@@ -1073,45 +1012,56 @@ fn test_boxed_mime_detector_trait_object_delegates_all_entry_points() {
     let filesystem = AsyncFileSystem::from_spi(EmptyAsyncFileSystemSpi::new()).expect("async fixture");
     let path = FsPath::parse("/unused").expect("valid fixture path");
 
-    assert_eq!(ContentRequirement::Complete, detector.content_requirement());
+    assert_eq!(
+        ContentRequirement::Complete,
+        MimeDetector::content_requirement(&detector)
+    );
     assert!(matches!(
-        detector.detect_prefix(b"data", None, MimeDetectionPolicy::PreferFilename),
+        MimeDetector::detect_prefix(&detector, b"data", None, MimeDetectionPolicy::PreferFilename),
         Err(MimeError::CompleteContentRequired)
     ));
     assert!(matches!(
-        run_ready(detector.detect_async_path(&filesystem, &path, 0, MimeDetectionPolicy::PreferFilename,)),
+        run_ready(MimeDetector::detect_async_path(
+            &detector,
+            &filesystem,
+            &path,
+            0,
+            MimeDetectionPolicy::PreferFilename,
+        )),
         Err(MimeError::CompleteContentRequired)
     ));
 
     assert_eq!(
         Some("application/x-static-name".to_owned()),
-        detector
-            .detect_by_filename("file.bin")
-            .expect("boxed filename delegation should succeed")
+        MimeDetector::detect_by_filename(&detector, "file.bin").expect("boxed filename delegation should succeed")
     );
     assert_eq!(
         Some("application/x-static-content".to_owned()),
-        detector
-            .detect_by_content(b"data")
-            .expect("boxed content delegation should succeed")
+        MimeDetector::detect_by_content(&detector, b"data").expect("boxed content delegation should succeed")
     );
     assert_eq!(
         Some("application/x-static-detect".to_owned()),
-        detector
-            .detect(b"data", Some("file.bin"), MimeDetectionPolicy::PreferFilename)
-            .expect("boxed detection delegation should succeed")
+        MimeDetector::detect(
+            &detector,
+            b"data",
+            Some("file.bin"),
+            MimeDetectionPolicy::PreferFilename
+        )
+        .expect("boxed detection delegation should succeed")
     );
     assert_eq!(
         Some("application/x-static-reader".to_owned()),
-        detector
-            .detect_reader(&mut reader, None, MimeDetectionPolicy::PreferFilename)
+        MimeDetector::detect_reader(&detector, &mut reader, None, MimeDetectionPolicy::PreferFilename)
             .expect("boxed reader delegation should succeed")
     );
     assert_eq!(
         Some("application/x-static-file".to_owned()),
-        detector
-            .detect_file(std::path::Path::new("Cargo.toml"), MimeDetectionPolicy::PreferFilename)
-            .expect("boxed file delegation should succeed")
+        MimeDetector::detect_file(
+            &detector,
+            std::path::Path::new("Cargo.toml"),
+            MimeDetectionPolicy::PreferFilename
+        )
+        .expect("boxed file delegation should succeed")
     );
 }
 
@@ -1123,47 +1073,77 @@ fn test_shared_mime_detector_trait_object_delegates_all_entry_points() {
     let filesystem = AsyncFileSystem::from_spi(EmptyAsyncFileSystemSpi::new()).expect("async fixture");
     let path = FsPath::parse("/unused").expect("valid fixture path");
 
-    assert_eq!(ContentRequirement::Complete, detector.content_requirement());
+    assert_eq!(
+        ContentRequirement::Complete,
+        MimeDetector::content_requirement(&detector)
+    );
     assert!(matches!(
-        detector.detect_prefix(b"data", None, MimeDetectionPolicy::PreferFilename),
+        MimeDetector::detect_prefix(&detector, b"data", None, MimeDetectionPolicy::PreferFilename),
         Err(MimeError::CompleteContentRequired)
     ));
     assert!(matches!(
-        run_ready(detector.detect_async_path(&filesystem, &path, 0, MimeDetectionPolicy::PreferFilename,)),
+        run_ready(MimeDetector::detect_async_path(
+            &detector,
+            &filesystem,
+            &path,
+            0,
+            MimeDetectionPolicy::PreferFilename,
+        )),
         Err(MimeError::CompleteContentRequired)
     ));
 
     assert_eq!(
         Some("application/x-static-name".to_owned()),
-        cloned
-            .as_ref()
-            .detect_by_filename("file.bin")
-            .expect("arc filename delegation should succeed")
+        MimeDetector::detect_by_filename(&cloned, "file.bin").expect("arc filename delegation should succeed")
     );
     assert_eq!(
         Some("application/x-static-content".to_owned()),
-        detector
-            .detect_by_content(b"data")
-            .expect("arc content delegation should succeed")
+        MimeDetector::detect_by_content(&detector, b"data").expect("arc content delegation should succeed")
     );
     assert_eq!(
         Some("application/x-static-detect".to_owned()),
-        detector
-            .detect(b"data", Some("file.bin"), MimeDetectionPolicy::PreferFilename)
-            .expect("arc detection delegation should succeed")
+        MimeDetector::detect(
+            &detector,
+            b"data",
+            Some("file.bin"),
+            MimeDetectionPolicy::PreferFilename
+        )
+        .expect("arc detection delegation should succeed")
     );
     assert_eq!(
         Some("application/x-static-reader".to_owned()),
-        detector
-            .detect_reader(&mut reader, None, MimeDetectionPolicy::PreferFilename)
+        MimeDetector::detect_reader(&detector, &mut reader, None, MimeDetectionPolicy::PreferFilename)
             .expect("arc reader delegation should succeed")
     );
     assert_eq!(
         Some("application/x-static-file".to_owned()),
-        detector
-            .detect_file(std::path::Path::new("Cargo.toml"), MimeDetectionPolicy::PreferFilename)
-            .expect("arc file delegation should succeed")
+        MimeDetector::detect_file(
+            &detector,
+            std::path::Path::new("Cargo.toml"),
+            MimeDetectionPolicy::PreferFilename
+        )
+        .expect("arc file delegation should succeed")
     );
+}
+
+#[test]
+fn test_shared_and_boxed_detector_delegate_path_limit_and_complete_content_policy() {
+    let boxed: Box<dyn MimeDetector> = Box::new(StaticEntryPointMimeDetector);
+    let shared: Arc<dyn MimeDetector> = Arc::new(StaticEntryPointMimeDetector);
+    let filesystem = FileSystem::from_spi(PrefixFileSystemSpi::hierarchical(b"data".to_vec()))
+        .expect("prefix filesystem should be created");
+    let path = FsPath::parse("/payload").expect("valid fixture path");
+
+    assert_eq!(0, MimeDetector::max_buffer_size(&boxed));
+    assert!(matches!(
+        MimeDetector::detect_path(&boxed, &filesystem, &path, 0, MimeDetectionPolicy::PreferFilename),
+        Err(MimeError::CompleteContentRequired)
+    ));
+    assert_eq!(0, MimeDetector::max_buffer_size(&shared));
+    assert!(matches!(
+        MimeDetector::detect_path(&shared, &filesystem, &path, 0, MimeDetectionPolicy::PreferFilename),
+        Err(MimeError::CompleteContentRequired)
+    ));
 }
 
 #[test]
@@ -1323,4 +1303,13 @@ fn test_detect_path_rejects_buffer_limit_before_provider_open() {
     ));
     assert_eq!(spi.opened(), 0);
     assert_eq!(spi.stat_calls(), 0);
+}
+
+#[test]
+fn test_direct_complete_detector_rejects_prefix_trait_call_before_detection() {
+    let error = DirectCompleteDetector
+        .detect_prefix(b"%PDF-1.7", Some("document.pdf"), MimeDetectionPolicy::PreferFilename)
+        .expect_err("a prefix cannot satisfy a detector that requires complete content");
+
+    assert!(matches!(error, MimeError::CompleteContentRequired));
 }

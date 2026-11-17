@@ -217,8 +217,12 @@ impl OperationControl for PreparedCommand {
     /// # Parameters
     /// - `reason`: Reason reported if the command resolves as stopped.
     fn request_stop(&self, reason: StopReason) {
+        let mut stop_reason = self.stop_reason.lock().unwrap_or_else(|e| e.into_inner());
+        if stop_reason.is_none() {
+            *stop_reason = Some(reason);
+        }
+        drop(stop_reason);
         self.cancellation.cancel();
-        *self.stop_reason.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason);
     }
 
     /// Returns an observer snapshot of execution, release, and outcome state.
@@ -236,15 +240,10 @@ impl OperationControl for PreparedCommand {
             } else {
                 ExecutionPhase::Queued
             },
-            stop: self
-                .stop_reason
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone()
-                .map(|reason| StopReport {
-                    reason,
-                    accepted_at: None,
-                }),
+            stop: (*self.stop_reason.lock().unwrap_or_else(|e| e.into_inner())).map(|reason| StopReport {
+                reason,
+                accepted_at: None,
+            }),
             outcome: self.summary.value(),
             input_released: self.released.load(Ordering::Acquire),
             settlement: self.settlement.value(),
@@ -322,13 +321,13 @@ impl PreparedCommand {
     /// # Parameters
     /// - `outcome`: Completed operation outcome mapped by the framework.
     fn publish(&self, outcome: OperationOutcome<MimeCommandOutput, CommandError>) {
-        let kind = match &outcome {
-            OperationOutcome::Succeeded(_) => ChildOutcomeKind::Succeeded,
-            OperationOutcome::Failed(_) => ChildOutcomeKind::Failed,
-            OperationOutcome::Stopped(_) => ChildOutcomeKind::Stopped,
-            OperationOutcome::Panicked(_) => ChildOutcomeKind::Panicked,
-            OperationOutcome::ChildFailed(_) => ChildOutcomeKind::Failed,
-            OperationOutcome::ExecutionFailed(_) => ChildOutcomeKind::ExecutionFailed,
+        let (kind, summary_text) = match &outcome {
+            OperationOutcome::Succeeded(_) => (ChildOutcomeKind::Succeeded, "child succeeded"),
+            OperationOutcome::Failed(_) => (ChildOutcomeKind::Failed, "child failed"),
+            OperationOutcome::Stopped(_) => (ChildOutcomeKind::Stopped, "child stopped"),
+            OperationOutcome::Panicked(panic) => (ChildOutcomeKind::Panicked, panic.summary.as_str()),
+            OperationOutcome::ChildFailed(_) => (ChildOutcomeKind::Failed, "child failed"),
+            OperationOutcome::ExecutionFailed(failure) => (ChildOutcomeKind::ExecutionFailed, failure.summary.as_str()),
         };
         let summary = ChildOutcomeSummary {
             operation_id: self
@@ -337,7 +336,7 @@ impl PreparedCommand {
                 .unwrap_or_else(|e| e.into_inner())
                 .expect("bound before outcome"),
             kind,
-            summary: DiagnosticSummary::new("MIME command worker completed"),
+            summary: DiagnosticSummary::new(summary_text),
         };
         self.summary.publish(summary);
         self.outcome.publish(outcome);
@@ -378,6 +377,633 @@ impl PreparedCommand {
             effects: Arc::from([]),
             effects_total: 0,
             effect_overflow: 0,
+            external_settlement: None,
         }));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::sync::Arc;
+    use std::task::Context;
+    use std::task::Poll;
+    use std::task::Wake;
+    use std::task::Waker;
+
+    use qubit_command::Command;
+    use qubit_command::CommandError;
+    use qubit_command::CommandErrorKind;
+    use qubit_command::CommandRunner;
+    use qubit_operation::ChildOutcomeKind;
+    use qubit_operation::ChildSnapshot;
+    use qubit_operation::ExecutionFailure;
+    use qubit_operation::OperationControl;
+    use qubit_operation::OperationOutcome;
+    use qubit_operation::PreparedExternalOperation;
+    use qubit_operation::StopReason;
+
+    use super::PreparedCommand;
+    use crate::InputExtent;
+    use crate::MimeError;
+    use crate::OwnedMimeInput;
+    use crate::command_execution::FixedMimeExecutionPort;
+    use crate::command_execution::MimeCommandOutput;
+    use crate::command_execution::MimeExecutionWorker;
+    use crate::detector::MimeExecutionPort;
+    use crate::detector::MimeExecutionServices;
+    use crate::managed_temp_staging::ManagedStagingLimits;
+    use crate::managed_temp_staging::stage_owned_in;
+
+    struct ThreadWake(std::thread::Thread);
+    impl Wake for ThreadWake {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => std::thread::park(),
+            }
+        }
+    }
+
+    fn execute_prepared_command(
+        command: Command,
+        reject_dispatch: bool,
+        observe_running: bool,
+        stop_when_running: bool,
+        timeout: std::time::Duration,
+        strict_output_limit: bool,
+    ) -> (
+        Result<OperationOutcome<MimeCommandOutput, CommandError>, ExecutionFailure>,
+        ChildSnapshot,
+    ) {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap());
+        services.prepare().unwrap();
+        let limits = ManagedStagingLimits {
+            max_bytes: 64,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port),
+        };
+        let read_tree = services.new_read_tree(64);
+        let body_services = Arc::clone(&services);
+        let input = OwnedMimeInput::bytes(Arc::from(b"prepared-command-input".as_slice()), InputExtent::Complete);
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let staged = stage_owned_in(&scope, input, limits, read_tree).await?;
+            let command_worker = Arc::new(FixedMimeExecutionPort::new(1, if reject_dispatch { 1 } else { 4 }));
+            command_worker.prepare()?;
+            let (release_blocker, queued_job_done) = if reject_dispatch {
+                let (started_tx, started_rx) = std::sync::mpsc::channel();
+                let (release_tx, release_rx) = std::sync::mpsc::channel();
+                assert!(
+                    command_worker
+                        .try_dispatch(Box::new(move || {
+                            started_tx.send(()).unwrap();
+                            release_rx.recv().unwrap();
+                        }))
+                        .is_ok()
+                );
+                started_rx.recv().unwrap();
+                let (done_tx, done_rx) = std::sync::mpsc::channel();
+                assert!(
+                    command_worker
+                        .try_dispatch(Box::new(move || done_tx.send(()).unwrap()))
+                        .is_ok()
+                );
+                (Some(release_tx), Some(done_rx))
+            } else {
+                (None, None)
+            };
+            let runner = CommandRunner::new(timeout).disable_logging(true);
+            let runner = if strict_output_limit {
+                runner.bounded_output(1)
+            } else {
+                runner
+            };
+            let prepared = Arc::new(PreparedCommand::new(
+                MimeExecutionWorker::new(command_worker.clone()),
+                runner,
+                command,
+                staged,
+            ));
+            let operation_id = scope.id();
+            prepared.bind(operation_id).unwrap();
+            let activation = Arc::clone(&prepared).activate(scope);
+            let result = match activation {
+                Ok(()) => {
+                    if observe_running {
+                        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                        loop {
+                            let snapshot = prepared.snapshot();
+                            if snapshot.execution == qubit_operation::ExecutionPhase::Running {
+                                assert!(!snapshot.input_released);
+                                {
+                                    let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+                                    let mut context = Context::from_waker(&waker);
+                                    assert!(matches!(prepared.poll_take_outcome(&mut context), Poll::Pending));
+                                    assert!(matches!(prepared.poll_outcome(&mut context), Poll::Pending));
+                                    assert!(matches!(prepared.poll_release(&mut context), Poll::Pending));
+                                    assert!(matches!(prepared.poll_settlement(&mut context), Poll::Pending));
+                                }
+                                if stop_when_running {
+                                    prepared.request_stop(StopReason::Timeout);
+                                }
+                                break;
+                            }
+                            assert!(std::time::Instant::now() < deadline, "worker never reported running");
+                            std::thread::yield_now();
+                        }
+                    }
+                    let mut outcome = None;
+                    let mut release = None;
+                    std::future::poll_fn(|cx| {
+                        if outcome.is_none()
+                            && let std::task::Poll::Ready(value) = prepared.poll_take_outcome(cx)
+                        {
+                            outcome = Some(value);
+                        }
+                        if release.is_none()
+                            && let std::task::Poll::Ready(value) = prepared.poll_release(cx)
+                        {
+                            release = Some(value);
+                        }
+                        if outcome.is_some() && release.is_some() {
+                            std::task::Poll::Ready(())
+                        } else {
+                            std::task::Poll::Pending
+                        }
+                    })
+                    .await;
+                    assert_eq!(
+                        operation_id,
+                        release.expect("release signal must be observed").operation_id
+                    );
+                    Ok(outcome.expect("outcome signal must be observed"))
+                }
+                Err(error) => Err(error),
+            };
+            let snapshot = prepared.snapshot();
+            if let Some(release) = release_blocker {
+                release.send(()).unwrap();
+                queued_job_done.expect("queued callback").recv().unwrap();
+            }
+            command_worker.shutdown()?;
+            Ok::<_, MimeError>((result, snapshot))
+        }))
+        .unwrap();
+        let result = match block_on(operation.wait_outcome()).unwrap() {
+            OperationOutcome::Succeeded(value) => value,
+            _ => panic!("test operation did not return its command lifecycle facts"),
+        };
+        assert!(block_on(operation.wait_settlement()).all_released());
+        let shutdown = body_services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+        result
+    }
+
+    #[test]
+    fn test_stop_before_activation_publishes_terminal_outcome_and_release() {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap());
+        services.prepare().unwrap();
+        let limits = ManagedStagingLimits {
+            max_bytes: 64,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port.clone()),
+        };
+        let read_tree = services.new_read_tree(64);
+        let body_services = Arc::clone(&services);
+        let input = OwnedMimeInput::bytes(Arc::from(b"cancel before dispatch".as_slice()), InputExtent::Complete);
+
+        let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let abandoned_input = stage_owned_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::from(b"abandoned request".as_slice()), InputExtent::Complete),
+                limits.clone(),
+                Arc::clone(&read_tree),
+            )
+            .await?;
+            let abandoned = Arc::new(PreparedCommand::new(
+                MimeExecutionWorker::new(port.clone()),
+                CommandRunner::new(std::time::Duration::from_secs(1)),
+                Command::new("must-not-run"),
+                abandoned_input,
+            ));
+            abandoned.bind(scope.id()).unwrap();
+            let request_lock = Arc::clone(&abandoned);
+            assert!(
+                std::thread::spawn(move || {
+                    let _guard = request_lock.request.lock().unwrap();
+                    panic!("poison abandoned request lock");
+                })
+                .join()
+                .is_err()
+            );
+            Arc::clone(&abandoned).abandon();
+            let abandoned_snapshot = abandoned.snapshot();
+            assert_eq!(scope.id(), abandoned_snapshot.operation_id);
+            assert_eq!(qubit_operation::ExecutionPhase::Finished, abandoned_snapshot.execution);
+            assert!(abandoned_snapshot.input_released);
+            assert!(
+                abandoned_snapshot.outcome.is_none(),
+                "abandonment is not a command outcome"
+            );
+            assert!(abandoned_snapshot.settlement.is_some());
+            {
+                let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+                let mut context = Context::from_waker(&waker);
+                assert!(matches!(abandoned.poll_take_outcome(&mut context), Poll::Pending));
+                assert!(matches!(abandoned.poll_outcome(&mut context), Poll::Pending));
+            }
+            let abandoned_release = std::future::poll_fn(|cx| abandoned.poll_release(cx)).await;
+            assert_eq!(scope.id(), abandoned_release.operation_id);
+            let abandoned_settlement = std::future::poll_fn(|cx| abandoned.poll_settlement(cx)).await;
+            assert_eq!(qubit_operation::SettlementStatus::Released, abandoned_settlement.status);
+            drop(abandoned);
+
+            let staged = stage_owned_in(&scope, input, limits, read_tree).await?;
+            let command = Arc::new(PreparedCommand::new(
+                MimeExecutionWorker::new(port),
+                CommandRunner::new(std::time::Duration::from_secs(1)),
+                Command::new("must-not-run"),
+                staged,
+            ));
+            command.bind(scope.id()).unwrap();
+            assert!(
+                command.bind(scope.id()).is_err(),
+                "a command binds to one operation only"
+            );
+            let queued_snapshot = command.snapshot();
+            assert_eq!(scope.id(), queued_snapshot.operation_id);
+            assert_eq!(qubit_operation::ExecutionPhase::Queued, queued_snapshot.execution);
+            assert!(queued_snapshot.stop.is_none());
+
+            command.request_stop(StopReason::Timeout);
+            command.request_stop(StopReason::ParentStopped);
+            assert!(matches!(command.snapshot().stop, Some(report) if report.reason == StopReason::Timeout));
+            Arc::clone(&command).activate(scope).unwrap();
+            let outcome = std::future::poll_fn(|cx| command.poll_take_outcome(cx)).await;
+            assert!(matches!(outcome, OperationOutcome::Stopped(report) if report.reason == StopReason::Timeout));
+            let snapshot = command.snapshot();
+            assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
+            assert!(snapshot.input_released);
+            assert!(matches!(snapshot.stop, Some(report) if report.reason == StopReason::Timeout));
+            assert_eq!(
+                Some(ChildOutcomeKind::Stopped),
+                snapshot.outcome.map(|summary| summary.kind)
+            );
+            assert!(snapshot.settlement.is_some());
+            Ok::<(), MimeError>(())
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            block_on(handle.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+        assert!(block_on(handle.wait_settlement()).all_released());
+        let shutdown = body_services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+    }
+
+    #[test]
+    fn test_prepared_command_recovers_poisoned_state_locks_before_stopping() {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        services.prepare().unwrap();
+        let worker = MimeExecutionWorker::new(port);
+        let limits = ManagedStagingLimits {
+            max_bytes: 32,
+            budget: services.staging_budget(),
+            worker: worker.clone(),
+        };
+        let body_services = Arc::clone(&services);
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let staged = stage_owned_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::from(b"stopped input".as_slice()), InputExtent::Complete),
+                limits,
+                body_services.new_read_tree(32),
+            )
+            .await?;
+            let command = Arc::new(PreparedCommand::new(
+                worker,
+                CommandRunner::new(std::time::Duration::from_secs(1)),
+                Command::new("must-not-run"),
+                staged,
+            ));
+
+            let id_lock = Arc::clone(&command);
+            assert!(
+                std::thread::spawn(move || {
+                    let _guard = id_lock.id.lock().unwrap();
+                    panic!("poison operation identity lock");
+                })
+                .join()
+                .is_err()
+            );
+            let request_lock = Arc::clone(&command);
+            assert!(
+                std::thread::spawn(move || {
+                    let _guard = request_lock.request.lock().unwrap();
+                    panic!("poison prepared request lock");
+                })
+                .join()
+                .is_err()
+            );
+            let stop_lock = Arc::clone(&command);
+            assert!(
+                std::thread::spawn(move || {
+                    let _guard = stop_lock.stop_reason.lock().unwrap();
+                    panic!("poison stop reason lock");
+                })
+                .join()
+                .is_err()
+            );
+
+            command
+                .bind(scope.id())
+                .expect("binding should recover the poisoned identity lock");
+            command.request_stop(StopReason::Timeout);
+            Arc::clone(&command)
+                .activate(scope)
+                .expect("a stopped command should settle without dispatch");
+            let outcome = std::future::poll_fn(|cx| command.poll_take_outcome(cx)).await;
+            assert!(matches!(outcome, OperationOutcome::Stopped(report) if report.reason == StopReason::Timeout));
+            assert!(command.snapshot().input_released);
+            Ok::<_, MimeError>(())
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+        assert!(block_on(operation.wait_settlement()).all_released());
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+    }
+
+    #[test]
+    fn test_activation_maps_success_and_confirms_input_release() {
+        let (result, snapshot) = execute_prepared_command(
+            Command::new("rustc").arg("--version"),
+            false,
+            false,
+            false,
+            std::time::Duration::from_secs(10),
+            false,
+        );
+        let output = match result {
+            Ok(OperationOutcome::Succeeded(output)) => output,
+            _ => panic!("version command should complete successfully"),
+        };
+        assert_eq!(Some(0), output.exit_code);
+        assert!(output.stdout.starts_with(b"rustc "));
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
+        assert!(snapshot.input_released);
+        assert_eq!(
+            Some(ChildOutcomeKind::Succeeded),
+            snapshot.outcome.map(|summary| summary.kind)
+        );
+        assert!(snapshot.settlement.is_some());
+    }
+
+    #[test]
+    fn test_activation_maps_spawn_failure_and_worker_rejection() {
+        let (result, failed_snapshot) = execute_prepared_command(
+            Command::new("__qubit_mime_prepared_command_missing_test_executable__"),
+            false,
+            false,
+            false,
+            std::time::Duration::from_secs(10),
+            false,
+        );
+        assert!(matches!(result, Ok(OperationOutcome::Failed(error)) if error.kind() == CommandErrorKind::SpawnFailed));
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, failed_snapshot.execution);
+        assert_eq!(
+            Some(ChildOutcomeKind::Failed),
+            failed_snapshot.outcome.map(|summary| summary.kind)
+        );
+        assert!(failed_snapshot.input_released);
+        assert!(failed_snapshot.settlement.is_some());
+
+        let (result, rejected_snapshot) = execute_prepared_command(
+            Command::new("must-not-run"),
+            true,
+            false,
+            false,
+            std::time::Duration::from_secs(10),
+            false,
+        );
+        assert!(result.is_err(), "a full command queue rejects activation");
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, rejected_snapshot.execution);
+        assert!(rejected_snapshot.input_released);
+        assert!(
+            rejected_snapshot.outcome.is_none(),
+            "dispatch rejection is execution failure, not command outcome"
+        );
+        assert!(rejected_snapshot.settlement.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_running_snapshot_retains_input_until_command_exit() {
+        let (result, snapshot) = execute_prepared_command(
+            Command::new("sleep").arg("0.2"),
+            false,
+            true,
+            false,
+            std::time::Duration::from_secs(10),
+            false,
+        );
+        assert!(matches!(result, Ok(OperationOutcome::Succeeded(_))));
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
+        assert!(snapshot.input_released);
+        assert_eq!(
+            Some(ChildOutcomeKind::Succeeded),
+            snapshot.outcome.map(|summary| summary.kind)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_stop_during_running_command_cancels_child_and_releases_input() {
+        let (result, snapshot) = execute_prepared_command(
+            Command::new("sleep").arg("10"),
+            false,
+            true,
+            true,
+            std::time::Duration::from_secs(10),
+            false,
+        );
+
+        assert!(matches!(result, Ok(OperationOutcome::Stopped(report)) if report.reason == StopReason::Timeout));
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
+        assert!(snapshot.input_released);
+        assert_eq!(
+            Some(ChildOutcomeKind::Stopped),
+            snapshot.outcome.map(|summary| summary.kind)
+        );
+        assert!(snapshot.settlement.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_command_timeout_reports_failure_and_releases_staged_input() {
+        let (result, snapshot) = execute_prepared_command(
+            Command::new("sleep").arg("10"),
+            false,
+            false,
+            false,
+            std::time::Duration::from_millis(100),
+            false,
+        );
+
+        assert!(matches!(result, Ok(OperationOutcome::Failed(error)) if error.kind() == CommandErrorKind::TimedOut));
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
+        assert!(snapshot.input_released);
+        assert_eq!(
+            Some(ChildOutcomeKind::Failed),
+            snapshot.outcome.map(|summary| summary.kind)
+        );
+        assert!(snapshot.settlement.is_some());
+    }
+
+    #[test]
+    fn test_truncated_stdout_fails_command_and_releases_staged_input() {
+        let (result, snapshot) = execute_prepared_command(
+            Command::new("rustc").arg("--version"),
+            false,
+            false,
+            false,
+            std::time::Duration::from_secs(10),
+            true,
+        );
+
+        assert!(
+            matches!(result, Ok(OperationOutcome::Failed(error)) if error.kind() == CommandErrorKind::OutputTruncated)
+        );
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
+        assert!(snapshot.input_released);
+        assert_eq!(
+            Some(ChildOutcomeKind::Failed),
+            snapshot.outcome.map(|summary| summary.kind)
+        );
+        assert!(snapshot.settlement.is_some());
+    }
+
+    #[test]
+    fn test_stdin_open_failure_publishes_failed_outcome_and_releases_input() {
+        let (result, snapshot) = execute_prepared_command(
+            Command::new("rustc")
+                .arg("--version")
+                .stdin_file("/qubit-mime-missing-command-input-test"),
+            false,
+            false,
+            false,
+            std::time::Duration::from_secs(10),
+            false,
+        );
+
+        assert!(
+            matches!(result, Ok(OperationOutcome::Failed(error)) if error.kind() == CommandErrorKind::OpenInputFailed)
+        );
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
+        assert!(snapshot.input_released);
+        assert_eq!(
+            Some(ChildOutcomeKind::Failed),
+            snapshot.outcome.map(|summary| summary.kind)
+        );
+        assert!(snapshot.settlement.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_stop_after_dispatch_but_before_worker_start_releases_without_spawning() {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap());
+        services.prepare().unwrap();
+        let limits = ManagedStagingLimits {
+            max_bytes: 64,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port.clone()),
+        };
+        let read_tree = services.new_read_tree(64);
+        let body_services = Arc::clone(&services);
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let input = OwnedMimeInput::bytes(
+                Arc::from(b"queued cancellation input".as_slice()),
+                InputExtent::Complete,
+            );
+            let staged = stage_owned_in(&scope, input, limits, read_tree).await?;
+            let (started_tx, started_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            assert!(
+                MimeExecutionWorker::new(port.clone())
+                    .try_dispatch(Box::new(move || {
+                        started_tx.send(()).unwrap();
+                        let _ = release_rx.recv();
+                    }))
+                    .is_ok()
+            );
+            started_rx.recv().unwrap();
+
+            let command = Arc::new(PreparedCommand::new(
+                MimeExecutionWorker::new(port),
+                CommandRunner::new(std::time::Duration::from_secs(1)).disable_logging(true),
+                Command::new("must-not-start-after-queued-stop"),
+                staged,
+            ));
+            command.bind(scope.id()).unwrap();
+            let operation_id = scope.id();
+            Arc::clone(&command).activate(scope).unwrap();
+            command.request_stop(StopReason::ParentStopped);
+            command.request_stop(StopReason::Timeout);
+            release_tx.send(()).unwrap();
+
+            let outcome = std::future::poll_fn(|cx| command.poll_take_outcome(cx)).await;
+            assert!(matches!(outcome, OperationOutcome::Stopped(report) if report.reason == StopReason::ParentStopped));
+            let summary = std::future::poll_fn(|cx| command.poll_outcome(cx)).await;
+            assert_eq!(ChildOutcomeKind::Stopped, summary.kind);
+            let release = std::future::poll_fn(|cx| command.poll_release(cx)).await;
+            assert_eq!(operation_id, release.operation_id);
+            let settlement = std::future::poll_fn(|cx| command.poll_settlement(cx)).await;
+            assert_eq!(qubit_operation::SettlementStatus::Released, settlement.status);
+            let snapshot = command.snapshot();
+            assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
+            assert!(matches!(snapshot.stop, Some(report) if report.reason == StopReason::ParentStopped));
+            assert!(snapshot.input_released);
+            Ok::<_, MimeError>(())
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+        assert!(block_on(operation.wait_settlement()).all_released());
+        let shutdown = body_services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
     }
 }

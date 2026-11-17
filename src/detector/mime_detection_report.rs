@@ -9,9 +9,10 @@
 mod mime_budget_summary;
 mod mime_candidate;
 mod mime_candidates;
-mod mime_detection_report;
+#[path = "mime_detection_report/mime_detection_report.rs"]
+mod report;
 
 pub use mime_budget_summary::MimeBudgetSummary;
 pub use mime_candidate::MimeCandidate;
 pub use mime_candidates::MimeCandidates;
-pub use mime_detection_report::MimeDetectionReport;
+pub use report::MimeDetectionReport;

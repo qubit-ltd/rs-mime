@@ -9,6 +9,8 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use qubit_local_files::LocalTempFile;
 use qubit_operation::ResourceId;
@@ -27,6 +29,8 @@ pub(crate) struct StagedMimeInput {
     pub(super) permits: Mutex<Vec<StagingPermit>>,
     /// Worker that performs writes and cleanup.
     pub(super) worker: MimeExecutionWorker,
+    /// Total bytes successfully written into this resource.
+    pub(super) staged_bytes: AtomicU64,
     /// Resource identity shared with its cleanup adapter.
     pub(super) cleanup_id: Arc<Mutex<Option<ResourceId>>>,
 }
@@ -47,6 +51,7 @@ impl StagedMimeInput {
             owner: Mutex::new(owner),
             permits: Mutex::new(vec![permit]),
             worker,
+            staged_bytes: AtomicU64::new(0),
             cleanup_id: Arc::new(Mutex::new(None)),
         }
     }
@@ -55,6 +60,11 @@ impl StagedMimeInput {
     pub(crate) fn path(&self) -> MimeResult<std::path::PathBuf> {
         let owner = self.owner.lock().unwrap_or_else(|poison| poison.into_inner());
         Ok(owner.path().to_path_buf())
+    }
+
+    /// Returns the number of bytes written into this staged resource.
+    pub(crate) fn staged_bytes(&self) -> u64 {
+        self.staged_bytes.load(Ordering::Acquire)
     }
 
     /// Writes bytes and retains their staging permit for the resource lifetime.
@@ -77,6 +87,104 @@ impl StagedMimeInput {
         owner
             .as_file_mut()
             .and_then(|file| file.write_all(bytes))
-            .map_err(|error| MimeError::Io(error.into()))
+            .map_err(MimeError::Io)?;
+        self.staged_bytes.fetch_add(bytes.len() as u64, Ordering::Release);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use qubit_local_files::LocalFileSystem;
+    use qubit_operation::GroupOptions;
+    use qubit_operation::OperationManager;
+
+    use super::StagedMimeInput;
+    use crate::MimeError;
+    use crate::command_execution::FixedMimeExecutionPort;
+    use crate::command_execution::MimeExecutionWorker;
+    use crate::detector::MimeExecutionServices;
+
+    #[test]
+    fn test_failed_chunk_write_keeps_budget_until_the_temp_owner_is_dropped() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let services = MimeExecutionServices::new(manager, group, port.clone(), 32).unwrap();
+        let budget = services.staging_budget();
+        let first_permit = budget.try_reserve(5).unwrap();
+        let write_permit = budget.try_reserve(3).unwrap();
+        let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
+        let path = owner.path().to_path_buf();
+        let mut staged = StagedMimeInput::new(owner, first_permit, MimeExecutionWorker::new(port));
+        staged.owner.lock().unwrap().close();
+
+        let error = staged
+            .write_chunk(b"abc", write_permit)
+            .expect_err("writing after close must fail");
+        assert!(matches!(error, MimeError::Io(_)));
+        assert_eq!(8, budget.used_bytes(), "both permits remain owned after write failure");
+
+        staged.owner.get_mut().unwrap().cleanup().unwrap();
+        drop(staged);
+        assert_eq!(
+            0,
+            budget.used_bytes(),
+            "dropping the cleaned resource releases its permits"
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_owner_and_permit_mutex_poisoning_do_not_block_staged_input_use() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let services = MimeExecutionServices::new(manager, group, port.clone(), 32).unwrap();
+        let budget = services.staging_budget();
+        let resource = Arc::new(StagedMimeInput::new(
+            LocalFileSystem::host().unwrap().create_temp_file().unwrap(),
+            budget.try_reserve(3).unwrap(),
+            MimeExecutionWorker::new(port),
+        ));
+        let path = resource.path().unwrap();
+
+        let owner_resource = Arc::clone(&resource);
+        assert!(
+            std::thread::spawn(move || {
+                let _owner = owner_resource.owner.lock().unwrap();
+                panic!("poison staged-file owner mutex");
+            })
+            .join()
+            .is_err()
+        );
+        let permits_resource = Arc::clone(&resource);
+        assert!(
+            std::thread::spawn(move || {
+                let _permits = permits_resource.permits.lock().unwrap();
+                panic!("poison staging-permit mutex");
+            })
+            .join()
+            .is_err()
+        );
+
+        assert_eq!(path, resource.path().unwrap());
+        resource
+            .write_chunk(b"abc", budget.try_reserve(3).unwrap())
+            .expect("poisoned staging state should recover for a later write");
+        assert_eq!(b"abc", std::fs::read(&path).unwrap().as_slice());
+        assert_eq!(6, budget.used_bytes());
+
+        resource
+            .owner
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .cleanup()
+            .unwrap();
+        drop(resource);
+        assert_eq!(0, budget.used_bytes());
+        assert!(!path.exists());
     }
 }

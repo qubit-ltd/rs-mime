@@ -47,13 +47,13 @@ pub(in crate::detector) async fn match_content(
     let mut rules_in_batch = 0usize;
     for (mime_index, mime) in repository.all().iter().enumerate() {
         for magic in mime.magics() {
-            if rules_in_batch == 0 {
-                if let Some(reason) = scope.context().stop_reason() {
-                    return Err(MimeError::DetectorBackend {
-                        backend: "repository".to_owned(),
-                        reason: format!("operation stopped: {reason:?}"),
-                    });
-                }
+            if rules_in_batch == 0
+                && let Some(reason) = scope.context().stop_reason()
+            {
+                return Err(MimeError::DetectorBackend {
+                    backend: "repository".to_owned(),
+                    reason: format!("operation stopped: {reason:?}"),
+                });
             }
             rules_in_batch += 1;
             if best_priority.is_some_and(|best| magic.priority() < best) || !magic.matches(bytes) {

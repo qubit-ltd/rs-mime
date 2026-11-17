@@ -18,7 +18,7 @@ MIME 类型。它适合文件上传路由和媒体检查场景：默认使用内
 
 ```toml
 [dependencies]
-qubit-mime = "0.21"
+qubit-mime = "^0.22"
 ```
 
 本 crate 要求 Rust 1.94 或更高版本。默认的 `repository` 检测器使用 crate 内置的
@@ -57,8 +57,9 @@ fn main() -> qubit_mime::MimeResult<()> {
 
 对于内置 detector 和通过本 crate blanket `MimeDetector` 实现接入的 backend，
 `detect_prefix` 会匹配文件名和内容候选，不会把前缀交给需要完整媒体内容的
-classifier。直接实现 `MimeDetector` 的类型自行决定其行为。默认异步 Prefix 路径最多读取
-请求的字节数；需要完整内容的 backend 必须自行提供异步路径 hook。
+classifier。直接实现 `MimeDetector` 的类型自行决定其行为。受管异步操作必须显式选择支持
+异步的 backend；仅支持同步的 backend 会返回 `AsyncUnsupported`，不会在异步流程里回退到同步执行。
+受管操作的生命周期和 Provider 能力限制见用户手册。
 
 ## 提供的能力
 
@@ -80,9 +81,10 @@ n 字节，若提前遇到 EOF 则停止；`Complete` 在默认 16 MiB 预算（
 EOF，并额外探测一个字节以检查是否超限。两者都会恢复起始位置；恢复错误优先。默认
 `MimeDetectorBackend` reader hook 只支持其前缀，遇到 `Complete` 会返回
 `CompleteContentRequired`，因此完整内容 backend 必须覆盖该 hook。adapter 委托给 backend
-reader hook；自定义随机访问覆盖仍可使用。通过异步 Provider 路径调用时，内置 `file` provider
-会在线程池执行暂存、命令和清理。自定义 backend 的默认异步内容 hook 会调用同步方法；可能阻塞的
-backend 应覆盖该 hook。丢弃 future 不保证取消已启动的任务。前缀读取期间可能同时保留 Provider
+reader hook；自定义随机访问覆盖仍可使用。受管检测通过 owned input、显式 scope 和有限请求预算管理执行过程，并分别观察业务结果与资源
+settlement。创建 runtime 或注册 Provider 不会启动 worker；应用需显式准备和停止 MIME 执行服务。
+不支持受管异步能力的 Provider 会被拒绝，不会在异步操作中同步执行。丢弃进行中的 future
+不能证明已接纳工作停止；释放资源前应观察 settlement。前缀读取期间可能同时保留 Provider
 缓冲区和 worker 的 owned 副本；`max_buffer_size` 限制单个缓冲区，不限制两者合计内存。无文件名时，若同一 MIME 对应的多个映射具有不同
 MIME 对，细化会保留原 MIME；可传入匹配的文件名或消除映射冲突来指定细化对。
 
@@ -110,7 +112,7 @@ Provider 依赖对应的可执行文件，也可能因命令不可用、超时�
 
 ```toml
 [dependencies]
-qubit-mime = "0.21"
+qubit-mime = "^0.22"
 qubit-config = "0.15"
 qubit-spi = "0.14"
 ```
