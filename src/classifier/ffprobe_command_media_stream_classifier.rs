@@ -576,6 +576,7 @@ mod async_operation_tests {
         staged_len: Mutex<Option<u64>>,
         blocker: Mutex<Option<std::path::PathBuf>>,
         gate: Option<Arc<TestGate>>,
+        concurrent_gate: Option<Arc<ConcurrentTestGate>>,
         fail: bool,
     }
     impl AsyncMimeCommandExecutor for FakeCommandExecutor {
@@ -595,10 +596,18 @@ mod async_operation_tests {
             }
             *self.path.lock().unwrap() = Some(path);
             let gate = self.gate.clone();
+            let concurrent_gate = self.concurrent_gate.clone();
             let fail = self.fail;
             Box::pin(async move {
                 if let Some(gate) = gate {
                     TestGateFuture(gate).await;
+                }
+                if let Some(gate) = concurrent_gate {
+                    ConcurrentTestGateFuture {
+                        gate,
+                        arrived: false,
+                    }
+                    .await;
                 }
                 let output = MimeCommandOutput {
                     exit_code: Some(0),
@@ -695,6 +704,89 @@ mod async_operation_tests {
                     && report.budget.staging_bytes == media.len() as u64
         ));
         assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+    }
+
+    #[test]
+    fn test_concurrent_runtime_reports_keep_request_staging_isolated() {
+        let mut raw_config = qubit_config::Config::new();
+        raw_config
+            .set(crate::CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)
+            .unwrap();
+        raw_config
+            .set(crate::CONFIG_MIME_PRECISE_DETECTION_PATTERNS, "ogg")
+            .unwrap();
+        raw_config
+            .set(
+                crate::CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+                "ogg:video/ogg,audio/x-vorbis+ogg",
+            )
+            .unwrap();
+        let config = MimeConfig::from_config(&raw_config).unwrap();
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let services =
+            MimeExecutionServices::new(manager, group, Arc::new(InlinePort), 1024 * 1024).unwrap();
+        services.prepare().unwrap();
+        let gate = Arc::new(ConcurrentTestGate::default());
+        let executor = Arc::new(FakeCommandExecutor {
+            concurrent_gate: Some(Arc::clone(&gate)),
+            ..Default::default()
+        });
+        let detector_registry = crate::MimeDetectorRegistry::builtin();
+        let classifier_registry = crate::MediaStreamClassifierRegistry::builtin();
+        classifier_registry
+            .register_async_provider(InjectedFfprobeProvider(Arc::clone(&executor)))
+            .unwrap();
+        let runtime = MimeRuntime::new(config, Arc::new(crate::MimeRepository::bundled().clone()))
+            .with_execution_services(services.clone())
+            .with_async_provider_selection_and_classifier(
+                &detector_registry,
+                &qubit_spi::ProviderSelection::named("repository").unwrap(),
+                &classifier_registry,
+                &qubit_spi::ProviderSelection::named("mime010-injected-ffprobe").unwrap(),
+            )
+            .unwrap();
+        let fixture = include_bytes!("../../tests/fixtures/real_files/test.ogg");
+        let first: Arc<[u8]> = Arc::from(fixture.as_slice());
+        let mut second_content = fixture.to_vec();
+        second_content.extend_from_slice(b"distinct request tail");
+        let second: Arc<[u8]> = second_content.into();
+        let first_len = first.len() as u64;
+        let second_len = second.len() as u64;
+        let mut first_operation = runtime
+            .try_submit_detection(
+                crate::OwnedMimeInput::bytes(Arc::clone(&first), InputExtent::Complete).with_filename("first.ogg"),
+                MimeOperationOptions::default(),
+            )
+            .unwrap_or_else(|_| panic!("first Ogg operation should be admitted"));
+        let mut second_operation = runtime
+            .try_submit_detection(
+                crate::OwnedMimeInput::bytes(Arc::clone(&second), InputExtent::Complete)
+                    .with_filename("second.ogg"),
+                MimeOperationOptions::default(),
+            )
+            .unwrap_or_else(|_| panic!("second Ogg operation should be admitted"));
+
+        gate.wait_for_arrivals(2);
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 2);
+        gate.release();
+        let first_report = block_on(first_operation.wait_outcome()).unwrap();
+        let second_report = block_on(second_operation.wait_outcome()).unwrap();
+        assert!(matches!(
+            first_report,
+            qubit_operation::OperationOutcome::Succeeded(ref report)
+                if report.mime_type.as_deref() == Some("audio/x-vorbis+ogg")
+                    && report.budget.staging_bytes == first_len
+        ));
+        assert!(matches!(
+            second_report,
+            qubit_operation::OperationOutcome::Succeeded(ref report)
+                if report.mime_type.as_deref() == Some("audio/x-vorbis+ogg")
+                    && report.budget.staging_bytes == second_len
+        ));
         let shutdown = services.shutdown();
         block_on(shutdown.wait_services_settled()).unwrap();
         shutdown.stop_services().unwrap();
@@ -808,6 +900,59 @@ mod async_operation_tests {
                 Poll::Ready(())
             } else {
                 state.waker = Some(context.waker().clone());
+                Poll::Pending
+            }
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct ConcurrentGateState {
+        arrivals: usize,
+        released: bool,
+        wakers: Vec<Waker>,
+    }
+    #[derive(Debug, Default)]
+    struct ConcurrentTestGate {
+        state: Mutex<ConcurrentGateState>,
+        changed: Condvar,
+    }
+    impl ConcurrentTestGate {
+        fn wait_for_arrivals(&self, required: usize) {
+            let mut state = self.state.lock().unwrap();
+            while state.arrivals < required {
+                state = self.changed.wait(state).unwrap();
+            }
+        }
+
+        fn release(&self) {
+            let mut state = self.state.lock().unwrap();
+            state.released = true;
+            let wakers = std::mem::take(&mut state.wakers);
+            drop(state);
+            for waker in wakers {
+                waker.wake();
+            }
+        }
+    }
+    struct ConcurrentTestGateFuture {
+        gate: Arc<ConcurrentTestGate>,
+        arrived: bool,
+    }
+    impl Future for ConcurrentTestGateFuture {
+        type Output = ();
+
+        fn poll(mut self: std::pin::Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+            let gate = Arc::clone(&self.gate);
+            let mut state = gate.state.lock().unwrap();
+            if !self.arrived {
+                state.arrivals += 1;
+                self.arrived = true;
+                gate.changed.notify_all();
+            }
+            if state.released {
+                Poll::Ready(())
+            } else {
+                state.wakers.push(context.waker().clone());
                 Poll::Pending
             }
         }
@@ -997,6 +1142,7 @@ mod async_operation_tests {
             staged_len: Mutex::new(None),
             blocker: Mutex::new(None),
             gate: Some(Arc::clone(&gate)),
+            concurrent_gate: None,
             fail: false,
         });
         let classifier = Arc::new(
@@ -1112,6 +1258,7 @@ mod async_operation_tests {
             staged_len: Mutex::new(None),
             blocker: Mutex::new(None),
             gate: None,
+            concurrent_gate: None,
             fail: true,
         });
         let classifier = Arc::new(
