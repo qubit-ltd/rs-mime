@@ -6,20 +6,20 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::Weak;
 
 use qubit_operation::OperationId;
 
 use super::ReadTreeContext;
+use super::read_tree_registration::Registration;
+use super::read_tree_registration::Roots;
 
 /// Weakly indexes read-budget roots by operation ID.
 #[derive(Debug, Default)]
 pub(in crate::detector) struct ReadTreeRegistry {
     /// Root contexts retained only while an operation or descendant owns them.
-    roots: Mutex<HashMap<OperationId, Weak<ReadTreeContext>>>,
+    roots: Arc<Roots>,
 }
 
 impl ReadTreeRegistry {
@@ -38,13 +38,21 @@ impl ReadTreeRegistry {
         tree_limit: u64,
         scope_limit: u64,
     ) -> Arc<ReadTreeContext> {
-        let mut roots = self.roots.lock().unwrap_or_else(|e| e.into_inner());
-        roots.retain(|_, tree| tree.strong_count() > 0);
-        let parent = roots.get(&id).and_then(Weak::upgrade).unwrap_or_else(|| {
-            let context = ReadTreeContext::new(tree_limit);
-            roots.insert(id, Arc::downgrade(&context));
-            context
-        });
+        let parent = {
+            let mut roots = self.roots.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(parent) = roots.get(&id).and_then(Weak::upgrade) {
+                parent
+            } else {
+                roots.remove(&id);
+                let context = ReadTreeContext::new(tree_limit);
+                roots.insert(id, Arc::downgrade(&context));
+                context.register(Registration {
+                    roots: Arc::downgrade(&self.roots),
+                    operation: id,
+                });
+                context
+            }
+        };
         parent.child(scope_limit)
     }
 
@@ -58,6 +66,10 @@ impl ReadTreeRegistry {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(id, Arc::downgrade(tree));
+        tree.register(Registration {
+            roots: Arc::downgrade(&self.roots),
+            operation: id,
+        });
     }
 
     /// Looks up a live context registered for an operation.
@@ -169,5 +181,101 @@ mod tests {
         let replacement = registry.child_for_parent(operation, 6, 6);
         assert_eq!(replacement.reserve(6).unwrap().commit(6), 6);
         assert_eq!(replacement.tree.consumed(), 6);
+    }
+
+    #[test]
+    fn test_root_bindings_are_removed_after_context_drop() {
+        let registry = ReadTreeRegistry::default();
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager
+            .group(qubit_operation::GroupOptions { capacity: 32 })
+            .unwrap();
+
+        for _ in 0..32 {
+            let mut operation = group
+                .as_async()
+                .try_submit(Default::default(), |scope| async move {
+                    Ok::<_, ()>(scope.id())
+                })
+                .unwrap();
+            let id = match block_on(operation.wait_outcome()).unwrap() {
+                OperationOutcome::Succeeded(id) => id,
+                other => panic!("operation should return its own identity: {other:?}"),
+            };
+            let root = ReadTreeContext::new(8);
+            registry.bind(id, &root);
+            assert!(registry.for_operation(id).is_some());
+            drop(root);
+            assert!(registry.for_operation(id).is_none());
+            assert!(registry.roots.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_dropping_replaced_context_keeps_new_binding() {
+        let registry = ReadTreeRegistry::default();
+        let id = operation_id();
+        let old = ReadTreeContext::new(8);
+        let replacement = ReadTreeContext::new(16);
+
+        registry.bind(id, &old);
+        registry.bind(id, &replacement);
+        drop(old);
+
+        assert!(Arc::ptr_eq(
+            &replacement,
+            &registry
+                .for_operation(id)
+                .expect("replacement should remain bound")
+        ));
+        assert_eq!(1, registry.roots.lock().unwrap().len());
+        drop(replacement);
+        assert!(registry.roots.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_context_unregisters_multiple_ids_and_survives_registry_drop() {
+        let id_a = operation_id();
+        let id_b = operation_id();
+        let context = ReadTreeContext::new(8);
+        let registry = ReadTreeRegistry::default();
+
+        registry.bind(id_a, &context);
+        registry.bind(id_b, &context);
+        assert_eq!(2, registry.roots.lock().unwrap().len());
+        drop(context);
+        assert!(registry.roots.lock().unwrap().is_empty());
+
+        let context = ReadTreeContext::new(8);
+        let registry = ReadTreeRegistry::default();
+        registry.bind(id_a, &context);
+        drop(registry);
+        drop(context);
+    }
+
+    #[test]
+    fn test_context_drop_recovers_poisoned_roots_lock() {
+        let registry = ReadTreeRegistry::default();
+        let id = operation_id();
+        let context = ReadTreeContext::new(8);
+        registry.bind(id, &context);
+        let roots = Arc::clone(&registry.roots);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = roots.lock().unwrap();
+                panic!("poison read-tree roots lock");
+            })
+            .join()
+            .is_err()
+        );
+
+        drop(context);
+        assert!(
+            registry
+                .roots
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        );
     }
 }

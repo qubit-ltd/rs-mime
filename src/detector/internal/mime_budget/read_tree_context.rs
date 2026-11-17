@@ -8,11 +8,13 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::Weak;
 
 use super::ReadPermit;
 use super::ReadScopeBudget;
 use super::ReadTreeBudget;
 use super::ScopeCounters;
+use super::read_tree_registration::Registration;
 
 /// Read accounting context inherited by MIME descendants.
 #[derive(Debug)]
@@ -24,6 +26,7 @@ pub(crate) struct ReadTreeContext {
     /// Keeps an external-parent anchor alive while a child operation is held.
     #[allow(dead_code)]
     parent: Option<Arc<ReadTreeContext>>,
+    registrations: Mutex<Vec<Registration>>,
 }
 
 impl ReadTreeContext {
@@ -43,6 +46,7 @@ impl ReadTreeContext {
                 parent: None,
             }),
             parent: None,
+            registrations: Mutex::new(Vec::new()),
         })
     }
 
@@ -63,7 +67,18 @@ impl ReadTreeContext {
                 parent: Some(Arc::clone(&self.scope)),
             }),
             parent: Some(Arc::clone(self)),
+            registrations: Mutex::new(Vec::new()),
         })
+    }
+
+    pub(super) fn register(&self, registration: Registration) {
+        let mut registrations = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
+        if !registrations.iter().any(|item| {
+            item.operation == registration.operation
+                && Weak::ptr_eq(&item.roots, &registration.roots)
+        }) {
+            registrations.push(registration);
+        }
     }
 
     /// Reserves read capacity across the root tree and every ancestor scope.
@@ -140,6 +155,26 @@ impl ReadTreeContext {
     /// Returns bytes committed in this operation's inherited read tree.
     pub(crate) fn consumed(&self) -> u64 {
         self.scope.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
+    }
+}
+
+impl Drop for ReadTreeContext {
+    fn drop(&mut self) {
+        let registrations =
+            std::mem::take(&mut *self.registrations.lock().unwrap_or_else(|e| e.into_inner()));
+        let context = std::ptr::from_ref(self);
+        for registration in registrations {
+            let Some(roots) = registration.roots.upgrade() else {
+                continue;
+            };
+            let mut roots = roots.lock().unwrap_or_else(|e| e.into_inner());
+            let matches = roots
+                .get(&registration.operation)
+                .is_some_and(|registered| std::ptr::eq(registered.as_ptr(), context));
+            if matches {
+                roots.remove(&registration.operation);
+            }
+        }
     }
 }
 
