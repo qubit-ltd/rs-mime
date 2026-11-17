@@ -481,6 +481,12 @@ stdout-plus-stderr budget equal to four times
 `MimeConfig::command_output_max_bytes()`. A zero per-stream limit therefore
 produces a zero total budget, and any output can stop the command early with
 `OutputLimitExceeded`; partial capture remains available on the command error.
+`MimeDetectionReport::budget.staging_bytes` records the peak staging bytes
+simultaneously charged to that request. It is not cumulative I/O or a snapshot
+of storage still alive at report time, and concurrent requests have separate
+peaks. The value does not replace cleanup or settlement observation. A custom
+backend that manages staging outside the built-in staging budget must report
+its own staging usage through its `MimeCandidates` result.
 This policy belongs to these `qubit-mime` defaults and does not change the
 default behavior of `rs-command` or an injected runner. Applications that
 inject a `CommandRunner` can preserve an unlimited total budget with

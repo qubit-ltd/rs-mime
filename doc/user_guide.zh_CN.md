@@ -221,6 +221,10 @@ EOF 时停止。该上限来自 MIME 配置；所选文件名仓库中的 magic 
 命令只看到暂存前缀而得到不同结果。如需调整 reader 预算，可使用现有
 `mime.max.buffer.size` 配置。
 
+`MimeDetectionReport::budget.staging_bytes` 表示本请求同时计入暂存预算的峰值，不是累计写入量，
+也不是报告生成时仍存活的暂存量。并发请求分别计量。该值不代表清理或 operation settlement 已完成；
+自定义 backend 若在内置暂存预算之外管理资源，应通过 `MimeCandidates` 提供自己的暂存用量。
+
 这些入口都返回 `MimeResult<Option<String>>`。应先处理外层错误，再解释可选的 MIME 名称。
 
 ## 进阶用法
