@@ -339,11 +339,15 @@ mod tests {
         let (second_done_tx, second_done_rx) = mpsc::channel();
         let second_port = Arc::clone(&port);
         let second = std::thread::spawn(move || {
-            second_started_tx.send(()).unwrap();
+            let observed_first_shutdown = matches!(
+                second_port.shutdown_failed.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            );
+            second_started_tx.send(observed_first_shutdown).unwrap();
             let result = second_port.shutdown();
             second_done_tx.send(result).unwrap();
         });
-        second_started_rx.recv().unwrap();
+        let observed_first_shutdown = second_started_rx.recv().unwrap();
         let second_returned_early = second_done_rx
             .recv_timeout(std::time::Duration::from_millis(100))
             .is_ok();
@@ -368,6 +372,10 @@ mod tests {
         assert!(
             reached_worker_join,
             "shutdown did not reach worker join before the timeout"
+        );
+        assert!(
+            observed_first_shutdown,
+            "second shutdown did not observe the first shutdown holding its result lock"
         );
         assert!(
             !second_returned_early,
