@@ -19,6 +19,9 @@ pub(crate) use staging_budget::StagingBudget;
 #[path = "mime_budget/staging_permit.rs"]
 mod staging_permit;
 pub(crate) use staging_permit::StagingPermit;
+#[path = "mime_budget/request_staging_usage.rs"]
+mod request_staging_usage;
+pub(crate) use request_staging_usage::RequestStagingUsage;
 #[path = "mime_budget/owned_memory_permit.rs"]
 mod owned_memory_permit;
 pub(crate) use owned_memory_permit::OwnedMemoryPermit;

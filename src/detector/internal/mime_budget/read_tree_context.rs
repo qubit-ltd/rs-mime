@@ -13,12 +13,16 @@ use std::sync::Weak;
 use super::ReadPermit;
 use super::ReadScopeBudget;
 use super::ReadTreeBudget;
+use super::RequestStagingUsage;
 use super::ScopeCounters;
 use super::registration::Registration;
 
 /// Read accounting context inherited by MIME descendants.
 #[derive(Debug)]
 pub(crate) struct ReadTreeContext {
+    /// Request-local accounting for concurrently held staging permits.
+    #[allow(dead_code)] // Used by request report assembly in the following task.
+    pub(super) staging_usage: Arc<RequestStagingUsage>,
     /// Root-level allowance shared across related contexts.
     pub(super) tree: Arc<ReadTreeBudget>,
     /// Allowance and counters for this operation scope.
@@ -40,6 +44,7 @@ impl ReadTreeContext {
     /// A reference-counted root context.
     pub(crate) fn new(limit: u64) -> Arc<Self> {
         Arc::new(Self {
+            staging_usage: Arc::new(RequestStagingUsage::default()),
             tree: ReadTreeBudget::new(limit),
             scope: Arc::new(ReadScopeBudget {
                 limit,
@@ -61,6 +66,7 @@ impl ReadTreeContext {
     /// A child context whose reads charge the ancestor scopes.
     pub(in crate::detector) fn child(self: &Arc<Self>, limit: u64) -> Arc<Self> {
         Arc::new(Self {
+            staging_usage: Arc::new(RequestStagingUsage::default()),
             tree: Arc::clone(&self.tree),
             scope: Arc::new(ReadScopeBudget {
                 limit: limit.min(self.scope.limit),
@@ -237,6 +243,16 @@ mod tests {
             OperationOutcome::Succeeded(id) => id,
             other => panic!("operation should return its own identity: {other:?}"),
         }
+    }
+
+    #[test]
+    fn request_staging_contexts_do_not_share_usage_with_parent_or_siblings() {
+        let root = ReadTreeContext::new(10);
+        let first = root.child(10);
+        let second = root.child(10);
+
+        assert!(!Arc::ptr_eq(&root.staging_usage, &first.staging_usage));
+        assert!(!Arc::ptr_eq(&first.staging_usage, &second.staging_usage));
     }
 
     #[test]
