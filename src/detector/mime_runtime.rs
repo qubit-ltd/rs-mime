@@ -395,6 +395,8 @@ impl MimeRuntime {
         let body_cell = Arc::clone(&cell);
         let body_services = Arc::clone(&services);
         let body_tree = Arc::clone(&read_tree);
+        let repository_max_test_bytes = self.context.repository().max_test_bytes();
+        let repository = self.context.repository_arc();
         let body = move |scope: OperationScope| {
             body_services.bind_read_tree(scope.id(), &body_tree);
             let input = mime_submission::take(&body_cell);
@@ -404,17 +406,33 @@ impl MimeRuntime {
                     extent,
                     filename,
                 } => {
-                    let mime_type = detector.detect(&content, filename.as_deref(), options.policy)?;
-                    let inspected_extent = match extent {
-                        super::mime_input::InputExtent::Prefix => {
-                            super::mime_input::InspectedExtent::Prefix(content.len())
+                    let filename_short_circuit = options.policy == crate::MimeDetectionPolicy::PreferFilename
+                        && filename.as_deref().is_some_and(|name| {
+                            repository.detect_by_filename(name).len() == 1
+                        });
+                    let inspected_bytes = if filename_short_circuit {
+                        0
+                    } else {
+                        content.len().min(repository_max_test_bytes)
+                    };
+                    let mime_type = if filename_short_circuit {
+                        detector.detect_by_filename(filename.as_deref().expect("short circuit requires filename"))?
+                    } else {
+                        match extent {
+                            super::mime_input::InputExtent::Prefix => detector.detect_prefix(
+                                &content[..inspected_bytes],
+                                filename.as_deref(),
+                                options.policy,
+                            )?,
+                            super::mime_input::InputExtent::Complete => {
+                                detector.detect(&content, filename.as_deref(), options.policy)?
+                            }
                         }
-                        super::mime_input::InputExtent::Complete => super::mime_input::InspectedExtent::Complete,
                     };
                     Ok(crate::MimeDetectionReport {
                         mime_type,
                         backend_id: "repository".into(),
-                        inspected_extent,
+                        inspected_extent: super::mime_input::InspectedExtent::Prefix(inspected_bytes),
                         budget: super::mime_detection_report::MimeBudgetSummary {
                             owned_bytes: content.len(),
                             ..Default::default()

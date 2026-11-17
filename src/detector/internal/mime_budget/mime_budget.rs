@@ -78,6 +78,7 @@ impl MimeBudget {
         let inner = Arc::new(PermitInner {
             budget: Arc::clone(self),
             amount: Amount::Owned(allocation.len()),
+            allocation_identity: Some(identity),
         });
         counters
             .allocations
@@ -127,6 +128,7 @@ impl MimeBudget {
             _inner: Arc::new(PermitInner {
                 budget: Arc::clone(self),
                 amount,
+                allocation_identity: None,
             }),
         })
     }
@@ -146,10 +148,13 @@ impl MimeBudget {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Barrier;
     use std::sync::Arc;
 
     use super::Limits;
     use super::MimeBudget;
+    use super::super::Amount;
+    use super::super::PermitInner;
 
     #[test]
     fn test_owned_and_staging_counters_follow_live_permits() {
@@ -208,6 +213,69 @@ mod tests {
         assert_eq!(4, budget.owned_bytes());
         drop(next);
         assert_eq!(0, budget.owned_bytes());
+    }
+
+    #[test]
+    fn test_allocation_index_and_weak_reference_follow_final_permit_drop() {
+        let budget = MimeBudget::new(Limits { owned: 16, staging: 0 });
+        for _ in 0..8 {
+            let allocation: Arc<[u8]> = Arc::from([3u8; 2]);
+            let weak = Arc::downgrade(&allocation);
+            assert_eq!(1, Arc::weak_count(&allocation));
+            let permit = budget.reserve_allocation(&allocation).unwrap();
+            assert_eq!(2, Arc::weak_count(&allocation));
+            drop(permit);
+            assert_eq!(1, Arc::weak_count(&allocation));
+            assert_eq!(0, budget.owned_bytes());
+            assert!(budget.counters.lock().unwrap().allocations.is_empty());
+            assert!(weak.upgrade().is_some());
+        }
+    }
+
+    #[test]
+    fn test_old_allocation_permit_does_not_remove_replacement_index() {
+        let budget = MimeBudget::new(Limits { owned: 8, staging: 0 });
+        let allocation: Arc<[u8]> = Arc::from([5u8; 4]);
+        let identity = Arc::as_ptr(&allocation) as *const u8 as usize;
+        let replacement = budget.reserve_allocation(&allocation).unwrap();
+        let old = Arc::new(PermitInner {
+            budget: Arc::clone(&budget),
+            amount: Amount::Owned(1),
+            allocation_identity: Some(identity),
+        });
+        budget.counters.lock().unwrap().owned += 1;
+
+        drop(old);
+        assert_eq!(4, budget.owned_bytes());
+        assert!(budget.counters.lock().unwrap().allocations.contains_key(&identity));
+        drop(replacement);
+        assert_eq!(0, budget.owned_bytes());
+        assert!(budget.counters.lock().unwrap().allocations.is_empty());
+    }
+
+    #[test]
+    fn test_concurrent_allocation_reservations_release_their_indexes() {
+        let budget = MimeBudget::new(Limits { owned: 64, staging: 0 });
+        let barrier = Arc::new(Barrier::new(9));
+        let workers = (0..8)
+            .map(|_| {
+                let budget = Arc::clone(&budget);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let allocation: Arc<[u8]> = Arc::from([9u8; 4]);
+                    let permit = budget.reserve_allocation(&allocation).unwrap();
+                    barrier.wait();
+                    drop(permit);
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        let counters = budget.counters.lock().unwrap();
+        assert_eq!(0, counters.owned);
+        assert!(counters.allocations.is_empty());
     }
 
     #[test]

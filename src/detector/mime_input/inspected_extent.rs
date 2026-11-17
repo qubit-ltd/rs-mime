@@ -7,7 +7,12 @@
 // =============================================================================
 //! Extent that a MIME backend actually inspected.
 
-/// Portion of an input actually inspected by a backend.
+/// Content range supplied to a backend's matching operation.
+///
+/// `Prefix(n)` records the bounded contiguous window made available to
+/// matching. It is not a count of individual bytes read or touched by each
+/// rule. Use [`super::InputExtent`] to describe whether the caller supplied a
+/// prefix or the complete input.
 ///
 /// # Variants
 /// - `Prefix`: A contiguous prefix measured in bytes.
@@ -15,8 +20,8 @@
 /// - `RandomAccessSamples`: Noncontiguous samples were inspected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectedExtent {
-    /// A contiguous prefix whose length is recorded in bytes.
-    Prefix(#[doc = "Number of contiguous prefix bytes inspected."] usize),
+    /// A bounded contiguous prefix made available to content matching.
+    Prefix(#[doc = "Length of the contiguous matching window in bytes."] usize),
     /// The complete input was inspected.
     Complete,
     /// The backend inspected samples through random access.

@@ -363,9 +363,11 @@ nonzero cumulative read limit; attach it with `MimeRuntime::with_execution_servi
 and call `prepare()` before root submissions. Preparation is explicit.
 
 Select an async-capable provider with `MimeRuntime::with_async_provider_selection`
-when the runtime needs an async implementation. In this checkout, the bundled
-repository provider implements that path. Provider registration itself does not
-start detection work. A runtime without execution services returns a typed
+when the runtime needs an async implementation. The built-in `repository` and
+`file` providers both expose managed async backends. `file` requires complete
+content; its lack of random-access support only rules out inputs that require
+random access. Provider registration itself does not start detection work. A
+runtime without execution services returns a typed
 `ExecutionServicesRequired` submission rejection; an unsupported async backend
 returns `AsyncUnsupported`. Both rejections return the original
 `OwnedMimeInput` in `MimeSubmitFailure`, so the caller can retry or choose another
@@ -378,16 +380,27 @@ or failed outcome does not by itself prove that staged resources or background
 helpers have been released. Do not interpret dropping a handle or future as proof
 of cancellation. The operation report contains the selected MIME value, backend
 identifier, inspected extent, and budget summary; it does not replace operation
-settlement diagnostics.
+settlement diagnostics. `InputExtent` describes whether the caller supplied a
+prefix or complete input. `InspectedExtent::Prefix(n)` describes the bounded
+contiguous window made available to matching; it is not a byte-by-byte access
+counter. A complete input can therefore have a prefix inspected extent.
 
 Use `try_submit_detection_in` to submit beneath an existing
 `qubit-operation::OperationScope`; the child uses the parent's manager view and
 MIME group binding. The synchronous child entry point is
-`try_submit_detection_sync_in`. These APIs do not make every existing detector
-provider async-capable: the `file` backend currently declares that it requires
-complete content and lacks random-access support, and provider tests cover its
-capability rejection. Do not assume that selecting `file` enables managed async
-submission or that `ffprobe` is available through every async selection.
+`try_submit_detection_sync_in`. Provider capabilities are:
+
+| Provider | Managed async backend | Input and refinement limits |
+| --- | --- | --- |
+| `repository` | Yes | Matches supplied bytes against repository rules; does not support random-access input. |
+| `file` | Yes, after explicit selection | Requires complete content and does not support random-access input. Attaching a classifier that needs same-object refinement is rejected with `UnsupportedCapability`. |
+| Sync-only custom provider | No | Async selection returns `AsyncUnsupported`; it is not run synchronously as a fallback. |
+
+Selecting a command provider does not guarantee the external command is
+available or will run successfully. Those are runtime conditions reported by
+the accepted operation. A classifier also needs explicit async selection and a
+compatible same-object capability; do not assume `ffprobe` is available
+through every detector selection.
 
 `MimeExecutionServices::shutdown()` closes new root submissions and returns an
 observer. Observe operation settlements, stop MIME execution services from an

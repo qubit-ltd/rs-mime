@@ -611,6 +611,98 @@ fn test_operation_runtime_sync_submission_uses_parent() {
 }
 
 #[test]
+fn test_operation_runtime_sync_and_async_reports_match_repository_inspection_extent() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let port = Arc::new(TestExecution::default());
+    let services = services(&manager, 8, port);
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
+    let max_test_bytes = qubit_mime::MimeRepository::bundled().max_test_bytes();
+    let mut bytes = vec![b'x'; max_test_bytes + 1];
+    bytes[..8].copy_from_slice(b"%PDF-1.7");
+    let bytes: Arc<[u8]> = Arc::from(bytes);
+    let handles = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let body_handles = Arc::clone(&handles);
+    let body_runtime = runtime.clone();
+    let body_bytes = Arc::clone(&bytes);
+    let mut parent = manager
+        .try_submit(Default::default(), move |scope| {
+            let cases = [
+                (InputExtent::Complete, qubit_mime::MimeDetectionPolicy::VerifyContent, "extent.pdf"),
+                (InputExtent::Prefix, qubit_mime::MimeDetectionPolicy::VerifyContent, "extent.pdf"),
+                (InputExtent::Complete, qubit_mime::MimeDetectionPolicy::PreferFilename, "unique-name.pdf"),
+            ];
+            let mut accepted = true;
+            for (extent, policy, filename) in cases {
+                let options = MimeOperationOptions {
+                    policy,
+                    ..Default::default()
+                };
+                let sync = body_runtime.try_submit_detection_sync_in(
+                    &scope,
+                    OwnedMimeInput::bytes(Arc::clone(&body_bytes), extent).with_filename(filename),
+                    options.clone(),
+                );
+                let asynchronous = body_runtime.try_submit_detection_in(
+                    &scope,
+                    OwnedMimeInput::bytes(Arc::clone(&body_bytes), extent).with_filename(filename),
+                    options,
+                );
+                match (sync, asynchronous) {
+                    (Ok(sync), Ok(asynchronous)) => body_handles.lock().unwrap().push((sync, asynchronous)),
+                    _ => accepted = false,
+                }
+            }
+            Ok::<_, ()>(accepted)
+        })
+        .unwrap();
+    assert!(matches!(
+        parent.wait_outcome().unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(true)
+    ));
+
+    let pairs = std::mem::take(&mut *handles.lock().unwrap());
+    assert_eq!(3, pairs.len());
+    for (index, (mut sync, mut asynchronous)) in pairs.into_iter().enumerate() {
+        let sync_report = match sync.wait_outcome().unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(report) => report,
+            other => panic!("sync operation should succeed: {other:?}"),
+        };
+        let async_report = match block_on(asynchronous.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(report) => report,
+            other => panic!("async operation should succeed: {other:?}"),
+        };
+        assert_eq!(Some("application/pdf".to_owned()), sync_report.mime_type);
+        assert_eq!(sync_report.mime_type, async_report.mime_type);
+        match index {
+            0 | 1 => assert_eq!(
+                qubit_mime::InspectedExtent::Prefix(max_test_bytes),
+                sync_report.inspected_extent,
+                "repository matching inspects only its bounded magic window"
+            ),
+            2 => assert_eq!(
+                qubit_mime::InspectedExtent::Prefix(0),
+                sync_report.inspected_extent,
+                "PreferFilename returns before repository content matching"
+            ),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            qubit_mime::InspectedExtent::Prefix(max_test_bytes),
+            async_report.inspected_extent,
+            "async repository backend reports its bounded matcher window"
+        );
+    }
+
+    let shutdown = services.shutdown();
+    block_on(shutdown.wait_services_settled()).unwrap();
+    shutdown.stop_services().unwrap();
+    let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
 fn test_operation_runtime_sync_rejects_provider_and_returns_original_input() {
     use qubit_fs::AsyncFileSystem;
     use qubit_fs::Path;

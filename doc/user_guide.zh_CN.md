@@ -281,8 +281,9 @@ MIME 父类型继承关系使用迭代方式遍历，因此长继承链不会为
 准备阶段不会由 runtime 构造自动触发。
 
 如需异步实现，使用 `MimeRuntime::with_async_provider_selection` 选择明确支持异步的
-Provider。本 checkout 中内置 `repository` Provider 实现了这条路径。注册 Provider 不会启动
-检测任务。未配置执行服务时，提交会以 `ExecutionServicesRequired` 拒绝；所选 backend
+Provider。内置 `repository` 和 `file` Provider 都提供受管异步 backend。`file` 要求完整内容；
+它不支持随机访问，只表示不能处理要求随机访问的输入。注册 Provider 不会启动检测任务。
+未配置执行服务时，提交会以 `ExecutionServicesRequired` 拒绝；所选 backend
 没有异步能力时会以 `AsyncUnsupported` 拒绝。这些提交前拒绝都通过
 `MimeSubmitFailure` 原样返还 `OwnedMimeInput`，调用方可以重试或改走其他入口。任务接纳后
 发生的检测错误则由 operation handle 报告。
@@ -290,14 +291,23 @@ Provider。本 checkout 中内置 `repository` Provider 实现了这条路径。
 handle 提供两种彼此独立的观察方式。`wait_outcome()` 等待 MIME 业务结果；成功时结果包含
 `MimeDetectionReport`。`wait_settlement()` 观察资源是否已释放或恢复责任是否仍待处理。提前得到
 Stopped 或 Failed 并不能证明暂存文件和后台 helper 已退出；丢弃 handle 或 future 也不代表任务
-已取消。报告包含 MIME 结果、backend 标识、实际检查范围和预算摘要，不能替代 operation 的
-settlement 诊断。
+已取消。报告包含 MIME 结果、backend 标识、检查范围和预算摘要，不能替代 operation 的
+settlement 诊断。`InputExtent` 说明调用方提供的是前缀还是完整输入；`InspectedExtent::Prefix(n)`
+说明交给内容匹配的有界连续窗口，不是逐字节访问计数。因此完整输入也可能对应前缀检查范围。
 
 已有 `qubit-operation::OperationScope` 时，可调用 `try_submit_detection_in` 创建子操作；它沿用
 父操作的 manager 视图并绑定 MIME 组。同步子操作入口为
-`try_submit_detection_sync_in`。这些 API 不会让所有现有 Provider 自动具备异步能力：当前
-`file` backend 声明需要完整内容且不支持随机访问，Provider 测试覆盖了相应能力拒绝。因此不能
-假定选择 `file` 就能通过受管异步入口提交，也不能假定任意异步选择都能使用 `ffprobe`。
+`try_submit_detection_sync_in`。Provider 能力如下：
+
+| Provider | 受管异步 backend | 输入与精化限制 |
+| --- | --- | --- |
+| `repository` | 支持 | 根据提供的字节匹配仓库规则；不支持随机访问输入。 |
+| `file` | 支持，须显式选择 | 要求完整内容，不支持随机访问。附加要求同一对象精化的 classifier 会以 `UnsupportedCapability` 拒绝。 |
+| 仅同步的自定义 Provider | 不支持 | 异步选择返回 `AsyncUnsupported`，不会回退为同步执行。 |
+
+选择命令 Provider 不保证外部命令可用或运行成功；任务接纳后的运行问题由 operation 报告。
+Classifier 也需要单独显式选择异步实现并满足同一对象能力要求；不能假定每种 detector 选择都能
+使用 `ffprobe`。
 
 调用 `MimeExecutionServices::shutdown()` 会关闭新的根提交并返回 observer。之后应等待已提交
 操作的 settlement，在外部同步上下文调用 `stop_services()` 停止 MIME 执行服务，再通过

@@ -106,18 +106,33 @@ mod tests {
 
     #[test]
     fn test_mime_budget_alias_permits_share_reservation_until_last_drop() {
-        let budget = MimeBudget::new(Limits { owned: 8, staging: 0 });
+        let budget = MimeBudget::new(Limits { owned: 16, staging: 2 });
         let allocation: Arc<[u8]> = Arc::from([7u8; 8]);
         let alias = Arc::clone(&allocation);
         let permit = budget.reserve_allocation(&allocation).unwrap();
         let alias_permit = budget.reserve_allocation(&alias).unwrap();
+        let allocation_identity = Arc::as_ptr(&allocation) as *const u8 as usize;
 
         assert_eq!(budget.owned_bytes(), 8);
+        assert_eq!(1, budget.counters.lock().unwrap().allocations.len());
         drop(permit);
         assert_eq!(budget.owned_bytes(), 8);
-        assert!(budget.reserve_owned(1).is_none());
+        assert!(budget.counters.lock().unwrap().allocations.contains_key(&allocation_identity));
+
+        let ordinary_owned = budget.reserve_owned(1).unwrap();
+        let staging = budget.reserve_staging(2).unwrap();
+        assert_eq!(9, budget.owned_bytes());
+        assert_eq!(2, budget.staging_bytes());
+        assert_eq!(1, budget.counters.lock().unwrap().allocations.len());
+        assert!(budget.counters.lock().unwrap().allocations.contains_key(&allocation_identity));
+        drop((ordinary_owned, staging));
+        assert_eq!(8, budget.owned_bytes());
+        assert_eq!(0, budget.staging_bytes());
+        assert_eq!(1, budget.counters.lock().unwrap().allocations.len());
+
         drop(alias_permit);
         assert_eq!(budget.owned_bytes(), 0);
+        assert!(budget.counters.lock().unwrap().allocations.is_empty());
         assert!(budget.reserve_owned(8).is_some());
     }
 

@@ -17,6 +17,8 @@ pub(super) struct PermitInner {
     pub(super) budget: Arc<MimeBudget>,
     /// Reserved resource category and amount.
     pub(super) amount: Amount,
+    /// Allocation identity whose weak index entry belongs to this permit.
+    pub(super) allocation_identity: Option<usize>,
 }
 
 impl Drop for PermitInner {
@@ -26,6 +28,14 @@ impl Drop for PermitInner {
         match self.amount {
             Amount::Owned(bytes) => counters.owned -= bytes,
             Amount::Staging(bytes) => counters.staging -= bytes,
+        }
+        if let Some(identity) = self.allocation_identity
+            && counters
+                .allocations
+                .get(&identity)
+                .is_some_and(|(_, permit)| std::ptr::eq(permit.as_ptr(), self))
+        {
+            counters.allocations.remove(&identity);
         }
     }
 }
