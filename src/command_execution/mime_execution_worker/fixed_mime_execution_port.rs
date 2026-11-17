@@ -72,20 +72,22 @@ impl FixedMimeExecutionPort {
     /// attempt before checking whether the caller returned early.
     ///
     /// # Parameters
-    /// - `on_contended`: Callback invoked after the result lock is observed
-    ///   busy.
+    /// - `on_contended`: Optional callback invoked after the result lock is
+    ///   observed busy.
     ///
     /// # Returns
     /// The shared shutdown result.
     ///
     /// # Errors
     /// Returns `ExecutionServicesRequired` if a worker thread panicked.
-    fn shutdown_inner(&self, on_contended: impl FnOnce()) -> Result<(), MimeError> {
+    fn shutdown_inner(&self, on_contended: Option<&dyn Fn()>) -> Result<(), MimeError> {
         let mut shutdown_failed = match self.shutdown_failed.try_lock() {
             Ok(guard) => guard,
             Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
             Err(std::sync::TryLockError::WouldBlock) => {
-                on_contended();
+                if let Some(on_contended) = on_contended {
+                    on_contended();
+                }
                 self.shutdown_failed.lock().unwrap_or_else(|e| e.into_inner())
             }
         };
@@ -209,7 +211,7 @@ impl MimeExecutionPort for FixedMimeExecutionPort {
     /// # Errors
     /// Returns `ExecutionServicesRequired` if a worker thread panicked.
     fn shutdown(&self) -> Result<(), MimeError> {
-        self.shutdown_inner(|| {})
+        self.shutdown_inner(None)
     }
 }
 
@@ -243,6 +245,9 @@ mod tests {
     use std::sync::mpsc;
 
     use super::FixedMimeExecutionPort;
+    use super::FixedQueue;
+    use super::QueueState;
+    use super::RunningWorkers;
     use crate::detector::MimeExecutionPort;
 
     #[test]
@@ -353,7 +358,8 @@ mod tests {
         let (second_done_tx, second_done_rx) = mpsc::channel();
         let second_port = Arc::clone(&port);
         let second = std::thread::spawn(move || {
-            let result = second_port.shutdown_inner(|| second_contended_tx.send(()).unwrap());
+            let on_contended = || second_contended_tx.send(()).unwrap();
+            let result = second_port.shutdown_inner(Some(&on_contended));
             second_done_tx.send(result).unwrap();
         });
         let observed_lock_contention = second_contended_rx
@@ -365,6 +371,9 @@ mod tests {
 
         let dispatched = port.try_dispatch(Box::new(|| {}));
         let dispatch_was_rejected = dispatched.is_err();
+        if let Err(job) = dispatched {
+            job();
+        }
 
         // Always release and join before asserting so a failure cannot leave
         // a blocked worker or shutdown thread behind.
@@ -432,6 +441,36 @@ mod tests {
         assert_eq!(7, done_rx.recv().unwrap());
         port.shutdown().unwrap();
         assert!(format!("{port:?}").contains("stopped: true"));
+
+        let result_lock_port = FixedMimeExecutionPort::new(1, 1);
+        let result_lock_poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = result_lock_port.shutdown_failed.lock().unwrap();
+            panic!("poison shutdown result before closing an unprepared pool");
+        }));
+        assert!(result_lock_poison.is_err());
+        result_lock_port.shutdown().unwrap();
+        result_lock_port.shutdown().unwrap();
+
+        let queue_lock_port = FixedMimeExecutionPort::new(1, 1);
+        let queue = Arc::new(FixedQueue {
+            state: std::sync::Mutex::new(QueueState {
+                jobs: std::collections::VecDeque::new(),
+                closed: false,
+            }),
+            ready: std::sync::Condvar::new(),
+            capacity: 1,
+        });
+        let queue_to_poison = Arc::clone(&queue);
+        let queue_lock_poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = queue_to_poison.state.lock().unwrap();
+            panic!("poison queue state before shutdown");
+        }));
+        assert!(queue_lock_poison.is_err());
+        *queue_lock_port.running.lock().unwrap() = Some(RunningWorkers {
+            queue,
+            threads: Vec::new(),
+        });
+        queue_lock_port.shutdown().unwrap();
     }
 
     #[test]
@@ -455,10 +494,33 @@ mod tests {
     #[test]
     fn test_repeated_shutdown_replays_cached_worker_failure() {
         let port = FixedMimeExecutionPort::new(1, 1);
-        *port.shutdown_failed.lock().unwrap() = Some(true);
+        let (panicked_tx, panicked_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            panicked_tx.send(()).unwrap();
+            panic!("inject a worker join failure, not a caught job panic");
+        });
+        panicked_rx.recv().unwrap();
+        let queue = Arc::new(FixedQueue {
+            state: std::sync::Mutex::new(QueueState {
+                jobs: std::collections::VecDeque::new(),
+                closed: false,
+            }),
+            ready: std::sync::Condvar::new(),
+            capacity: 1,
+        });
+        *port.running.lock().unwrap() = Some(RunningWorkers {
+            queue,
+            threads: vec![worker],
+        });
 
-        assert!(port.shutdown().is_err());
-        assert!(port.shutdown().is_err());
+        assert!(matches!(
+            port.shutdown(),
+            Err(crate::MimeError::ExecutionServicesRequired)
+        ));
+        assert!(matches!(
+            port.shutdown(),
+            Err(crate::MimeError::ExecutionServicesRequired)
+        ));
     }
 
     #[test]

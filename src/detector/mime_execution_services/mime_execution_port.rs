@@ -115,6 +115,7 @@ mod tests {
 
     #[test]
     fn test_default_dispatch_rejection_returns_unconsumed_job() {
+        RejectingPort.prepare().unwrap();
         let called = Arc::new(AtomicBool::new(false));
         let job_called = Arc::clone(&called);
         let job = Box::new(move || job_called.store(true, Ordering::SeqCst));
@@ -124,5 +125,6 @@ mod tests {
         assert!(!called.load(Ordering::SeqCst));
         returned();
         assert!(called.load(Ordering::SeqCst));
+        RejectingPort.shutdown().unwrap();
     }
 }
