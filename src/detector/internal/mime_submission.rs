@@ -207,7 +207,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                 candidates.inspected_extent,
                 0,
                 content.len(),
-                candidates.staging_bytes,
+                candidates.staging_bytes.max(read_tree.staging_usage().peak()),
             )
         }
         OwnedMimeInput::Provider { file_system, path } => {
@@ -274,7 +274,9 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                     budget: MimeBudgetSummary {
                         owned_bytes: content.len(),
                         bytes_read,
-                        staging_bytes: candidates.staging_bytes,
+                        staging_bytes: candidates
+                            .staging_bytes
+                            .max(read_tree.staging_usage().peak()),
                     },
                 });
             };
@@ -286,7 +288,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                 candidates.inspected_extent,
                 read_tree.consumed(),
                 0,
-                candidates.staging_bytes,
+                candidates.staging_bytes.max(read_tree.staging_usage().peak()),
             )
         }
     };

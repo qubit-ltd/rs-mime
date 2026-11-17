@@ -462,7 +462,7 @@ impl AsyncMediaStreamClassifierBackend for FfprobeCommandMediaStreamClassifier {
             let worker = MimeExecutionWorker::new(Arc::clone(&services.execution));
             let limits = ManagedStagingLimits {
                 max_bytes: max_staging_size,
-                budget: services.staging_budget(),
+                budget: services.staging_budget_for_operation(scope.id()),
                 worker: worker.clone(),
             };
             let staged = if let Some((content, extent)) = borrowed_bytes {
@@ -531,6 +531,7 @@ mod async_operation_tests {
     use qubit_operation::ResourceRef;
 
     use super::FfprobeCommandMediaStreamClassifier;
+    use crate::AsyncMediaStreamClassifierProvider;
     use crate::AsyncMediaStreamClassifierBackend;
     use crate::BorrowedMimeInput;
     use crate::InputExtent;
@@ -544,7 +545,11 @@ mod async_operation_tests {
     use crate::command_execution::ManagedMimeCommand;
     use crate::command_execution::MimeCommandOutput;
     use crate::detector::MimeExecutionServices;
+    use crate::detector::MimeRuntime;
     use crate::managed_temp_staging::StagedMimeInput;
+    use qubit_spi::ProviderDescriptor;
+    use qubit_spi::ProviderId;
+    use qubit_spi::ProviderMetadata;
 
     #[derive(Debug)]
     struct InlinePort;
@@ -613,6 +618,86 @@ mod async_operation_tests {
                 }
             })
         }
+    }
+
+    #[derive(Debug)]
+    struct InjectedFfprobeProvider(Arc<FakeCommandExecutor>);
+
+    impl ProviderMetadata for InjectedFfprobeProvider {
+        fn descriptor(&self) -> ProviderDescriptor {
+            ProviderDescriptor::new(ProviderId::new("mime010-injected-ffprobe").unwrap())
+        }
+    }
+
+    impl AsyncMediaStreamClassifierProvider for InjectedFfprobeProvider {
+        fn create_async_backend(
+            &self,
+            config: &MimeConfig,
+            services: &MimeExecutionServices,
+        ) -> Result<Arc<dyn AsyncMediaStreamClassifierBackend>, MimeError> {
+            Ok(Arc::new(
+                FfprobeCommandMediaStreamClassifier::from_mime_config(config.clone())
+                    .with_execution_services(Arc::new(services.clone()))
+                    .with_async_executor(self.0.clone()),
+            ))
+        }
+    }
+
+    #[test]
+    fn test_runtime_report_includes_real_ffprobe_staging_for_ogg_refinement() {
+        let mut raw_config = qubit_config::Config::new();
+        raw_config
+            .set(crate::CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)
+            .unwrap();
+        raw_config
+            .set(crate::CONFIG_MIME_PRECISE_DETECTION_PATTERNS, "ogg")
+            .unwrap();
+        raw_config
+            .set(
+                crate::CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
+                "ogg:video/ogg,audio/x-vorbis+ogg",
+            )
+            .unwrap();
+        let config = MimeConfig::from_config(&raw_config).unwrap();
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let services =
+            MimeExecutionServices::new(manager, group, Arc::new(InlinePort), 1024 * 1024).unwrap();
+        services.prepare().unwrap();
+        let executor = Arc::new(FakeCommandExecutor::default());
+        let detector_registry = crate::MimeDetectorRegistry::builtin();
+        let classifier_registry = crate::MediaStreamClassifierRegistry::builtin();
+        classifier_registry
+            .register_async_provider(InjectedFfprobeProvider(Arc::clone(&executor)))
+            .unwrap();
+        let runtime = MimeRuntime::new(config, Arc::new(crate::MimeRepository::bundled().clone()))
+            .with_execution_services(services.clone())
+            .with_async_provider_selection_and_classifier(
+                &detector_registry,
+                &qubit_spi::ProviderSelection::named("repository").unwrap(),
+                &classifier_registry,
+                &qubit_spi::ProviderSelection::named("mime010-injected-ffprobe").unwrap(),
+            )
+            .unwrap();
+        let media: Arc<[u8]> =
+            Arc::from(include_bytes!("../../tests/fixtures/real_files/test.ogg").as_slice());
+        let mut operation = runtime
+            .try_submit_detection(
+                crate::OwnedMimeInput::bytes(Arc::clone(&media), InputExtent::Complete)
+                    .with_filename("clip.ogg"),
+                MimeOperationOptions::default(),
+            )
+            .unwrap_or_else(|_| panic!("prepared Ogg operation should be admitted"));
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            qubit_operation::OperationOutcome::Succeeded(ref report)
+                if report.mime_type.as_deref() == Some("audio/x-vorbis+ogg")
+                    && report.budget.staging_bytes == media.len() as u64
+        ));
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
     }
 
     struct TestProvider {
@@ -763,13 +848,16 @@ mod async_operation_tests {
                 .with_async_executor(command_executor.clone()),
         );
         let content = vec![0x45; 40 * 1024];
+        let operation_services = Arc::clone(&services);
         let mut operation = manager
             .as_async()
             .try_submit(Default::default(), move |scope| {
                 let classifier = Arc::clone(&classifier);
                 let content: Arc<[u8]> = content.into();
                 async move {
-                    classifier
+                    let read_tree = operation_services.new_read_tree(content.len() as u64);
+                    operation_services.bind_read_tree(scope.id(), &read_tree);
+                    let result = classifier
                         .classify_in(
                             &scope,
                             BorrowedMimeInput::Bytes {
@@ -779,7 +867,13 @@ mod async_operation_tests {
                             },
                             &MimeOperationOptions::default(),
                         )
-                        .await
+                        .await;
+                    assert_eq!(
+                        read_tree.staging_usage().peak(),
+                        40 * 1024,
+                        "managed FFprobe staging should be charged to its bound request"
+                    );
+                    result
                 }
             })
             .unwrap();

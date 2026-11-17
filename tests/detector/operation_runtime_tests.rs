@@ -289,6 +289,7 @@ fn test_managed_prefix_skips_complete_media_classifier() {
             &prefix_outcome,
             qubit_operation::OperationOutcome::Succeeded(report)
                 if report.mime_type.as_deref() == Some("audio/x-vorbis+ogg")
+                    && report.budget.staging_bytes == 0
         ),
         "unexpected Prefix outcome: {prefix_outcome:?}"
     );

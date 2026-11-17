@@ -335,6 +335,16 @@ impl MimeExecutionServices {
     pub(crate) fn staging_budget(&self) -> StagingBudget {
         StagingBudget::from_budget(Arc::clone(&self.budget))
     }
+
+    /// Creates a staging-budget adapter associated with a bound request when
+    /// one exists. Direct classifier calls retain the service-wide budget.
+    pub(crate) fn staging_budget_for_operation(&self, operation: OperationId) -> StagingBudget {
+        let budget = self.staging_budget();
+        match self.read_trees.for_operation(operation) {
+            Some(tree) => budget.with_usage(tree.staging_usage()),
+            None => budget,
+        }
+    }
 }
 
 /// Reports whether a recovery handle still requires resolution or transfer.

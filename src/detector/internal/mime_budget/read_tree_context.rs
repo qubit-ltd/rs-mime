@@ -35,6 +35,11 @@ pub(crate) struct ReadTreeContext {
 }
 
 impl ReadTreeContext {
+    /// Returns this operation's independent staging usage tracker.
+    pub(crate) fn staging_usage(&self) -> Arc<RequestStagingUsage> {
+        Arc::clone(&self.staging_usage)
+    }
+
     /// Creates an independent root context with the given byte allowance.
     ///
     /// # Parameters
