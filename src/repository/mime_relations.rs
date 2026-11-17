@@ -30,6 +30,7 @@ impl MimeRelations {
     ///
     /// # Returns
     /// An immutable relation table for the supplied types.
+    #[must_use]
     pub(crate) fn from_mime_types(mime_types: &[MimeType]) -> Self {
         let mut relations = Self::default();
         for mime_type in mime_types {
@@ -56,6 +57,7 @@ impl MimeRelations {
     ///
     /// # Returns
     /// `true` when the resolved child equals or inherits from the parent.
+    #[must_use]
     pub(crate) fn is_a(&self, child: &str, parent: &str) -> bool {
         let child = self.canonical_name_or_input(child);
         let parent = self.canonical_name_or_input(parent);
@@ -92,6 +94,7 @@ impl MimeRelations {
     ///
     /// # Returns
     /// The canonical name, or the normalized input for an unknown name.
+    #[must_use]
     fn canonical_name_or_input(&self, name: &str) -> String {
         let normalized = normalize(name);
         self.canonical_names.get(&normalized).cloned().unwrap_or(normalized)
@@ -105,6 +108,7 @@ impl MimeRelations {
 ///
 /// # Returns
 /// A lowercase copy of the supplied name.
+#[must_use]
 fn normalize(name: &str) -> String {
     name.to_lowercase()
 }

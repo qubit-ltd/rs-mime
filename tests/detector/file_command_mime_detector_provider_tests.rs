@@ -18,6 +18,7 @@ use qubit_config::Config;
 use qubit_local_files::LocalFileSystem;
 #[cfg(unix)]
 use qubit_local_files::options::LocalTempDirectoryOptions;
+use qubit_mime::AsyncMimeDetectorProvider;
 use qubit_mime::CONFIG_COMMAND_OUTPUT_MAX_BYTES;
 use qubit_mime::CONFIG_COMMAND_TIMEOUT;
 use qubit_mime::ContentRequirement;
@@ -36,6 +37,32 @@ use qubit_spi::error::ProviderFailureKind;
 
 #[cfg(unix)]
 use crate::support::PathEnvGuard;
+
+fn services() -> MimeExecutionServices {
+    let manager = OperationManager::new(Default::default()).expect("provider test manager should be created");
+    let group = manager
+        .group(GroupOptions { capacity: 1 })
+        .expect("provider test group should be created");
+    MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 16)
+        .expect("provider test services should be created")
+}
+
+#[test]
+fn test_provider_builds_complete_async_backend_without_command_probe() {
+    let provider = FileCommandMimeDetectorProvider;
+    let config = MimeConfig::default();
+    let services = services();
+
+    let backend = <FileCommandMimeDetectorProvider as AsyncMimeDetectorProvider>::create_async_backend(
+        &provider, &config, &services,
+    )
+    .expect("async factory should configure without running the file command");
+    assert_eq!(ContentRequirement::Complete, backend.content_requirement());
+    assert_eq!(RandomAccessCapability::Unsupported, backend.random_access_capability());
+
+    let inherent_backend = provider.create_async_backend(&config, services);
+    assert_eq!(ContentRequirement::Complete, inherent_backend.content_requirement());
+}
 
 #[test]
 fn test_file_command_mime_detector_provider_metadata_and_availability() {

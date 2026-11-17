@@ -37,6 +37,12 @@ impl std::fmt::Debug for FixedMimeExecutionPort {
     ///
     /// # Parameters
     /// - `f`: Formatter receiving the pool state.
+    ///
+    /// # Returns
+    /// The formatter result after writing the pool configuration and state.
+    ///
+    /// # Errors
+    /// Returns a formatting error if the formatter cannot accept the output.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FixedMimeExecutionPort")
             .field("worker_count", &self.worker_count)
@@ -54,8 +60,14 @@ impl FixedMimeExecutionPort {
     /// Creates a bounded worker service without starting threads.
     ///
     /// # Parameters
-    /// - `worker_count`: Number of worker threads to create on preparation.
-    /// - `queue_capacity`: Maximum number of pending jobs.
+    /// - `worker_count`: Number of worker threads to create on preparation,
+    ///   clamped to at least one.
+    /// - `queue_capacity`: Maximum number of pending jobs, clamped to at least
+    ///   one.
+    ///
+    /// # Returns
+    /// A configured port that has not started any worker threads.
+    #[must_use]
     pub fn new(worker_count: usize, queue_capacity: usize) -> Self {
         Self {
             worker_count: worker_count.max(1),

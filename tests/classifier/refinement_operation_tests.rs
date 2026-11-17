@@ -298,7 +298,7 @@ fn test_public_ffprobe_async_provider_classifies_complete_bytes() {
     ));
     assert!(block_on(operation.wait_settlement()).all_released());
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }

@@ -124,10 +124,12 @@ fn test_runtime_debug_reports_configured_execution_services() {
     struct NoopExecution;
 
     impl qubit_mime::MimeExecutionPort for NoopExecution {
+        #[inline]
         fn prepare(&self) -> Result<(), qubit_mime::MimeError> {
             Ok(())
         }
 
+        #[inline]
         fn shutdown(&self) -> Result<(), qubit_mime::MimeError> {
             Ok(())
         }

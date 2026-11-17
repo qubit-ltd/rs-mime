@@ -6,42 +6,40 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+#[cfg(test)]
+use std::panic::catch_unwind;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-#[derive(Debug, Default)]
-struct Counters {
-    current: u64,
-    peak: u64,
-}
+use super::request_staging_counters::RequestStagingCounters;
+pub(crate) use super::request_staging_guard::RequestStagingGuard;
 
 /// Tracks simultaneous staging reservations belonging to one request.
 #[derive(Debug, Default)]
 pub(crate) struct RequestStagingUsage {
-    counters: Mutex<Counters>,
+    /// Shared counters for reservations held by this request.
+    pub(super) counters: Mutex<RequestStagingCounters>,
 }
 
 impl RequestStagingUsage {
     /// Returns the peak simultaneously reserved staging bytes.
+    ///
+    /// # Returns
+    /// The highest simultaneous staging byte count observed for this request.
+    #[must_use]
+    #[inline]
     pub(crate) fn peak(&self) -> u64 {
         self.counters.lock().unwrap_or_else(|error| error.into_inner()).peak
     }
 
-    /// Returns bytes currently held by staging permits.
-    #[cfg(test)]
-    pub(super) fn current(&self) -> u64 {
-        self.counters.lock().unwrap_or_else(|error| error.into_inner()).current
-    }
-
-    #[cfg(test)]
-    pub(super) fn poison_lock_for_test(&self) {
-        let _ = std::panic::catch_unwind(|| {
-            let _counters = self.counters.lock().unwrap();
-            panic!("poison request staging counters");
-        });
-    }
-
     /// Records a reservation and returns its RAII accounting guard.
+    ///
+    /// # Parameters
+    /// - `bytes`: Number of staging bytes to reserve.
+    ///
+    /// # Returns
+    /// `Some` with a guard that releases `bytes` when dropped, or `None` if
+    /// adding `bytes` would overflow the current count.
     pub(crate) fn reserve(self: &Arc<Self>, bytes: u64) -> Option<RequestStagingGuard> {
         let mut counters = self.counters.lock().unwrap_or_else(|error| error.into_inner());
         let current = counters.current.checked_add(bytes)?;
@@ -52,21 +50,19 @@ impl RequestStagingUsage {
             bytes,
         })
     }
-}
 
-/// Releases current request usage when the corresponding staging permit ends.
-pub(crate) struct RequestStagingGuard {
-    usage: Arc<RequestStagingUsage>,
-    bytes: u64,
-}
+    /// Returns bytes currently held by staging permits.
+    #[cfg(test)]
+    pub(super) fn current(&self) -> u64 {
+        self.counters.lock().unwrap_or_else(|error| error.into_inner()).current
+    }
 
-impl Drop for RequestStagingGuard {
-    fn drop(&mut self) {
-        let mut counters = self.usage.counters.lock().unwrap_or_else(|error| error.into_inner());
-        counters.current = counters
-            .current
-            .checked_sub(self.bytes)
-            .expect("staging usage guard underflow");
+    #[cfg(test)]
+    pub(super) fn poison_lock_for_test(&self) {
+        let _ = catch_unwind(|| {
+            let _counters = self.counters.lock().unwrap();
+            panic!("poison request staging counters");
+        });
     }
 }
 
@@ -77,7 +73,7 @@ mod tests {
     use super::RequestStagingUsage;
 
     #[test]
-    fn request_staging_overlapping_reservations_track_peak_and_release_current() {
+    fn test_request_staging_overlapping_reservations_track_peak_and_release_current() {
         let usage = Arc::new(RequestStagingUsage::default());
         let first = usage.reserve(4).unwrap();
         assert_eq!((usage.current(), usage.peak()), (4, 4));
@@ -90,7 +86,7 @@ mod tests {
     }
 
     #[test]
-    fn request_staging_sequential_reservations_keep_largest_peak() {
+    fn test_request_staging_sequential_reservations_keep_largest_peak() {
         let usage = Arc::new(RequestStagingUsage::default());
         drop(usage.reserve(4).unwrap());
         drop(usage.reserve(3).unwrap());
@@ -98,7 +94,7 @@ mod tests {
     }
 
     #[test]
-    fn request_staging_trackers_are_independent_and_overflow_rolls_back() {
+    fn test_request_staging_trackers_are_independent_and_overflow_rolls_back() {
         let first = Arc::new(RequestStagingUsage::default());
         let second = Arc::new(RequestStagingUsage::default());
         let _permit = first.reserve(u64::MAX).unwrap();

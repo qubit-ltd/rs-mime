@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+//! Checks file-based classification, staged content, and staging limits.
 
 use std::path::Path;
 use std::sync::atomic::AtomicUsize;
@@ -15,6 +16,7 @@ use qubit_mime::MediaStreamClassifier;
 use qubit_mime::MediaStreamType;
 use qubit_mime::MimeResult;
 
+/// Classifies existing files as video with audio and missing paths as none.
 #[derive(Debug)]
 struct FileOnlyClassifier;
 
@@ -46,12 +48,14 @@ fn test_file_based_media_stream_classifier_stages_content_to_temp_file() {
     );
 }
 
+/// Enforces a three-byte staging limit and counts file-classification calls.
 #[derive(Debug, Default)]
 struct LimitedFileOnlyClassifier {
     calls: AtomicUsize,
 }
 
 impl FileBasedMediaStreamClassifier for LimitedFileOnlyClassifier {
+    #[inline]
     fn max_staging_size(&self) -> u64 {
         3
     }

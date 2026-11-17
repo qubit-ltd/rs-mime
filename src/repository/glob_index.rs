@@ -27,39 +27,6 @@ pub(crate) struct GlobIndex {
 }
 
 impl GlobIndex {
-    /// Adds one MIME glob to the appropriate lookup index.
-    ///
-    /// # Parameters
-    /// - `mime_index`: Repository position of the MIME type owning the glob.
-    /// - `glob`: Pattern and weight to add to the lookup index.
-    pub(crate) fn add(&mut self, mime_index: usize, glob: &MimeGlob) {
-        let entry = GlobEntry {
-            glob: glob.clone(),
-            mime_index,
-        };
-        if let Some(extension) = extension_pattern(glob.pattern()) {
-            if !extension.is_ascii() {
-                self.wildcards.push(entry);
-                return;
-            }
-            self.extensions
-                .entry(extension.to_ascii_lowercase())
-                .or_default()
-                .push(entry);
-        } else if is_literal_pattern(glob.pattern()) {
-            if !glob.pattern().is_ascii() {
-                self.unicode_literals.push(entry);
-                return;
-            }
-            self.literals
-                .entry(glob.pattern().to_ascii_lowercase())
-                .or_default()
-                .push(entry);
-        } else {
-            self.wildcards.push(entry);
-        }
-    }
-
     /// Returns the best matching entries for a filename.
     ///
     /// # Type Parameters
@@ -119,6 +86,39 @@ impl GlobIndex {
         }
         candidates.extend(self.wildcards.iter().filter(|entry| entry.glob.matches(basename)));
         select_best(candidates)
+    }
+
+    /// Adds one MIME glob to the appropriate lookup index.
+    ///
+    /// # Parameters
+    /// - `mime_index`: Repository position of the MIME type owning the glob.
+    /// - `glob`: Pattern and weight to add to the lookup index.
+    pub(crate) fn add(&mut self, mime_index: usize, glob: &MimeGlob) {
+        let entry = GlobEntry {
+            glob: glob.clone(),
+            mime_index,
+        };
+        if let Some(extension) = extension_pattern(glob.pattern()) {
+            if !extension.is_ascii() {
+                self.wildcards.push(entry);
+                return;
+            }
+            self.extensions
+                .entry(extension.to_ascii_lowercase())
+                .or_default()
+                .push(entry);
+        } else if is_literal_pattern(glob.pattern()) {
+            if !glob.pattern().is_ascii() {
+                self.unicode_literals.push(entry);
+                return;
+            }
+            self.literals
+                .entry(glob.pattern().to_ascii_lowercase())
+                .or_default()
+                .push(entry);
+        } else {
+            self.wildcards.push(entry);
+        }
     }
 }
 

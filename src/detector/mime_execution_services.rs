@@ -43,6 +43,34 @@ pub use mime_shutdown_snapshot::MimeShutdownSnapshot;
 
 /// Services shared by MIME requests. Runtime construction is explicit so a
 /// closed service cannot silently create replacement workers.
+///
+/// # Examples
+///
+/// Create the operation group and execution adapter before constructing the
+/// shared services. Construction leaves workers stopped until `prepare` is
+/// called.
+///
+/// ```
+/// use std::sync::Arc;
+/// use qubit_mime::{MimeError, MimeExecutionPort, MimeExecutionServices};
+/// use qubit_operation::{GroupOptions, OperationManager};
+///
+/// #[derive(Debug)]
+/// struct NoopPort;
+///
+/// impl MimeExecutionPort for NoopPort {
+///     fn prepare(&self) -> Result<(), MimeError> { Ok(()) }
+///     fn shutdown(&self) -> Result<(), MimeError> { Ok(()) }
+/// }
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let manager = OperationManager::new(Default::default())?;
+/// let group = manager.group(GroupOptions { capacity: 1 })?;
+/// let services = MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 1024)?;
+/// assert_eq!(services.max_read_bytes, 1024);
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct MimeExecutionServices {
     /// Application-shared asynchronous manager.
@@ -219,10 +247,14 @@ impl MimeExecutionServices {
     }
 
     /// Returns whether workers are running and root submissions remain open.
+    #[inline]
+    #[must_use]
     pub(in crate::detector) fn is_prepared(&self) -> bool {
         self.lifecycle.load(Ordering::Acquire) == 1 && !self.top_closed.load(Ordering::Acquire)
     }
     /// Returns whether child submissions can still be accepted.
+    #[inline]
+    #[must_use]
     pub(in crate::detector) fn accepts_children(&self) -> bool {
         match self.lifecycle.load(Ordering::Acquire) {
             1 => true,
@@ -241,6 +273,7 @@ impl MimeExecutionServices {
     ///
     /// # Returns
     /// A permit when the allocation fits the owned-memory budget.
+    #[inline]
     pub(in crate::detector) fn reserve_owned(&self, bytes: usize) -> Option<BudgetPermit> {
         self.budget.reserve_owned(bytes)
     }
@@ -258,6 +291,7 @@ impl MimeExecutionServices {
     /// # Errors
     /// Returns the parent's resource-scope error when it cannot retain the
     /// cumulative read-tree anchor.
+    #[inline]
     pub(crate) fn read_tree_for_parent(
         &self,
         parent: &OperationScope,
@@ -274,6 +308,7 @@ impl MimeExecutionServices {
     ///
     /// # Returns
     /// An independent read-budget context.
+    #[inline]
     pub(crate) fn new_read_tree(&self, limit: u64) -> Arc<ReadTreeContext> {
         ReadTreeContext::new(limit)
     }
@@ -292,6 +327,7 @@ impl MimeExecutionServices {
     /// # Errors
     /// Returns [`crate::MimeError::ExecutionServicesRequired`] if no context is
     /// bound.
+    #[inline]
     pub(crate) fn read_tree_for_operation(
         &self,
         operation: OperationId,
@@ -306,6 +342,7 @@ impl MimeExecutionServices {
     /// # Parameters
     /// - `operation`: Operation receiving the context.
     /// - `tree`: Shared read-budget context to bind.
+    #[inline]
     pub(crate) fn bind_read_tree(&self, operation: OperationId, tree: &Arc<ReadTreeContext>) {
         self.read_trees.bind(operation, tree);
     }
@@ -316,6 +353,7 @@ impl MimeExecutionServices {
     ///
     /// # Returns
     /// A permit when the allocation fits the owned-memory budget.
+    #[inline]
     pub(in crate::detector) fn reserve_allocation(&self, bytes: &Arc<[u8]>) -> Option<BudgetPermit> {
         self.budget.reserve_allocation(bytes)
     }
@@ -327,17 +365,23 @@ impl MimeExecutionServices {
     /// # Returns
     /// A permit when the staged bytes fit the budget.
     #[allow(dead_code)]
+    #[inline]
     pub(in crate::detector) fn reserve_staging(&self, bytes: u64) -> Option<BudgetPermit> {
         self.budget.reserve_staging(bytes)
     }
 
     /// Creates the staging-budget adapter used by owned staging requests.
+    #[inline]
     pub(crate) fn staging_budget(&self) -> StagingBudget {
         StagingBudget::from_budget(Arc::clone(&self.budget))
     }
 
     /// Creates a staging-budget adapter associated with a bound request when
     /// one exists. Direct classifier calls retain the service-wide budget.
+    ///
+    /// # Parameters
+    /// - `operation`: Operation whose read tree supplies request-scoped staging
+    ///   usage.
     pub(crate) fn staging_budget_for_operation(&self, operation: OperationId) -> StagingBudget {
         let budget = self.staging_budget();
         match self.read_trees.for_operation(operation) {
@@ -617,8 +661,8 @@ mod tests {
         ));
         assert!(block_on(parent.wait_settlement()).all_released());
         let shutdown = services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
     }
 
     #[test]
@@ -668,8 +712,8 @@ mod tests {
             "shutdown must close services after preparation finishes"
         );
         assert!(matches!(services.prepare(), Err(MimeError::ExecutionServicesRequired)));
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
     }
 
     #[test]
@@ -732,8 +776,8 @@ mod tests {
         );
 
         let shutdown = services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
         assert!(matches!(services.prepare(), Err(MimeError::ExecutionServicesRequired)));
         assert_eq!(
             2,
@@ -769,8 +813,8 @@ mod tests {
         ));
         assert!(block_on(operation.wait_settlement()).all_released());
         let shutdown = services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
     }
 
     #[test]

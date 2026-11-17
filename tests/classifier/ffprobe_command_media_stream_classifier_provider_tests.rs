@@ -6,6 +6,9 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+//! Checks the public ffprobe provider identity and command output/timeout
+//! limits.
+
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 

@@ -155,6 +155,7 @@ fn glob_to_regex(pattern: &str) -> String {
 ///
 /// # Returns
 /// Index of the closing `]` when a class was parsed; otherwise `start`.
+#[must_use]
 fn append_character_class(chars: &[char], start: usize, regex: &mut String) -> usize {
     let mut content_start = start + 1;
     let negated = chars.get(content_start) == Some(&'!');

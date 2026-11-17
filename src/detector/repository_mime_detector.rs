@@ -64,6 +64,7 @@ impl RepositoryMimeDetector<'static> {
     /// # Errors
     /// The embedded database is parsed from crate resources and is expected to
     /// be valid; this method keeps a `Result` return type for API consistency.
+    #[inline]
     pub fn new() -> MimeResult<Self> {
         Ok(Self::with_repository(default_repository()))
     }
@@ -75,6 +76,7 @@ impl RepositoryMimeDetector<'static> {
     ///
     /// # Returns
     /// A repository-backed detector.
+    #[inline]
     pub fn from_mime_config(config: MimeConfig) -> Self {
         Self::with_repository_and_config(default_repository(), config)
     }
@@ -82,6 +84,7 @@ impl RepositoryMimeDetector<'static> {
 
 impl Default for RepositoryMimeDetector<'static> {
     /// Creates a detector backed by the embedded repository.
+    #[inline]
     fn default() -> Self {
         Self::new().expect("embedded MIME repository should parse")
     }
@@ -95,6 +98,7 @@ impl<'a> RepositoryMimeDetector<'a> {
     ///
     /// # Returns
     /// A detector borrowing `repository`.
+    #[inline]
     pub fn with_repository(repository: &'a MimeRepository) -> Self {
         Self::with_repository_and_config(repository, MimeConfig::default())
     }
@@ -111,21 +115,6 @@ impl<'a> RepositoryMimeDetector<'a> {
         let mut core = MimeDetectorCore::from_mime_config(config);
         core.set_mime_relations(repository.relations());
         Self { core, repository }
-    }
-
-    /// Adds explicit async stream refinement to this detector's selection core.
-    ///
-    /// # Parameters
-    /// - `classifier`: Optional operation-backed stream classifier.
-    ///
-    /// # Returns
-    /// This detector with its async classifier configuration replaced.
-    pub(crate) fn with_async_media_stream_classifier(
-        mut self,
-        classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
-    ) -> Self {
-        self.core.set_async_media_stream_classifier(classifier);
-        self
     }
 
     /// Gets the shared detector core.
@@ -294,15 +283,33 @@ impl<'a> RepositoryMimeDetector<'a> {
             .map(|mime_type| mime_type.name().to_owned())
             .collect()
     }
+
+    /// Adds explicit async stream refinement to this detector's selection core.
+    ///
+    /// # Parameters
+    /// - `classifier`: Optional operation-backed stream classifier.
+    ///
+    /// # Returns
+    /// This detector with its async classifier configuration replaced.
+    #[inline]
+    pub(crate) fn with_async_media_stream_classifier(
+        mut self,
+        classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
+    ) -> Self {
+        self.core.set_async_media_stream_classifier(classifier);
+        self
+    }
 }
 
 impl AsyncMimeDetectorBackend for RepositoryMimeDetector<'_> {
     /// Reports the maximum prefix length required by repository matching.
+    #[inline]
     fn content_requirement(&self) -> ContentRequirement {
         ContentRequirement::Prefix(self.repository.max_test_bytes())
     }
 
     /// Reports that repository matching does not perform random access.
+    #[inline]
     fn random_access_capability(&self) -> RandomAccessCapability {
         RandomAccessCapability::Unsupported
     }
@@ -378,17 +385,21 @@ impl AsyncMimeDetectorBackend for RepositoryMimeDetector<'_> {
 ///
 /// # Returns
 /// Shared parsed repository.
+#[must_use]
+#[inline]
 pub(crate) fn default_repository() -> &'static MimeRepository {
     MimeRepository::bundled()
 }
 
 impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
     /// Gets the shared detector core.
+    #[inline]
     fn core(&self) -> &MimeDetectorCore {
         &self.core
     }
 
     /// Gets the maximum content prefix length from the repository.
+    #[inline]
     fn max_test_bytes(&self) -> usize {
         self.repository.max_test_bytes()
     }
@@ -397,6 +408,7 @@ impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
     ///
     /// # Parameters
     /// - `filename`: File path or basename to match against repository rules.
+    #[inline]
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         RepositoryMimeDetector::guess_from_filename(self, filename)
     }
@@ -405,6 +417,7 @@ impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
     ///
     /// # Parameters
     /// - `content`: Content bytes to inspect against repository magic rules.
+    #[inline]
     fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         Ok(RepositoryMimeDetector::guess_from_content(self, content))
     }

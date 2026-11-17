@@ -71,12 +71,14 @@ where
     B: MimeDetectorBackend,
 {
     /// Delegates the backend's input-size requirement.
+    #[inline]
     fn content_requirement(&self) -> ContentRequirement {
         self.backend.content_requirement()
     }
 
     /// Delegates the reader buffer budget to the wrapped detector
     /// configuration.
+    #[inline]
     fn max_reader_buffer_size(&self) -> usize {
         self.backend.core().max_buffer_size()
     }

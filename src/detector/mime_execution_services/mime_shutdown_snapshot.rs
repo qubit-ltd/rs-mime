@@ -10,6 +10,21 @@
 use qubit_operation::ShutdownSnapshot;
 
 /// Snapshot separating execution-service shutdown from operation-group drain.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::detector::mime_execution_services::MimeShutdownSnapshot;
+///
+/// let snapshot = MimeShutdownSnapshot {
+///     operations_settled: true,
+///     services_stopped: true,
+///     unresolved_recoveries: 0,
+///     group: None,
+/// };
+/// assert!(snapshot.operations_settled && snapshot.services_stopped);
+/// ```
+#[must_use = "inspect the shutdown progress before proceeding"]
 #[derive(Debug, Clone)]
 pub struct MimeShutdownSnapshot {
     /// Whether every tracked operation has published settlement.

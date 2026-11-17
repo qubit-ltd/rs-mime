@@ -20,6 +20,7 @@ use super::SignalState;
 ///
 /// # Type Parameters
 /// - `T`: Lifecycle value published to waiting command observers.
+#[must_use]
 pub(in crate::command_execution) struct PollSignal<T> {
     /// Value and waiter protected by one lock to prevent lost wakeups.
     state: Mutex<SignalState<T>>,
@@ -27,6 +28,9 @@ pub(in crate::command_execution) struct PollSignal<T> {
 
 impl<T> PollSignal<T> {
     /// Creates an empty signal with no registered waiter.
+    ///
+    /// # Returns
+    /// An empty signal ready to publish a value or register a waiter.
     pub(in crate::command_execution) fn new() -> Self {
         Self {
             state: Mutex::new(SignalState {
@@ -34,6 +38,17 @@ impl<T> PollSignal<T> {
                 waker: None,
             }),
         }
+    }
+
+    /// Clones the value when already published without registering a waiter.
+    ///
+    /// # Returns
+    /// A clone of the value, or `None` while publication is pending.
+    pub(in crate::command_execution) fn value(&self) -> Option<T>
+    where
+        T: Clone,
+    {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).value.clone()
     }
 
     /// Publishes one value and wakes the waiter registered by a pending poll.
@@ -67,17 +82,6 @@ impl<T> PollSignal<T> {
             state.waker = Some(cx.waker().clone());
             Poll::Pending
         }
-    }
-
-    /// Clones the value when already published without registering a waiter.
-    ///
-    /// # Returns
-    /// A clone of the value, or `None` while publication is pending.
-    pub(in crate::command_execution) fn value(&self) -> Option<T>
-    where
-        T: Clone,
-    {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).value.clone()
     }
 
     /// Clones a published value or registers the current task for a wakeup.

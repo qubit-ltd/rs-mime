@@ -32,6 +32,7 @@ impl ManagedMimeCommand {
     ///
     /// # Returns
     /// A request retaining all command and operation settings.
+    #[must_use]
     pub(crate) fn new(runner: CommandRunner, command: Command, runtime_group: OperationGroup) -> Self {
         Self {
             runner,

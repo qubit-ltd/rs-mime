@@ -6,6 +6,20 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 /// Summary of bytes retained, read, and temporarily staged for one request.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeBudgetSummary;
+///
+/// let summary = MimeBudgetSummary {
+///     owned_bytes: 1024,
+///     bytes_read: 512,
+///     staging_bytes: 2048,
+/// };
+/// assert_eq!(summary.owned_bytes, 1024);
+/// assert_eq!(summary.staging_bytes, 2048);
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MimeBudgetSummary {
     /// Bytes charged to owned-memory budget at the report boundary.

@@ -20,6 +20,29 @@ use crate::MimeError;
 use crate::MimeExecutionServices;
 
 /// Explicit async capability offered by a detector provider.
+///
+/// # Examples
+///
+/// The runtime prepares execution services and supplies them with the detector
+/// configuration when it creates an async backend:
+///
+/// ```
+/// use std::sync::Arc;
+/// use qubit_mime::AsyncMimeDetectorBackend;
+/// use qubit_mime::AsyncMimeDetectorProvider;
+/// use qubit_mime::FileCommandMimeDetectorProvider;
+/// use qubit_mime::MimeConfig;
+/// use qubit_mime::MimeError;
+/// use qubit_mime::MimeExecutionServices;
+///
+/// fn create_backend(
+///     provider: &FileCommandMimeDetectorProvider,
+///     config: &MimeConfig,
+///     services: &MimeExecutionServices,
+/// ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+///     AsyncMimeDetectorProvider::create_async_backend(provider, config, services)
+/// }
+/// ```
 pub trait AsyncMimeDetectorProvider: ProviderMetadata + Debug + Send + Sync {
     /// Creates an async backend bound to this operation service set.
     ///

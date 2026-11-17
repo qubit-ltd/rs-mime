@@ -41,6 +41,7 @@ use crate::MimeResult;
 /// assert_eq!(detector.detect_by_filename("document.pdf")?, Some("application/pdf".to_owned()));
 /// # Ok::<(), qubit_mime::MimeError>(())
 /// ```
+#[must_use = "use the runtime to create detectors or submit MIME operations"]
 #[derive(Clone)]
 pub struct MimeRuntime {
     /// Configuration and repository shared by detectors created by this
@@ -86,7 +87,6 @@ impl MimeRuntime {
     ///
     /// A runtime retaining the configuration and repository for later detector
     /// creation.
-    #[must_use]
     pub fn new(config: MimeConfig, repository: Arc<MimeRepository>) -> Self {
         Self {
             context: MimeDetectorContext::new(Arc::new(config), repository),
@@ -111,6 +111,39 @@ impl MimeRuntime {
         Ok(Self::new(MimeConfig::default(), MimeRepository::bundled_shared()))
     }
 
+    /// Creates a detector using this runtime's configuration and repository.
+    ///
+    /// The detector receives a clone of the configuration value and a clone of
+    /// the repository's `Arc`, so the repository remains alive independently of
+    /// this runtime.
+    ///
+    /// # Returns
+    ///
+    /// A shared handle to a repository-backed MIME detector.
+    ///
+    /// # Errors
+    ///
+    /// This implementation currently constructs the repository-backed
+    /// detector infallibly and returns `Ok`.
+    pub fn create_detector(&self) -> MimeResult<Arc<dyn MimeDetector>> {
+        Ok(Arc::new(OwnedRepositoryMimeDetector::new(
+            self.context.config().clone(),
+            self.context.repository_arc(),
+        )))
+    }
+
+    /// Returns the immutable configuration and repository shared by this
+    /// runtime.
+    ///
+    /// # Returns
+    ///
+    /// A reference to this runtime's context. The reference is valid for the
+    /// lifetime of the borrow and does not clone the shared handles.
+    #[must_use]
+    pub fn context(&self) -> &MimeDetectorContext {
+        &self.context
+    }
+
     /// Attaches shared operation and MIME execution services without starting
     /// workers.
     ///
@@ -120,7 +153,6 @@ impl MimeRuntime {
     ///
     /// # Returns
     /// This runtime configured for managed operations.
-    #[must_use]
     pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
         let backend = OwnedRepositoryMimeDetector::new(self.context.config().clone(), self.context.repository_arc());
         self.async_backend = Some(("repository".to_owned(), Arc::new(backend)));
@@ -199,6 +231,11 @@ impl MimeRuntime {
     ///
     /// # Returns
     /// An operation handle, or the rejected input and its reason.
+    ///
+    /// # Errors
+    /// Returns `MimeSubmitFailure` if services or an async backend are
+    /// unavailable, request preflight fails, or root-group admission is
+    /// rejected. The failure retains the input for recovery.
     pub fn try_submit_detection(
         &self,
         input: OwnedMimeInput,
@@ -216,6 +253,12 @@ impl MimeRuntime {
     ///
     /// # Returns
     /// An operation handle, or the rejected input and its reason.
+    ///
+    /// # Errors
+    /// Returns `MimeSubmitFailure` if services or an async backend are
+    /// unavailable, the parent cannot accept a child, preflight, read-budget
+    /// or group binding fails, or admission is rejected. The failure retains
+    /// the input for recovery.
     pub fn try_submit_detection_in(
         &self,
         parent: &OperationScope,
@@ -223,121 +266,6 @@ impl MimeRuntime {
         options: MimeOperationOptions,
     ) -> Result<AsyncMimeOperation, MimeSubmitFailure> {
         self.submit_async(Some(parent), input, options)
-    }
-
-    /// Submits the input through the configured async backend.
-    ///
-    /// # Parameters
-    /// - `parent`: Optional parent operation for child submission.
-    /// - `input`: Owned input returned when admission is rejected.
-    /// - `options`: Detection policy, limits, and operation context.
-    ///
-    /// # Returns
-    /// An operation handle, or the rejected input and its reason.
-    fn submit_async(
-        &self,
-        parent: Option<&OperationScope>,
-        input: OwnedMimeInput,
-        options: MimeOperationOptions,
-    ) -> Result<AsyncMimeOperation, MimeSubmitFailure> {
-        let Some(services) = self.execution_services.as_ref().cloned() else {
-            return Err(MimeSubmitFailure {
-                reason: MimeSubmitRejection::ExecutionServicesRequired,
-                input,
-            });
-        };
-        let _submission = services.submission_guard();
-        let can_submit = if parent.is_some() {
-            services.accepts_children()
-        } else {
-            services.is_prepared()
-        };
-        if !can_submit {
-            return Err(MimeSubmitFailure {
-                reason: MimeSubmitRejection::ExecutionServicesRequired,
-                input,
-            });
-        }
-        let Some((backend_id, backend)) = self.async_backend.as_ref().cloned() else {
-            return Err(MimeSubmitFailure {
-                reason: MimeSubmitRejection::AsyncUnsupported,
-                input,
-            });
-        };
-        let max_buffer_size = self.context.config().max_buffer_size();
-        let permit = match mime_submission::preflight(
-            &input,
-            &options,
-            backend.content_requirement(),
-            backend.random_access_capability(),
-            max_buffer_size,
-            &services,
-        ) {
-            Ok(permit) => permit,
-            Err(reason) => return Err(MimeSubmitFailure { reason, input }),
-        };
-        let tree_limit = options
-            .max_read_bytes
-            .unwrap_or(services.max_read_bytes)
-            .min(services.max_read_bytes);
-        let read_tree = match parent {
-            Some(parent) => match services.read_tree_for_parent(parent, tree_limit, tree_limit) {
-                Ok(tree) => tree,
-                Err(kind) => {
-                    return Err(MimeSubmitFailure {
-                        reason: MimeSubmitRejection::ReadBudgetBinding(kind),
-                        input,
-                    });
-                }
-            },
-            None => services.new_read_tree(tree_limit),
-        };
-        let cell = mime_submission::cell(input);
-        let body_cell = Arc::clone(&cell);
-        let body_services = Arc::clone(&services);
-        let body_options = options.clone();
-        let body_tree = Arc::clone(&read_tree);
-        let body_backend_id = backend_id.clone();
-        let body_max_buffer_size = max_buffer_size;
-        let body = move |scope: OperationScope| {
-            mime_submission::detect(mime_submission::MimeSubmission {
-                scope,
-                input: mime_submission::take(&body_cell),
-                services: body_services,
-                backend,
-                backend_id: body_backend_id,
-                max_buffer_size: body_max_buffer_size,
-                options: body_options,
-                permit: Some(permit),
-                read_tree: body_tree,
-            })
-        };
-        let result = if let Some(parent) = parent {
-            match parent.manager().with_group(&services.root_group) {
-                Ok(manager) => manager.as_async().try_submit(options.operation, body),
-                Err(error) => {
-                    return Err(MimeSubmitFailure {
-                        reason: MimeSubmitRejection::GroupBinding(error),
-                        input: mime_submission::return_input(&cell),
-                    });
-                }
-            }
-        } else {
-            services.async_root_group.try_submit(options.operation, body)
-        };
-        match result {
-            Ok(handle) => {
-                services.track_observer(handle.observer());
-                Ok(handle)
-            }
-            Err(error) => {
-                let (reason, _) = error.into_parts();
-                Err(MimeSubmitFailure {
-                    reason: MimeSubmitRejection::Admission(reason),
-                    input: mime_submission::return_input(&cell),
-                })
-            }
-        }
     }
 
     /// Submits a synchronous child operation using the parent's manager view.
@@ -349,6 +277,12 @@ impl MimeRuntime {
     ///
     /// # Returns
     /// An operation handle, or the rejected input and its reason.
+    ///
+    /// # Errors
+    /// Returns `MimeSubmitFailure` if the parent cannot accept a child, the
+    /// provider-backed input is unsupported, detector creation or preflight
+    /// fails, read-budget or group binding fails, or admission is rejected.
+    /// The failure retains the input for recovery.
     pub fn try_submit_detection_sync_in(
         &self,
         parent: &OperationScope,
@@ -485,37 +419,125 @@ impl MimeRuntime {
         }
     }
 
-    /// Returns the immutable configuration and repository shared by this
-    /// runtime.
+    /// Submits the input through the configured async backend.
+    ///
+    /// # Parameters
+    /// - `parent`: Optional parent operation for child submission.
+    /// - `input`: Owned input returned when admission is rejected.
+    /// - `options`: Detection policy, limits, and operation context.
     ///
     /// # Returns
-    ///
-    /// A reference to this runtime's context. The reference is valid for the
-    /// lifetime of the borrow and does not clone the shared handles.
-    #[must_use]
-    pub fn context(&self) -> &MimeDetectorContext {
-        &self.context
-    }
-
-    /// Creates a detector using this runtime's configuration and repository.
-    ///
-    /// The detector receives a clone of the configuration value and a clone of
-    /// the repository's `Arc`, so the repository remains alive independently of
-    /// this runtime.
-    ///
-    /// # Returns
-    ///
-    /// A shared handle to a repository-backed MIME detector.
+    /// An operation handle, or the rejected input and its reason.
     ///
     /// # Errors
-    ///
-    /// This implementation currently constructs the repository-backed
-    /// detector infallibly and returns `Ok`.
-    pub fn create_detector(&self) -> MimeResult<Arc<dyn MimeDetector>> {
-        Ok(Arc::new(OwnedRepositoryMimeDetector::new(
-            self.context.config().clone(),
-            self.context.repository_arc(),
-        )))
+    /// Returns `MimeSubmitFailure` if services or a backend are unavailable,
+    /// the parent cannot accept a child, preflight, read-budget or group
+    /// binding fails, or operation admission is rejected. The failure retains
+    /// the input for recovery.
+    fn submit_async(
+        &self,
+        parent: Option<&OperationScope>,
+        input: OwnedMimeInput,
+        options: MimeOperationOptions,
+    ) -> Result<AsyncMimeOperation, MimeSubmitFailure> {
+        let Some(services) = self.execution_services.as_ref().cloned() else {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::ExecutionServicesRequired,
+                input,
+            });
+        };
+        let _submission = services.submission_guard();
+        let can_submit = if parent.is_some() {
+            services.accepts_children()
+        } else {
+            services.is_prepared()
+        };
+        if !can_submit {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::ExecutionServicesRequired,
+                input,
+            });
+        }
+        let Some((backend_id, backend)) = self.async_backend.as_ref().cloned() else {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::AsyncUnsupported,
+                input,
+            });
+        };
+        let max_buffer_size = self.context.config().max_buffer_size();
+        let permit = match mime_submission::preflight(
+            &input,
+            &options,
+            backend.content_requirement(),
+            backend.random_access_capability(),
+            max_buffer_size,
+            &services,
+        ) {
+            Ok(permit) => permit,
+            Err(reason) => return Err(MimeSubmitFailure { reason, input }),
+        };
+        let tree_limit = options
+            .max_read_bytes
+            .unwrap_or(services.max_read_bytes)
+            .min(services.max_read_bytes);
+        let read_tree = match parent {
+            Some(parent) => match services.read_tree_for_parent(parent, tree_limit, tree_limit) {
+                Ok(tree) => tree,
+                Err(kind) => {
+                    return Err(MimeSubmitFailure {
+                        reason: MimeSubmitRejection::ReadBudgetBinding(kind),
+                        input,
+                    });
+                }
+            },
+            None => services.new_read_tree(tree_limit),
+        };
+        let cell = mime_submission::cell(input);
+        let body_cell = Arc::clone(&cell);
+        let body_services = Arc::clone(&services);
+        let body_options = options.clone();
+        let body_tree = Arc::clone(&read_tree);
+        let body_backend_id = backend_id.clone();
+        let body_max_buffer_size = max_buffer_size;
+        let body = move |scope: OperationScope| {
+            mime_submission::detect(mime_submission::MimeSubmission {
+                scope,
+                input: mime_submission::take(&body_cell),
+                services: body_services,
+                backend,
+                backend_id: body_backend_id,
+                max_buffer_size: body_max_buffer_size,
+                options: body_options,
+                permit: Some(permit),
+                read_tree: body_tree,
+            })
+        };
+        let result = if let Some(parent) = parent {
+            match parent.manager().with_group(&services.root_group) {
+                Ok(manager) => manager.as_async().try_submit(options.operation, body),
+                Err(error) => {
+                    return Err(MimeSubmitFailure {
+                        reason: MimeSubmitRejection::GroupBinding(error),
+                        input: mime_submission::return_input(&cell),
+                    });
+                }
+            }
+        } else {
+            services.async_root_group.try_submit(options.operation, body)
+        };
+        match result {
+            Ok(handle) => {
+                services.track_observer(handle.observer());
+                Ok(handle)
+            }
+            Err(error) => {
+                let (reason, _) = error.into_parts();
+                Err(MimeSubmitFailure {
+                    reason: MimeSubmitRejection::Admission(reason),
+                    input: mime_submission::return_input(&cell),
+                })
+            }
+        }
     }
 }
 
@@ -526,6 +548,9 @@ impl Default for MimeRuntime {
     ///
     /// A runtime initialized with the default MIME configuration and bundled
     /// repository.
+    ///
+    /// # Panics
+    /// Panics if initialization of the bundled runtime unexpectedly fails.
     fn default() -> Self {
         Self::builtin().expect("built-in MIME runtime should initialize")
     }

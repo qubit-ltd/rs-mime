@@ -30,11 +30,31 @@ impl StagingBudget {
     ///
     /// # Returns
     /// A cloneable staging-budget handle.
+    #[must_use]
+    #[inline]
     pub(in crate::detector) fn from_budget(budget: Arc<MimeBudget>) -> Self {
         Self { budget, usage: None }
     }
 
+    /// Returns the configured maximum staging size.
+    ///
+    /// # Returns
+    /// The maximum number of staging bytes allowed by the shared budget.
+    #[must_use]
+    #[inline]
+    pub(crate) fn limit(&self) -> u64 {
+        self.budget.limits.staging
+    }
+
     /// Returns a handle that also records permits in the given request.
+    ///
+    /// # Parameters
+    /// - `usage`: Request-local tracker updated alongside the shared budget.
+    ///
+    /// # Returns
+    /// A staging-budget handle configured to track request-local usage.
+    #[must_use]
+    #[inline]
     pub(crate) fn with_usage(mut self, usage: Arc<RequestStagingUsage>) -> Self {
         self.usage = Some(usage);
         self
@@ -46,8 +66,8 @@ impl StagingBudget {
     /// - `bytes`: Number of staging bytes requested.
     ///
     /// # Returns
-    /// A permit when capacity is available, or `None` if the limit would be
-    /// exceeded.
+    /// A permit when capacity is available, or `None` if the service limit
+    /// would be exceeded or tracked request usage would overflow.
     pub(crate) fn try_reserve(&self, bytes: u64) -> Option<StagingPermit> {
         let permit = self.budget.reserve_staging(bytes)?;
         let usage = match &self.usage {
@@ -66,17 +86,12 @@ impl StagingBudget {
     /// - `bytes`: Number of owned-memory bytes requested.
     ///
     /// # Returns
-    /// A permit when capacity is available, or `None` if the limit would be
-    /// exceeded.
+    /// A permit when capacity is available, or `None` if the owned-memory limit
+    /// would be exceeded.
     pub(crate) fn try_reserve_owned(&self, bytes: usize) -> Option<OwnedMemoryPermit> {
         self.budget
             .reserve_owned(bytes)
             .map(|permit| OwnedMemoryPermit { _permit: permit })
-    }
-
-    /// Returns the configured maximum staging size.
-    pub(crate) fn limit(&self) -> u64 {
-        self.budget.limits.staging
     }
 
     /// Returns currently reserved staging bytes for budget assertions.
@@ -96,7 +111,7 @@ mod tests {
     use super::StagingBudget;
 
     #[test]
-    fn staging_budget_tracks_usage_and_releases_it_with_the_permit() {
+    fn test_staging_budget_tracks_usage_and_releases_it_with_the_permit() {
         let budget = Arc::new(MimeBudget::new(Limits { owned: 0, staging: 7 }));
         let usage = Arc::new(RequestStagingUsage::default());
         let staging = StagingBudget::from_budget(Arc::clone(&budget)).with_usage(Arc::clone(&usage));
@@ -109,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn staging_budget_rejection_does_not_pollute_usage_or_global_counters() {
+    fn test_staging_budget_rejection_does_not_pollute_usage_or_global_counters() {
         let budget = Arc::new(MimeBudget::new(Limits { owned: 0, staging: 5 }));
         let usage = Arc::new(RequestStagingUsage::default());
         let staging = StagingBudget::from_budget(Arc::clone(&budget)).with_usage(Arc::clone(&usage));
@@ -122,7 +137,7 @@ mod tests {
     }
 
     #[test]
-    fn staging_budget_without_tracker_keeps_global_limit_and_overflow_rolls_back() {
+    fn test_staging_budget_without_tracker_keeps_global_limit_and_overflow_rolls_back() {
         let budget = Arc::new(MimeBudget::new(Limits { owned: 0, staging: 6 }));
         let staging = StagingBudget::from_budget(Arc::clone(&budget));
         let permit = staging.try_reserve(6).unwrap();
@@ -144,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn staging_budget_recovers_poisoned_usage_lock() {
+    fn test_staging_budget_recovers_poisoned_usage_lock() {
         let usage = Arc::new(RequestStagingUsage::default());
         usage.poison_lock_for_test();
         let permit = usage.reserve(2).unwrap();

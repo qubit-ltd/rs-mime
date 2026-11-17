@@ -7,6 +7,10 @@
 // =============================================================================
 // qubit-style: allow coverage-cfg
 
+#[cfg(coverage)]
+use std::panic::AssertUnwindSafe;
+#[cfg(coverage)]
+use std::panic::catch_unwind;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::Weak;
@@ -30,15 +34,6 @@ pub(in crate::detector) struct ReadTreeRegistry {
 }
 
 impl ReadTreeRegistry {
-    /// Poisons the registration mutex so coverage can exercise recovery.
-    #[cfg(coverage)]
-    pub(crate) fn poison_registrations_for_coverage(&self) {
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _guard = self.registrations.lock().unwrap();
-            panic!("poison read-tree registration lock for coverage");
-        }));
-    }
-
     /// Creates a child context for an operation, creating its root if needed.
     ///
     /// # Parameters
@@ -85,6 +80,31 @@ impl ReadTreeRegistry {
         Ok(root.child(scope_limit))
     }
 
+    /// Looks up a live context registered for an operation.
+    ///
+    /// # Parameters
+    /// - `id`: Operation ID to look up.
+    ///
+    /// # Returns
+    /// The upgraded context when it is still owned, or `None` after it expires.
+    #[inline]
+    pub(crate) fn for_operation(&self, id: OperationId) -> Option<Arc<ReadTreeContext>> {
+        self.roots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&id)
+            .and_then(Weak::upgrade)
+    }
+
+    /// Poisons the registration mutex so coverage can exercise recovery.
+    #[cfg(coverage)]
+    pub(crate) fn poison_registrations_for_coverage(&self) {
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = self.registrations.lock().unwrap();
+            panic!("poison read-tree registration lock for coverage");
+        }));
+    }
+
     /// Associates an operation ID with an existing read-tree context.
     ///
     /// # Parameters
@@ -100,21 +120,6 @@ impl ReadTreeRegistry {
             operation: id,
         });
     }
-
-    /// Looks up a live context registered for an operation.
-    ///
-    /// # Parameters
-    /// - `id`: Operation ID to look up.
-    ///
-    /// # Returns
-    /// The upgraded context when it is still owned, or `None` after it expires.
-    pub(crate) fn for_operation(&self, id: OperationId) -> Option<Arc<ReadTreeContext>> {
-        self.roots
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&id)
-            .and_then(Weak::upgrade)
-    }
 }
 
 #[cfg(test)]
@@ -126,15 +131,18 @@ mod tests {
     use std::task::Poll;
     use std::task::Wake;
     use std::task::Waker;
+    use std::thread;
 
+    use qubit_operation::GroupOptions;
     use qubit_operation::OperationId;
+    use qubit_operation::OperationManager;
     use qubit_operation::OperationOutcome;
     use qubit_operation::OperationScope;
 
     use super::ReadTreeContext;
     use super::ReadTreeRegistry;
 
-    struct ThreadWake(std::thread::Thread);
+    struct ThreadWake(thread::Thread);
 
     impl Wake for ThreadWake {
         fn wake(self: Arc<Self>) {
@@ -146,21 +154,24 @@ mod tests {
         }
     }
 
+    /// Runs a future to completion, parking the test thread until it is woken.
     fn block_on<F: Future>(future: F) -> F::Output {
-        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
         let mut context = Context::from_waker(&waker);
         let mut future = Box::pin(future);
         loop {
             match Pin::as_mut(&mut future).poll(&mut context) {
                 Poll::Ready(value) => return value,
-                Poll::Pending => std::thread::park(),
+                Poll::Pending => thread::park(),
             }
         }
     }
 
+    /// Starts a completed operation and returns its identity for registry
+    /// tests.
     fn operation_id() -> OperationId {
-        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let mut operation = group
             .as_async()
             .try_submit(Default::default(), |scope| async move { Ok::<_, ()>(scope.id()) })
@@ -172,9 +183,11 @@ mod tests {
         }
     }
 
+    /// Runs a test closure in a managed parent operation and waits for
+    /// settlement.
     fn with_parent_scope<T: Send + 'static>(body: impl FnOnce(&OperationScope) -> T + Send + 'static) -> T {
-        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let mut operation = group
             .as_async()
             .try_submit(
@@ -266,8 +279,8 @@ mod tests {
     #[test]
     fn test_root_bindings_are_removed_after_context_drop() {
         let registry = ReadTreeRegistry::default();
-        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager.group(qubit_operation::GroupOptions { capacity: 32 }).unwrap();
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 32 }).unwrap();
 
         for _ in 0..32 {
             let mut operation = group
@@ -335,7 +348,7 @@ mod tests {
         registry.bind(id, &context);
         let roots = Arc::clone(&registry.roots);
         assert!(
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let _guard = roots.lock().unwrap();
                 panic!("poison read-tree roots lock");
             })

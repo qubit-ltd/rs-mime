@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+
 //! Result type used by MIME database parsing and detection.
 
 use crate::MimeError;

@@ -20,6 +20,10 @@ use crate::command_execution::require_complete_stdout;
 /// # Returns
 /// The classified stream type, or a backend error when stdout is incomplete or
 /// ffprobe did not produce an exit code.
+///
+/// # Errors
+/// Returns [`MimeError::ClassifierBackend`] when stdout is incomplete after a
+/// successful exit or ffprobe provides no numeric exit code.
 pub(crate) fn stream_type_from_output(output: &MimeCommandOutput) -> Result<MediaStreamType, MimeError> {
     match output.exit_code {
         Some(0) => {
@@ -42,6 +46,7 @@ pub(crate) fn stream_type_from_output(output: &MimeCommandOutput) -> Result<Medi
 #[cfg(test)]
 mod tests {
     use super::stream_type_from_output;
+    use crate::MediaStreamType;
     use crate::MimeError;
     use crate::command_execution::MimeCommandOutput;
 
@@ -53,7 +58,7 @@ mod tests {
             stdout_truncated: false,
             stdout_complete: true,
         };
-        assert_eq!(crate::MediaStreamType::None, stream_type_from_output(&output).unwrap());
+        assert_eq!(MediaStreamType::None, stream_type_from_output(&output).unwrap());
     }
 
     #[test]

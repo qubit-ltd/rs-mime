@@ -5,24 +5,33 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+
 //! Exercises MIME policy using execution facts without modifying PATH.
 use std::future::Future;
 use std::path::Path;
+use std::path::PathBuf;
+use std::path::absolute;
 use std::pin::Pin;
+use std::str;
 use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 use std::task::Wake;
 use std::task::Waker;
+use std::thread;
+use std::thread::Thread;
 use std::time::Duration;
+use std::time::Instant;
 
 use qubit_command::Command;
+use qubit_command::CommandCancellation;
 use qubit_command::CommandError;
 use qubit_command::CommandErrorKind;
 use qubit_command::CommandRunner;
 use qubit_config::Config;
 
 use crate::CONFIG_COMMAND_OUTPUT_MAX_BYTES;
+use crate::CONFIG_COMMAND_TIMEOUT;
 use crate::FfprobeCommandMediaStreamClassifier;
 use crate::FileCommandMimeDetector;
 use crate::MediaStreamType;
@@ -30,21 +39,22 @@ use crate::MimeConfig;
 use crate::MimeError;
 use crate::command_execution::MimeCommandExecutor;
 use crate::command_execution::MimeCommandOutput;
+use crate::command_execution::SystemMimeCommandExecutor;
 use crate::detector::MimeDetectorBackend;
+use crate::repository::MimeRepository;
 
+/// Polls a worker future synchronously, parking between wakeups until a bound
+/// expires.
 fn block_on_worker<F: Future + ?Sized>(mut future: Pin<Box<F>>) -> F::Output {
-    let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+    let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
     let mut context = Context::from_waker(&waker);
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if let Poll::Ready(output) = future.as_mut().poll(&mut context) {
             return output;
         }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "worker future completed within bound"
-        );
-        std::thread::park_timeout(Duration::from_millis(20));
+        assert!(Instant::now() < deadline, "worker future completed within bound");
+        thread::park_timeout(Duration::from_millis(20));
     }
 }
 
@@ -59,7 +69,8 @@ fn test_legacy_file_async_hook_rejects_managed_work() {
     assert!(matches!(error, MimeError::AsyncUnsupported));
 }
 
-struct ThreadWake(std::thread::Thread);
+/// Unparks the thread that is polling a worker future when it is woken.
+struct ThreadWake(Thread);
 
 impl Wake for ThreadWake {
     fn wake(self: Arc<Self>) {
@@ -136,7 +147,7 @@ struct FakeExecutor {
 impl MimeCommandExecutor for FakeExecutor {
     fn run(&self, _: &CommandRunner, command: Command) -> Result<MimeCommandOutput, CommandError> {
         let args: Vec<_> = command.arguments().collect();
-        let expected_path = std::path::absolute(Path::new("-private-media")).expect("cwd should be available");
+        let expected_path = absolute(Path::new("-private-media")).expect("cwd should be available");
         assert_eq!(args.last().copied(), Some(expected_path.as_os_str()));
         let separator = if command.program() == "file" { "--" } else { "-i" };
         assert_eq!(args[args.len() - 2], separator);
@@ -206,7 +217,7 @@ fn test_command_backend_policy_matrix() {
             let expected = if bytes.is_empty() {
                 Vec::new()
             } else {
-                vec![std::str::from_utf8(bytes).expect("valid UTF-8 case").trim().to_owned()]
+                vec![str::from_utf8(bytes).expect("valid UTF-8 case").trim().to_owned()]
             };
             assert_eq!(result.expect("complete success must parse"), expected);
         } else {
@@ -263,7 +274,7 @@ fn test_file_backend_accepts_only_one_mime_name_or_empty_output() {
             .expect_err("invalid MIME output must fail");
         assert!(matches!(error, MimeError::DetectorBackend { ref backend, ref reason }
             if backend == "file" && reason == "file returned an invalid MIME type"
-                && !reason.contains("private-media") && !reason.contains(std::str::from_utf8(bytes).unwrap_or(""))));
+                && !reason.contains("private-media") && !reason.contains(str::from_utf8(bytes).unwrap_or(""))));
     }
 }
 
@@ -277,6 +288,7 @@ impl MimeCommandExecutor for FailingExecutor {
     }
 }
 
+/// Supplies fake command results while asserting availability-probe budgets.
 struct ProbeBudgetExecutor {
     timeout: Duration,
     output_limit: u64,
@@ -287,8 +299,9 @@ struct ProbeBudgetExecutor {
     stdout_complete: bool,
 }
 
+/// Supplies fake command output after verifying its process-cwd absolute path.
 struct PathAssertionExecutor {
-    expected_path: std::path::PathBuf,
+    expected_path: PathBuf,
 }
 
 impl MimeCommandExecutor for PathAssertionExecutor {
@@ -315,7 +328,7 @@ impl MimeCommandExecutor for PathAssertionExecutor {
 #[test]
 fn test_command_boundaries_absolute_paths_with_special_names_and_working_directory() {
     let ffprobe = FfprobeCommandMediaStreamClassifier::new();
-    let repository = crate::repository::MimeRepository::empty();
+    let repository = MimeRepository::empty();
     let file = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
         CommandRunner::new(Duration::from_secs(1)).working_directory("child-working-directory"),
@@ -327,7 +340,7 @@ fn test_command_boundaries_absolute_paths_with_special_names_and_working_directo
         Path::new("first/media.bin"),
         Path::new("second/media.bin"),
     ] {
-        let expected_path = std::path::absolute(path).expect("cwd should be available");
+        let expected_path = absolute(path).expect("cwd should be available");
         let executor = PathAssertionExecutor {
             expected_path: expected_path.clone(),
         };
@@ -371,7 +384,7 @@ fn test_availability_probes_use_supplied_timeout_and_output_budgets() {
     let output_limit = 3_u64;
     let mut source = Config::new();
     source
-        .set(crate::CONFIG_COMMAND_TIMEOUT, "17ms")
+        .set(CONFIG_COMMAND_TIMEOUT, "17ms")
         .expect("custom timeout should be accepted");
     source
         .set(CONFIG_COMMAND_OUTPUT_MAX_BYTES, output_limit)
@@ -418,4 +431,33 @@ fn test_command_backends_propagate_execution_failure() {
     assert!(matches!(ffprobe, Err(MimeError::Command(ref error)) if error.kind() == CommandErrorKind::SpawnFailed));
     let file = FileCommandMimeDetector::default().guess_with_executor(path, &FailingExecutor);
     assert!(matches!(file, Err(MimeError::Command(ref error)) if error.kind() == CommandErrorKind::SpawnFailed));
+}
+
+#[test]
+fn test_cancellable_executor_observes_pre_cancelled_token_before_spawn() {
+    let cancellation = CommandCancellation::new();
+    cancellation.cancel();
+    let error = match SystemMimeCommandExecutor.run_cancellable(
+        &CommandRunner::new(Duration::from_secs(1)).disable_logging(true),
+        Command::new("must-not-start-after-cancellation"),
+        cancellation,
+    ) {
+        Ok(_) => panic!("pre-cancelled execution should not start a process"),
+        Err(error) => error,
+    };
+    assert_eq!(CommandErrorKind::CancelledBeforeStart, error.kind());
+    assert!(error.output().is_none());
+}
+
+#[test]
+fn test_executor_preserves_output_for_clean_unexpected_exit() {
+    let output = SystemMimeCommandExecutor
+        .run(
+            &CommandRunner::new(Duration::from_secs(5)).disable_logging(true),
+            Command::new("rustc").arg("--qubit-mime-invalid-option"),
+        )
+        .expect("a clean unexpected exit retains the captured output");
+
+    assert_ne!(Some(0), output.exit_code);
+    assert!(output.stdout_complete);
 }

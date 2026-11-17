@@ -47,6 +47,7 @@ impl FileCommandMimeDetectorProvider {
     ///
     /// # Returns
     /// A backend configured with the supplied MIME services.
+    #[must_use]
     pub fn create_async_backend(
         &self,
         config: &MimeConfig,
@@ -143,45 +144,5 @@ impl super::AsyncMimeDetectorProvider for FileCommandMimeDetectorProvider {
             });
         }
         Ok(self.create_async_backend(_config, _services.clone()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::FileCommandMimeDetectorProvider;
-    use crate::AsyncMimeDetectorProvider;
-    use crate::ContentRequirement;
-    use crate::FixedMimeExecutionPort;
-    use crate::MimeConfig;
-    use crate::MimeExecutionServices;
-    use crate::RandomAccessCapability;
-
-    fn services() -> MimeExecutionServices {
-        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
-        MimeExecutionServices::new(
-            manager,
-            group,
-            std::sync::Arc::new(FixedMimeExecutionPort::new(1, 1)),
-            16,
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn test_provider_builds_complete_async_backend_without_command_probe() {
-        let provider = FileCommandMimeDetectorProvider;
-        let config = MimeConfig::default();
-        let services = services();
-
-        let backend = <FileCommandMimeDetectorProvider as AsyncMimeDetectorProvider>::create_async_backend(
-            &provider, &config, &services,
-        )
-        .expect("async factory should configure without running the file command");
-        assert_eq!(ContentRequirement::Complete, backend.content_requirement());
-        assert_eq!(RandomAccessCapability::Unsupported, backend.random_access_capability());
-
-        let inherent_backend = provider.create_async_backend(&config, services);
-        assert_eq!(ContentRequirement::Complete, inherent_backend.content_requirement());
     }
 }

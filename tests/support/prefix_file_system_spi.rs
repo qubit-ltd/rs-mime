@@ -51,15 +51,18 @@ pub(crate) struct PrefixFileSystemSpi {
 
 impl PrefixFileSystemSpi {
     /// Creates a hierarchical provider serving `content`.
+    #[must_use]
     pub(crate) fn hierarchical(content: Vec<u8>) -> Self {
         Self::new(content, PathSemantics::Hierarchical)
     }
 
     /// Creates an object-key provider serving `content`.
+    #[must_use]
     pub(crate) fn object_key(content: Vec<u8>) -> Self {
         Self::new(content, PathSemantics::ObjectKey)
     }
 
+    #[must_use]
     fn new(content: Vec<u8>, semantics: PathSemantics) -> Self {
         Self {
             content: Arc::new(content),
@@ -73,29 +76,37 @@ impl PrefixFileSystemSpi {
     }
 
     /// Returns the number of metadata requests received by this provider.
+    #[inline]
+    #[must_use]
     pub(crate) fn stat_calls(&self) -> usize {
         self.stats.load(Ordering::Relaxed)
     }
 
     /// Returns the number of reader sessions opened by this provider.
+    #[inline]
+    #[must_use]
     pub(crate) fn opened(&self) -> usize {
         self.opened.load(Ordering::Relaxed)
     }
 
     /// Returns the total number of bytes requested from opened readers.
+    #[inline]
+    #[must_use]
     pub(crate) fn requested_read_bytes(&self) -> usize {
         self.requested_read_bytes.load(Ordering::Relaxed)
-    }
-
-    /// Enables the guaranteed range contract for request-planning tests.
-    pub(crate) fn with_guaranteed_range(mut self) -> Self {
-        self.guaranteed_range = true;
-        self
     }
 
     /// Returns the actual length received at the provider boundary.
     pub(crate) fn range_length(&self) -> Option<u64> {
         *self.range_length.lock().unwrap()
+    }
+
+    /// Enables the guaranteed range contract for request-planning tests.
+    #[inline]
+    #[must_use]
+    pub(crate) fn with_guaranteed_range(mut self) -> Self {
+        self.guaranteed_range = true;
+        self
     }
 
     fn properties_snapshot(&self) -> ProviderProperties {

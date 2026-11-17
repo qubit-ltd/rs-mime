@@ -6,6 +6,9 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+//! Checks public provider marker, registration metadata, and backend
+//! construction.
+
 use qubit_mime::AsyncMediaStreamClassifierProvider;
 use qubit_mime::FfprobeCommandMediaStreamClassifierProvider;
 use qubit_mime::FixedMimeExecutionPort;
@@ -14,6 +17,7 @@ use qubit_mime::MimeConfig;
 use qubit_mime::MimeExecutionServices;
 use qubit_spi::ProviderMetadata;
 
+// Forces the compiler to check the provider marker bound for the selected type.
 fn assert_provider<T: MediaStreamClassifierProvider>() {}
 
 #[test]

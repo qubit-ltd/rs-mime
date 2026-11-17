@@ -6,6 +6,7 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+use std::ptr;
 use std::sync::Arc;
 
 use crate::MimeRepository;
@@ -15,7 +16,16 @@ fn test_bundled_repository_single_allocation() {
     let first = MimeRepository::bundled_shared();
     let second = MimeRepository::bundled_shared();
 
-    assert!(Arc::ptr_eq(&first, &second));
-    assert!(std::ptr::eq(MimeRepository::bundled(), first.as_ref()));
-    assert!(first.get("application/pdf").is_some());
+    assert!(
+        Arc::ptr_eq(&first, &second),
+        "shared access should reuse the same allocation"
+    );
+    assert!(
+        ptr::eq(MimeRepository::bundled(), first.as_ref()),
+        "shared and borrowed accessors should refer to the same repository"
+    );
+    assert!(
+        first.get("application/pdf").is_some(),
+        "the bundled repository should include the PDF media type"
+    );
 }

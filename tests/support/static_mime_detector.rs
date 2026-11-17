@@ -30,6 +30,7 @@ impl StaticMimeDetector {
     /// # Returns
     ///
     /// A deterministic detector fixture.
+    #[must_use]
     #[inline]
     pub(crate) const fn new(mime_type: &'static str) -> Self {
         Self { mime_type }
@@ -37,6 +38,7 @@ impl StaticMimeDetector {
 }
 
 impl MimeDetector for StaticMimeDetector {
+    #[inline]
     fn max_buffer_size(&self) -> usize {
         0
     }
@@ -45,10 +47,12 @@ impl MimeDetector for StaticMimeDetector {
         Ok(filename.ends_with(".static").then(|| self.mime_type.to_owned()))
     }
 
+    #[inline]
     fn detect_by_content(&self, _content: &[u8]) -> MimeResult<Option<String>> {
         Ok(None)
     }
 
+    #[inline]
     fn detect(
         &self,
         _content: &[u8],
@@ -61,6 +65,7 @@ impl MimeDetector for StaticMimeDetector {
             .map(|result| result.flatten())
     }
 
+    #[inline]
     fn detect_reader(
         &self,
         _reader: &mut dyn ReadSeek,
@@ -70,6 +75,7 @@ impl MimeDetector for StaticMimeDetector {
         self.detect(&[], filename, policy)
     }
 
+    #[inline]
     fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         self.detect(&[], file.file_name().and_then(|name| name.to_str()), policy)
     }

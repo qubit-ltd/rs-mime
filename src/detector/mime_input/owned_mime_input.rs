@@ -15,6 +15,25 @@ use qubit_fs::Path as FsPath;
 use super::InputExtent;
 
 /// An input whose storage ownership transfers on successful submission.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+///
+/// use qubit_mime::{InputExtent, OwnedMimeInput};
+///
+/// let input = OwnedMimeInput::bytes(Arc::from(b"media".as_slice()), InputExtent::Complete)
+///     .with_filename("clip.mp4");
+/// assert!(matches!(
+///     input,
+///     OwnedMimeInput::Bytes {
+///         filename: Some(name),
+///         ..
+///     } if name == "clip.mp4"
+/// ));
+/// ```
+#[must_use = "submit the owned input to MIME detection"]
 pub enum OwnedMimeInput {
     /// In-memory bytes with an explicit range claim.
     Bytes {
@@ -44,7 +63,6 @@ impl OwnedMimeInput {
     ///
     /// # Returns
     /// An owned byte input without a filename hint.
-    #[must_use]
     pub fn bytes(content: Arc<[u8]>, extent: InputExtent) -> Self {
         Self::Bytes {
             content,
@@ -60,7 +78,6 @@ impl OwnedMimeInput {
     ///
     /// # Returns
     /// The byte input with its filename hint, or the unchanged provider input.
-    #[must_use]
     pub fn with_filename(self, filename: impl Into<String>) -> Self {
         match self {
             Self::Bytes { content, extent, .. } => Self::Bytes {

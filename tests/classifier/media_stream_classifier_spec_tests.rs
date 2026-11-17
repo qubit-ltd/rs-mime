@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+//! Checks the public media-stream service specification's associated types.
 
 use std::sync::Arc;
 
@@ -16,7 +17,9 @@ use qubit_spi::SyncServiceSpec;
 
 #[test]
 fn test_specification_exposes_the_expected_contract_types() {
+    // Confirms callers configure this spec through MimeConfig.
     fn assert_config<T: ServiceSpec<Config = MimeConfig>>() {}
+    // Confirms synchronous creation yields the shared classifier interface.
     fn assert_output<T: SyncServiceSpec<Output = Arc<dyn MediaStreamClassifier>>>() {}
 
     assert_config::<MediaStreamClassifierSpec>();

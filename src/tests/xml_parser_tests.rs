@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+//! Checks the crate-private XML declaration stripping used before parsing.
 
 use std::borrow::Cow;
 

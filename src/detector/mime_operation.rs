@@ -20,6 +20,30 @@ pub use mime_submit_failure::MimeSubmitFailure;
 pub use mime_submit_rejection::MimeSubmitRejection;
 
 /// Asynchronous operation handle for one MIME request.
+///
+/// The runtime returns this handle from asynchronous submission methods.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::AsyncMimeOperation;
+///
+/// fn log_operation_id(operation: &AsyncMimeOperation) {
+///     println!("{:?}", operation.id());
+/// }
+/// ```
 pub type AsyncMimeOperation = AsyncOperationHandle<MimeDetectionReport, MimeError>;
 /// Synchronous operation handle for one MIME request.
+///
+/// The runtime returns this handle from synchronous submission methods.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeOperation;
+///
+/// fn log_operation_id(operation: &MimeOperation) {
+///     println!("{:?}", operation.id());
+/// }
+/// ```
 pub type MimeOperation = OperationHandle<MimeDetectionReport, MimeError>;

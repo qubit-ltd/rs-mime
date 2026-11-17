@@ -19,10 +19,12 @@ use qubit_mime::MimeResult;
 pub(crate) struct StaticEntryPointMimeDetector;
 
 impl MimeDetector for StaticEntryPointMimeDetector {
+    #[inline]
     fn content_requirement(&self) -> ContentRequirement {
         ContentRequirement::Complete
     }
 
+    #[inline]
     fn max_buffer_size(&self) -> usize {
         0
     }

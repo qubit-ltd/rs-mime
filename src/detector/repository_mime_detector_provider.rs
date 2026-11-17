@@ -53,6 +53,7 @@ impl RepositoryMimeDetectorProvider {
     /// # Returns
     /// An async backend using the bundled MIME repository.
     #[must_use]
+    #[inline]
     pub fn create_async_backend(&self, config: &MimeConfig) -> Arc<dyn AsyncMimeDetectorBackend> {
         Arc::new(RepositoryMimeDetector::from_mime_config(config.clone()))
     }
@@ -101,6 +102,7 @@ impl super::AsyncMimeDetectorProvider for RepositoryMimeDetectorProvider {
     ///
     /// # Errors
     /// This built-in provider does not currently return an error.
+    #[inline]
     fn create_async_backend(
         &self,
         config: &MimeConfig,

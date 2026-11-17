@@ -36,6 +36,9 @@ use qubit_mime::MimeDetector;
 use qubit_mime::MimeError;
 use qubit_mime::MimeRepository;
 
+#[cfg(unix)]
+use crate::support::PathEnvGuard;
+
 #[test]
 fn test_custom_repository_relations() {
     let repository = MimeRepository::from_xml(
@@ -73,9 +76,6 @@ fn test_empty_repository_relations() {
         detector.core().merge_results(&filename, &content)
     );
 }
-
-#[cfg(unix)]
-use crate::support::PathEnvGuard;
 
 #[test]
 fn test_detect_by_filename_uses_repository_candidates() {
@@ -706,8 +706,10 @@ fn test_detect_file_rejects_successful_command_error_text() {
     assert!(!format!("{error:?}").contains("private-media"));
 }
 
+#[cfg(unix)]
 #[test]
 fn test_detect_file_reports_missing_input_with_host_file_utility() {
+    #[cfg(unix)]
     let _path_guard = PathEnvGuard::preserve();
     if !FileCommandMimeDetector::is_available() {
         eprintln!("skipping: host file utility is unavailable");
@@ -721,4 +723,91 @@ fn test_detect_file_reports_missing_input_with_host_file_utility() {
         error,
         MimeError::DetectorBackend { .. } | MimeError::Command(_)
     ));
+}
+
+#[test]
+fn test_public_sync_file_reader_and_file_based_entry_points() {
+    use std::io::Cursor;
+
+    use qubit_mime::MimeDetectionPolicy;
+
+    #[cfg(unix)]
+    let _path_guard = PathEnvGuard::preserve();
+    if !FileCommandMimeDetector::is_available() {
+        return;
+    }
+    let path = std::env::temp_dir().join(format!("mime-file-command-api-{}.pdf", std::process::id()));
+    std::fs::write(&path, b"%PDF-1.7\n").expect("test PDF should be created");
+    let detector = FileCommandMimeDetector::new();
+    assert!(FileBasedMimeDetector::max_test_bytes(&detector) > 0);
+    assert!(FileBasedMimeDetector::core(&detector).max_buffer_size() > 0);
+    assert_eq!(
+        vec!["application/pdf"],
+        FileBasedMimeDetector::guess_from_filename(&detector, "document.pdf")
+    );
+    assert_eq!(
+        vec!["application/pdf"],
+        FileBasedMimeDetector::guess_from_local_file(&detector, &path)
+            .expect("file-based local path should use the system file command")
+    );
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        detector
+            .detect_file_by_content(&path)
+            .expect("direct content helper should use the command result")
+    );
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        detector
+            .detect_file(&path, MimeDetectionPolicy::VerifyContent)
+            .expect("detector file API should verify file content")
+    );
+    let mut reader = Cursor::new(b"%PDF-1.7\n".to_vec());
+    reader.set_position(4);
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        detector
+            .detect_reader(&mut reader, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
+            .expect("reader API should stage and inspect the input")
+    );
+    assert_eq!(
+        4,
+        reader.position(),
+        "reader position is restored after the command call"
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn test_public_core_repository_and_runner_accessors_preserve_detector_state() {
+    use std::sync::Arc;
+
+    use qubit_mime::FfprobeCommandMediaStreamClassifier;
+
+    let repository = MimeRepository::empty();
+    let mut detector = FileCommandMimeDetector::with_repository(&repository);
+
+    assert!(std::ptr::eq(&repository, detector.repository()));
+    assert!(detector.core().max_buffer_size() > 0);
+    detector
+        .core_mut()
+        .set_media_stream_classifier(Some(Arc::new(FfprobeCommandMediaStreamClassifier::new())));
+    assert!(
+        detector.core().media_stream_classifier().is_some(),
+        "mutating the shared core should install the requested classifier"
+    );
+    detector.core_mut().set_media_stream_classifier(None);
+    assert!(detector.core().media_stream_classifier().is_none());
+
+    let runner = CommandRunner::new(Duration::from_secs(7)).disable_logging(true);
+    detector.set_command_runner(runner);
+    assert_eq!(
+        Some(Duration::from_secs(7)),
+        detector.command_runner().configured_timeout()
+    );
+    assert!(detector.command_runner().is_logging_disabled());
+
+    let debug = format!("{detector:?}");
+    assert!(debug.contains("FileCommandMimeDetector"));
+    assert!(debug.contains("execution_services_configured: false"));
 }

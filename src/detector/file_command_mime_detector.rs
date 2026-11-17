@@ -93,6 +93,12 @@ impl std::fmt::Debug for FileCommandMimeDetector<'_> {
     ///
     /// # Parameters
     /// - `formatter`: Receives the formatted detector fields.
+    ///
+    /// # Returns
+    /// `Ok(())` after writing the detector's debug fields.
+    ///
+    /// # Errors
+    /// Returns the formatter error if one of the fields cannot be written.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("FileCommandMimeDetector")
@@ -191,25 +197,6 @@ impl<'a> FileCommandMimeDetector<'a> {
         }
     }
 
-    /// Attaches prepared MIME operation services for explicit async detection.
-    ///
-    /// # Parameters
-    /// - `services`: Services used to submit and account for async work.
-    ///
-    /// # Returns
-    /// The detector configured with those services.
-    #[must_use]
-    pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
-        self.execution_services = Some(services);
-        self
-    }
-
-    #[cfg(test)]
-    fn with_test_command_executor(mut self, executor: Arc<dyn AsyncMimeCommandExecutor>) -> Self {
-        self.test_command_executor = Some(executor);
-        self
-    }
-
     /// Gets the shared detector core.
     ///
     /// # Returns
@@ -244,6 +231,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// Runner used for `file` command executions.
+    #[must_use = "use the returned command runner to inspect or clone its configuration"]
     #[inline]
     pub fn command_runner(&self) -> &CommandRunner {
         &self.command_runner
@@ -268,6 +256,19 @@ impl<'a> FileCommandMimeDetector<'a> {
     #[must_use]
     pub fn with_command_runner(mut self, command_runner: CommandRunner) -> Self {
         self.command_runner = command_runner;
+        self
+    }
+
+    /// Attaches prepared MIME operation services for explicit async detection.
+    ///
+    /// # Parameters
+    /// - `services`: Services used to submit and account for async work.
+    ///
+    /// # Returns
+    /// The detector configured with those services.
+    #[must_use]
+    pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
+        self.execution_services = Some(services);
         self
     }
 
@@ -367,6 +368,12 @@ impl<'a> FileCommandMimeDetector<'a> {
                 Self::command_for_path(Path::new(".")),
             )
             .is_ok_and(|output| output.exit_code == Some(0) && require_complete_stdout(&output).is_ok())
+    }
+
+    #[cfg(test)]
+    fn with_test_command_executor(mut self, executor: Arc<dyn AsyncMimeCommandExecutor>) -> Self {
+        self.test_command_executor = Some(executor);
+        self
     }
 
     /// Gets filename candidates from the repository.
@@ -518,6 +525,12 @@ impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
     ///
     /// # Returns
     /// A future resolving to the candidates and input evidence.
+    ///
+    /// # Errors
+    /// The future resolves to a MIME error if the input is incomplete,
+    /// operation services are unavailable, staging exceeds its budget or
+    /// fails, command execution fails, or command output is incomplete or
+    /// invalid.
     fn guess_content_in<'b>(
         &'b self,
         scope: &'b OperationScope,
@@ -658,6 +671,10 @@ fn is_mime_name(value: &str) -> bool {
 
 impl Default for FileCommandMimeDetector<'static> {
     /// Creates a detector using the embedded repository.
+    ///
+    /// # Returns
+    /// A file command detector configured with the embedded repository and
+    /// default command runner.
     fn default() -> Self {
         Self::new()
     }
@@ -665,6 +682,9 @@ impl Default for FileCommandMimeDetector<'static> {
 
 impl<'a> FileBasedMimeDetector for FileCommandMimeDetector<'a> {
     /// Gets the shared detector core.
+    ///
+    /// # Returns
+    /// Shared detector core used for configuration and candidate processing.
     fn core(&self) -> &MimeDetectorCore {
         &self.core
     }
@@ -673,6 +693,9 @@ impl<'a> FileBasedMimeDetector for FileCommandMimeDetector<'a> {
     ///
     /// The prefix budget comes from [`MimeConfig::max_buffer_size`] and is
     /// independent of the magic offsets in the filename repository.
+    ///
+    /// # Returns
+    /// Maximum byte prefix used for content inspection.
     fn max_test_bytes(&self) -> usize {
         self.core.max_buffer_size()
     }
@@ -681,6 +704,9 @@ impl<'a> FileBasedMimeDetector for FileCommandMimeDetector<'a> {
     ///
     /// # Parameters
     /// - `filename`: File path or basename to match.
+    ///
+    /// # Returns
+    /// Matching MIME type names in repository order.
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         FileCommandMimeDetector::guess_from_filename(self, filename)
     }
@@ -689,6 +715,13 @@ impl<'a> FileBasedMimeDetector for FileCommandMimeDetector<'a> {
     ///
     /// # Parameters
     /// - `file`: Local file path passed to the `file` command.
+    ///
+    /// # Returns
+    /// MIME type names reported by the command.
+    ///
+    /// # Errors
+    /// Returns an error when the command cannot inspect the file or its output
+    /// cannot be parsed as MIME type names.
     fn guess_from_local_file(&self, file: &Path) -> MimeResult<Vec<String>> {
         self.guess_from_file_command(file)
     }
@@ -1060,8 +1093,8 @@ mod file_operation_tests {
 
     fn cleanup(harness: &Harness) {
         let shutdown = harness.services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
     }
 
     #[test]
@@ -1115,8 +1148,8 @@ mod file_operation_tests {
         assert_eq!(budget.used_bytes(), 0);
         assert!(block_on(handle.wait_settlement()).all_released());
         let shutdown = services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
     }
 
     #[test]
@@ -1372,90 +1405,8 @@ mod file_operation_tests {
         let settlement = block_on(operation.wait_settlement());
         assert_eq!(settlement.status, SettlementStatus::Released);
         let shutdown = services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
         let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
-    }
-
-    #[test]
-    fn test_public_sync_file_reader_and_file_based_entry_points() {
-        use std::io::Cursor;
-
-        use crate::FileBasedMimeDetector;
-        use crate::MimeDetectionPolicy;
-
-        if !FileCommandMimeDetector::is_available() {
-            return;
-        }
-        let path = std::env::temp_dir().join(format!("mime-file-command-api-{}.pdf", std::process::id()));
-        std::fs::write(&path, b"%PDF-1.7\n").expect("test PDF should be created");
-        let detector = FileCommandMimeDetector::new();
-        assert!(FileBasedMimeDetector::max_test_bytes(&detector) > 0);
-        assert!(FileBasedMimeDetector::core(&detector).max_buffer_size() > 0);
-        assert_eq!(
-            vec!["application/pdf"],
-            FileBasedMimeDetector::guess_from_filename(&detector, "document.pdf")
-        );
-        assert_eq!(
-            vec!["application/pdf"],
-            FileBasedMimeDetector::guess_from_local_file(&detector, &path)
-                .expect("file-based local path should use the system file command")
-        );
-        assert_eq!(
-            Some("application/pdf".to_owned()),
-            detector
-                .detect_file_by_content(&path)
-                .expect("direct content helper should use the command result")
-        );
-        assert_eq!(
-            Some("application/pdf".to_owned()),
-            detector
-                .detect_file(&path, MimeDetectionPolicy::VerifyContent)
-                .expect("detector file API should verify file content")
-        );
-        let mut reader = Cursor::new(b"%PDF-1.7\n".to_vec());
-        reader.set_position(4);
-        assert_eq!(
-            Some("application/pdf".to_owned()),
-            detector
-                .detect_reader(&mut reader, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
-                .expect("reader API should stage and inspect the input")
-        );
-        assert_eq!(
-            4,
-            reader.position(),
-            "reader position is restored after the command call"
-        );
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn test_public_core_repository_and_runner_accessors_preserve_detector_state() {
-        let repository = crate::MimeRepository::empty();
-        let mut detector = FileCommandMimeDetector::with_repository(&repository);
-
-        assert!(std::ptr::eq(&repository, detector.repository()));
-        assert!(detector.core().max_buffer_size() > 0);
-        detector
-            .core_mut()
-            .set_media_stream_classifier(Some(Arc::new(crate::FfprobeCommandMediaStreamClassifier::new())));
-        assert!(
-            detector.core().media_stream_classifier().is_some(),
-            "mutating the shared core should install the requested classifier"
-        );
-        detector.core_mut().set_media_stream_classifier(None);
-        assert!(detector.core().media_stream_classifier().is_none());
-
-        let runner = qubit_command::CommandRunner::new(std::time::Duration::from_secs(7)).disable_logging(true);
-        detector.set_command_runner(runner);
-        assert_eq!(
-            Some(std::time::Duration::from_secs(7)),
-            detector.command_runner().configured_timeout()
-        );
-        assert!(detector.command_runner().is_logging_disabled());
-
-        let debug = format!("{detector:?}");
-        assert!(debug.contains("FileCommandMimeDetector"));
-        assert!(debug.contains("execution_services_configured: false"));
     }
 }

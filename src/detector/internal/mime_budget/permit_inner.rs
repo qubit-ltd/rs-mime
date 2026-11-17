@@ -6,6 +6,7 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+use std::ptr::eq;
 use std::sync::Arc;
 
 use super::Amount;
@@ -33,7 +34,7 @@ impl Drop for PermitInner {
             && counters
                 .allocations
                 .get(&identity)
-                .is_some_and(|(_, permit)| std::ptr::eq(permit.as_ptr(), self))
+                .is_some_and(|(_, permit)| eq(permit.as_ptr(), self))
         {
             counters.allocations.remove(&identity);
         }

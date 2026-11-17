@@ -6,6 +6,9 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+use std::mem::take;
+use std::ptr::eq;
+use std::ptr::from_ref;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::Weak;
@@ -35,11 +38,6 @@ pub(crate) struct ReadTreeContext {
 }
 
 impl ReadTreeContext {
-    /// Returns this operation's independent staging usage tracker.
-    pub(crate) fn staging_usage(&self) -> Arc<RequestStagingUsage> {
-        Arc::clone(&self.staging_usage)
-    }
-
     /// Creates an independent root context with the given byte allowance.
     ///
     /// # Parameters
@@ -83,18 +81,50 @@ impl ReadTreeContext {
         })
     }
 
-    /// Records one weak registry entry for final-drop cleanup.
+    /// Returns this operation's independent staging usage tracker.
     ///
-    /// # Parameters
-    /// - `registration`: Weak roots map and operation ID to remove on drop.
-    pub(super) fn register(&self, registration: Registration) {
-        let mut registrations = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
-        if !registrations
-            .iter()
-            .any(|item| item.operation == registration.operation && Weak::ptr_eq(&item.roots, &registration.roots))
-        {
-            registrations.push(registration);
+    /// # Returns
+    /// A shared reference to this operation's staging usage tracker.
+    #[inline]
+    pub(crate) fn staging_usage(&self) -> Arc<RequestStagingUsage> {
+        Arc::clone(&self.staging_usage)
+    }
+
+    /// Returns the smallest remaining allowance across this scope's ancestors.
+    ///
+    /// # Returns
+    /// The smallest remaining byte allowance across the root tree and all
+    /// ancestor scopes.
+    #[must_use]
+    pub(crate) fn remaining(&self) -> u64 {
+        let tree = self.tree.counters.lock().unwrap_or_else(|e| e.into_inner());
+        let mut remaining = self
+            .tree
+            .limit
+            .saturating_sub(tree.consumed.saturating_add(tree.reserved));
+        drop(tree);
+        let mut scope = Some(Arc::clone(&self.scope));
+        while let Some(current) = scope {
+            let counters = current.counters.lock().unwrap_or_else(|e| e.into_inner());
+            remaining = remaining.min(
+                current
+                    .limit
+                    .saturating_sub(counters.consumed.saturating_add(counters.reserved)),
+            );
+            drop(counters);
+            scope = current.parent.clone();
         }
+        remaining
+    }
+
+    /// Returns bytes committed in this operation's inherited read tree.
+    ///
+    /// # Returns
+    /// The number of bytes committed by this operation's scope.
+    #[must_use]
+    #[inline]
+    pub(crate) fn consumed(&self) -> u64 {
+        self.scope.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
     }
 
     /// Reserves read capacity across the root tree and every ancestor scope.
@@ -146,31 +176,18 @@ impl ReadTreeContext {
         })
     }
 
-    /// Returns the smallest remaining allowance across this scope's ancestors.
-    pub(crate) fn remaining(&self) -> u64 {
-        let tree = self.tree.counters.lock().unwrap_or_else(|e| e.into_inner());
-        let mut remaining = self
-            .tree
-            .limit
-            .saturating_sub(tree.consumed.saturating_add(tree.reserved));
-        drop(tree);
-        let mut scope = Some(Arc::clone(&self.scope));
-        while let Some(current) = scope {
-            let counters = current.counters.lock().unwrap_or_else(|e| e.into_inner());
-            remaining = remaining.min(
-                current
-                    .limit
-                    .saturating_sub(counters.consumed.saturating_add(counters.reserved)),
-            );
-            drop(counters);
-            scope = current.parent.clone();
+    /// Records one weak registry entry for final-drop cleanup.
+    ///
+    /// # Parameters
+    /// - `registration`: Weak roots map and operation ID to remove on drop.
+    pub(super) fn register(&self, registration: Registration) {
+        let mut registrations = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
+        if !registrations
+            .iter()
+            .any(|item| item.operation == registration.operation && Weak::ptr_eq(&item.roots, &registration.roots))
+        {
+            registrations.push(registration);
         }
-        remaining
-    }
-
-    /// Returns bytes committed in this operation's inherited read tree.
-    pub(crate) fn consumed(&self) -> u64 {
-        self.scope.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
     }
 }
 
@@ -178,8 +195,8 @@ impl ReadTreeContext {
 impl Drop for ReadTreeContext {
     /// Unregisters this context from each weak operation index.
     fn drop(&mut self) {
-        let registrations = std::mem::take(&mut *self.registrations.lock().unwrap_or_else(|e| e.into_inner()));
-        let context = std::ptr::from_ref(self);
+        let registrations = take(&mut *self.registrations.lock().unwrap_or_else(|e| e.into_inner()));
+        let context = from_ref(self);
         for registration in registrations {
             let Some(roots) = registration.roots.upgrade() else {
                 continue;
@@ -187,7 +204,7 @@ impl Drop for ReadTreeContext {
             let mut roots = roots.lock().unwrap_or_else(|e| e.into_inner());
             let matches = roots
                 .get(&registration.operation)
-                .is_some_and(|registered| std::ptr::eq(registered.as_ptr(), context));
+                .is_some_and(|registered| eq(registered.as_ptr(), context));
             if matches {
                 roots.remove(&registration.operation);
             }
@@ -206,14 +223,17 @@ mod tests {
     use std::task::Poll;
     use std::task::Wake;
     use std::task::Waker;
+    use std::thread;
 
+    use qubit_operation::GroupOptions;
     use qubit_operation::OperationId;
+    use qubit_operation::OperationManager;
     use qubit_operation::OperationOutcome;
 
     use super::super::registration::Registration;
     use super::ReadTreeContext;
 
-    struct ThreadWake(std::thread::Thread);
+    struct ThreadWake(thread::Thread);
 
     impl Wake for ThreadWake {
         fn wake(self: Arc<Self>) {
@@ -225,21 +245,23 @@ mod tests {
         }
     }
 
+    /// Runs a future to completion, parking this thread until its waker fires.
     fn block_on<F: Future>(future: F) -> F::Output {
-        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
         let mut context = Context::from_waker(&waker);
         let mut future = Box::pin(future);
         loop {
             match Pin::as_mut(&mut future).poll(&mut context) {
                 Poll::Ready(value) => return value,
-                Poll::Pending => std::thread::park(),
+                Poll::Pending => thread::park(),
             }
         }
     }
 
+    /// Creates a completed operation and returns its ID for registry tests.
     fn operation_id() -> OperationId {
-        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let mut operation = group
             .as_async()
             .try_submit(Default::default(), |scope| async move { Ok::<_, ()>(scope.id()) })
@@ -251,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn request_staging_contexts_do_not_share_usage_with_parent_or_siblings() {
+    fn test_request_staging_contexts_do_not_share_usage_with_parent_or_siblings() {
         let root = ReadTreeContext::new(10);
         let first = root.child(10);
         let second = root.child(10);
@@ -264,27 +286,27 @@ mod tests {
     fn test_read_tree_reservation_and_commit_recover_poisoned_scope_counters() {
         let root = ReadTreeContext::new(10);
         let child = root.child(8);
-        let tree_counters = std::sync::Arc::clone(&root.tree);
+        let tree_counters = Arc::clone(&root.tree);
         assert!(
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let _guard = tree_counters.counters.lock().unwrap();
                 panic!("poison shared read-tree counters");
             })
             .join()
             .is_err()
         );
-        let root_scope = std::sync::Arc::clone(&root.scope);
+        let root_scope = Arc::clone(&root.scope);
         assert!(
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let _guard = root_scope.counters.lock().unwrap();
                 panic!("poison root read-scope counters");
             })
             .join()
             .is_err()
         );
-        let child_scope = std::sync::Arc::clone(&child.scope);
+        let child_scope = Arc::clone(&child.scope);
         assert!(
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let _guard = child_scope.counters.lock().unwrap();
                 panic!("poison child read-scope counters");
             })
@@ -439,7 +461,7 @@ mod tests {
         let context = ReadTreeContext::new(8);
         let poisoned = Arc::clone(&context);
         assert!(
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let _guard = poisoned.registrations.lock().unwrap();
                 panic!("poison read-tree registrations lock");
             })

@@ -55,7 +55,6 @@ impl MimeDetectorContext {
     /// # Returns
     /// A borrow of the configuration; the reference is valid while `self` is
     /// borrowed.
-    #[must_use]
     #[inline]
     pub fn config(&self) -> &MimeConfig {
         &self.config

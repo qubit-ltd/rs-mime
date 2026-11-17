@@ -33,10 +33,12 @@ impl DirectBackendDetector {
 }
 
 impl MimeDetectorBackend for DirectBackendDetector {
+    #[inline]
     fn core(&self) -> &MimeDetectorCore {
         &self.core
     }
 
+    #[inline]
     fn max_test_bytes(&self) -> usize {
         5
     }

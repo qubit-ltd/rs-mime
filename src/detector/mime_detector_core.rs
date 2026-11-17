@@ -182,14 +182,6 @@ impl MimeDetectorCore {
         })
     }
 
-    /// Installs the relations for the repository this core uses.
-    ///
-    /// # Parameters
-    /// - `mime_relations`: Immutable MIME names and inheritance metadata.
-    pub(crate) fn set_mime_relations(&mut self, mime_relations: Arc<MimeRelations>) {
-        self.mime_relations = Some(mime_relations);
-    }
-
     /// Merges filename and content candidates using the detector selection
     /// strategy.
     ///
@@ -215,6 +207,9 @@ impl MimeDetectorCore {
     ///
     /// # Returns
     /// Selected and optionally refined MIME type name.
+    ///
+    /// # Errors
+    /// Propagates errors from media stream classification when refinement runs.
     pub fn select_result(
         &self,
         from_filename: &[String],
@@ -231,6 +226,14 @@ impl MimeDetectorCore {
             return Ok(Some(result));
         }
         self.refine_detected_mime_type(&result, filename, source).map(Some)
+    }
+
+    /// Installs the relations for the repository this core uses.
+    ///
+    /// # Parameters
+    /// - `mime_relations`: Immutable MIME names and inheritance metadata.
+    pub(crate) fn set_mime_relations(&mut self, mime_relations: Arc<MimeRelations>) {
+        self.mime_relations = Some(mime_relations);
     }
 
     /// Selects candidates using the policy's equality or inheritance rule.
@@ -258,6 +261,9 @@ impl MimeDetectorCore {
 
     /// Gets the configured repository relations or lazily initializes bundled
     /// relations for a standalone core's Freedesktop merge.
+    ///
+    /// # Returns
+    /// Shared repository relations for candidate inheritance checks.
     fn mime_relations(&self) -> Arc<MimeRelations> {
         self.mime_relations
             .clone()
@@ -495,12 +501,16 @@ impl MimeDetectorCore {
 ///
 /// # Returns
 /// `true` when both positions match without ASCII case sensitivity.
+#[must_use]
 fn mime_pair_eq_ignore_ascii_case(left: &[String; 2], right: &[String; 2]) -> bool {
     left[0].eq_ignore_ascii_case(&right[0]) && left[1].eq_ignore_ascii_case(&right[1])
 }
 
 impl Default for MimeDetectorCore {
     /// Loads the default detector core.
+    ///
+    /// # Returns
+    /// A detector core initialized from the default MIME configuration.
     fn default() -> Self {
         Self::from_mime_config(MimeConfig::default())
     }

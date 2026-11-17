@@ -18,6 +18,15 @@
 /// - `Prefix`: A contiguous prefix measured in bytes.
 /// - `Complete`: The complete input was inspected.
 /// - `RandomAccessSamples`: Noncontiguous samples were inspected.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::InspectedExtent;
+///
+/// let inspected = InspectedExtent::Prefix(4096);
+/// assert_eq!(inspected, InspectedExtent::Prefix(4096));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InspectedExtent {
     /// A bounded contiguous prefix made available to content matching.

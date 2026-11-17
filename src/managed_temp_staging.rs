@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+
 //! Managed temporary-file staging for MIME command inputs.
 
 use std::sync::Arc;
@@ -60,18 +61,6 @@ pub(crate) use staged_mime_input::StagedMimeInput;
 ///
 /// # Errors
 /// Returns an error when staging fails, is stopped, or exceeds its budget.
-///
-/// # Parameters
-/// - `scope`: Operation scope that owns the staged resource.
-/// - `input`: Owned bytes or provider-backed input to stage.
-/// - `limits`: Per-request staging and execution limits.
-/// - `read_tree`: Shared provider-read budget context.
-///
-/// # Returns
-/// A future resolving to the operation-owned staged input.
-///
-/// # Errors
-/// Returns an error when staging fails, is stopped, or exceeds its budget.
 pub(crate) fn stage_owned_in<'a>(
     scope: &'a OperationScope,
     input: OwnedMimeInput,
@@ -98,15 +87,6 @@ pub(crate) fn stage_owned_in<'a>(
 ///
 /// # Errors
 /// Returns the operation stop reason when stopping has begun.
-///
-/// # Parameters
-/// - `scope`: Operation scope whose stop state is checked.
-///
-/// # Returns
-/// `Ok(())` when the operation is still active.
-///
-/// # Errors
-/// Returns the operation stop reason when stopping has begun.
 fn ensure_not_stopped(scope: &OperationScope) -> MimeResult<()> {
     if let Some(reason) = scope.context().stop_reason() {
         return Err(stopped_error(reason));
@@ -115,12 +95,6 @@ fn ensure_not_stopped(scope: &OperationScope) -> MimeResult<()> {
 }
 
 /// Converts the operation's stop signal into the MIME error used by staging.
-///
-/// # Parameters
-/// - `reason`: Stop reason reported by the operation context.
-///
-/// # Returns
-/// A MIME error carrying the operation stop report.
 ///
 /// # Parameters
 /// - `reason`: Stop reason reported by the operation context.
@@ -163,18 +137,6 @@ pub(crate) fn stage_borrowed_bytes_in<'a>(
 /// Each chunk reserves staging and temporary owned-memory capacity before a
 /// worker writes it. The resource reservation keeps cleanup responsible for
 /// any partial file if a later chunk fails.
-///
-/// # Parameters
-/// - `scope`: Operation scope that owns the staged resource.
-/// - `content`: Bounded input bytes to copy.
-/// - `_extent`: Completeness claim retained for the staging contract.
-/// - `limits`: Per-request staging and execution limits.
-///
-/// # Returns
-/// The registered staged-file resource.
-///
-/// # Errors
-/// Returns an error when writing, dispatch, or a budget check fails.
 ///
 /// # Parameters
 /// - `scope`: Operation scope that owns the staged resource.
@@ -247,19 +209,6 @@ async fn stage_byte_slice_in(
 ///
 /// Reads are charged to the shared tree budget, and a one-byte sentinel is
 /// used when needed to prove the per-request staging limit was not exceeded.
-///
-/// # Parameters
-/// - `scope`: Operation scope that owns the staged resource.
-/// - `file_system`: Provider filesystem used to open the input once.
-/// - `path`: Provider path to read.
-/// - `limits`: Per-request staging and execution limits.
-/// - `read_tree`: Shared provider-read budget context.
-///
-/// # Returns
-/// The registered staged-file resource.
-///
-/// # Errors
-/// Returns an error when opening, reading, dispatch, or a budget check fails.
 ///
 /// # Parameters
 /// - `scope`: Operation scope that owns the staged resource.
@@ -392,17 +341,6 @@ async fn stage_provider_in(
 ///
 /// # Errors
 /// Returns an error when the operation stops or the worker rejects creation.
-///
-/// # Parameters
-/// - `scope`: Operation scope used to register and own the resource.
-/// - `reservation`: Resource reservation committed after file creation.
-/// - `limits`: Worker and budget settings for this request.
-///
-/// # Returns
-/// The registered staged-file resource.
-///
-/// # Errors
-/// Returns an error when the operation stops or the worker rejects creation.
 async fn create_empty_staged(
     scope: &OperationScope,
     reservation: ResourceReservation,
@@ -447,20 +385,6 @@ async fn create_empty_staged(
 ///
 /// The closure owns the bytes and permits until the write finishes, including
 /// when dispatch is rejected or the operation stops.
-///
-/// # Parameters
-/// - `scope`: Operation scope checked before dispatch.
-/// - `worker`: Worker that performs the write.
-/// - `staged`: Registered staged-file resource.
-/// - `bytes`: Chunk to write.
-/// - `permit`: Staging budget held for the chunk.
-/// - `owned_permit`: Temporary memory budget held for the chunk.
-///
-/// # Returns
-/// `Ok(())` after the chunk is written.
-///
-/// # Errors
-/// Returns an error when stopping, dispatch, or the file write fails.
 ///
 /// # Parameters
 /// - `scope`: Operation scope checked before dispatch.
@@ -554,14 +478,8 @@ pub(crate) fn commit_staged(
 ///
 /// # Returns
 /// `true` when `size` does not exceed `limit`.
-/// Returns whether a staged object fits within its byte limit.
-///
-/// # Parameters
-/// - `size`: Requested staged byte count.
-/// - `limit`: Maximum permitted staged byte count.
-///
-/// # Returns
-/// `true` when `size` does not exceed `limit`.
+#[must_use]
+#[inline]
 pub(crate) const fn within_staging_limit(size: u64, limit: u64) -> bool {
     size <= limit
 }
@@ -580,6 +498,7 @@ pub(crate) const fn sentinel_read_limit(limit: u64) -> Option<u64> {
 ///
 /// # Returns
 /// The panic string, or a fallback message when it is not a string payload.
+#[must_use]
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<String>()
@@ -710,8 +629,8 @@ mod lifecycle_tests {
         assert_eq!(0, services.staging_budget().used_bytes());
 
         let shutdown = services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
         let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 
@@ -745,8 +664,8 @@ mod lifecycle_tests {
         assert!(block_on(operation.wait_settlement()).all_released());
         assert!(!path.exists());
         let shutdown = services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
         let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 
@@ -780,8 +699,8 @@ mod lifecycle_tests {
         assert_eq!(0, services.staging_budget().used_bytes());
 
         let shutdown = services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
         let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 
@@ -817,8 +736,8 @@ mod lifecycle_tests {
         assert_eq!(0, budget.used_bytes(), "failed chunk and occupied permits are released");
 
         let shutdown = services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
         let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 
@@ -885,8 +804,8 @@ mod lifecycle_tests {
         );
 
         let shutdown = services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
         let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 
@@ -977,8 +896,8 @@ mod lifecycle_tests {
         assert_eq!(0, services.staging_budget().used_bytes());
 
         let shutdown = services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
         let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 }

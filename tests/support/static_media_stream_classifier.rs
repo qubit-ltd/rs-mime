@@ -18,10 +18,12 @@ use qubit_mime::MimeResult;
 pub(crate) struct StaticMediaStreamClassifier;
 
 impl MediaStreamClassifier for StaticMediaStreamClassifier {
+    #[inline]
     fn classify_file(&self, _file: &Path) -> MimeResult<MediaStreamType> {
         Ok(MediaStreamType::None)
     }
 
+    #[inline]
     fn classify_reader(&self, _reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
         Ok(MediaStreamType::None)
     }

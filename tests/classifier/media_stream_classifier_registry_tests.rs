@@ -15,9 +15,15 @@ use std::sync::Arc;
 use qubit_local_files::LocalFileSystem;
 #[cfg(unix)]
 use qubit_local_files::options::LocalTempDirectoryOptions;
+use qubit_mime::FfprobeCommandMediaStreamClassifierProvider;
+use qubit_mime::FixedMimeExecutionPort;
 use qubit_mime::MediaStreamClassifierRegistry;
 use qubit_mime::MediaStreamClassifierSpec;
 use qubit_mime::MimeConfig;
+use qubit_mime::MimeError;
+use qubit_mime::MimeExecutionServices;
+use qubit_operation::GroupOptions;
+use qubit_operation::OperationManager;
 use qubit_spi::FallbackPolicy;
 use qubit_spi::ProviderCreationTermination;
 use qubit_spi::ProviderDefinition;
@@ -310,4 +316,58 @@ fn test_classifier_creation_reports_policy_stop() {
 
     assert_eq!(ProviderCreationTermination::StoppedByPolicy, error.termination(),);
     assert_eq!(1, error.attempts().len());
+}
+
+#[test]
+fn test_async_registry_resolves_auto_alias_chain_and_unknown_selection() {
+    let manager = OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+    let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 32).unwrap();
+    let registry = MediaStreamClassifierRegistry::builtin();
+    let config = MimeConfig::default();
+
+    for selection in [
+        ProviderSelection::auto(),
+        ProviderSelection::named("ffprobe-command").unwrap(),
+        ProviderSelection::chain(["not-registered", "ffprobe-command"])
+            .expect("the fallback selector chain should be valid"),
+    ] {
+        let (id, _backend) = registry
+            .create_async_backend(&selection, &config, &services)
+            .expect("the built-in async classifier should resolve its default and aliases");
+        assert_eq!("ffprobe", id);
+    }
+
+    let error = registry
+        .create_async_backend(&ProviderSelection::named("not-registered").unwrap(), &config, &services)
+        .expect_err("unknown async selectors have no backend");
+    assert!(matches!(error, MimeError::AsyncUnsupported));
+
+    let empty = MediaStreamClassifierRegistry::default();
+    assert!(matches!(
+        empty.create_async_backend(&ProviderSelection::auto(), &config, &services),
+        Err(MimeError::AsyncUnsupported)
+    ));
+}
+
+#[test]
+fn test_async_registry_rejects_duplicate_provider_registration() {
+    let registry = MediaStreamClassifierRegistry::builtin();
+    let error = registry
+        .register_async_provider(FfprobeCommandMediaStreamClassifierProvider)
+        .expect_err("canonical selectors must have one owner");
+    assert!(error.contains("ffprobe"));
+
+    // The original alias still resolves after the rejected registration.
+    let manager = OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+    let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 32).unwrap();
+    let (id, _backend) = registry
+        .create_async_backend(
+            &ProviderSelection::named("ffprobe-command").unwrap(),
+            &MimeConfig::default(),
+            &services,
+        )
+        .unwrap();
+    assert_eq!("ffprobe", id);
 }

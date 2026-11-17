@@ -292,6 +292,9 @@ pub trait MimeDetector: Debug + Send + Sync {
 
 impl MimeDetector for Box<dyn MimeDetector> {
     /// Delegates content-requirement discovery to the boxed detector.
+    ///
+    /// # Returns
+    /// The delegated detector's required input scope.
     #[inline]
     fn content_requirement(&self) -> ContentRequirement {
         self.as_ref().content_requirement()
@@ -303,6 +306,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
     /// - `content`: Bounded content prefix to inspect.
     /// - `filename`: Optional path or basename for filename matching.
     /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_prefix(
         &self,
@@ -320,6 +329,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
     /// - `path`: Provider-neutral path to inspect.
     /// - `max_bytes`: Maximum prefix length to read.
     /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_async_path<'a>(
         &'a self,
@@ -335,6 +350,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
     ///
     /// # Parameters
     /// - `filename`: File path or basename to match.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_filename(filename)
@@ -344,6 +365,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
     ///
     /// # Parameters
     /// - `content`: Content bytes to inspect.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_by_content(&self, content: &[u8]) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_content(content)
@@ -355,6 +382,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
     /// - `content`: Content bytes to inspect.
     /// - `filename`: Optional path or basename for filename matching.
     /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect(
         &self,
@@ -366,6 +399,9 @@ impl MimeDetector for Box<dyn MimeDetector> {
     }
 
     /// Delegates the configured buffer limit to the boxed detector.
+    ///
+    /// # Returns
+    /// The delegated detector's inclusive prefix byte limit.
     #[inline]
     fn max_buffer_size(&self) -> usize {
         self.as_ref().max_buffer_size()
@@ -377,6 +413,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
     /// - `reader`: Seekable stream to inspect without consuming its position.
     /// - `filename`: Optional path or basename for filename matching.
     /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_reader(
         &self,
@@ -392,6 +434,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
     /// # Parameters
     /// - `file`: Local file path to inspect.
     /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         self.as_ref().detect_file(file, policy)
@@ -404,6 +452,12 @@ impl MimeDetector for Box<dyn MimeDetector> {
     /// - `path`: Provider-neutral path to inspect.
     /// - `max_bytes`: Maximum prefix length to read.
     /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_path(
         &self,
@@ -418,6 +472,9 @@ impl MimeDetector for Box<dyn MimeDetector> {
 
 impl MimeDetector for Arc<dyn MimeDetector> {
     /// Delegates content-requirement discovery to the shared detector.
+    ///
+    /// # Returns
+    /// The delegated detector's required input scope.
     #[inline]
     fn content_requirement(&self) -> ContentRequirement {
         self.as_ref().content_requirement()
@@ -429,6 +486,12 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     /// - `content`: Bounded content prefix to inspect.
     /// - `filename`: Optional path or basename for filename matching.
     /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_prefix(
         &self,
@@ -446,6 +509,12 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     /// - `path`: Provider-neutral path to inspect.
     /// - `max_bytes`: Maximum prefix length to read.
     /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_async_path<'a>(
         &'a self,
@@ -461,6 +530,12 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     ///
     /// # Parameters
     /// - `filename`: File path or basename to match.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_by_filename(&self, filename: &str) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_filename(filename)
@@ -470,6 +545,12 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     ///
     /// # Parameters
     /// - `content`: Content bytes to inspect.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_by_content(&self, content: &[u8]) -> MimeResult<Option<String>> {
         self.as_ref().detect_by_content(content)
@@ -481,6 +562,12 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     /// - `content`: Content bytes to inspect.
     /// - `filename`: Optional path or basename for filename matching.
     /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect(
         &self,
@@ -492,6 +579,9 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     }
 
     /// Delegates the configured buffer limit to the shared detector.
+    ///
+    /// # Returns
+    /// The delegated detector's inclusive prefix byte limit.
     #[inline]
     fn max_buffer_size(&self) -> usize {
         self.as_ref().max_buffer_size()
@@ -503,6 +593,12 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     /// - `reader`: Seekable stream to inspect without consuming its position.
     /// - `filename`: Optional path or basename for filename matching.
     /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_reader(
         &self,
@@ -518,6 +614,12 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     /// # Parameters
     /// - `file`: Local file path to inspect.
     /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
         self.as_ref().detect_file(file, policy)
@@ -530,6 +632,12 @@ impl MimeDetector for Arc<dyn MimeDetector> {
     /// - `path`: Provider-neutral path to inspect.
     /// - `max_bytes`: Maximum prefix length to read.
     /// - `policy`: Strategy for resolving filename and content results.
+    ///
+    /// # Returns
+    /// The delegated detection result, or `None` when no candidate matches.
+    ///
+    /// # Errors
+    /// Propagates errors from the delegated detector.
     #[inline]
     fn detect_path(
         &self,
@@ -539,91 +647,5 @@ impl MimeDetector for Arc<dyn MimeDetector> {
         policy: MimeDetectionPolicy,
     ) -> MimeResult<Option<String>> {
         self.as_ref().detect_path(file_system, path, max_bytes, policy)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::io::Cursor;
-    use std::path::Path;
-    use std::sync::Arc;
-
-    use qubit_fs::FileSystem;
-    use qubit_fs::Path as FsPath;
-    use qubit_fs_local::LocalFileSystems;
-    use qubit_fs_local::LocalResourcePolicy;
-    use qubit_fs_local::host_path_to_logical;
-
-    use super::MimeDetector;
-    use crate::MimeDetectionPolicy;
-    use crate::RepositoryMimeDetector;
-
-    fn assert_facade_entry_points<D: MimeDetector>(
-        detector: &D,
-        file: &Path,
-        filesystem: &FileSystem,
-        logical_path: &FsPath,
-    ) {
-        let bytes = b"%PDF-1.7\n";
-        let expected = Some("application/pdf".to_owned());
-        assert!(detector.max_buffer_size() > 0);
-        assert!(matches!(
-            detector.content_requirement(),
-            crate::ContentRequirement::Prefix(limit) if limit > 0
-        ));
-        assert_eq!(expected, detector.detect_by_filename("document.pdf").unwrap());
-        assert_eq!(expected, detector.detect_by_content(bytes).unwrap());
-        assert_eq!(
-            expected,
-            detector
-                .detect(bytes, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
-                .unwrap()
-        );
-        assert_eq!(
-            expected,
-            detector
-                .detect_prefix(bytes, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
-                .unwrap()
-        );
-
-        let mut reader = Cursor::new(bytes.to_vec());
-        reader.set_position(3);
-        assert_eq!(
-            expected,
-            detector
-                .detect_reader(&mut reader, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
-                .unwrap()
-        );
-        assert_eq!(3, reader.position(), "reader facade preserves the caller's offset");
-        assert_eq!(
-            expected,
-            detector.detect_file(file, MimeDetectionPolicy::VerifyContent).unwrap()
-        );
-        assert_eq!(
-            expected,
-            detector
-                .detect_path(
-                    filesystem,
-                    logical_path,
-                    detector.max_buffer_size(),
-                    MimeDetectionPolicy::VerifyContent
-                )
-                .unwrap()
-        );
-    }
-
-    #[test]
-    fn test_boxed_and_shared_detector_facades_forward_public_entry_points() {
-        let file = std::env::temp_dir().join(format!("mime-detector-facade-{}.pdf", std::process::id()));
-        std::fs::write(&file, b"%PDF-1.7\n").unwrap();
-        let filesystem = LocalFileSystems::host(LocalResourcePolicy::unbounded()).unwrap();
-        let logical_path = host_path_to_logical(&file).expect("host path should convert losslessly");
-
-        let boxed: Box<dyn MimeDetector> = Box::new(RepositoryMimeDetector::new().unwrap());
-        assert_facade_entry_points(&boxed, &file, &filesystem, &logical_path);
-        let shared: Arc<dyn MimeDetector> = Arc::new(RepositoryMimeDetector::new().unwrap());
-        assert_facade_entry_points(&shared, &file, &filesystem, &logical_path);
-
-        std::fs::remove_file(file).unwrap();
     }
 }

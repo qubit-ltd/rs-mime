@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+
 //! Detection consumes a bounded prefix through exactly one filesystem reader.
 
 #[allow(dead_code)]

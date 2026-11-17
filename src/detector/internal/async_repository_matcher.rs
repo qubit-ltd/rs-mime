@@ -104,6 +104,7 @@ pub(in crate::detector) async fn match_content(
 ///
 /// # Returns
 /// The selected candidate, or an empty list when no candidate is selected.
+#[must_use]
 pub(in crate::detector) fn select_candidates(
     repository: &MimeRepository,
     content: Vec<MimeCandidate>,

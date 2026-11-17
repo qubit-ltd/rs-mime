@@ -30,6 +30,7 @@ impl MimeExecutionWorker {
     ///
     /// # Parameters
     /// - `port`: Application-owned execution port.
+    #[must_use]
     pub(crate) fn new(port: Arc<dyn MimeExecutionPort>) -> Self {
         Self { port }
     }

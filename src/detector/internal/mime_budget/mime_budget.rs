@@ -33,6 +33,7 @@ impl MimeBudget {
     ///
     /// # Returns
     /// A reference-counted budget shared by execution service clones.
+    #[must_use = "the budget must be retained to enforce reservations"]
     pub(in crate::detector) fn new(limits: Limits) -> Arc<Self> {
         Arc::new(Self {
             limits,
@@ -99,13 +100,28 @@ impl MimeBudget {
         self.reserve(Amount::Staging(bytes))
     }
 
+    /// Returns the number of owned-memory bytes currently reserved.
+    #[must_use]
+    #[allow(dead_code)]
+    pub(in crate::detector) fn owned_bytes(&self) -> usize {
+        self.counters.lock().unwrap_or_else(|e| e.into_inner()).owned
+    }
+
+    /// Returns the number of staging bytes currently reserved.
+    #[must_use]
+    #[allow(dead_code)]
+    pub(in crate::detector) fn staging_bytes(&self) -> u64 {
+        self.counters.lock().unwrap_or_else(|e| e.into_inner()).staging
+    }
+
     /// Reserves the requested category while enforcing its corresponding limit.
     ///
     /// # Parameters
     /// - `amount`: Resource category and byte count to reserve.
     ///
     /// # Returns
-    /// A permit when the corresponding limit allows the reservation.
+    /// A permit when the corresponding limit allows the reservation; `None`
+    /// when the byte count overflows or exceeds the limit.
     fn reserve(self: &Arc<Self>, amount: Amount) -> Option<BudgetPermit> {
         let mut counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
         match amount {
@@ -132,24 +148,14 @@ impl MimeBudget {
             }),
         })
     }
-
-    /// Returns the number of owned-memory bytes currently reserved.
-    #[allow(dead_code)]
-    pub(in crate::detector) fn owned_bytes(&self) -> usize {
-        self.counters.lock().unwrap_or_else(|e| e.into_inner()).owned
-    }
-
-    /// Returns the number of staging bytes currently reserved.
-    #[allow(dead_code)]
-    pub(in crate::detector) fn staging_bytes(&self) -> u64 {
-        self.counters.lock().unwrap_or_else(|e| e.into_inner()).staging
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
     use std::sync::Barrier;
+    use std::sync::Weak;
+    use std::thread;
 
     use super::super::Amount;
     use super::super::PermitInner;
@@ -176,9 +182,9 @@ mod tests {
     #[test]
     fn test_budget_reservation_recovers_poisoned_counter_lock() {
         let budget = MimeBudget::new(Limits { owned: 5, staging: 5 });
-        let poisoned = std::sync::Arc::clone(&budget);
+        let poisoned = Arc::clone(&budget);
         assert!(
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let _guard = poisoned.counters.lock().unwrap();
                 panic!("poison MIME budget counter lock");
             })
@@ -264,7 +270,7 @@ mod tests {
             .lock()
             .unwrap()
             .allocations
-            .insert(identity, (Arc::downgrade(&unrelated), std::sync::Weak::new()));
+            .insert(identity, (Arc::downgrade(&unrelated), Weak::new()));
 
         let permit = budget
             .reserve_allocation(&allocation)
@@ -285,7 +291,7 @@ mod tests {
             .map(|_| {
                 let budget = Arc::clone(&budget);
                 let barrier = Arc::clone(&barrier);
-                std::thread::spawn(move || {
+                thread::spawn(move || {
                     let allocation: Arc<[u8]> = Arc::from([9u8; 4]);
                     let permit = budget.reserve_allocation(&allocation).unwrap();
                     barrier.wait();

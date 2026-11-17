@@ -172,10 +172,12 @@ qubit-config = "0.15"
 qubit-spi = "0.14"
 ```
 
+Bring `qubit_spi::ServiceProvider` into scope for the provider's
+`create_configured` method.
+
 <!-- mime-doc-example:precise-detection -->
 ```rust
 fn detect_precisely(content: &[u8], filename: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    use qubit_spi::ServiceProvider;
     let mut source = qubit_config::Config::new();
     source.set(qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)?;
     let config = qubit_mime::MimeConfig::from_config(&source)?;

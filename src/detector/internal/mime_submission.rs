@@ -45,6 +45,9 @@ pub(in crate::detector) fn cell(input: OwnedMimeInput) -> InputCell {
 /// # Parameters
 /// - `cell`: Shared cell from which to take the input.
 ///
+/// # Returns
+/// The input removed from the cell.
+///
 /// # Panics
 /// Panics if the input has already been taken.
 pub(in crate::detector) fn take(cell: &InputCell) -> OwnedMimeInput {
@@ -58,6 +61,9 @@ pub(in crate::detector) fn take(cell: &InputCell) -> OwnedMimeInput {
 ///
 /// # Parameters
 /// - `cell`: Shared cell containing the unconsumed input.
+///
+/// # Returns
+/// The rejected input that remained unconsumed.
 ///
 /// # Panics
 /// Panics if the rejected input is no longer present.

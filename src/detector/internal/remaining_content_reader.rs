@@ -111,6 +111,7 @@ impl Seek for RemainingContentReader<'_> {
 ///
 /// # Errors
 /// Returns [`std::io::ErrorKind::InvalidInput`] when the adjustment overflows.
+#[inline]
 fn checked_offset(base: u64, offset: i64) -> std::io::Result<u64> {
     let result = if offset >= 0 {
         base.checked_add(offset as u64)
@@ -124,6 +125,7 @@ fn checked_offset(base: u64, offset: i64) -> std::io::Result<u64> {
 ///
 /// # Returns
 /// An invalid-input I/O error.
+#[must_use]
 fn invalid_seek() -> Error {
     Error::new(ErrorKind::InvalidInput, "seek is outside the remaining content window")
 }

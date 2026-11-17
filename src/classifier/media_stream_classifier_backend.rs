@@ -10,6 +10,7 @@
 use std::fmt::Debug;
 use std::io::Read;
 use std::path::Path;
+use std::path::absolute;
 
 use super::MediaStreamClassifier;
 use super::MediaStreamType;
@@ -99,7 +100,7 @@ where
     /// Returns [`MimeError::Io`](crate::MimeError::Io) when validation or
     /// backend I/O fails, or another backend classification error.
     fn classify_file(&self, file: &Path) -> MimeResult<MediaStreamType> {
-        let absolute_file = std::path::absolute(file)?;
+        let absolute_file = absolute(file)?;
         validate_readable_file(&absolute_file)?;
         self.classify_by_local_file(&absolute_file)
     }

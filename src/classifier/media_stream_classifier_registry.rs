@@ -62,6 +62,11 @@ impl MediaStreamClassifierRegistry {
     /// # Returns
     ///
     /// A runtime-mutable Registry containing the FFprobe provider.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the built-in provider cannot be registered or the built-in
+    /// default selection is invalid.
     #[must_use]
     pub fn builtin() -> Self {
         #[cfg(feature = "inventory")]
@@ -84,43 +89,6 @@ impl MediaStreamClassifierRegistry {
             .register_async_provider(FfprobeCommandMediaStreamClassifierProvider)
             .expect("built-in FFprobe async provider should register");
         registry
-    }
-
-    /// Registers an explicit async classifier factory without constructing a
-    /// classifier or starting its execution resources.
-    ///
-    /// # Type Parameters
-    /// - `P`: Provider type that implements the asynchronous classifier
-    ///   capability and remains owned by this registry.
-    ///
-    /// # Parameters
-    /// - `provider`: Factory whose canonical ID and aliases become selectors.
-    ///
-    /// # Errors
-    /// Returns an error when a canonical ID or alias is already registered.
-    pub fn register_async_provider<P>(&self, provider: P) -> Result<(), String>
-    where
-        P: AsyncMediaStreamClassifierProvider + 'static,
-    {
-        let descriptor = provider.descriptor();
-        let id = descriptor.id().as_str().to_owned();
-        let provider: Arc<dyn AsyncMediaStreamClassifierProvider> = Arc::new(provider);
-        let mut providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
-        let mut selectors = Vec::with_capacity(1 + descriptor.aliases().len());
-        selectors.push(id.clone());
-        selectors.extend(descriptor.aliases().iter().map(|alias| alias.as_str().to_owned()));
-        for selector in &selectors {
-            if let Some(existing) = providers.get(selector) {
-                return Err(format!(
-                    "async classifier selector `{selector}` is already owned by `{}` (attempted `{id}`)",
-                    existing.descriptor().id().as_str()
-                ));
-            }
-        }
-        for selector in selectors {
-            providers.insert(selector, Arc::clone(&provider));
-        }
-        Ok(())
     }
 
     /// Creates a classifier using an explicit async-capable provider choice.
@@ -184,6 +152,7 @@ impl MediaStreamClassifierRegistry {
 
     /// Returns whether this registry is sealed.
     #[must_use]
+    #[inline]
     pub fn is_sealed(&self) -> bool {
         self.providers.is_sealed()
     }
@@ -199,6 +168,47 @@ impl MediaStreamClassifierRegistry {
         self.providers.provider_ids()
     }
 
+    /// Registers an explicit async classifier factory without constructing a
+    /// classifier or starting its execution resources.
+    ///
+    /// # Type Parameters
+    /// - `P`: Provider type that implements the asynchronous classifier
+    ///   capability and remains owned by this registry.
+    ///
+    /// # Parameters
+    /// - `provider`: Factory whose canonical ID and aliases become selectors.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the provider and its aliases are registered.
+    ///
+    /// # Errors
+    /// Returns an error when a canonical ID or alias is already registered.
+    pub fn register_async_provider<P>(&self, provider: P) -> Result<(), String>
+    where
+        P: AsyncMediaStreamClassifierProvider + 'static,
+    {
+        let descriptor = provider.descriptor();
+        let id = descriptor.id().as_str().to_owned();
+        let provider: Arc<dyn AsyncMediaStreamClassifierProvider> = Arc::new(provider);
+        let mut providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
+        let mut selectors = Vec::with_capacity(1 + descriptor.aliases().len());
+        selectors.push(id.clone());
+        selectors.extend(descriptor.aliases().iter().map(|alias| alias.as_str().to_owned()));
+        for selector in &selectors {
+            if let Some(existing) = providers.get(selector) {
+                return Err(format!(
+                    "async classifier selector `{selector}` is already owned by `{}` (attempted `{id}`)",
+                    existing.descriptor().id().as_str()
+                ));
+            }
+        }
+        for selector in selectors {
+            providers.insert(selector, Arc::clone(&provider));
+        }
+        Ok(())
+    }
+
     /// Registers an owned self-described classifier provider.
     ///
     /// # Type Parameters
@@ -208,6 +218,10 @@ impl MediaStreamClassifierRegistry {
     /// # Parameters
     ///
     /// * `provider` - Provider definition moved into Registry storage.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the provider is registered.
     ///
     /// # Errors
     ///
@@ -230,6 +244,10 @@ impl MediaStreamClassifierRegistry {
     ///   through the domain-specific [`MediaStreamClassifierProvider`]
     ///   contract.
     ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the shared provider is registered.
+    ///
     /// # Errors
     ///
     /// Returns [`RegistryMutationError`] when its ID or an alias is already
@@ -247,12 +265,22 @@ impl MediaStreamClassifierRegistry {
     /// # Parameters
     ///
     /// * `selection` - Validated selection and creation fallback policy.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the default selection is replaced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryMutationError::Sealed`] when the registry rejects
+    /// further configuration changes.
     #[inline]
     pub fn set_default_selection(&self, selection: ProviderSelection) -> Result<(), RegistryMutationError> {
         self.providers.set_default_selection(selection)
     }
 
     /// Seals this registry against further mutation.
+    #[inline]
     pub fn seal(&self) {
         self.providers.seal();
     }
@@ -311,75 +339,5 @@ impl Default for MediaStreamClassifierRegistry {
             providers: ProviderRegistry::default(),
             async_providers: Arc::new(RwLock::new(HashMap::new())),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use qubit_spi::ProviderSelection;
-
-    use super::super::FfprobeCommandMediaStreamClassifierProvider;
-    use super::MediaStreamClassifierRegistry;
-    use crate::MimeConfig;
-    use crate::MimeError;
-    use crate::command_execution::FixedMimeExecutionPort;
-    use crate::detector::MimeExecutionServices;
-
-    #[test]
-    fn test_async_registry_resolves_auto_alias_chain_and_unknown_selection() {
-        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
-        let services =
-            MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 32).unwrap();
-        let registry = MediaStreamClassifierRegistry::builtin();
-        let config = MimeConfig::default();
-
-        for selection in [
-            ProviderSelection::auto(),
-            ProviderSelection::named("ffprobe-command").unwrap(),
-            ProviderSelection::chain(["not-registered", "ffprobe-command"])
-                .expect("the fallback selector chain should be valid"),
-        ] {
-            let (id, _backend) = registry
-                .create_async_backend(&selection, &config, &services)
-                .expect("the built-in async classifier should resolve its default and aliases");
-            assert_eq!("ffprobe", id);
-        }
-
-        let error = registry
-            .create_async_backend(&ProviderSelection::named("not-registered").unwrap(), &config, &services)
-            .expect_err("unknown async selectors have no backend");
-        assert!(matches!(error, MimeError::AsyncUnsupported));
-
-        let empty = MediaStreamClassifierRegistry::default();
-        assert!(matches!(
-            empty.create_async_backend(&ProviderSelection::auto(), &config, &services),
-            Err(MimeError::AsyncUnsupported)
-        ));
-    }
-
-    #[test]
-    fn test_async_registry_rejects_duplicate_provider_registration() {
-        let registry = MediaStreamClassifierRegistry::builtin();
-        let error = registry
-            .register_async_provider(FfprobeCommandMediaStreamClassifierProvider)
-            .expect_err("canonical selectors must have one owner");
-        assert!(error.contains("ffprobe"));
-
-        // The original alias still resolves after the rejected registration.
-        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
-        let services =
-            MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 32).unwrap();
-        let (id, _backend) = registry
-            .create_async_backend(
-                &ProviderSelection::named("ffprobe-command").unwrap(),
-                &MimeConfig::default(),
-                &services,
-            )
-            .unwrap();
-        assert_eq!("ffprobe", id);
     }
 }

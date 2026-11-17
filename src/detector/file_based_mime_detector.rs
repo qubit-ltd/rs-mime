@@ -29,7 +29,8 @@ use crate::StreamBasedMimeDetector;
 /// assert!(!candidates.is_empty());
 /// ```
 pub trait FileBasedMimeDetector: Debug + Send + Sync {
-    /// Gets the shared detector core.
+    /// Returns the shared core for common detector configuration and
+    /// candidate merge/refinement behavior.
     ///
     /// # Returns
     /// Shared detector configuration and merge/refinement behavior.
@@ -95,6 +96,12 @@ where
     ///
     /// # Parameters
     /// - `content`: Content bytes staged for file-based inspection.
+    ///
+    /// # Returns
+    /// MIME candidates produced by inspecting the staged content.
+    ///
+    /// # Errors
+    /// Returns an error if staging fails or local-file inspection fails.
     fn guess_from_content_bytes(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         with_temp_file(content, |path| FileBasedMimeDetector::guess_from_local_file(self, path))
     }
@@ -103,6 +110,13 @@ where
     ///
     /// # Parameters
     /// - `file`: Local file path passed to the file-based detector.
+    ///
+    /// # Returns
+    /// Candidates returned by the file-based detector and an empty byte buffer,
+    /// since this implementation has no additional source bytes to provide.
+    ///
+    /// # Errors
+    /// Propagates errors returned by the file-based detector.
     fn guess_from_file_stream(&self, file: &Path) -> MimeResult<(Vec<String>, Vec<u8>)> {
         Ok((FileBasedMimeDetector::guess_from_local_file(self, file)?, Vec::new()))
     }
@@ -122,7 +136,7 @@ where
 ///
 /// # Errors
 /// Returns [`MimeError::Io`](crate::MimeError::Io) when the temporary file
-/// cannot be written.
+/// cannot be written, or propagates the MIME error returned by `detect`.
 pub(crate) fn with_temp_file<T>(content: &[u8], detect: impl FnOnce(&Path) -> MimeResult<T>) -> MimeResult<T> {
     crate::temp_staging::with_temp_file(
         "MimeDetectorTemp-",

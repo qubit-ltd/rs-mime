@@ -7,6 +7,7 @@
 // =============================================================================
 
 use std::future::Future;
+use std::io::Cursor;
 use std::io::Read;
 use std::path::Path;
 use std::pin::Pin;
@@ -368,6 +369,8 @@ impl MimeDetectorBackend for CustomCompleteBackend {
     }
 }
 
+/// Polls a self-waking test future until it completes; pending work only yields
+/// the thread because the no-op waker does not schedule another poll.
 fn run_ready<F: Future>(future: F) -> F::Output {
     fn no_op(_: *const ()) {}
     fn clone(_: *const ()) -> RawWaker {
@@ -1312,4 +1315,73 @@ fn test_direct_complete_detector_rejects_prefix_trait_call_before_detection() {
         .expect_err("a prefix cannot satisfy a detector that requires complete content");
 
     assert!(matches!(error, MimeError::CompleteContentRequired));
+}
+
+fn assert_facade_entry_points<D: MimeDetector>(
+    detector: &D,
+    file: &Path,
+    filesystem: &FileSystem,
+    logical_path: &FsPath,
+) {
+    let bytes = b"%PDF-1.7\n";
+    let expected = Some("application/pdf".to_owned());
+    assert!(detector.max_buffer_size() > 0);
+    assert!(matches!(
+        detector.content_requirement(),
+        ContentRequirement::Prefix(limit) if limit > 0
+    ));
+    assert_eq!(expected, detector.detect_by_filename("document.pdf").unwrap());
+    assert_eq!(expected, detector.detect_by_content(bytes).unwrap());
+    assert_eq!(
+        expected,
+        detector
+            .detect(bytes, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
+            .unwrap()
+    );
+    assert_eq!(
+        expected,
+        detector
+            .detect_prefix(bytes, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
+            .unwrap()
+    );
+
+    let mut reader = Cursor::new(bytes.to_vec());
+    reader.set_position(3);
+    assert_eq!(
+        expected,
+        detector
+            .detect_reader(&mut reader, Some("document.pdf"), MimeDetectionPolicy::VerifyContent)
+            .unwrap()
+    );
+    assert_eq!(3, reader.position(), "reader facade preserves the caller's offset");
+    assert_eq!(
+        expected,
+        detector.detect_file(file, MimeDetectionPolicy::VerifyContent).unwrap()
+    );
+    assert_eq!(
+        expected,
+        detector
+            .detect_path(
+                filesystem,
+                logical_path,
+                detector.max_buffer_size(),
+                MimeDetectionPolicy::VerifyContent
+            )
+            .unwrap()
+    );
+}
+
+#[test]
+fn test_boxed_and_shared_detector_facades_forward_public_entry_points() {
+    let file = std::env::temp_dir().join(format!("mime-detector-facade-{}.pdf", std::process::id()));
+    std::fs::write(&file, b"%PDF-1.7\n").unwrap();
+    let filesystem = LocalFileSystems::host(LocalResourcePolicy::unbounded()).unwrap();
+    let logical_path = host_path_to_logical(&file).expect("host path should convert losslessly");
+
+    let boxed: Box<dyn MimeDetector> = Box::new(RepositoryMimeDetector::new().unwrap());
+    assert_facade_entry_points(&boxed, &file, &filesystem, &logical_path);
+    let shared: Arc<dyn MimeDetector> = Arc::new(RepositoryMimeDetector::new().unwrap());
+    assert_facade_entry_points(&shared, &file, &filesystem, &logical_path);
+
+    std::fs::remove_file(file).unwrap();
 }

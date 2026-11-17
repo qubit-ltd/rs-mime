@@ -90,6 +90,8 @@ fn test_inheritance_traversal_handles_cycles_diamonds_and_missing_parents() {
     assert!(std::ptr::eq(expected, matched));
 }
 
+/// Builds an inheritance graph for checking depth-first priority selection.
+#[must_use = "use the repository to verify inherited match selection"]
 fn inheritance_priority_repository(p2_priority: u8) -> MimeRepository {
     MimeRepository::from_xml(&format!(
         r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">

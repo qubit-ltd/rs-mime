@@ -295,6 +295,7 @@ impl PreparedCommand {
     ///
     /// # Returns
     /// State ready to bind to one operation identity.
+    #[must_use]
     pub(crate) fn new(
         worker: MimeExecutionWorker,
         runner: CommandRunner,
@@ -567,8 +568,8 @@ mod tests {
         };
         assert!(block_on(operation.wait_settlement()).all_released());
         let shutdown = body_services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
         result
     }
 
@@ -676,8 +677,8 @@ mod tests {
         ));
         assert!(block_on(handle.wait_settlement()).all_released());
         let shutdown = body_services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
     }
 
     #[test]
@@ -757,8 +758,8 @@ mod tests {
         ));
         assert!(block_on(operation.wait_settlement()).all_released());
         let shutdown = services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
     }
 
     #[test]
@@ -1003,7 +1004,7 @@ mod tests {
         ));
         assert!(block_on(operation.wait_settlement()).all_released());
         let shutdown = body_services.shutdown();
-        block_on(shutdown.wait_services_settled()).unwrap();
-        shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
     }
 }

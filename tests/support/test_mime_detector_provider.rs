@@ -46,6 +46,7 @@ impl TestMimeDetectorProvider {
     /// # Returns
     ///
     /// A self-described provider fixture.
+    #[must_use]
     #[inline]
     pub(crate) const fn new(id: &'static str, priority: i32, behavior: TestProviderBehavior) -> Self {
         Self {
@@ -65,6 +66,7 @@ impl TestMimeDetectorProvider {
     /// # Returns
     ///
     /// This provider with the supplied aliases.
+    #[must_use]
     #[inline(always)]
     pub(crate) const fn with_aliases(mut self, aliases: &'static [&'static str]) -> Self {
         self.aliases = aliases;

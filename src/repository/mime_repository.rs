@@ -148,13 +148,6 @@ impl MimeRepository {
         Arc::clone(Self::bundled_handle())
     }
 
-    /// Gets the single shared handle used by both bundled accessors.
-    fn bundled_handle() -> &'static Arc<Self> {
-        BUNDLED_SHARED_REPOSITORY.get_or_init(|| {
-            Arc::new(Self::from_xml(BUNDLED_DATABASE).expect("embedded freedesktop MIME database should parse"))
-        })
-    }
-
     /// Gets all MIME types in database order.
     ///
     /// # Returns
@@ -199,12 +192,6 @@ impl MimeRepository {
     #[must_use]
     pub fn is_a(&self, child: &str, parent: &str) -> bool {
         self.relations.is_a(child, parent)
-    }
-
-    /// Returns the immutable relation context used by MIME candidate merging.
-    #[must_use]
-    pub(crate) fn relations(&self) -> Arc<MimeRelations> {
-        Arc::clone(&self.relations)
     }
 
     /// Detects MIME types from a filename.
@@ -272,6 +259,20 @@ impl MimeRepository {
         .copied()
         .into_iter()
         .collect()
+    }
+
+    /// Returns the immutable relation context used by MIME candidate merging.
+    #[must_use]
+    pub(crate) fn relations(&self) -> Arc<MimeRelations> {
+        Arc::clone(&self.relations)
+    }
+
+    /// Gets the single shared handle used by both bundled accessors.
+    #[must_use]
+    fn bundled_handle() -> &'static Arc<Self> {
+        BUNDLED_SHARED_REPOSITORY.get_or_init(|| {
+            Arc::new(Self::from_xml(BUNDLED_DATABASE).expect("embedded freedesktop MIME database should parse"))
+        })
     }
 
     /// Adds a MIME type and updates lookup indexes.
@@ -475,6 +476,8 @@ fn parse_matcher(node: Node<'_, '_>, depth: usize) -> MimeResult<MimeMagicMatche
 ///
 /// # Returns
 /// `true` when the element has both the expected namespace and local name.
+#[must_use]
+#[inline]
 fn is_standard_element(node: Node<'_, '_>, name: &str) -> bool {
     node.tag_name().namespace() == Some(SHARED_MIME_INFO_NAMESPACE) && node.tag_name().name() == name
 }
@@ -486,6 +489,8 @@ fn is_standard_element(node: Node<'_, '_>, name: &str) -> bool {
 ///
 /// # Returns
 /// XML language key, or an empty string for the default comment.
+#[must_use]
+#[inline]
 fn comment_language<'a>(node: Node<'a, '_>) -> &'a str {
     node.attribute((NS_XML_URI, "lang"))
         .or_else(|| node.attribute("xml:lang"))
@@ -747,6 +752,7 @@ fn parse_hex_bytes(value: &str) -> MimeResult<Vec<u8>> {
 ///
 /// # Returns
 /// Lowercase name for map lookup.
+#[must_use]
 fn normalize_mime_name(name: &str) -> String {
     name.to_lowercase()
 }

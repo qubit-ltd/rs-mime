@@ -6,6 +6,9 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+//! Checks file validation behavior in the blanket media-stream classifier
+//! helpers.
+
 use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -21,14 +24,17 @@ use qubit_mime::MediaStreamType;
 use qubit_mime::MimeError;
 use qubit_mime::MimeResult;
 
+/// Mock backend that returns fixed classifications for files and content.
 #[derive(Debug)]
 struct Backend;
 
 impl MediaStreamClassifierBackend for Backend {
+    #[inline]
     fn classify_by_local_file(&self, _file: &Path) -> MimeResult<MediaStreamType> {
         Ok(MediaStreamType::VideoOnly)
     }
 
+    #[inline]
     fn classify_by_content(&self, _reader: &mut dyn Read) -> MimeResult<MediaStreamType> {
         Ok(MediaStreamType::AudioOnly)
     }

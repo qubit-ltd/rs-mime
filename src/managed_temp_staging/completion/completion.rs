@@ -5,7 +5,10 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+
 //! Shared value and waiter state for a completion channel.
+
+use std::task::Waker;
 
 /// Shared state observed by the sender and receiver halves.
 ///
@@ -15,5 +18,5 @@ pub(in crate::managed_temp_staging) struct Completion<T> {
     /// Result waiting to be received.
     pub(in crate::managed_temp_staging) value: Option<T>,
     /// Task to wake when a result is published.
-    pub(in crate::managed_temp_staging) waker: Option<std::task::Waker>,
+    pub(in crate::managed_temp_staging) waker: Option<Waker>,
 }

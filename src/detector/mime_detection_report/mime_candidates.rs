@@ -9,6 +9,26 @@ use super::super::mime_input::InspectedExtent;
 use super::mime_candidate::MimeCandidate;
 
 /// Candidate set and bounded input evidence produced by a detector backend.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::InspectedExtent;
+/// use qubit_mime::MimeCandidate;
+/// use qubit_mime::MimeCandidates;
+///
+/// let candidates = MimeCandidates {
+///     candidates: vec![MimeCandidate {
+///         mime_type: "application/pdf".to_owned(),
+///         rank: 0,
+///     }],
+///     inspected_extent: InspectedExtent::Prefix(512),
+///     retained_prefix: b"%PDF".to_vec(),
+///     staging_bytes: 64,
+/// };
+/// assert_eq!(candidates.candidates[0].mime_type, "application/pdf");
+/// assert_eq!(candidates.inspected_extent, InspectedExtent::Prefix(512));
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MimeCandidates {
     /// Ordered candidates, best first.

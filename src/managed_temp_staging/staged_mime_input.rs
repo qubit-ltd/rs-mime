@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+
 //! Shared resource control for a staged MIME input.
 
 use std::sync::Arc;
@@ -22,6 +23,7 @@ use crate::detector::StagingPermit;
 
 /// Shared control port for a staged file. Its resource owner is registered
 /// exactly once by operation; consumers receive only `ResourceRef`s.
+#[must_use = "the staged MIME input owns a temporary file and staging permits"]
 pub(crate) struct StagedMimeInput {
     /// Native temporary-file owner retained until cleanup succeeds.
     pub(super) owner: Mutex<LocalTempFile>,
@@ -36,7 +38,6 @@ pub(crate) struct StagedMimeInput {
 }
 
 impl StagedMimeInput {
-    #[cfg(test)]
     /// Builds a staged-file test resource around an existing owner.
     ///
     /// # Parameters
@@ -46,6 +47,7 @@ impl StagedMimeInput {
     ///
     /// # Returns
     /// A staged input retaining the owner and budget permit.
+    #[cfg(test)]
     pub(crate) fn new(owner: LocalTempFile, permit: StagingPermit, worker: MimeExecutionWorker) -> Self {
         Self {
             owner: Mutex::new(owner),
@@ -57,12 +59,21 @@ impl StagedMimeInput {
     }
 
     /// Returns a cloned native path for command argument construction.
+    ///
+    /// # Returns
+    /// The staged file's native path.
+    #[inline]
     pub(crate) fn path(&self) -> MimeResult<std::path::PathBuf> {
         let owner = self.owner.lock().unwrap_or_else(|poison| poison.into_inner());
         Ok(owner.path().to_path_buf())
     }
 
     /// Returns the number of bytes written into this staged resource.
+    ///
+    /// # Returns
+    /// The total number of successfully written bytes.
+    #[must_use]
+    #[inline]
     pub(crate) fn staged_bytes(&self) -> u64 {
         self.staged_bytes.load(Ordering::Acquire)
     }

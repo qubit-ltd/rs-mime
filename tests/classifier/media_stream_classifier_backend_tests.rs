@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+//! Checks the public blanket classifier behavior for file and content backends.
 
 use std::io::Read;
 use std::path::Path;
@@ -15,10 +16,12 @@ use qubit_mime::MediaStreamType;
 use qubit_mime::MimeError;
 use qubit_mime::MimeResult;
 
+/// Mock backend with fixed file output and content-sensitive audio output.
 #[derive(Debug)]
 struct Backend;
 
 impl MediaStreamClassifierBackend for Backend {
+    #[inline]
     fn classify_by_local_file(&self, _file: &Path) -> MimeResult<MediaStreamType> {
         Ok(MediaStreamType::VideoOnly)
     }

@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+
 //! Tests for MIME repository parsing and matching.
 
 use qubit_mime::MimeDetectionPolicy;

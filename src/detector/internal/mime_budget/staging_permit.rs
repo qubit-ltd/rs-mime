@@ -10,6 +10,7 @@ use super::BudgetPermit;
 use super::request_staging_usage::RequestStagingGuard;
 
 /// RAII reservation held for as long as the staged resource remains owned.
+#[must_use = "the staging reservation must be held for the resource lifetime"]
 pub(crate) struct StagingPermit {
     /// Underlying staging-byte reservation retained with the resource.
     pub(super) _permit: BudgetPermit,

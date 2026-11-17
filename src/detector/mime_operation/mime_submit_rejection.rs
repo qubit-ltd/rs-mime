@@ -22,6 +22,19 @@ use qubit_operation::ResourceManageErrorKind;
 /// - `GroupBinding`: The child operation could not bind to the MIME group.
 /// - `ReadBudgetBinding`: The parent scope could not retain the cumulative
 ///   read-budget context for its child operations.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeSubmitRejection;
+///
+/// let rejection = MimeSubmitRejection::ExecutionServicesRequired;
+/// assert!(matches!(
+///     rejection,
+///     MimeSubmitRejection::ExecutionServicesRequired
+/// ));
+/// ```
+#[must_use = "inspect the submission rejection before choosing recovery"]
 #[derive(Debug)]
 pub enum MimeSubmitRejection {
     /// Admission rejected by operation's manager.

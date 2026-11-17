@@ -67,6 +67,7 @@ impl MimeType {
     ///
     /// # Returns
     /// A MIME type value.
+    #[must_use]
     pub(crate) fn from_parts(
         name: String,
         descriptions: HashMap<String, String>,

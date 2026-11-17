@@ -49,6 +49,16 @@ use qubit_spi::ProviderSelectionTargetRef;
 
 static MIME_CONFIG_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+/// Verifies the default classifier selection is accessible from configuration.
+#[test]
+fn test_default_classifier_selection_is_accessible_from_config() {
+    let config = MimeConfig::default();
+    assert!(matches!(
+        config.media_stream_classifier_selection().target(),
+        ProviderSelectionTargetRef::Named(selector) if selector.as_str() == "ffprobe"
+    ));
+}
+
 /// Verifies provider selections are validated and retained during loading.
 #[test]
 fn test_mime_config_retains_validated_provider_selections() {
@@ -632,6 +642,7 @@ fn test_registries_use_mime_config_defaults() {
     );
 }
 
+/// Serializes tests that read or modify process-wide MIME configuration state.
 pub(crate) fn mime_config_test_lock() -> MutexGuard<'static, ()> {
     MIME_CONFIG_TEST_LOCK
         .lock()
@@ -651,6 +662,7 @@ pub(crate) fn mime_config_test_lock() -> MutexGuard<'static, ()> {
 /// # Panics
 ///
 /// Panics when `selection` is automatic or contains no explicit selector.
+#[must_use = "inspect the selected provider in this test"]
 fn selection_primary(selection: &ProviderSelection) -> &str {
     match selection.target() {
         ProviderSelectionTargetRef::Named(selector) => selector.as_str(),
@@ -667,6 +679,8 @@ fn selection_primary(selection: &ProviderSelection) -> &str {
     }
 }
 
+/// Builds a validated MIME configuration from the values a test needs.
+#[must_use = "use the configured MIME settings in the test"]
 fn create_test_config(
     mime_detector_default: &str,
     media_stream_classifier_default: &str,
@@ -693,6 +707,8 @@ fn create_test_config(
     MimeConfig::from_config(&config).expect("test MIME config should parse")
 }
 
+/// Restores the process default MIME configuration when the test ends.
+#[must_use = "keep the guard alive until the test has finished"]
 struct DefaultConfigRestore {
     config: MimeConfig,
 }
@@ -709,6 +725,8 @@ impl Drop for DefaultConfigRestore {
     }
 }
 
+/// Restores the selected environment variables when the test ends.
+#[must_use = "keep the guard alive until the test has finished"]
 struct EnvRestore {
     values: Vec<(&'static str, Option<String>)>,
 }

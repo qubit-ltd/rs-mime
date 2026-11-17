@@ -13,6 +13,19 @@ use super::mime_detection_policy::MimeDetectionPolicy;
 
 /// Request-specific MIME policy. Values can tighten, but never enlarge,
 /// execution-service limits.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::MimeOperationOptions;
+///
+/// let options = MimeOperationOptions {
+///     max_read_bytes: Some(128),
+///     ..MimeOperationOptions::default()
+/// };
+/// assert_eq!(options.max_read_bytes, Some(128));
+/// ```
+#[must_use = "pass these options to a MIME operation submission"]
 #[derive(Clone)]
 pub struct MimeOperationOptions {
     /// Candidate resolution policy.

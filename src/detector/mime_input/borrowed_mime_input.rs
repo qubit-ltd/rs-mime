@@ -13,6 +13,20 @@ use qubit_fs::Path as FsPath;
 use super::InputExtent;
 
 /// Borrowed view valid only while the backend call is active.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::{BorrowedMimeInput, InputExtent};
+///
+/// let content = b"media";
+/// let input = BorrowedMimeInput::Bytes {
+///     content,
+///     extent: InputExtent::Complete,
+///     filename: Some("clip.mp4"),
+/// };
+/// assert!(matches!(input, BorrowedMimeInput::Bytes { filename: Some("clip.mp4"), .. }));
+/// ```
 #[derive(Clone, Copy)]
 pub enum BorrowedMimeInput<'a> {
     /// Borrowed byte content and its explicit extent.

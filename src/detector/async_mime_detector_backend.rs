@@ -24,6 +24,9 @@ pub use self::random_access_capability::RandomAccessCapability;
 
 /// Boxed, sendable future returned by MIME domain backends.
 ///
+/// The `'a` bound limits how long a pending future may be retained; backend
+/// methods use it to tie in-flight work to their borrowed inputs.
+///
 /// # Type Parameters
 /// - `T`: Owned value produced by the backend.
 pub type MimeFuture<'a, T> = Pin<Box<dyn Future<Output = MimeResult<T>> + Send + 'a>>;
@@ -50,12 +53,47 @@ pub type MimeFuture<'a, T> = Pin<Box<dyn Future<Output = MimeResult<T>> + Send +
 ///     backend.guess_content_in(scope, input, options)
 /// }
 /// ```
+///
+/// # Examples
+///
+/// A caller supplies the operation context and borrowed input from its current
+/// detection flow. Awaiting the backend future performs the inspection and
+/// propagates any MIME error.
+///
+/// ```
+/// use qubit_mime::{
+///     AsyncMimeDetectorBackend, BorrowedMimeInput, MimeCandidates,
+///     MimeOperationOptions, MimeResult,
+/// };
+/// use qubit_operation::OperationScope;
+///
+/// async fn inspect(
+///     backend: &dyn AsyncMimeDetectorBackend,
+///     scope: &OperationScope,
+///     input: BorrowedMimeInput<'_>,
+///     options: &MimeOperationOptions,
+/// ) -> MimeResult<MimeCandidates> {
+///     backend.guess_content_in(scope, input, options).await
+/// }
+/// ```
 pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
-    /// Required inspection extent.
+    /// Returns the minimum input extent this backend needs to inspect before it
+    /// can produce a useful MIME candidate.
+    ///
+    /// # Returns
+    /// The minimum extent callers should make available before requesting a
+    /// candidate from this backend.
     fn content_requirement(&self) -> ContentRequirement;
 
-    /// Declares whether provider inputs support random sampling of the same
-    /// opened object. Implementations must state this explicitly.
+    /// Returns whether this backend can sample arbitrary positions from the
+    /// same opened input object.
+    ///
+    /// The detector uses this capability to choose a compatible read strategy;
+    /// implementations must report it explicitly rather than relying on a
+    /// synchronous fallback.
+    ///
+    /// # Returns
+    /// The backend's declared random-access capability for one opened input.
     fn random_access_capability(&self) -> RandomAccessCapability;
 
     /// Inspects input within this operation's context.
@@ -66,7 +104,12 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     /// - `options`: Per-operation limits and selection preferences.
     ///
     /// # Returns
-    /// A future that resolves to the backend's candidates or a MIME error.
+    /// A future that must be awaited or otherwise polled to run the inspection;
+    /// it resolves to the backend's candidates.
+    ///
+    /// # Errors
+    /// The future resolves to a MIME error if the backend cannot inspect the
+    /// input or the operation is cancelled or exceeds a configured limit.
     fn guess_content_in<'a>(
         &'a self,
         scope: &'a OperationScope,

@@ -7,6 +7,16 @@
 // =============================================================================
 
 /// Random-access provider capability declared by an async backend.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::RandomAccessCapability;
+///
+/// let sequential = RandomAccessCapability::Unsupported;
+/// let sampling = RandomAccessCapability::SamplesSameObject;
+/// assert_ne!(sequential, sampling);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RandomAccessCapability {
     /// Backend cannot inspect provider content at arbitrary offsets.

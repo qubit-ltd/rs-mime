@@ -12,6 +12,7 @@ use crate::MimeMagic;
 use crate::MimeMagicMatcher;
 use crate::repository::magic_index::MagicIndex;
 
+/// Builds a string-valued magic rule for priority and ordering scenarios.
 fn rule(priority: u16, value: &[u8]) -> MimeMagic {
     let matcher = MimeMagicMatcher::new(MagicValueType::String, 0, 0, value.to_vec(), None, vec![])
         .expect("test matcher should be valid");

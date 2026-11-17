@@ -5,9 +5,11 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+
 //! Focused checks for staging bounds and fixed-worker admission.
 
 use std::future::Future;
+use std::io::Write;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Barrier;
@@ -57,6 +59,7 @@ use crate::managed_temp_staging::sentinel_read_limit;
 use crate::managed_temp_staging::stage_owned_in;
 use crate::managed_temp_staging::within_staging_limit;
 
+/// Unparks the polling thread when a test future schedules its waker.
 struct ThreadWake(std::thread::Thread);
 impl Wake for ThreadWake {
     fn wake(self: Arc<Self>) {
@@ -66,6 +69,7 @@ impl Wake for ThreadWake {
         self.0.unpark();
     }
 }
+/// Runs a future on the current test thread, parking it between wakeups.
 fn block_on<F: Future>(future: F) -> F::Output {
     let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
     let mut context = Context::from_waker(&waker);
@@ -98,6 +102,8 @@ fn test_managed_staging_checked_sentinel_arithmetic() {
     assert_eq!(sentinel_read_limit(u64::MAX), None);
 }
 
+/// In-memory provider used to count opens and control asynchronous read
+/// behavior.
 struct BytesAsyncFs {
     properties: ProviderProperties,
     content: Vec<u8>,
@@ -107,10 +113,13 @@ struct BytesAsyncFs {
 }
 
 impl BytesAsyncFs {
+    /// Builds a provider that returns the supplied bytes in short chunks.
     fn filesystem(content: &[u8]) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
         Self::filesystem_with_pending(content, None)
     }
 
+    /// Builds a provider that either returns short chunks or remains pending on
+    /// read.
     fn filesystem_with_pending(
         content: &[u8],
         pending_read: Option<Arc<AtomicBool>>,
@@ -170,6 +179,7 @@ impl AsyncFileSystemSpi for BytesAsyncFs {
     }
 }
 
+/// Reader that stays pending and records when the provider polls it.
 struct PendingAsyncInput {
     polled: Arc<AtomicBool>,
 }
@@ -187,6 +197,7 @@ impl AsyncInput for PendingAsyncInput {
     }
 }
 
+/// Reader that returns at most two bytes per poll and counts bytes read.
 struct ShortAsyncInput {
     bytes: Vec<u8>,
     at: usize,
@@ -261,8 +272,8 @@ fn test_managed_staging_provider_limit_boundaries_and_short_reads() {
         assert_eq!(16_u64 - actual_read as u64, read_tree.remaining());
     }
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
 }
 
 #[test]
@@ -296,8 +307,8 @@ fn test_managed_staging_provider_read_tree_budget_stops_before_sentinel_overrun(
     assert_eq!(0, read_tree.remaining());
     assert!(block_on(handle.wait_settlement()).all_released());
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
 }
 
 #[test]
@@ -345,8 +356,8 @@ fn test_managed_staging_provider_budget_failure_cleans_partial_owner() {
     drop(occupied);
     assert!(services.staging_budget().try_reserve(256 * 1024 * 1024).is_some());
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
 }
 
 #[test]
@@ -404,8 +415,8 @@ fn test_managed_staging_cancel_during_provider_read_retains_cleanup_owner() {
     );
     assert_eq!(8, read_tree.remaining(), "a Pending read transfers zero bytes");
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
 }
 
 #[test]
@@ -525,8 +536,8 @@ fn test_managed_staging_owner_waits_for_scope_end_and_all_references() {
     assert!(report.all_released());
     assert!(!path.exists(), "scope end plus final reference drop triggers cleanup");
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
 }
 
 #[test]
@@ -576,8 +587,8 @@ fn test_managed_staging_open_scope_does_not_clean_after_last_reference_drops() {
     assert!(!path.exists(), "scope end triggers cleanup after references are gone");
     assert_eq!(0, services.staging_budget().used_bytes());
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
 }
 
 #[test]
@@ -644,10 +655,11 @@ fn test_managed_staging_parent_can_wait_for_child_settlement_while_holding_resou
         "the parent resource is cleaned after its final reference drops"
     );
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
 }
 
+/// Executor that retains its input after returning a successful outcome.
 struct EarlyOutcomeCommand {
     helper_input:
         Arc<std::sync::Mutex<Option<qubit_operation::ResourceRef<crate::managed_temp_staging::StagedMimeInput>>>>,
@@ -725,8 +737,8 @@ fn test_managed_staging_outcome_precedes_helper_input_release() {
         "the temp is cleaned after the helper returns its final reference"
     );
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
 }
 
 #[cfg(unix)]
@@ -786,8 +798,8 @@ fn test_managed_staging_cleanup_failure_retains_owner_for_retry() {
     );
     assert!(!sandbox.exists(), "retry removes the retained sandbox");
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
 }
 
 #[test]
@@ -814,7 +826,6 @@ fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
         .unwrap()
         .create_temp_file()
         .unwrap();
-    use std::io::Write;
     temp.as_file_mut().unwrap().write_all(b"partial owner").unwrap();
     let path = temp.path().to_path_buf();
     let permit = services.staging_budget().try_reserve(13).unwrap();
@@ -834,8 +845,8 @@ fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
         "cleanup releases the staged-byte permit"
     );
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
 }
 
 #[test]
@@ -867,6 +878,6 @@ fn test_managed_staging_unconsumed_outcome_does_not_hold_temp() {
     assert!(report.all_released());
     assert!(!path_slot.lock().unwrap().as_ref().unwrap().exists());
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
 }

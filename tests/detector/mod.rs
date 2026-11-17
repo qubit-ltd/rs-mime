@@ -19,6 +19,7 @@ mod mime_detector_provider_tests;
 mod mime_detector_registry_tests;
 mod mime_detector_spec_tests;
 mod mime_detector_tests;
+mod mime_execution_port_tests;
 mod mime_runtime_tests;
 mod operation_provider_tests;
 mod operation_runtime_tests;

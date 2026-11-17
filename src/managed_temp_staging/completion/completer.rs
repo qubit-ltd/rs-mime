@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+
 //! Sender half of a completion channel.
 
 use std::sync::Arc;
@@ -16,6 +17,7 @@ use super::Completion;
 ///
 /// # Type Parameters
 /// - `T`: Result value shared with the receiver.
+#[must_use]
 pub(in crate::managed_temp_staging) struct Completer<T>(
     #[doc = "Shared result and receiver-waker state."] pub(in crate::managed_temp_staging) Arc<Mutex<Completion<T>>>,
 );

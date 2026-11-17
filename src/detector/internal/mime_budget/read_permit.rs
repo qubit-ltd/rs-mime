@@ -12,6 +12,7 @@ use super::ReadScopeBudget;
 use super::ReadTreeBudget;
 
 /// Provisional read reservation charged to a tree and its ancestor scopes.
+#[must_use = "the read reservation must be committed or held until the read completes"]
 pub(crate) struct ReadPermit {
     /// Shared root budget charged when this reservation is committed.
     pub(super) tree: Arc<ReadTreeBudget>,
@@ -64,6 +65,9 @@ impl Drop for ReadPermit {
 #[cfg(test)]
 mod tests {
     use std::panic::AssertUnwindSafe;
+    use std::panic::catch_unwind;
+    use std::sync::Arc;
+    use std::thread;
 
     use super::super::ReadTreeContext;
 
@@ -90,7 +94,7 @@ mod tests {
         assert_eq!(root.remaining(), 4);
         assert_eq!(child.remaining(), 2);
 
-        let result = std::panic::catch_unwind(AssertUnwindSafe(|| permit.commit(5)));
+        let result = catch_unwind(AssertUnwindSafe(|| permit.commit(5)));
         assert!(result.is_err(), "a read cannot commit more than it reserved");
         assert_eq!(root.consumed(), 0);
         assert_eq!(child.consumed(), 0);
@@ -103,11 +107,11 @@ mod tests {
         let root = ReadTreeContext::new(10);
         let child = root.child(5);
         let permit = child.reserve(4).expect("reservation fits both scopes");
-        let tree = std::sync::Arc::clone(&permit.tree);
-        let scope = std::sync::Arc::clone(&permit.scopes[0]);
+        let tree = Arc::clone(&permit.tree);
+        let scope = Arc::clone(&permit.scopes[0]);
 
         assert!(
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let _guard = tree.counters.lock().unwrap();
                 panic!("poison shared read-tree counters");
             })
@@ -115,7 +119,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let _guard = scope.counters.lock().unwrap();
                 panic!("poison child read-scope counters");
             })

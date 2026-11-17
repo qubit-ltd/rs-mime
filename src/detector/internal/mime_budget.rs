@@ -19,6 +19,10 @@ pub(crate) use staging_budget::StagingBudget;
 #[path = "mime_budget/staging_permit.rs"]
 mod staging_permit;
 pub(crate) use staging_permit::StagingPermit;
+#[path = "mime_budget/request_staging_counters.rs"]
+mod request_staging_counters;
+#[path = "mime_budget/request_staging_guard.rs"]
+mod request_staging_guard;
 #[path = "mime_budget/request_staging_usage.rs"]
 mod request_staging_usage;
 pub(crate) use request_staging_usage::RequestStagingUsage;

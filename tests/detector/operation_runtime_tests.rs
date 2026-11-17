@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -409,7 +410,7 @@ fn test_operation_runtime_prepare_retries_after_failure_and_rejects_after_shutdo
 
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
-    shutdown.stop_services().unwrap();
+    let _ = shutdown.stop_services().unwrap();
     assert!(matches!(
         services.prepare(),
         Err(qubit_mime::MimeError::ExecutionServicesRequired)
@@ -442,8 +443,8 @@ fn test_operation_runtime_releases_owned_budget_after_operation_settles() {
     }
 
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -539,8 +540,8 @@ fn test_operation_runtime_child_does_not_reserve_root() {
     ));
 
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -615,8 +616,8 @@ fn test_operation_runtime_queue_and_budget_boundaries() {
         .unwrap_or_else(|_| panic!("rejected admission must release its owned-byte permit"));
     let _retry_outcome = block_on(retry.wait_outcome()).unwrap();
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -659,8 +660,8 @@ fn test_operation_runtime_wrong_manager_returns_original_input() {
         qubit_operation::OperationOutcome::Succeeded(true)
     ));
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -701,8 +702,8 @@ fn test_operation_runtime_ended_parent_returns_original_input() {
         OwnedMimeInput::Provider { .. } => panic!("bytes input changed kind"),
     }
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -748,8 +749,8 @@ fn test_operation_runtime_sync_submission_uses_parent() {
         other => panic!("sync child should succeed: {other:?}"),
     }
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -852,8 +853,8 @@ fn test_operation_runtime_sync_and_async_reports_match_repository_inspection_ext
     }
 
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -908,8 +909,8 @@ fn test_operation_runtime_sync_rejects_provider_and_returns_original_input() {
         "rejected provider input must not be read"
     );
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -953,8 +954,8 @@ fn test_operation_runtime_closed_group_returns_original_input() {
         .unwrap();
     entered_rx.recv().unwrap();
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     release_tx.send(()).unwrap();
     assert!(matches!(
         parent.wait_outcome().unwrap(),
@@ -1016,8 +1017,8 @@ fn test_operation_runtime_sync_preflight_matches_async() {
         qubit_operation::OperationOutcome::Succeeded(true)
     ));
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -1103,8 +1104,8 @@ fn test_operation_runtime_parallel_children_share_actual_read_budget() {
     );
 
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -1189,8 +1190,8 @@ fn test_sequential_mime_children_keep_external_parent_read_budget() {
     );
 
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -1323,8 +1324,8 @@ fn test_external_parent_read_budget_binding_failures_return_input() {
     assert!(stopped_rejection.load(Ordering::SeqCst));
 
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -1399,8 +1400,8 @@ fn test_concurrent_external_parent_children_share_one_budget_binding() {
     block_on(parent.wait_settlement());
 
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
@@ -1443,8 +1444,8 @@ fn test_operation_runtime_independent_roots_have_independent_read_limits() {
     }
     assert_eq!(opens.load(Ordering::SeqCst), 2);
     let shutdown = services.shutdown();
-    block_on(shutdown.wait_services_settled()).unwrap();
-    shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 

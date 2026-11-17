@@ -11,6 +11,7 @@ use std::sync::Arc;
 use super::PermitInner;
 
 /// Cloneable reservation whose count returns only after its final owner drops.
+#[must_use = "the reservation must be held until its resource is released"]
 pub(in crate::detector) struct BudgetPermit {
     /// Shared inner reservation released after its final clone is dropped.
     pub(super) _inner: Arc<PermitInner>,

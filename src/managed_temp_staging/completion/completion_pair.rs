@@ -21,6 +21,7 @@ use super::CompletionFuture;
 ///
 /// # Returns
 /// A sender and future receiver sharing one completion state.
+#[must_use = "the completion sender and receiver must be retained to use the channel"]
 pub(in crate::managed_temp_staging) fn completion_pair<T>() -> (Completer<T>, CompletionFuture<T>) {
     let state = Arc::new(Mutex::new(Completion {
         value: None,

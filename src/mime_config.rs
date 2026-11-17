@@ -5,6 +5,7 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
+
 //! Configuration values for MIME detection.
 //!
 //! [`MimeConfig`] is the runtime configuration shared by detector wrappers,
@@ -94,6 +95,7 @@ use crate::MimeResult;
 /// object. Selector text is validated while configuration is loaded and stored
 /// as reusable [`ProviderSelection`] values.
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct MimeConfig {
     /// Validated MIME detector selection.
     mime_detector_selection: ProviderSelection,
@@ -216,7 +218,9 @@ impl MimeConfig {
     /// # Returns
     /// Parsed environment configuration, or the complete built-in
     /// configuration when any environment value is invalid.
-    #[must_use]
+    ///
+    /// # Panics
+    /// Panics if a built-in provider selection or MIME mapping is invalid.
     pub fn load() -> Self {
         match Self::from_env() {
             Ok(config) => config,
@@ -389,7 +393,9 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Configuration populated entirely from crate constants.
-    #[must_use]
+    ///
+    /// # Panics
+    /// Panics if a built-in provider selection or MIME mapping is invalid.
     fn builtin_default() -> Self {
         Self {
             mime_detector_selection: create_detector_selection(DEFAULT_MIME_DETECTOR, fallback_defaults())
@@ -415,56 +421,6 @@ impl MimeConfig {
             .expect("built-in ambiguous MIME mapping should be valid"),
             max_buffer_size: DEFAULT_MIME_MAX_BUFFER_SIZE,
         }
-    }
-
-    /// Replaces the global default MIME configuration.
-    ///
-    /// # Parameters
-    /// - `config`: Configuration to use for future default instances.
-    ///
-    /// # Returns
-    ///
-    /// This method returns `()` after replacing the global default.
-    pub fn set_default(config: Self) {
-        let mut guard = DEFAULT_MIME_CONFIG
-            .write()
-            .expect("default MIME configuration lock should not be poisoned");
-        *guard = config;
-    }
-
-    /// Reloads the global default MIME configuration from a config object.
-    ///
-    /// # Parameters
-    /// - `config`: Configuration object used to build the new default.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` after the global default has been replaced.
-    ///
-    /// # Errors
-    /// Returns [`MimeError::Config`](crate::MimeError::Config) when a present
-    /// configuration value cannot be converted to the expected type. Returns
-    /// a detector- or classifier-name error when a configured provider
-    /// selector is invalid.
-    pub fn reload_default(config: &Config) -> MimeResult<()> {
-        Self::set_default(Self::from_config(config)?);
-        Ok(())
-    }
-
-    /// Reloads the global default MIME configuration from process environment.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` after the global default has been replaced.
-    ///
-    /// # Errors
-    /// Returns [`MimeError::Config`](crate::MimeError::Config) when the
-    /// environment cannot be represented by [`Config`]. Returns a detector-
-    /// or classifier-name error when a configured provider selector is
-    /// invalid.
-    pub fn reload_default_from_env() -> MimeResult<()> {
-        Self::set_default(Self::from_env()?);
-        Ok(())
     }
 
     /// Returns the validated MIME detector selection.
@@ -493,6 +449,7 @@ impl MimeConfig {
     /// # Returns
     /// Maximum number of bytes copied to a temporary file for one classifier
     /// input.
+    #[inline]
     #[must_use]
     pub fn media_stream_max_staging_size(&self) -> u64 {
         self.media_stream_max_staging_size
@@ -503,6 +460,7 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Per-stream retained output byte limit applied to `file` and `ffprobe`.
+    #[inline]
     #[must_use]
     pub fn command_output_max_bytes(&self) -> usize {
         self.command_output_max_bytes
@@ -512,6 +470,7 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Timeout used by command-backed MIME detectors and classifiers.
+    #[inline]
     #[must_use]
     pub fn command_timeout(&self) -> Duration {
         self.command_timeout
@@ -521,6 +480,7 @@ impl MimeConfig {
     ///
     /// # Returns
     /// `true` when ambiguous media MIME types may be refined.
+    #[inline]
     #[must_use]
     pub fn enable_precise_detection(&self) -> bool {
         self.enable_precise_detection
@@ -536,6 +496,7 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Lowercase extension names without leading dots.
+    #[inline]
     #[must_use]
     pub fn precise_detection_patterns(&self) -> &HashSet<String> {
         &self.precise_detection_patterns
@@ -545,6 +506,7 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Mapping from extension to `[video_mime, audio_mime]`.
+    #[inline]
     #[must_use]
     pub fn ambiguous_mime_mapping(&self) -> &HashMap<String, [String; 2]> {
         &self.ambiguous_mime_mapping
@@ -554,9 +516,69 @@ impl MimeConfig {
     ///
     /// # Returns
     /// Maximum number of bytes a detector may allocate for one read buffer.
+    #[inline]
     #[must_use]
     pub fn max_buffer_size(&self) -> usize {
         self.max_buffer_size
+    }
+
+    /// Replaces the global default MIME configuration.
+    ///
+    /// # Parameters
+    /// - `config`: Configuration to use for future default instances.
+    ///
+    /// # Returns
+    ///
+    /// This method returns `()` after replacing the global default.
+    ///
+    /// # Panics
+    /// Panics if the process-wide configuration lock is poisoned.
+    pub fn set_default(config: Self) {
+        let mut guard = DEFAULT_MIME_CONFIG
+            .write()
+            .expect("default MIME configuration lock should not be poisoned");
+        *guard = config;
+    }
+
+    /// Reloads the global default MIME configuration from a config object.
+    ///
+    /// # Parameters
+    /// - `config`: Configuration object used to build the new default.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the global default has been replaced.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::Config`](crate::MimeError::Config) when a present
+    /// configuration value cannot be converted to the expected type. Returns
+    /// a detector- or classifier-name error when a configured provider
+    /// selector is invalid.
+    ///
+    /// # Panics
+    /// Panics if the process-wide configuration lock is poisoned.
+    pub fn reload_default(config: &Config) -> MimeResult<()> {
+        Self::set_default(Self::from_config(config)?);
+        Ok(())
+    }
+
+    /// Reloads the global default MIME configuration from process environment.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` after the global default has been replaced.
+    ///
+    /// # Errors
+    /// Returns [`MimeError::Config`](crate::MimeError::Config) when the
+    /// environment cannot be represented by [`Config`]. Returns a detector-
+    /// or classifier-name error when a configured provider selector is
+    /// invalid.
+    ///
+    /// # Panics
+    /// Panics if the process-wide configuration lock is poisoned.
+    pub fn reload_default_from_env() -> MimeResult<()> {
+        Self::set_default(Self::from_env()?);
+        Ok(())
     }
 
     /// Gets the derived total output budget for one native command.
@@ -564,6 +586,10 @@ impl MimeConfig {
     /// The combined stdout-plus-stderr budget is four times the configured
     /// per-stream limit, with saturating arithmetic. Each stream still has its
     /// own retained-output limit.
+    ///
+    /// # Returns
+    /// Four times the per-stream limit, saturating at `u64::MAX`.
+    #[inline]
     #[must_use]
     pub(crate) fn command_total_output_max_bytes(&self) -> u64 {
         u64::try_from(self.command_output_max_bytes)
@@ -660,6 +686,12 @@ fn classifier_selection_error(error: ProviderSelectionBuildError) -> MimeError {
 
 impl Default for MimeConfig {
     /// Loads default configuration.
+    ///
+    /// # Returns
+    /// A clone of the current process-wide MIME configuration.
+    ///
+    /// # Panics
+    /// Panics if the process-wide configuration lock is poisoned.
     fn default() -> Self {
         DEFAULT_MIME_CONFIG
             .read()
@@ -758,20 +790,4 @@ fn build_ambiguous_mime_mapping(entries: Vec<String>) -> MimeResult<HashMap<Stri
         );
     }
     Ok(mapping)
-}
-
-#[cfg(test)]
-mod tests {
-    use qubit_spi::ProviderSelectionTargetRef;
-
-    use super::MimeConfig;
-
-    #[test]
-    fn test_default_classifier_selection_is_accessible_from_config() {
-        let config = MimeConfig::default();
-        assert!(matches!(
-            config.media_stream_classifier_selection().target(),
-            ProviderSelectionTargetRef::Named(selector) if selector.as_str() == "ffprobe"
-        ));
-    }
 }

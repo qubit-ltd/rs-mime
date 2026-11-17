@@ -34,6 +34,17 @@ type AsyncProviderPathResult<'a> =
     Pin<Box<dyn Future<Output = MimeResult<(Vec<String>, Option<Vec<u8>>)>> + Send + 'a>>;
 
 /// Core implementation contract for MIME detectors.
+///
+/// # Examples
+///
+/// ```
+/// use qubit_mime::{MimeDetectorBackend, RepositoryMimeDetector};
+///
+/// let backend = RepositoryMimeDetector::new()?;
+/// let candidates = MimeDetectorBackend::guess_from_filename(&backend, "document.pdf");
+/// assert_eq!(candidates, ["application/pdf"]);
+/// # Ok::<(), qubit_mime::MimeError>(())
+/// ```
 pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// Describes how much content the backend needs for detection.
     ///

@@ -7,8 +7,11 @@
 // =============================================================================
 //! Staging failures that public inspection callbacks cannot manufacture.
 
+use std::cell::Cell;
 use std::fs;
 use std::io;
+use std::panic::AssertUnwindSafe;
+use std::panic::catch_unwind;
 
 use qubit_io::Output;
 use qubit_local_files::error::LocalFileOperation;
@@ -164,4 +167,46 @@ fn test_failed_inspection_retains_primary_and_cleanup_context() {
             assert!(matches!(error, MimeError::InvalidClassifierInput { ref reason } if reason == "inspection failed"));
         }
     }
+}
+
+#[test]
+fn test_temp_creation_failure_is_mapped_before_staging_or_inspection() {
+    let staged = Cell::new(false);
+    let inspected = Cell::new(false);
+    let error = with_temp_file::<()>(
+        "invalid/component/",
+        |_| {
+            staged.set(true);
+            Ok(())
+        },
+        |_| {
+            inspected.set(true);
+            Ok(())
+        },
+    )
+    .expect_err("a path separator in the filename prefix must prevent temp creation");
+
+    assert!(matches!(error, MimeError::Io(_)));
+    assert!(!staged.get(), "staging must not run without a created owner");
+    assert!(!inspected.get(), "inspection must not run without a created owner");
+}
+
+#[test]
+fn test_inspection_panic_unwinds_after_best_effort_temp_cleanup() {
+    let mut staged_path = None;
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        let _ = with_temp_file::<()>(
+            "InspectionPanic-",
+            |file| {
+                staged_path = Some(file.path().to_path_buf());
+                Ok(())
+            },
+            |_| panic!("inspection panic for cleanup test"),
+        );
+    }));
+
+    assert!(panic.is_err(), "inspection panic must keep unwinding");
+    let path = staged_path.expect("staging callback should have recorded the temp path");
+    assert!(!path.exists(), "temporary file guard should clean up during unwind");
+    assert!(!path.parent().expect("temp file path has a parent").exists());
 }

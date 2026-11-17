@@ -75,6 +75,7 @@ pub(crate) fn strip_doctype(xml: &str) -> Cow<'_, str> {
 /// # Returns
 /// `true` when another doctype or an incomplete prolog comment/instruction is
 /// encountered before the root element.
+#[must_use]
 fn has_repeated_doctype(bytes: &[u8], mut position: usize) -> bool {
     loop {
         while position < bytes.len() && is_xml_whitespace(bytes[position]) {
@@ -103,6 +104,7 @@ fn has_repeated_doctype(bytes: &[u8], mut position: usize) -> bool {
 ///
 /// # Returns
 /// `true` for space, tab, carriage return, or line feed.
+#[must_use]
 fn is_xml_whitespace(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\r' | b'\n')
 }
@@ -114,6 +116,7 @@ fn is_xml_whitespace(byte: u8) -> bool {
 ///
 /// # Returns
 /// `true` when XML 1.0 permits the character in source text.
+#[must_use]
 fn is_xml_character(character: char) -> bool {
     matches!(
         character,
@@ -167,6 +170,7 @@ fn quoted_literal_end(bytes: &[u8], position: usize, public_identifier: bool) ->
 ///
 /// # Returns
 /// `true` when the byte belongs to the XML `PubidChar` set.
+#[must_use]
 fn is_public_identifier_char(byte: u8) -> bool {
     byte.is_ascii_alphanumeric()
         || matches!(
@@ -234,6 +238,7 @@ fn xml_comment_end(bytes: &[u8], position: usize) -> Option<usize> {
 /// Finds the byte immediately after a complete doctype declaration.
 ///
 /// # Parameters
+/// - `xml`: XML source text associated with the byte offsets.
 /// - `bytes`: XML source bytes.
 /// - `position`: Offset immediately after the `<!DOCTYPE` token.
 ///
@@ -302,6 +307,7 @@ fn doctype_end(xml: &str, bytes: &[u8], mut position: usize) -> Option<usize> {
 /// Scans the top-level items in an XML internal subset.
 ///
 /// # Parameters
+/// - `xml`: XML source text associated with the byte offsets.
 /// - `bytes`: XML source bytes.
 /// - `position`: Offset immediately after the subset's opening bracket.
 ///
@@ -337,6 +343,7 @@ fn internal_subset_end(xml: &str, bytes: &[u8], mut position: usize) -> Option<u
 /// Scans a DTD markup declaration after checking its declaration keyword.
 ///
 /// # Parameters
+/// - `xml`: XML source text associated with the byte offsets.
 /// - `bytes`: XML source bytes.
 /// - `position`: Offset at the declaration's opening `<`.
 ///
@@ -443,6 +450,7 @@ fn markup_declaration_end(xml: &str, bytes: &[u8], mut position: usize) -> Optio
 /// Scans an XML element content specification.
 ///
 /// # Parameters
+/// - `xml`: XML source text associated with the byte offsets.
 /// - `bytes`: XML source bytes.
 /// - `position`: Offset at the content specification's opening parenthesis.
 ///
@@ -486,6 +494,7 @@ fn element_content_spec_end(xml: &str, bytes: &[u8], mut position: usize) -> Opt
 /// Scans a `children` content group and checks its separators and particles.
 ///
 /// # Parameters
+/// - `xml`: XML source text associated with the byte offsets.
 /// - `bytes`: XML source bytes.
 /// - `position`: Offset at the group's opening parenthesis.
 /// - `depth`: Current nested-group depth.
@@ -522,6 +531,7 @@ fn children_group_end(xml: &str, bytes: &[u8], mut position: usize, depth: usize
 /// Scans one element content particle, including its optional occurrence.
 ///
 /// # Parameters
+/// - `xml`: XML source text associated with the byte offsets.
 /// - `bytes`: XML source bytes.
 /// - `position`: Offset at the particle's first character.
 /// - `depth`: Current nested-group depth.
@@ -543,6 +553,7 @@ fn content_particle_end(xml: &str, bytes: &[u8], mut position: usize, depth: usi
 /// Scans the attribute definitions in an ATTLIST declaration.
 ///
 /// # Parameters
+/// - `xml`: XML source text associated with the byte offsets.
 /// - `bytes`: XML source bytes.
 /// - `position`: Offset immediately after the element name and whitespace.
 ///
@@ -609,6 +620,7 @@ fn attlist_declaration_end(xml: &str, bytes: &[u8], mut position: usize) -> Opti
 /// Scans a DTD enumeration enclosed in parentheses.
 ///
 /// # Parameters
+/// - `xml`: XML source text associated with the byte offsets.
 /// - `bytes`: XML source bytes.
 /// - `position`: Offset at the opening parenthesis.
 /// - `name_only`: Whether members use the XML `Name` rule instead of `Nmtoken`.
@@ -683,6 +695,7 @@ fn simple_keyword_declaration_end(bytes: &[u8], mut position: usize) -> Option<u
 /// Scans an XML entity definition after its name.
 ///
 /// # Parameters
+/// - `xml`: XML source text associated with the byte offsets.
 /// - `bytes`: XML source bytes.
 /// - `position`: Offset immediately after the entity name and whitespace.
 /// - `parameter_entity`: Whether this is a parameter-entity declaration.
@@ -728,7 +741,7 @@ fn entity_declaration_end(xml: &str, bytes: &[u8], mut position: usize, paramete
 /// Finds the end of an XML name at a byte offset.
 ///
 /// # Parameters
-/// - `bytes`: XML source bytes.
+/// - `xml`: XML source text.
 /// - `position`: Offset of the name's first character.
 ///
 /// # Returns
@@ -753,7 +766,7 @@ fn xml_name_end(xml: &str, position: usize) -> Option<usize> {
 /// Finds the end of an XML `Nmtoken` at a byte offset.
 ///
 /// # Parameters
-/// - `bytes`: XML source bytes.
+/// - `xml`: XML source text.
 /// - `position`: Offset of the token's first character.
 ///
 /// # Returns
@@ -777,6 +790,7 @@ fn xml_nmtoken_end(xml: &str, position: usize) -> Option<usize> {
 ///
 /// # Returns
 /// `true` when it belongs to the XML 1.0 `NameStartChar` ranges.
+#[must_use]
 fn is_xml_name_start(character: char) -> bool {
     matches!(
         character,
@@ -805,6 +819,7 @@ fn is_xml_name_start(character: char) -> bool {
 ///
 /// # Returns
 /// `true` when it belongs to the XML 1.0 `NameChar` ranges.
+#[must_use]
 fn is_xml_name_char(character: char) -> bool {
     is_xml_name_start(character)
         || matches!(

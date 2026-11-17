@@ -10,7 +10,9 @@
 use std::cell::Cell;
 use std::io::Cursor;
 use std::io::Error;
+use std::io::ErrorKind;
 use std::io::Read;
+use std::io::Result;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::rc::Rc;
@@ -20,17 +22,80 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
 use qubit_config::Config;
+use qubit_io::std_io::ReadSeek;
 use qubit_mime::CONFIG_MIME_MAX_BUFFER_SIZE;
 use qubit_mime::ContentRequirement;
+use qubit_mime::DEFAULT_MIME_MAX_BUFFER_SIZE;
 use qubit_mime::MimeConfig;
 use qubit_mime::MimeContentBackend;
 use qubit_mime::MimeDetectorAdapter;
 use qubit_mime::MimeDetectorBackend;
 use qubit_mime::MimeDetectorCore;
+use qubit_mime::MimeError;
 use qubit_mime::MimeResult;
 use qubit_mime::RepositoryMimeDetector;
 
 use crate::support::DirectBackendDetector;
+
+#[derive(Debug)]
+struct PrefixBackend;
+
+impl MimeContentBackend for PrefixBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(3)
+    }
+
+    fn detect_bytes(&self, bytes: &[u8]) -> MimeResult<Vec<String>> {
+        Ok(vec![String::from_utf8_lossy(bytes).into_owned()])
+    }
+}
+
+#[test]
+fn test_default_reader_buffers_declared_prefix_and_restores_position() {
+    let backend = PrefixBackend;
+    let mut reader = Cursor::new(b"_abcdef".to_vec());
+    reader.set_position(1);
+
+    assert_eq!(backend.max_reader_buffer_size(), DEFAULT_MIME_MAX_BUFFER_SIZE);
+    assert_eq!(backend.detect_reader(&mut reader).unwrap(), ["abc"]);
+    assert_eq!(reader.position(), 1);
+}
+
+#[test]
+fn test_default_reader_rejects_complete_content_over_budget_and_restores() {
+    #[derive(Debug)]
+    struct CompleteBackend;
+
+    impl MimeContentBackend for CompleteBackend {
+        fn content_requirement(&self) -> ContentRequirement {
+            ContentRequirement::Complete
+        }
+
+        fn max_reader_buffer_size(&self) -> usize {
+            3
+        }
+
+        fn detect_bytes(&self, bytes: &[u8]) -> MimeResult<Vec<String>> {
+            Ok(vec![bytes.len().to_string()])
+        }
+    }
+
+    let mut reader = Cursor::new(b"_abcd".to_vec());
+    reader.set_position(1);
+    let error = CompleteBackend
+        .detect_reader(&mut reader)
+        .expect_err("complete input one byte above the limit must fail");
+
+    assert!(matches!(
+        error,
+        MimeError::BufferLimitExceeded { requested: 4, limit: 3 }
+    ));
+    assert_eq!(reader.position(), 1);
+
+    let mut within_limit = Cursor::new(b"xy".to_vec());
+    assert_eq!(CompleteBackend.detect_reader(&mut within_limit).unwrap(), ["2"]);
+    assert_eq!(within_limit.position(), 0);
+}
 
 #[derive(Debug)]
 struct DeclaredPrefixBackend {
@@ -64,7 +129,7 @@ struct ByteCountingReader {
 }
 
 impl Read for ByteCountingReader {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize> {
         let count = self.cursor.read(buffer)?;
         self.bytes_read.set(self.bytes_read.get() + count);
         Ok(count)
@@ -72,7 +137,7 @@ impl Read for ByteCountingReader {
 }
 
 impl Seek for ByteCountingReader {
-    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+    fn seek(&mut self, from: SeekFrom) -> Result<u64> {
         self.cursor.seek(from)
     }
 }
@@ -104,7 +169,7 @@ fn test_adapter_reader_uses_declared_prefix_length() {
 struct WholeResourceReaderBackend(DirectBackendDetector);
 
 impl MimeDetectorBackend for WholeResourceReaderBackend {
-    fn core(&self) -> &qubit_mime::MimeDetectorCore {
+    fn core(&self) -> &MimeDetectorCore {
         self.0.core()
     }
     fn max_test_bytes(&self) -> usize {
@@ -119,7 +184,7 @@ impl MimeDetectorBackend for WholeResourceReaderBackend {
     fn guess_from_content(&self, content: &[u8]) -> MimeResult<Vec<String>> {
         self.0.guess_from_content(content)
     }
-    fn guess_from_reader(&self, reader: &mut dyn qubit_io::std_io::ReadSeek) -> MimeResult<(Vec<String>, Vec<u8>)> {
+    fn guess_from_reader(&self, reader: &mut dyn ReadSeek) -> MimeResult<(Vec<String>, Vec<u8>)> {
         reader.seek(SeekFrom::Start(0))?;
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes)?;
@@ -186,7 +251,7 @@ impl MimeDetectorBackend for ReaderProbeBackend {
     fn guess_from_content(&self, _content: &[u8]) -> MimeResult<Vec<String>> {
         panic!("reader adapter must not fall back to guess_from_content")
     }
-    fn guess_from_reader(&self, reader: &mut dyn qubit_io::std_io::ReadSeek) -> MimeResult<(Vec<String>, Vec<u8>)> {
+    fn guess_from_reader(&self, reader: &mut dyn ReadSeek) -> MimeResult<(Vec<String>, Vec<u8>)> {
         match self.probe {
             ReaderProbe::Sample => {
                 reader.seek(SeekFrom::Start(0))?;
@@ -224,12 +289,12 @@ impl MimeDetectorBackend for ReaderProbeBackend {
             }
             ReaderProbe::FailAfterSeek => {
                 reader.seek(SeekFrom::Start(0))?;
-                Err(qubit_mime::MimeError::Io(Error::other("injected hook error")))
+                Err(MimeError::Io(Error::other("injected hook error")))
             }
             ReaderProbe::ReadThenFail => {
                 let mut byte = [0_u8; 1];
                 assert_eq!(reader.read(&mut byte)?, 1);
-                Err(qubit_mime::MimeError::Io(Error::other("injected hook error")))
+                Err(MimeError::Io(Error::other("injected hook error")))
             }
         }
     }
@@ -301,7 +366,7 @@ struct RestoreFailReader {
 }
 
 impl Read for RestoreFailReader {
-    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, bytes: &mut [u8]) -> Result<usize> {
         let count = self.cursor.read(bytes)?;
         self.read_happened |= count > 0;
         Ok(count)
@@ -309,7 +374,7 @@ impl Read for RestoreFailReader {
 }
 
 impl Seek for RestoreFailReader {
-    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+    fn seek(&mut self, from: SeekFrom) -> Result<u64> {
         if self.read_happened && matches!(from, SeekFrom::Start(4)) {
             return Err(Error::other("injected restore failure"));
         }
@@ -332,7 +397,7 @@ fn test_adapter_restore_error_takes_priority_over_hook_error() {
 
     assert!(matches!(
         adapter.detect_reader(&mut reader),
-        Err(qubit_mime::MimeError::Io(error))
+        Err(MimeError::Io(error))
             if error.to_string().contains("injected restore failure")
     ));
 }
@@ -347,7 +412,7 @@ fn test_adapter_prefix_budget_rejects_before_reading() {
     let (mut reader, reads) = counting_reader(b"skipabcdef");
     assert!(matches!(
         adapter.detect_reader(&mut reader),
-        Err(qubit_mime::MimeError::BufferLimitExceeded { requested: 5, limit: 3 })
+        Err(MimeError::BufferLimitExceeded { requested: 5, limit: 3 })
     ));
     assert_eq!(reads.get(), 0);
 }
@@ -425,14 +490,14 @@ struct CountingReader {
 }
 
 impl Read for CountingReader {
-    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, bytes: &mut [u8]) -> Result<usize> {
         self.reads.set(self.reads.get() + 1);
         self.cursor.read(bytes)
     }
 }
 
 impl Seek for CountingReader {
-    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+    fn seek(&mut self, from: SeekFrom) -> Result<u64> {
         self.cursor.seek(from)
     }
 }
@@ -456,14 +521,14 @@ fn test_reader_budget_and_complete_boundary_probe() {
     let mut oversized = Cursor::new(b"abcd".to_vec());
     assert!(matches!(
         backend.detect_reader(&mut oversized),
-        Err(qubit_mime::MimeError::BufferLimitExceeded { requested: 4, limit: 3 })
+        Err(MimeError::BufferLimitExceeded { requested: 4, limit: 3 })
     ));
     assert_eq!(oversized.position(), 0);
     let prefix = LimitedLengthBackend(ContentRequirement::Prefix(4), 3);
     let mut input = Cursor::new(b"abcd".to_vec());
     assert!(matches!(
         prefix.detect_reader(&mut input),
-        Err(qubit_mime::MimeError::BufferLimitExceeded { requested: 4, limit: 3 })
+        Err(MimeError::BufferLimitExceeded { requested: 4, limit: 3 })
     ));
     assert_eq!(input.position(), 0);
 
@@ -473,14 +538,14 @@ fn test_reader_budget_and_complete_boundary_probe() {
     let mut nonempty = Cursor::new(b"x".to_vec());
     assert!(matches!(
         zero.detect_reader(&mut nonempty),
-        Err(qubit_mime::MimeError::BufferLimitExceeded { requested: 1, limit: 0 })
+        Err(MimeError::BufferLimitExceeded { requested: 1, limit: 0 })
     ));
     assert_eq!(nonempty.position(), 0);
 
     let (mut untouched, reads) = counting_reader(b"must not be read");
     assert!(matches!(
         prefix.detect_reader(&mut untouched),
-        Err(qubit_mime::MimeError::BufferLimitExceeded { .. })
+        Err(MimeError::BufferLimitExceeded { .. })
     ));
     assert_eq!(reads.get(), 0, "Prefix budget rejection must precede any input read");
 }
@@ -498,7 +563,7 @@ impl MimeContentBackend for DetectFails {
             0,
             "detect_bytes must run after reader restoration"
         );
-        Err(qubit_mime::MimeError::CompleteContentRequired)
+        Err(MimeError::CompleteContentRequired)
     }
 }
 
@@ -508,7 +573,7 @@ fn test_detect_error_occurs_after_position_is_restored() {
     let mut reader = PositionReader::new(b"abc", Arc::clone(&position));
     assert!(matches!(
         DetectFails(Arc::clone(&position)).detect_reader(&mut reader),
-        Err(qubit_mime::MimeError::CompleteContentRequired)
+        Err(MimeError::CompleteContentRequired)
     ));
     assert_eq!(position.load(Ordering::SeqCst), 0);
 }
@@ -528,14 +593,14 @@ impl PositionReader {
     }
 }
 impl Read for PositionReader {
-    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, out: &mut [u8]) -> Result<usize> {
         let count = self.cursor.read(out)?;
         self.position.store(self.cursor.position(), Ordering::SeqCst);
         Ok(count)
     }
 }
 impl Seek for PositionReader {
-    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+    fn seek(&mut self, from: SeekFrom) -> Result<u64> {
         let position = self.cursor.seek(from)?;
         self.position.store(position, Ordering::SeqCst);
         Ok(position)
@@ -548,8 +613,8 @@ struct FailsAfterByte {
     fail_restore: bool,
 }
 
-impl std::io::Read for FailsAfterByte {
-    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+impl Read for FailsAfterByte {
+    fn read(&mut self, out: &mut [u8]) -> Result<usize> {
         if self.position == 0 && !out.is_empty() {
             out[0] = b'x';
             self.position = 1;
@@ -560,7 +625,7 @@ impl std::io::Read for FailsAfterByte {
     }
 }
 impl Seek for FailsAfterByte {
-    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+    fn seek(&mut self, from: SeekFrom) -> Result<u64> {
         match from {
             SeekFrom::Start(0) if !self.fail_restore => {
                 self.position = 0;
@@ -580,7 +645,7 @@ fn test_reader_error_restores_and_restore_error_takes_priority() {
         fail_restore: false,
     };
     assert!(
-        matches!(backend.detect_reader(&mut restored), Err(qubit_mime::MimeError::Io(error)) if error.to_string().contains("injected read failure"))
+        matches!(backend.detect_reader(&mut restored), Err(MimeError::Io(error)) if error.to_string().contains("injected read failure"))
     );
     assert_eq!(restored.position, 0);
     let mut restore_fails = FailsAfterByte {
@@ -588,7 +653,7 @@ fn test_reader_error_restores_and_restore_error_takes_priority() {
         fail_restore: true,
     };
     assert!(
-        matches!(backend.detect_reader(&mut restore_fails), Err(qubit_mime::MimeError::Io(error)) if error.to_string().contains("injected seek failure"))
+        matches!(backend.detect_reader(&mut restore_fails), Err(MimeError::Io(error)) if error.to_string().contains("injected seek failure"))
     );
 
     let prefix_backend = LimitedLengthBackend(ContentRequirement::Prefix(1), 4);
@@ -598,7 +663,7 @@ fn test_reader_error_restores_and_restore_error_takes_priority() {
     };
     assert!(matches!(
         prefix_backend.detect_reader(&mut successful_read_restore_fails),
-        Err(qubit_mime::MimeError::Io(error))
+        Err(MimeError::Io(error))
             if error.to_string().contains("injected seek failure")
     ));
 }
@@ -652,10 +717,10 @@ struct InterruptedReader {
 }
 
 impl Read for InterruptedReader {
-    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize> {
         self.call += 1;
         if self.interrupt_calls.contains(&self.call) {
-            return Err(Error::from(std::io::ErrorKind::Interrupted));
+            return Err(Error::from(ErrorKind::Interrupted));
         }
         let size = buffer.len().min(self.max_chunk);
         self.cursor.read(&mut buffer[..size])
@@ -663,7 +728,7 @@ impl Read for InterruptedReader {
 }
 
 impl Seek for InterruptedReader {
-    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+    fn seek(&mut self, from: SeekFrom) -> Result<u64> {
         self.cursor.seek(from)
     }
 }
@@ -696,7 +761,7 @@ fn test_reader_retries_interrupted_reads_and_boundary_probe() {
     let mut oversized = interrupted_reader(b"abcd", &[2], 3);
     assert!(matches!(
         complete.detect_reader(&mut oversized),
-        Err(qubit_mime::MimeError::BufferLimitExceeded { requested: 4, limit: 3 })
+        Err(MimeError::BufferLimitExceeded { requested: 4, limit: 3 })
     ));
     assert_eq!(oversized.cursor.position(), 0);
 }

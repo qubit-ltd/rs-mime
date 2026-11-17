@@ -9,9 +9,10 @@
 
 use qubit_mime::MimeDetectionPolicy;
 use qubit_mime::MimeDetector;
+use qubit_mime::MimeResult;
 use qubit_mime::RepositoryMimeDetector;
 
-fn main() -> qubit_mime::MimeResult<()> {
+fn main() -> MimeResult<()> {
     let detector = RepositoryMimeDetector::new()?;
     assert_eq!(
         detector.detect_by_filename("report.pdf")?.as_deref(),
