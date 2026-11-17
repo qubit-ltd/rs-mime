@@ -31,10 +31,7 @@ impl StagingBudget {
     /// # Returns
     /// A cloneable staging-budget handle.
     pub(in crate::detector) fn from_budget(budget: Arc<MimeBudget>) -> Self {
-        Self {
-            budget,
-            usage: None,
-        }
+        Self { budget, usage: None }
     }
 
     /// Returns a handle that also records permits in the given request.
@@ -100,13 +97,9 @@ mod tests {
 
     #[test]
     fn staging_budget_tracks_usage_and_releases_it_with_the_permit() {
-        let budget = Arc::new(MimeBudget::new(Limits {
-            owned: 0,
-            staging: 7,
-        }));
+        let budget = Arc::new(MimeBudget::new(Limits { owned: 0, staging: 7 }));
         let usage = Arc::new(RequestStagingUsage::default());
-        let staging =
-            StagingBudget::from_budget(Arc::clone(&budget)).with_usage(Arc::clone(&usage));
+        let staging = StagingBudget::from_budget(Arc::clone(&budget)).with_usage(Arc::clone(&usage));
         let first = staging.try_reserve(4).unwrap();
         let second = staging.try_reserve(3).unwrap();
         assert_eq!((usage.current(), usage.peak()), (7, 7));
@@ -117,13 +110,9 @@ mod tests {
 
     #[test]
     fn staging_budget_rejection_does_not_pollute_usage_or_global_counters() {
-        let budget = Arc::new(MimeBudget::new(Limits {
-            owned: 0,
-            staging: 5,
-        }));
+        let budget = Arc::new(MimeBudget::new(Limits { owned: 0, staging: 5 }));
         let usage = Arc::new(RequestStagingUsage::default());
-        let staging =
-            StagingBudget::from_budget(Arc::clone(&budget)).with_usage(Arc::clone(&usage));
+        let staging = StagingBudget::from_budget(Arc::clone(&budget)).with_usage(Arc::clone(&usage));
         let permit = staging.try_reserve(5).unwrap();
         assert!(staging.try_reserve(1).is_none());
         assert_eq!((usage.current(), usage.peak()), (5, 5));
@@ -134,10 +123,7 @@ mod tests {
 
     #[test]
     fn staging_budget_without_tracker_keeps_global_limit_and_overflow_rolls_back() {
-        let budget = Arc::new(MimeBudget::new(Limits {
-            owned: 0,
-            staging: 6,
-        }));
+        let budget = Arc::new(MimeBudget::new(Limits { owned: 0, staging: 6 }));
         let staging = StagingBudget::from_budget(Arc::clone(&budget));
         let permit = staging.try_reserve(6).unwrap();
         assert!(staging.try_reserve(1).is_none());

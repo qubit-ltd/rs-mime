@@ -274,9 +274,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                     budget: MimeBudgetSummary {
                         owned_bytes: content.len(),
                         bytes_read,
-                        staging_bytes: candidates
-                            .staging_bytes
-                            .max(read_tree.staging_usage().peak()),
+                        staging_bytes: candidates.staging_bytes.max(read_tree.staging_usage().peak()),
                     },
                 });
             };

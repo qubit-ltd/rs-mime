@@ -529,10 +529,13 @@ mod async_operation_tests {
     use qubit_fs::spi::StatResponse;
     use qubit_io::AsyncInput;
     use qubit_operation::ResourceRef;
+    use qubit_spi::ProviderDescriptor;
+    use qubit_spi::ProviderId;
+    use qubit_spi::ProviderMetadata;
 
     use super::FfprobeCommandMediaStreamClassifier;
-    use crate::AsyncMediaStreamClassifierProvider;
     use crate::AsyncMediaStreamClassifierBackend;
+    use crate::AsyncMediaStreamClassifierProvider;
     use crate::BorrowedMimeInput;
     use crate::InputExtent;
     use crate::MediaStreamType;
@@ -547,9 +550,6 @@ mod async_operation_tests {
     use crate::detector::MimeExecutionServices;
     use crate::detector::MimeRuntime;
     use crate::managed_temp_staging::StagedMimeInput;
-    use qubit_spi::ProviderDescriptor;
-    use qubit_spi::ProviderId;
-    use qubit_spi::ProviderMetadata;
 
     #[derive(Debug)]
     struct InlinePort;
@@ -603,11 +603,7 @@ mod async_operation_tests {
                     TestGateFuture(gate).await;
                 }
                 if let Some(gate) = concurrent_gate {
-                    ConcurrentTestGateFuture {
-                        gate,
-                        arrived: false,
-                    }
-                    .await;
+                    ConcurrentTestGateFuture { gate, arrived: false }.await;
                 }
                 let output = MimeCommandOutput {
                     exit_code: Some(0),
@@ -670,8 +666,7 @@ mod async_operation_tests {
         let config = MimeConfig::from_config(&raw_config).unwrap();
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
         let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
-        let services =
-            MimeExecutionServices::new(manager, group, Arc::new(InlinePort), 1024 * 1024).unwrap();
+        let services = MimeExecutionServices::new(manager, group, Arc::new(InlinePort), 1024 * 1024).unwrap();
         services.prepare().unwrap();
         let executor = Arc::new(FakeCommandExecutor::default());
         let detector_registry = crate::MimeDetectorRegistry::builtin();
@@ -688,12 +683,10 @@ mod async_operation_tests {
                 &qubit_spi::ProviderSelection::named("mime010-injected-ffprobe").unwrap(),
             )
             .unwrap();
-        let media: Arc<[u8]> =
-            Arc::from(include_bytes!("../../tests/fixtures/real_files/test.ogg").as_slice());
+        let media: Arc<[u8]> = Arc::from(include_bytes!("../../tests/fixtures/real_files/test.ogg").as_slice());
         let mut operation = runtime
             .try_submit_detection(
-                crate::OwnedMimeInput::bytes(Arc::clone(&media), InputExtent::Complete)
-                    .with_filename("clip.ogg"),
+                crate::OwnedMimeInput::bytes(Arc::clone(&media), InputExtent::Complete).with_filename("clip.ogg"),
                 MimeOperationOptions::default(),
             )
             .unwrap_or_else(|_| panic!("prepared Ogg operation should be admitted"));
@@ -727,8 +720,7 @@ mod async_operation_tests {
         let config = MimeConfig::from_config(&raw_config).unwrap();
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
         let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
-        let services =
-            MimeExecutionServices::new(manager, group, Arc::new(InlinePort), 1024 * 1024).unwrap();
+        let services = MimeExecutionServices::new(manager, group, Arc::new(InlinePort), 1024 * 1024).unwrap();
         services.prepare().unwrap();
         let gate = Arc::new(ConcurrentTestGate::default());
         let executor = Arc::new(FakeCommandExecutor {
@@ -764,8 +756,7 @@ mod async_operation_tests {
             .unwrap_or_else(|_| panic!("first Ogg operation should be admitted"));
         let mut second_operation = runtime
             .try_submit_detection(
-                crate::OwnedMimeInput::bytes(Arc::clone(&second), InputExtent::Complete)
-                    .with_filename("second.ogg"),
+                crate::OwnedMimeInput::bytes(Arc::clone(&second), InputExtent::Complete).with_filename("second.ogg"),
                 MimeOperationOptions::default(),
             )
             .unwrap_or_else(|_| panic!("second Ogg operation should be admitted"));

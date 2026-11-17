@@ -24,19 +24,13 @@ pub(crate) struct RequestStagingUsage {
 impl RequestStagingUsage {
     /// Returns the peak simultaneously reserved staging bytes.
     pub(crate) fn peak(&self) -> u64 {
-        self.counters
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .peak
+        self.counters.lock().unwrap_or_else(|error| error.into_inner()).peak
     }
 
     /// Returns bytes currently held by staging permits.
     #[cfg(test)]
     pub(super) fn current(&self) -> u64 {
-        self.counters
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .current
+        self.counters.lock().unwrap_or_else(|error| error.into_inner()).current
     }
 
     #[cfg(test)]
@@ -49,10 +43,7 @@ impl RequestStagingUsage {
 
     /// Records a reservation and returns its RAII accounting guard.
     pub(crate) fn reserve(self: &Arc<Self>, bytes: u64) -> Option<RequestStagingGuard> {
-        let mut counters = self
-            .counters
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let mut counters = self.counters.lock().unwrap_or_else(|error| error.into_inner());
         let current = counters.current.checked_add(bytes)?;
         counters.current = current;
         counters.peak = counters.peak.max(current);
@@ -71,11 +62,7 @@ pub(crate) struct RequestStagingGuard {
 
 impl Drop for RequestStagingGuard {
     fn drop(&mut self) {
-        let mut counters = self
-            .usage
-            .counters
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let mut counters = self.usage.counters.lock().unwrap_or_else(|error| error.into_inner());
         counters.current = counters
             .current
             .checked_sub(self.bytes)
