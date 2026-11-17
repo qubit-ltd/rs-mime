@@ -108,4 +108,4 @@
 | `cargo test --test mod prefix_paths_skip_classifier` | 通过，1 test。 |
 | `git diff --check` | 通过。 |
 
-并发测试随后依据独立 review 增加了第二个关闭线程观察到 shutdown 结果锁被首个调用持有的同步点；修复后再次运行 `cargo test --lib fixed_mime_execution_port`，10 tests 通过。完整格式对齐、style、默认／all-features 测试、文档、coverage、audit 与 CI 结果将在下方补录。
+并发测试随后依据独立 review 调整为通过共享 shutdown 实现入口的同步 hook 确认第二个调用已进入关闭路径，再检查 worker 释放前未提前返回；无论检查结果如何都会释放 job 并 join 两个线程。调整后再次运行 `cargo test --lib fixed_mime_execution_port`，10 tests 通过。完整格式对齐、style、默认／all-features 测试、文档、coverage、audit 与 CI 结果将在下方补录。
