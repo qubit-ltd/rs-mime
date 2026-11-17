@@ -130,19 +130,14 @@ impl MimeExecutionServices {
     /// Starts MIME-owned fixed-capacity workers explicitly.
     pub fn prepare(&self) -> Result<(), crate::MimeError> {
         let _guard = self.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
-        match self
-            .lifecycle
-            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
-        {
-            Ok(_) => match self.execution.prepare() {
-                Ok(()) => Ok(()),
-                Err(error) => {
-                    self.lifecycle.store(0, Ordering::Release);
-                    Err(error)
-                }
-            },
-            Err(1) => Ok(()),
-            Err(_) => Err(crate::MimeError::ExecutionServicesRequired),
+        match self.lifecycle.load(Ordering::Acquire) {
+            0 => {
+                self.execution.prepare()?;
+                self.lifecycle.store(1, Ordering::Release);
+                Ok(())
+            }
+            1 => Ok(()),
+            _ => Err(crate::MimeError::ExecutionServicesRequired),
         }
     }
 
@@ -342,6 +337,8 @@ fn is_unresolved_recovery(recovery: &RecoveryHandle) -> bool {
 mod tests {
     use std::future::Future;
     use std::sync::Arc;
+    use std::sync::Barrier;
+    use std::sync::mpsc;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::task::Context;
@@ -355,6 +352,9 @@ mod tests {
     use super::MimeExecutionServices;
     use crate::MimeError;
     use crate::detector::MimeExecutionPort;
+    use crate::detector::MimeRuntime;
+    use crate::detector::InputExtent;
+    use crate::detector::OwnedMimeInput;
 
     struct ThreadWake(std::thread::Thread);
     impl Wake for ThreadWake {
@@ -423,6 +423,205 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    #[derive(Debug)]
+    struct GatedPreparePort {
+        entered: Arc<Barrier>,
+        release: Arc<Barrier>,
+        fail_first: bool,
+        calls: AtomicUsize,
+    }
+
+    impl MimeExecutionPort for GatedPreparePort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            self.entered.wait();
+            self.release.wait();
+            if self.fail_first && call == 0 {
+                Err(MimeError::ExecutionServicesRequired)
+            } else {
+                Ok(())
+            }
+        }
+
+        fn shutdown(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_prepare_does_not_publish_ready_before_execution_port_returns() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let port = Arc::new(GatedPreparePort {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+            fail_first: false,
+            calls: AtomicUsize::new(0),
+        });
+        let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 32).unwrap();
+        let preparing = services.clone();
+        let prepare_thread = std::thread::spawn(move || preparing.prepare());
+
+        entered.wait();
+        assert!(!services.is_prepared(), "workers are not ready until port preparation completes");
+        assert!(!services.accepts_children(), "children are not admissible during preparation");
+
+        release.wait();
+        prepare_thread.join().unwrap().unwrap();
+        assert!(services.is_prepared());
+        assert!(services.accepts_children());
+        assert_eq!(1, port.calls.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_failed_prepare_keeps_services_unready_and_can_be_retried() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let port = Arc::new(GatedPreparePort {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+            fail_first: true,
+            calls: AtomicUsize::new(0),
+        });
+        let services = MimeExecutionServices::new(manager, group, port.clone(), 32).unwrap();
+
+        let preparing = services.clone();
+        let prepare_thread = std::thread::spawn(move || preparing.prepare());
+        entered.wait();
+        assert!(!services.is_prepared());
+        assert!(!services.accepts_children());
+        release.wait();
+        assert!(matches!(prepare_thread.join().unwrap(), Err(MimeError::ExecutionServicesRequired)));
+        assert!(!services.is_prepared());
+        assert!(!services.accepts_children());
+
+        let retrying = services.clone();
+        let retry_thread = std::thread::spawn(move || retrying.prepare());
+        entered.wait();
+        assert!(!services.is_prepared());
+        release.wait();
+        retry_thread.join().unwrap().unwrap();
+        assert_eq!(2, port.calls.load(Ordering::SeqCst));
+        assert!(services.is_prepared());
+        assert!(services.accepts_children());
+    }
+
+    #[test]
+    fn test_root_and_child_submissions_are_rejected_during_prepare() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let port = Arc::new(GatedPreparePort {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+            fail_first: false,
+            calls: AtomicUsize::new(0),
+        });
+        let services = MimeExecutionServices::new(manager, group.clone(), port, 32).unwrap();
+        let runtime = MimeRuntime::builtin().unwrap().with_execution_services(services.clone());
+
+        let (scope_tx, scope_rx) = mpsc::sync_channel(0);
+        let (parent_release_tx, parent_release_rx) = mpsc::channel();
+        let mut parent = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            scope_tx.send(scope).unwrap();
+            parent_release_rx.recv().unwrap();
+            Ok::<_, MimeError>(())
+        }))
+        .unwrap();
+        let parent_scope = scope_rx.recv().unwrap();
+
+        let preparing = services.clone();
+        let prepare_thread = std::thread::spawn(move || preparing.prepare());
+        entered.wait();
+
+        let root_bytes: Arc<[u8]> = Arc::from(b"root input".as_slice());
+        let root_result = runtime.try_submit_detection(
+            OwnedMimeInput::bytes(Arc::clone(&root_bytes), InputExtent::Complete),
+            Default::default(),
+        );
+        let child_bytes: Arc<[u8]> = Arc::from(b"child input".as_slice());
+        let child_result = runtime.try_submit_detection_in(
+            &parent_scope,
+            OwnedMimeInput::bytes(Arc::clone(&child_bytes), InputExtent::Complete),
+            Default::default(),
+        );
+        for (submission, expected) in [(root_result, root_bytes), (child_result, child_bytes)] {
+            let failure = match submission {
+                Ok(_) => panic!("preparation in progress must reject submission"),
+                Err(failure) => failure,
+            };
+            assert!(matches!(failure.reason, crate::detector::MimeSubmitRejection::ExecutionServicesRequired));
+            match failure.input {
+                OwnedMimeInput::Bytes { content, .. } => {
+                    assert!(Arc::ptr_eq(&content, &expected));
+                }
+                OwnedMimeInput::Provider { .. } => panic!("returned input should remain byte input"),
+            }
+        }
+
+        release.wait();
+        prepare_thread.join().unwrap().unwrap();
+        parent_release_tx.send(()).unwrap();
+        assert!(matches!(block_on(parent.wait_outcome()).unwrap(), qubit_operation::OperationOutcome::Succeeded(())));
+        assert!(block_on(parent.wait_settlement()).all_released());
+        let shutdown = services.shutdown();
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
+    }
+
+    #[test]
+    fn test_shutdown_waits_for_prepare_and_prevents_late_ready_state() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let services = MimeExecutionServices::new(
+            manager,
+            group,
+            Arc::new(GatedPreparePort {
+                entered: Arc::clone(&entered),
+                release: Arc::clone(&release),
+                fail_first: false,
+                calls: AtomicUsize::new(0),
+            }),
+            32,
+        )
+        .unwrap();
+
+        let preparing = services.clone();
+        let prepare_thread = std::thread::spawn(move || preparing.prepare());
+        entered.wait();
+        let shutdown_services = services.clone();
+        let shutdown_contended = Arc::new(Barrier::new(2));
+        let shutdown_contended_thread = Arc::clone(&shutdown_contended);
+        let shutdown_thread = std::thread::spawn(move || {
+            match shutdown_services.lifecycle_lock.try_lock() {
+                Err(std::sync::TryLockError::WouldBlock) => {}
+                Err(std::sync::TryLockError::Poisoned(error)) => {
+                    drop(error.into_inner());
+                    panic!("lifecycle lock should not be poisoned");
+                }
+                Ok(_guard) => panic!("prepare should still hold the lifecycle lock"),
+            }
+            shutdown_contended_thread.wait();
+            shutdown_services.shutdown()
+        });
+        shutdown_contended.wait();
+        release.wait();
+
+        prepare_thread.join().unwrap().unwrap();
+        let shutdown = shutdown_thread.join().unwrap();
+        assert!(!services.is_prepared(), "shutdown must close services after preparation finishes");
+        assert!(matches!(services.prepare(), Err(MimeError::ExecutionServicesRequired)));
+        block_on(shutdown.wait_services_settled()).unwrap();
+        shutdown.stop_services().unwrap();
     }
 
     #[test]
