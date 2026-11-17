@@ -407,9 +407,9 @@ impl MimeRuntime {
                     filename,
                 } => {
                     let filename_short_circuit = options.policy == crate::MimeDetectionPolicy::PreferFilename
-                        && filename.as_deref().is_some_and(|name| {
-                            repository.detect_by_filename(name).len() == 1
-                        });
+                        && filename
+                            .as_deref()
+                            .is_some_and(|name| repository.detect_by_filename(name).len() == 1);
                     let inspected_bytes = if filename_short_circuit {
                         0
                     } else {

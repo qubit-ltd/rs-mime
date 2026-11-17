@@ -49,8 +49,8 @@ fn test_packaged_markdown_links_resolve_inside_package_file_set() {
     assert!(!packaged.is_empty(), "cargo package returned an empty file list");
 
     for document in DOCUMENTS {
-        let markdown = fs::read_to_string(package_root.join(document))
-            .unwrap_or_else(|error| panic!("read {document}: {error}"));
+        let markdown =
+            fs::read_to_string(package_root.join(document)).unwrap_or_else(|error| panic!("read {document}: {error}"));
         for target in local_markdown_links(&markdown) {
             let resolved = resolve_link(document, &target);
             assert!(
@@ -61,7 +61,9 @@ fn test_packaged_markdown_links_resolve_inside_package_file_set() {
     }
 
     assert!(
-        !packaged.iter().any(|path| path.contains("implementation-plan-") || path.contains("design-20261117")),
+        !packaged
+            .iter()
+            .any(|path| path.contains("implementation-plan-") || path.contains("design-20261117")),
         "the package must not include this round's design or implementation plan"
     );
 }
@@ -167,6 +169,9 @@ mod tests {
 
     #[test]
     fn test_link_resolution_normalizes_parent_and_current_components() {
-        assert_eq!("doc/other.md", resolve_link("doc/section/page.md", ".././other.md#heading"));
+        assert_eq!(
+            "doc/other.md",
+            resolve_link("doc/section/page.md", ".././other.md#heading")
+        );
     }
 }

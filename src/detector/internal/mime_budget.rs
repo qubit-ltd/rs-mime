@@ -117,14 +117,28 @@ mod tests {
         assert_eq!(1, budget.counters.lock().unwrap().allocations.len());
         drop(permit);
         assert_eq!(budget.owned_bytes(), 8);
-        assert!(budget.counters.lock().unwrap().allocations.contains_key(&allocation_identity));
+        assert!(
+            budget
+                .counters
+                .lock()
+                .unwrap()
+                .allocations
+                .contains_key(&allocation_identity)
+        );
 
         let ordinary_owned = budget.reserve_owned(1).unwrap();
         let staging = budget.reserve_staging(2).unwrap();
         assert_eq!(9, budget.owned_bytes());
         assert_eq!(2, budget.staging_bytes());
         assert_eq!(1, budget.counters.lock().unwrap().allocations.len());
-        assert!(budget.counters.lock().unwrap().allocations.contains_key(&allocation_identity));
+        assert!(
+            budget
+                .counters
+                .lock()
+                .unwrap()
+                .allocations
+                .contains_key(&allocation_identity)
+        );
         drop((ordinary_owned, staging));
         assert_eq!(8, budget.owned_bytes());
         assert_eq!(0, budget.staging_bytes());

@@ -630,9 +630,21 @@ fn test_operation_runtime_sync_and_async_reports_match_repository_inspection_ext
     let mut parent = manager
         .try_submit(Default::default(), move |scope| {
             let cases = [
-                (InputExtent::Complete, qubit_mime::MimeDetectionPolicy::VerifyContent, "extent.pdf"),
-                (InputExtent::Prefix, qubit_mime::MimeDetectionPolicy::VerifyContent, "extent.pdf"),
-                (InputExtent::Complete, qubit_mime::MimeDetectionPolicy::PreferFilename, "unique-name.pdf"),
+                (
+                    InputExtent::Complete,
+                    qubit_mime::MimeDetectionPolicy::VerifyContent,
+                    "extent.pdf",
+                ),
+                (
+                    InputExtent::Prefix,
+                    qubit_mime::MimeDetectionPolicy::VerifyContent,
+                    "extent.pdf",
+                ),
+                (
+                    InputExtent::Complete,
+                    qubit_mime::MimeDetectionPolicy::PreferFilename,
+                    "unique-name.pdf",
+                ),
             ];
             let mut accepted = true;
             for (extent, policy, filename) in cases {

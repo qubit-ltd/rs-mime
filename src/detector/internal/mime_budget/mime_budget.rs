@@ -148,13 +148,13 @@ impl MimeBudget {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Barrier;
     use std::sync::Arc;
+    use std::sync::Barrier;
 
-    use super::Limits;
-    use super::MimeBudget;
     use super::super::Amount;
     use super::super::PermitInner;
+    use super::Limits;
+    use super::MimeBudget;
 
     #[test]
     fn test_owned_and_staging_counters_follow_live_permits() {
