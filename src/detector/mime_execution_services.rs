@@ -599,13 +599,21 @@ mod tests {
         let prepare_thread = std::thread::spawn(move || preparing.prepare());
         entered.wait();
         let shutdown_services = services.clone();
-        let shutdown_started = Arc::new(Barrier::new(2));
-        let shutdown_started_thread = Arc::clone(&shutdown_started);
+        let shutdown_contended = Arc::new(Barrier::new(2));
+        let shutdown_contended_thread = Arc::clone(&shutdown_contended);
         let shutdown_thread = std::thread::spawn(move || {
-            shutdown_started_thread.wait();
+            match shutdown_services.lifecycle_lock.try_lock() {
+                Err(std::sync::TryLockError::WouldBlock) => {}
+                Err(std::sync::TryLockError::Poisoned(error)) => {
+                    drop(error.into_inner());
+                    panic!("lifecycle lock should not be poisoned");
+                }
+                Ok(_guard) => panic!("prepare should still hold the lifecycle lock"),
+            }
+            shutdown_contended_thread.wait();
             shutdown_services.shutdown()
         });
-        shutdown_started.wait();
+        shutdown_contended.wait();
         release.wait();
 
         prepare_thread.join().unwrap().unwrap();
