@@ -8,4 +8,5 @@
 //! Internal repository index entries.
 
 pub(super) mod glob_entry;
+pub(super) mod glob_pattern;
 pub(super) mod magic_entry;

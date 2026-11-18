@@ -329,6 +329,30 @@ fn test_literal_precedes_higher_weight_wildcard() {
 }
 
 #[test]
+fn test_literal_punctuation_precedes_higher_weight_wildcard() {
+    for (literal, wildcard) in [
+        ("report!", "report*"),
+        ("report^", "report*"),
+        ("report{", "report*"),
+        ("report}", "report*"),
+        ("report]", "report*"),
+    ] {
+        let xml = format!(
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="text/x-literal"><glob pattern="{literal}" weight="10"/></mime-type>
+  <mime-type type="text/x-wildcard"><glob pattern="{wildcard}" weight="100"/></mime-type>
+</mime-info>"#
+        );
+        let repository = MimeRepository::from_xml(&xml).expect("punctuation patterns should parse");
+        assert_eq!(
+            vec!["text/x-literal"],
+            names(repository.detect_by_filename(literal)),
+            "{literal:?} is literal syntax and must outrank the wildcard"
+        );
+    }
+}
+
+#[test]
 fn test_literal_candidates_are_ranked_by_weight_before_mime_deduplication() {
     for xml in [
         r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">

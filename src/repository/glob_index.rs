@@ -12,6 +12,7 @@ use std::collections::HashSet;
 
 use super::MimeGlob;
 use super::internal::glob_entry::GlobEntry;
+use super::internal::glob_pattern;
 
 /// Indexes MIME glob patterns for filename candidate lookup.
 #[derive(Debug, Clone, Default)]
@@ -98,7 +99,7 @@ impl GlobIndex {
             glob: glob.clone(),
             mime_index,
         };
-        if let Some(extension) = extension_pattern(glob.pattern()) {
+        if let Some(extension) = glob_pattern::simple_extension(glob.pattern()) {
             if !extension.is_ascii() {
                 self.wildcards.push(entry);
                 return;
@@ -107,7 +108,7 @@ impl GlobIndex {
                 .entry(extension.to_ascii_lowercase())
                 .or_default()
                 .push(entry);
-        } else if is_literal_pattern(glob.pattern()) {
+        } else if !glob_pattern::has_pattern_syntax(glob.pattern()) {
             if !glob.pattern().is_ascii() {
                 self.unicode_literals.push(entry);
                 return;
@@ -180,39 +181,4 @@ fn extension_suffixes(filename: &str) -> impl Iterator<Item = &str> {
         .match_indices('.')
         .map(|(index, _)| &filename[index + 1..])
         .filter(|extension| !extension.is_empty())
-}
-
-/// Extracts a valid extension from a `*.extension` glob pattern.
-///
-/// # Parameters
-/// - `pattern`: Glob pattern to inspect.
-///
-/// # Returns
-/// The extension when the pattern is a simple extension glob, or `None` when
-/// it contains unsupported glob syntax.
-fn extension_pattern(pattern: &str) -> Option<&str> {
-    let extension = pattern.strip_prefix("*.")?;
-    if extension.is_empty()
-        || extension
-            .chars()
-            .any(|ch| matches!(ch, '*' | '?' | '{' | '}' | '!' | '[' | ']' | '^'))
-    {
-        None
-    } else {
-        Some(extension)
-    }
-}
-
-/// Returns whether a pattern contains no glob metacharacters.
-///
-/// # Parameters
-/// - `pattern`: Glob pattern to inspect.
-///
-/// # Returns
-/// `true` when the pattern consists only of literal characters.
-#[must_use]
-fn is_literal_pattern(pattern: &str) -> bool {
-    !pattern
-        .chars()
-        .any(|ch| matches!(ch, '*' | '?' | '{' | '}' | '!' | '[' | ']' | '^'))
 }

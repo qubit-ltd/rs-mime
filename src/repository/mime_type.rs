@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use super::internal::glob_pattern;
 use crate::MimeGlob;
 use crate::MimeMagic;
 use crate::MimeRepository;
@@ -292,14 +293,5 @@ fn best_extension(globs: &[MimeGlob], complex: bool) -> Option<&str> {
 /// # Returns
 /// Extension without `*.`, or `None` when the pattern contains glob syntax.
 fn extension_from_pattern(pattern: &str) -> Option<&str> {
-    let extension = pattern.strip_prefix("*.")?;
-    if extension.is_empty()
-        || extension
-            .chars()
-            .any(|ch| matches!(ch, '*' | '?' | '{' | '}' | '!' | '[' | ']' | '^'))
-    {
-        None
-    } else {
-        Some(extension)
-    }
+    glob_pattern::simple_extension(pattern)
 }

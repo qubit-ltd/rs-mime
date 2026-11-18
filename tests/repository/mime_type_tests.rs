@@ -40,6 +40,29 @@ fn test_get_all_extensions_sorts_by_weight_descending() {
 }
 
 #[test]
+fn test_punctuation_is_allowed_in_simple_extension_metadata() {
+    let glob = MimeGlob::new("*.data!", 80, false).expect("punctuation is literal in the matcher");
+    let mime_type = MimeType::builder("application/example")
+        .glob(glob)
+        .build()
+        .expect("MIME type should be valid");
+
+    assert!(mime_type.matches_filename("report.data!"));
+    assert_eq!(Some("data!"), mime_type.preferred_extension());
+    assert_eq!(vec!["data!"], mime_type.all_extensions());
+
+    for pattern in ["*.d[ab]", "*.d?", "*.d*"] {
+        let glob = MimeGlob::new(pattern, 80, false).expect("matcher patterns should be valid");
+        let mime_type = MimeType::builder("application/example")
+            .glob(glob)
+            .build()
+            .expect("MIME type should be valid");
+        assert_eq!(None, mime_type.preferred_extension(), "{pattern}");
+        assert!(mime_type.all_extensions().is_empty(), "{pattern}");
+    }
+}
+
+#[test]
 fn test_description_falls_back_to_default_and_english_entries() {
     let default_type = MimeType::builder("text/default")
         .description("", "Default description")
