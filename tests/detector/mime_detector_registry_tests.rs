@@ -9,10 +9,15 @@
 use std::process::Command;
 use std::ptr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc;
+use std::time::Duration;
 
+use qubit_mime::AsyncMimeDetectorProvider;
 use qubit_mime::ContentRequirement;
+use qubit_mime::FileCommandMimeDetectorProvider;
 use qubit_mime::FixedMimeExecutionPort;
 use qubit_mime::MimeConfig;
 use qubit_mime::MimeDetector;
@@ -43,7 +48,6 @@ fn test_builtin_registry_lists_and_resolves_repository_provider() {
         .expect("repository alias should resolve")
         .create()
         .expect("repository alias should resolve");
-
     assert_eq!(
         vec!["repository", "file"],
         registry.provider_ids().iter().map(|id| id.as_str()).collect::<Vec<_>>(),
@@ -421,6 +425,109 @@ fn test_async_registry_aliases_are_shared_by_clones_and_failed_registration_is_a
         1,
         creations.load(Ordering::SeqCst),
         "failed alias collision must not install the attempted provider's canonical ID",
+    );
+}
+
+#[test]
+fn test_async_registry_seal_rejects_registration_through_clone_and_keeps_existing_provider() {
+    let registry = MimeDetectorRegistry::builtin();
+    let clone = registry.clone();
+    registry.seal();
+    clone.seal();
+
+    let error = clone
+        .register_async_provider(FileCommandMimeDetectorProvider)
+        .expect_err("sealing must reject later async registration, even through a clone");
+    assert!(error.contains("sealed"), "unexpected rejection: {error}");
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(qubit_mime::FixedMimeExecutionPort::new(1, 1)),
+        1024,
+    )
+    .unwrap();
+    for selector in ["repository", "repository-mime-detector", "file", "file-command"] {
+        let result = registry.create_async_backend(
+            &ProviderSelection::named(selector).unwrap(),
+            &MimeConfig::default(),
+            &services,
+        );
+        assert!(
+            result.is_ok(),
+            "sealed registry must retain async selector `{selector}`"
+        );
+    }
+}
+
+#[derive(Debug)]
+struct ReentrantDetectorProvider {
+    registry: MimeDetectorRegistry,
+    descriptor: ProviderDescriptor,
+    reentry_succeeded: Arc<AtomicBool>,
+}
+
+impl ProviderMetadata for ReentrantDetectorProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        self.descriptor.clone()
+    }
+}
+
+impl AsyncMimeDetectorProvider for ReentrantDetectorProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn qubit_mime::AsyncMimeDetectorBackend>, MimeError> {
+        let registry = self.registry.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let succeeded = registry.register_async_provider(RepositoryMimeDetectorProvider).is_ok();
+            let _ = sender.send(succeeded);
+        });
+        self.reentry_succeeded.store(
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap_or(false),
+            Ordering::SeqCst,
+        );
+        Err(MimeError::AsyncUnsupported)
+    }
+}
+
+#[test]
+fn test_async_detector_factory_runs_without_holding_catalog_lock() {
+    let registry = MimeDetectorRegistry::default();
+    let reentry_succeeded = Arc::new(AtomicBool::new(false));
+    registry
+        .register_async_provider(ReentrantDetectorProvider {
+            registry: registry.clone(),
+            descriptor: ProviderDescriptor::new(ProviderId::new("reentrant-detector").unwrap()),
+            reentry_succeeded: Arc::clone(&reentry_succeeded),
+        })
+        .unwrap();
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(qubit_mime::FixedMimeExecutionPort::new(1, 1)),
+        1024,
+    )
+    .unwrap();
+    assert!(
+        registry
+            .create_async_backend(
+                &ProviderSelection::named("reentrant-detector").unwrap(),
+                &MimeConfig::default(),
+                &services,
+            )
+            .is_err()
+    );
+    assert!(
+        reentry_succeeded.load(Ordering::SeqCst),
+        "factory callback could not register another provider"
     );
 }
 
