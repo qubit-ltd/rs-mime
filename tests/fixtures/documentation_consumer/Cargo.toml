@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.94"
 
 [dependencies]
-qubit-mime = { version = "^0.22" }
+qubit-mime = { version = "^0.22", path = "../../.." }
 qubit-config = { version = "^0.15" }
 qubit-spi = "^0.14"
 
