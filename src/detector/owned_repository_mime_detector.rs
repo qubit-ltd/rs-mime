@@ -165,6 +165,27 @@ impl AsyncMimeDetectorBackend for OwnedRepositoryMimeDetector {
                     ));
                 }
             };
+            if let Some(mime) = super::internal::async_repository_matcher::preferred_filename(
+                &self.repository,
+                filename,
+                options.policy,
+            ) {
+                if let Some(reason) = scope.context().stop_reason() {
+                    return Err(MimeError::DetectorBackend {
+                        backend: "repository".to_owned(),
+                        reason: format!("operation stopped: {reason:?}"),
+                    });
+                }
+                return Ok(MimeCandidates {
+                    candidates: vec![crate::MimeCandidate {
+                        mime_type: mime.name().to_owned(),
+                        rank: 0,
+                    }],
+                    inspected_extent: InspectedExtent::Prefix(0),
+                    retained_prefix: Vec::new(),
+                    staging_bytes: 0,
+                });
+            }
             let matched =
                 super::internal::async_repository_matcher::match_content(scope, &self.repository, content).await?;
             let candidates = super::internal::async_repository_matcher::select_candidates(

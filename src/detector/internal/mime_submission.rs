@@ -119,6 +119,18 @@ pub(in crate::detector) fn preflight(
                 // bounded staging implementation, so no prefix buffer is
                 // reserved by this layer.
                 services.reserve_owned(0)
+            } else if matches!(requirement, ContentRequirement::Prefix(_))
+                && random_access != crate::RandomAccessCapability::SamplesSameObject
+            {
+                services.reserve_owned(prefix_buffer_bytes(
+                    options,
+                    match requirement {
+                        ContentRequirement::Prefix(required) => required,
+                        ContentRequirement::Complete => unreachable!("complete content was handled above"),
+                    },
+                    max_buffer_size,
+                    services.max_read_bytes,
+                ))
             } else {
                 let read_limit = options
                     .max_read_bytes
@@ -133,6 +145,32 @@ pub(in crate::detector) fn preflight(
     .ok_or(MimeSubmitRejection::BudgetExceeded)
 }
 
+/// Calculates the exact prefix allocation admitted and later requested from a
+/// non-random-access provider.
+///
+/// # Parameters
+/// - `options`: Per-request buffer and read limits.
+/// - `required_prefix`: Prefix length required by the backend.
+/// - `max_buffer_size`: Service-wide maximum buffer size.
+/// - `service_read_limit`: Service-wide cumulative read limit.
+///
+/// # Returns
+/// The prefix allocation bounded by every request and service limit.
+fn prefix_buffer_bytes(
+    options: &MimeOperationOptions,
+    required_prefix: usize,
+    max_buffer_size: usize,
+    service_read_limit: u64,
+) -> usize {
+    let request_buffer_limit = options.max_buffer_bytes.unwrap_or(max_buffer_size);
+    let request_read_limit = options.max_read_bytes.unwrap_or(service_read_limit);
+    let read_limit = request_read_limit.min(service_read_limit);
+    request_buffer_limit
+        .min(max_buffer_size)
+        .min(required_prefix)
+        .min(usize::try_from(read_limit).unwrap_or(usize::MAX))
+}
+
 /// All state retained for one admitted detection request.
 pub(in crate::detector) struct MimeSubmission {
     /// Operation scope used for cancellation and read-tree binding.
@@ -145,6 +183,9 @@ pub(in crate::detector) struct MimeSubmission {
     pub backend: Arc<dyn AsyncMimeDetectorBackend>,
     /// Identifier recorded in the returned report.
     pub backend_id: String,
+    /// Repository used only when this runtime selected its built-in async
+    /// repository matcher, enabling the documented filename short circuit.
+    pub repository: Option<Arc<crate::MimeRepository>>,
     /// Service-wide maximum content buffer.
     pub max_buffer_size: usize,
     /// Per-operation detection and resource limits.
@@ -172,6 +213,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
         services,
         backend,
         backend_id,
+        repository,
         max_buffer_size,
         options,
         permit,
@@ -192,6 +234,25 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                 return Err(MimeError::BufferLimitExceeded {
                     requested: content.len(),
                     limit,
+                });
+            }
+            if let Some(mime) = repository.as_ref().and_then(|repository| {
+                super::async_repository_matcher::preferred_filename(repository, filename.as_deref(), options.policy)
+            }) {
+                if let Some(reason) = _scope.context().stop_reason() {
+                    return Err(MimeError::DetectorBackend {
+                        backend: backend_id,
+                        reason: format!("operation stopped: {reason:?}"),
+                    });
+                }
+                return Ok(MimeDetectionReport {
+                    mime_type: Some(mime.name().to_owned()),
+                    backend_id,
+                    inspected_extent: crate::InspectedExtent::Prefix(0),
+                    budget: MimeBudgetSummary {
+                        owned_bytes: content.len(),
+                        ..Default::default()
+                    },
                 });
             }
             let candidates = backend
@@ -217,6 +278,22 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
             )
         }
         OwnedMimeInput::Provider { file_system, path } => {
+            if let Some(mime) = repository.as_ref().and_then(|repository| {
+                super::async_repository_matcher::preferred_filename(repository, path.file_name(), options.policy)
+            }) {
+                if let Some(reason) = _scope.context().stop_reason() {
+                    return Err(MimeError::DetectorBackend {
+                        backend: backend_id,
+                        reason: format!("operation stopped: {reason:?}"),
+                    });
+                }
+                return Ok(MimeDetectionReport {
+                    mime_type: Some(mime.name().to_owned()),
+                    backend_id,
+                    inspected_extent: crate::InspectedExtent::Prefix(0),
+                    budget: MimeBudgetSummary::default(),
+                });
+            }
             let candidates = if matches!(backend.content_requirement(), ContentRequirement::Complete)
                 || backend.random_access_capability() == crate::RandomAccessCapability::SamplesSameObject
             {
@@ -231,19 +308,15 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                     )
                     .await?
             } else {
-                let read_limit = options
-                    .max_read_bytes
-                    .unwrap_or(services.max_read_bytes)
-                    .min(services.max_read_bytes);
-                let max_bytes = options
-                    .max_buffer_bytes
-                    .unwrap_or(max_buffer_size)
-                    .min(max_buffer_size)
-                    .min(match backend.content_requirement() {
+                let max_bytes = prefix_buffer_bytes(
+                    &options,
+                    match backend.content_requirement() {
                         ContentRequirement::Prefix(required) => required,
-                        ContentRequirement::Complete => max_buffer_size,
-                    })
-                    .min(usize::try_from(read_limit).unwrap_or(usize::MAX));
+                        ContentRequirement::Complete => unreachable!("complete content was handled above"),
+                    },
+                    max_buffer_size,
+                    services.max_read_bytes,
+                );
                 let read_permit = read_tree.reserve(max_bytes as u64).ok_or(MimeError::BudgetExceeded {
                     kind: "read",
                     requested: max_bytes as u64,
@@ -311,8 +384,10 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::Mutex;
 
     use super::cell;
+    use super::prefix_buffer_bytes;
     use super::preflight;
     use super::return_input;
     use super::take;
@@ -326,15 +401,19 @@ mod tests {
     use crate::detector::mime_input::OwnedMimeInput;
     use crate::detector::mime_operation::MimeSubmitRejection;
 
-    #[derive(Debug)]
-    struct NoopPort;
+    #[derive(Debug, Default)]
+    struct NoopPort {
+        events: Arc<Mutex<Vec<&'static str>>>,
+    }
 
     impl MimeExecutionPort for NoopPort {
         fn prepare(&self) -> Result<(), MimeError> {
+            self.events.lock().unwrap().push("prepare");
             Ok(())
         }
 
         fn shutdown(&self) -> Result<(), MimeError> {
+            self.events.lock().unwrap().push("shutdown");
             Ok(())
         }
     }
@@ -342,7 +421,7 @@ mod tests {
     fn services() -> Arc<MimeExecutionServices> {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
         let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
-        Arc::new(MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 32).unwrap())
+        Arc::new(MimeExecutionServices::new(manager, group, Arc::new(NoopPort::default()), 32).unwrap())
     }
 
     fn bytes_input() -> OwnedMimeInput {
@@ -360,12 +439,19 @@ mod tests {
                 assert_eq!(InputExtent::Complete, extent);
                 assert_eq!(Some("report.bin".to_owned()), filename);
             }
-            OwnedMimeInput::Provider { .. } => panic!("byte input should retain its original variant"),
+            OwnedMimeInput::Provider { .. } => {
+                panic!("byte input should retain its original variant")
+            }
         }
     }
 
     #[test]
     fn test_preflight_reserves_valid_bytes_and_rejects_tight_or_zero_limits() {
+        let port = NoopPort::default();
+        port.prepare().unwrap();
+        port.shutdown().unwrap();
+        assert_eq!(vec!["prepare", "shutdown"], *port.events.lock().unwrap());
+
         let services = services();
         let input = OwnedMimeInput::bytes(Arc::from(b"payload".as_slice()), InputExtent::Complete);
         let permit = preflight(
@@ -410,6 +496,25 @@ mod tests {
             ),
             Err(MimeSubmitRejection::InvalidOptions(_))
         ));
+    }
+
+    #[test]
+    fn test_prefix_buffer_bytes_uses_required_request_and_service_limits() {
+        let options = MimeOperationOptions::default();
+        assert_eq!(4, prefix_buffer_bytes(&options, 4, 16 * 1024 * 1024, 16 * 1024 * 1024));
+        assert_eq!(0, prefix_buffer_bytes(&options, 0, 16 * 1024 * 1024, 16 * 1024 * 1024));
+
+        let tight_buffer = MimeOperationOptions {
+            max_buffer_bytes: Some(2),
+            ..Default::default()
+        };
+        assert_eq!(2, prefix_buffer_bytes(&tight_buffer, 4, 16, 64));
+        let tight_read = MimeOperationOptions {
+            max_read_bytes: Some(3),
+            ..Default::default()
+        };
+        assert_eq!(3, prefix_buffer_bytes(&tight_read, 4, 16, 64));
+        assert_eq!(4, prefix_buffer_bytes(&options, 8, 16, 4));
     }
 
     #[test]

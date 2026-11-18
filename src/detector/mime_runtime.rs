@@ -51,6 +51,8 @@ pub struct MimeRuntime {
     execution_services: Option<Arc<MimeExecutionServices>>,
     /// Selected async provider identity and detector backend.
     async_backend: Option<(String, Arc<dyn crate::AsyncMimeDetectorBackend>)>,
+    /// Repository selection is known to use the crate-owned async matcher.
+    async_repository_backend: bool,
 }
 
 impl fmt::Debug for MimeRuntime {
@@ -92,6 +94,7 @@ impl MimeRuntime {
             context: MimeDetectorContext::new(Arc::new(config), repository),
             execution_services: None,
             async_backend: None,
+            async_repository_backend: false,
         }
     }
 
@@ -156,6 +159,7 @@ impl MimeRuntime {
     pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
         let backend = OwnedRepositoryMimeDetector::new(self.context.config().clone(), self.context.repository_arc());
         self.async_backend = Some(("repository".to_owned(), Arc::new(backend)));
+        self.async_repository_backend = true;
         self.execution_services = Some(Arc::new(services));
         self
     }
@@ -183,6 +187,7 @@ impl MimeRuntime {
             .as_ref()
             .ok_or(crate::MimeError::ExecutionServicesRequired)?;
         self.async_backend = Some(registry.create_async_backend(selection, self.context.config(), services)?);
+        self.async_repository_backend = false;
         Ok(self)
     }
 
@@ -220,6 +225,7 @@ impl MimeRuntime {
             services,
             Some(classifier),
         )?);
+        self.async_repository_backend = false;
         Ok(self)
     }
 
@@ -389,7 +395,9 @@ impl MimeRuntime {
                         },
                     })
                 }
-                OwnedMimeInput::Provider { .. } => unreachable!("provider input is rejected before admission"),
+                OwnedMimeInput::Provider { .. } => {
+                    unreachable!("provider input is rejected before admission")
+                }
             };
             let _scope = scope;
             let _permit = permit;
@@ -465,10 +473,24 @@ impl MimeRuntime {
             });
         };
         let max_buffer_size = self.context.config().max_buffer_size();
+        let repository = self.async_repository_backend.then(|| self.context.repository_arc());
+        let filename_short_circuit = repository.as_ref().is_some_and(|repository| {
+            let filename = match &input {
+                OwnedMimeInput::Bytes { filename, .. } => filename.as_deref(),
+                OwnedMimeInput::Provider { path, .. } => path.file_name(),
+            };
+            super::internal::async_repository_matcher::preferred_filename(repository, filename, options.policy)
+                .is_some()
+        });
+        let requirement = if filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }) {
+            crate::ContentRequirement::Prefix(0)
+        } else {
+            backend.content_requirement()
+        };
         let permit = match mime_submission::preflight(
             &input,
             &options,
-            backend.content_requirement(),
+            requirement,
             backend.random_access_capability(),
             max_buffer_size,
             &services,
@@ -499,6 +521,7 @@ impl MimeRuntime {
         let body_tree = Arc::clone(&read_tree);
         let body_backend_id = backend_id.clone();
         let body_max_buffer_size = max_buffer_size;
+        let body_repository = repository;
         let body = move |scope: OperationScope| {
             mime_submission::detect(mime_submission::MimeSubmission {
                 scope,
@@ -506,6 +529,7 @@ impl MimeRuntime {
                 services: body_services,
                 backend,
                 backend_id: body_backend_id,
+                repository: body_repository,
                 max_buffer_size: body_max_buffer_size,
                 options: body_options,
                 permit: Some(permit),

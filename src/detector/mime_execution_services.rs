@@ -648,7 +648,9 @@ mod tests {
                 OwnedMimeInput::Bytes { content, .. } => {
                     assert!(Arc::ptr_eq(&content, &expected));
                 }
-                OwnedMimeInput::Provider { .. } => panic!("returned input should remain byte input"),
+                OwnedMimeInput::Provider { .. } => {
+                    panic!("returned input should remain byte input")
+                }
             }
         }
 

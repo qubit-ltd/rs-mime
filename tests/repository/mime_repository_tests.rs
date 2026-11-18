@@ -489,6 +489,33 @@ fn test_is_a_is_transitive_and_implicit() {
 }
 
 #[test]
+fn test_inode_types_do_not_implicitly_inherit_octet_stream() {
+    let repository = MimeRepository::bundled();
+    for name in ["inode/directory", "inode/socket", "inode/mount-point"] {
+        assert!(!repository.is_a(name, "application/octet-stream"));
+    }
+    assert!(repository.is_a("inode/mount-point", "inode/directory"));
+    assert!(repository.is_a("application/pdf", "application/octet-stream"));
+}
+
+#[test]
+fn test_inode_alias_keeps_explicit_inheritance() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+<mime-type type="inode/x-parent"/>
+<mime-type type="inode/x-child">
+  <alias type="inode/x-child-alias"/>
+  <sub-class-of type="inode/x-parent"/>
+</mime-type>
+</mime-info>"#,
+    )
+    .expect("custom inode MIME types should parse");
+
+    assert!(!repository.is_a("inode/x-child-alias", "application/octet-stream"));
+    assert!(repository.is_a("inode/x-child-alias", "inode/x-parent"));
+}
+
+#[test]
 fn test_is_a_resolves_case_insensitive_aliases_for_child_and_parent() {
     let repository = MimeRepository::from_xml(
         r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">

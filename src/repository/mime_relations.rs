@@ -64,7 +64,10 @@ impl MimeRelations {
         if child == parent {
             return true;
         }
-        if parent == "application/octet-stream" && self.canonical_names.contains_key(&child) {
+        if parent == "application/octet-stream"
+            && self.canonical_names.contains_key(&child)
+            && !child.starts_with("inode/")
+        {
             return true;
         }
         let mut pending = vec![child];

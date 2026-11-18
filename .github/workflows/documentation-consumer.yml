@@ -20,3 +20,5 @@ jobs:
           toolchain: 1.94
       - name: Compile documentation consumer
         run: cargo check --manifest-path tests/fixtures/documentation_consumer/Cargo.toml --locked
+      - name: Compile operation consumer
+        run: cargo check --manifest-path tests/fixtures/operation_consumer/Cargo.toml --locked

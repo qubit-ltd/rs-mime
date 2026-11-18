@@ -61,8 +61,11 @@
 //! content and may invoke an explicitly configured media classifier when
 //! precise detection is enabled. The built-in `file` provider runs staging,
 //! command execution, and cleanup on a blocking thread pool through its async
-//! provider path. A custom backend's default async content hook calls its
-//! synchronous method, so implementations that may block should override it.
+//! provider path. A custom backend's default async content hook returns
+//! `AsyncUnsupported`; synchronous content inspection does not become async
+//! automatically. Backends that need async inspection must implement the async
+//! hook, and managed operations need an async-capable provider with prepared
+//! execution services.
 //! Dropping the future does not guarantee cancellation of started work, and a
 //! prefix may temporarily occupy both the provider buffer and an owned worker
 //! copy; `max_buffer_size` limits each buffer individually.

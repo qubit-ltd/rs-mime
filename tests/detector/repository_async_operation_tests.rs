@@ -123,7 +123,19 @@ fn test_repository_async_candidates_equal_sync() {
                 .collect::<Vec<_>>(),
             expected
         );
-        assert!(matches!(candidates.inspected_extent, InspectedExtent::Prefix(_)));
+        if policy == qubit_mime::MimeDetectionPolicy::PreferFilename {
+            assert_eq!(InspectedExtent::Prefix(0), candidates.inspected_extent);
+            assert_eq!(
+                vec!["image/jpeg"],
+                candidates
+                    .candidates
+                    .iter()
+                    .map(|item| item.mime_type.as_str())
+                    .collect::<Vec<_>>()
+            );
+        } else {
+            assert!(matches!(candidates.inspected_extent, InspectedExtent::Prefix(_)));
+        }
     }
 }
 

@@ -2,8 +2,11 @@
 name = "mime-operation-consumer"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.94"
 publish = false
 
 [dependencies]
 qubit-mime = { path = "../../.." }
-qubit-operation = { version = "^0.3", path = "../../../../rs-operation" }
+qubit-operation = "^0.3"
+
+[workspace]

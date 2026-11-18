@@ -116,7 +116,8 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// A future containing candidate MIME type names.
     ///
     /// # Errors
-    /// Propagates content-inspection errors.
+    /// Propagates content-inspection errors. The default implementation
+    /// returns [`MimeError::AsyncUnsupported`](crate::MimeError::AsyncUnsupported).
     fn guess_from_content_async<'a>(
         &'a self,
         _content: &'a [u8],

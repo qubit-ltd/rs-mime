@@ -18,9 +18,33 @@ use crate::MimeDetectionPolicy;
 use crate::MimeError;
 use crate::MimeRepository;
 use crate::MimeResult;
+use crate::MimeType;
 
 /// Maximum number of repository rules evaluated between cooperative yields.
 pub(super) const RULES_PER_BATCH: usize = 32;
+
+/// Returns the unique repository filename result when the selected policy
+/// permits skipping content inspection.
+///
+/// # Parameters
+/// - `repository`: Immutable MIME filename rules.
+/// - `filename`: Optional basename supplied by the input.
+/// - `policy`: Candidate selection policy.
+///
+/// # Returns
+/// The sole matching MIME type for `PreferFilename`, or `None` otherwise.
+pub(in crate::detector) fn preferred_filename(
+    repository: &MimeRepository,
+    filename: Option<&str>,
+    policy: MimeDetectionPolicy,
+) -> Option<MimeType> {
+    if policy != MimeDetectionPolicy::PreferFilename {
+        return None;
+    }
+    let filename = filename?;
+    let matches = repository.detect_by_filename(filename);
+    (matches.len() == 1).then(|| matches[0].clone())
+}
 
 /// Match content rules in bounded batches while preserving the synchronous
 /// repository's highest-priority and insertion-order behavior.

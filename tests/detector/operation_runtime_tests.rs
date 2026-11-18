@@ -745,7 +745,9 @@ fn test_operation_runtime_sync_submission_uses_parent() {
         .take()
         .expect("sync child should be accepted");
     match child.wait_outcome().unwrap() {
-        qubit_operation::OperationOutcome::Succeeded(report) => assert_eq!(report.budget.owned_bytes, 8),
+        qubit_operation::OperationOutcome::Succeeded(report) => {
+            assert_eq!(report.budget.owned_bytes, 8)
+        }
         other => panic!("sync child should succeed: {other:?}"),
     }
     let shutdown = services.shutdown();
@@ -845,10 +847,14 @@ fn test_operation_runtime_sync_and_async_reports_match_repository_inspection_ext
             ),
             _ => unreachable!(),
         }
+        let expected_async_extent = if index == 2 {
+            qubit_mime::InspectedExtent::Prefix(0)
+        } else {
+            qubit_mime::InspectedExtent::Prefix(max_test_bytes)
+        };
         assert_eq!(
-            qubit_mime::InspectedExtent::Prefix(max_test_bytes),
-            async_report.inspected_extent,
-            "async repository backend reports its bounded matcher window"
+            expected_async_extent, async_report.inspected_extent,
+            "async repository PreferFilename agrees with the synchronous policy"
         );
     }
 
@@ -1016,6 +1022,69 @@ fn test_operation_runtime_sync_preflight_matches_async() {
         parent.wait_outcome().unwrap(),
         qubit_operation::OperationOutcome::Succeeded(true)
     ));
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_repository_prefer_filename_short_circuits_owned_bytes_and_provider() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let services = services(&manager, 4, Arc::new(TestExecution::default()));
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
+
+    let mut bytes = runtime
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(b"not a PDF".as_slice()), InputExtent::Complete)
+                .with_filename("document.pdf"),
+            MimeOperationOptions {
+                policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| panic!("bytes operation should be admitted: {:?}", failure.reason));
+    let bytes_report = match block_on(bytes.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(report) => report,
+        other => panic!("filename-selected bytes request should succeed: {other:?}"),
+    };
+    assert_eq!(bytes_report.mime_type.as_deref(), Some("application/pdf"));
+    assert_eq!(bytes_report.inspected_extent, qubit_mime::InspectedExtent::Prefix(0));
+    assert_eq!(bytes_report.budget.owned_bytes, b"not a PDF".len());
+    assert_eq!(bytes_report.budget.bytes_read, 0);
+    assert_eq!(bytes_report.budget.staging_bytes, 0);
+
+    let opens = Arc::new(AtomicUsize::new(0));
+    let fs = Arc::new(AsyncFileSystem::from_spi(CountingFileSystem::new(Arc::clone(&opens))).unwrap());
+    let mut provider = runtime
+        .try_submit_detection(
+            OwnedMimeInput::Provider {
+                file_system: fs,
+                path: Path::parse("/document.pdf").unwrap(),
+            },
+            MimeOperationOptions {
+                policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| panic!("provider operation should be admitted: {:?}", failure.reason));
+    let provider_report = match block_on(provider.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(report) => report,
+        other => panic!("filename-selected provider request should succeed: {other:?}"),
+    };
+    assert_eq!(provider_report.mime_type.as_deref(), Some("application/pdf"));
+    assert_eq!(provider_report.inspected_extent, qubit_mime::InspectedExtent::Prefix(0));
+    assert_eq!(provider_report.budget.owned_bytes, 0);
+    assert_eq!(provider_report.budget.bytes_read, 0);
+    assert_eq!(provider_report.budget.staging_bytes, 0);
+    assert_eq!(opens.load(Ordering::SeqCst), 0, "provider must not be opened");
+
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();
