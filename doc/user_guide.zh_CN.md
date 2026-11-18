@@ -235,6 +235,9 @@ EOF 时停止。该上限来自 MIME 配置；所选文件名仓库中的 magic 
 应用可以使用 `MimeDetectorRegistry::builtin()` 或其他独立 Registry。应用自定义 Provider
 需要实现 `ProviderMetadata` 和 `ServiceProvider<MimeDetectorSpec>`，完整的注册与解析流程
 见 `examples/custom_provider.rs`。
+启动配置完成后再调用 `seal()`。封闭状态由 Registry 克隆共享，之后同步和异步注册都会被拒绝，
+已有 Provider 仍可读取和创建。异步创建会先快照选中的 Provider，再调用其工厂；回调不持有异步
+注册表锁，回调期间注册的新 Provider 只影响后续创建。
 
 需要在链接时发现 Provider，可以启用可选的 `inventory` feature：
 

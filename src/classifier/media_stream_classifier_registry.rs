@@ -32,6 +32,9 @@ use crate::MimeError;
 static GLOBAL_MEDIA_STREAM_CLASSIFIER_REGISTRY: LazyLock<MediaStreamClassifierRegistry> =
     LazyLock::new(MediaStreamClassifierRegistry::builtin);
 
+/// Async factories indexed by selector with their registration-time identity.
+type AsyncProviderMap = HashMap<String, (String, Arc<dyn AsyncMediaStreamClassifierProvider>)>;
+
 /// Shared runtime Registry for media stream classifier definitions.
 ///
 /// Clones observe the same synchronized provider catalog and default
@@ -50,7 +53,7 @@ pub struct MediaStreamClassifierRegistry {
     /// Typed provider Registry owning synchronized runtime state.
     providers: ProviderRegistry<MediaStreamClassifierSpec>,
     /// Explicit async classifier factories, indexed by canonical ID/alias.
-    async_providers: Arc<RwLock<HashMap<String, Arc<dyn AsyncMediaStreamClassifierProvider>>>>,
+    async_providers: Arc<RwLock<AsyncProviderMap>>,
 }
 
 impl MediaStreamClassifierRegistry {
@@ -103,7 +106,9 @@ impl MediaStreamClassifierRegistry {
     ///
     /// # Errors
     /// Returns [`MimeError::AsyncUnsupported`] when no async-capable provider
-    /// matches, or the provider error when backend construction fails.
+    /// matches, or the provider error when backend construction fails. The
+    /// selected provider is snapshotted before its factory runs, so factory
+    /// callbacks run without holding the async catalog lock.
     pub fn create_async_backend(
         &self,
         selection: &ProviderSelection,
@@ -118,12 +123,12 @@ impl MediaStreamClassifierRegistry {
             }
             _ => return Err(MimeError::AsyncUnsupported),
         };
-        let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
-        for selector in selectors {
-            if let Some(provider) = providers.get(selector) {
-                let id = provider.descriptor().id().as_str().to_owned();
-                return Ok((id, provider.create_async_backend(config, services)?));
-            }
+        let selected = {
+            let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
+            selectors.iter().find_map(|selector| providers.get(*selector).cloned())
+        };
+        if let Some((id, provider)) = selected {
+            return Ok((id, provider.create_async_backend(config, services)?));
         }
         Err(MimeError::AsyncUnsupported)
     }
@@ -151,8 +156,8 @@ impl MediaStreamClassifierRegistry {
     }
 
     /// Returns whether this registry is sealed.
-    #[must_use]
     #[inline]
+    #[must_use]
     pub fn is_sealed(&self) -> bool {
         self.providers.is_sealed()
     }
@@ -183,7 +188,8 @@ impl MediaStreamClassifierRegistry {
     /// `Ok(())` after the provider and its aliases are registered.
     ///
     /// # Errors
-    /// Returns an error when a canonical ID or alias is already registered.
+    /// Returns an error when the registry is sealed or a canonical ID or alias
+    /// is already registered. Register all providers before sealing.
     pub fn register_async_provider<P>(&self, provider: P) -> Result<(), String>
     where
         P: AsyncMediaStreamClassifierProvider + 'static,
@@ -192,6 +198,11 @@ impl MediaStreamClassifierRegistry {
         let id = descriptor.id().as_str().to_owned();
         let provider: Arc<dyn AsyncMediaStreamClassifierProvider> = Arc::new(provider);
         let mut providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
+        if self.providers.is_sealed() {
+            return Err(format!(
+                "cannot register async media classifier `{id}` after registry is sealed"
+            ));
+        }
         let mut selectors = Vec::with_capacity(1 + descriptor.aliases().len());
         selectors.push(id.clone());
         selectors.extend(descriptor.aliases().iter().map(|alias| alias.as_str().to_owned()));
@@ -199,12 +210,12 @@ impl MediaStreamClassifierRegistry {
             if let Some(existing) = providers.get(selector) {
                 return Err(format!(
                     "async classifier selector `{selector}` is already owned by `{}` (attempted `{id}`)",
-                    existing.descriptor().id().as_str()
+                    existing.0
                 ));
             }
         }
         for selector in selectors {
-            providers.insert(selector, Arc::clone(&provider));
+            providers.insert(selector, (id.clone(), Arc::clone(&provider)));
         }
         Ok(())
     }
@@ -282,6 +293,7 @@ impl MediaStreamClassifierRegistry {
     /// Seals this registry against further mutation.
     #[inline]
     pub fn seal(&self) {
+        let _async_providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
         self.providers.seal();
     }
 

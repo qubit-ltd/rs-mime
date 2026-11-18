@@ -10,11 +10,15 @@
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc;
+use std::time::Duration;
 
 #[cfg(unix)]
 use qubit_local_files::LocalFileSystem;
 #[cfg(unix)]
 use qubit_local_files::options::LocalTempDirectoryOptions;
+use qubit_mime::AsyncMediaStreamClassifierProvider;
 use qubit_mime::FfprobeCommandMediaStreamClassifierProvider;
 use qubit_mime::FixedMimeExecutionPort;
 use qubit_mime::MediaStreamClassifierRegistry;
@@ -27,6 +31,9 @@ use qubit_operation::OperationManager;
 use qubit_spi::FallbackPolicy;
 use qubit_spi::ProviderCreationTermination;
 use qubit_spi::ProviderDefinition;
+use qubit_spi::ProviderDescriptor;
+use qubit_spi::ProviderId;
+use qubit_spi::ProviderMetadata;
 use qubit_spi::ProviderSelection;
 use qubit_spi::error::ProviderFailureKind;
 
@@ -370,4 +377,94 @@ fn test_async_registry_rejects_duplicate_provider_registration() {
         )
         .unwrap();
     assert_eq!("ffprobe", id);
+}
+
+#[test]
+fn test_async_classifier_registry_seal_rejects_registration_through_clone_and_keeps_existing_provider() {
+    let registry = MediaStreamClassifierRegistry::builtin();
+    let clone = registry.clone();
+    registry.seal();
+    clone.seal();
+
+    let error = clone
+        .register_async_provider(FfprobeCommandMediaStreamClassifierProvider)
+        .expect_err("sealing must reject later async registration, even through a clone");
+    assert!(error.contains("sealed"), "unexpected rejection: {error}");
+
+    let manager = OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+    let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 32).unwrap();
+    for selector in ["ffprobe", "ffprobe-command"] {
+        let result = registry.create_async_backend(
+            &ProviderSelection::named(selector).unwrap(),
+            &MimeConfig::default(),
+            &services,
+        );
+        assert!(
+            result.is_ok(),
+            "sealed registry must retain async selector `{selector}`"
+        );
+    }
+}
+
+#[derive(Debug)]
+struct ReentrantClassifierProvider {
+    registry: MediaStreamClassifierRegistry,
+    descriptor: ProviderDescriptor,
+    reentry_succeeded: Arc<AtomicBool>,
+}
+
+impl ProviderMetadata for ReentrantClassifierProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        self.descriptor.clone()
+    }
+}
+
+impl AsyncMediaStreamClassifierProvider for ReentrantClassifierProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn qubit_mime::AsyncMediaStreamClassifierBackend>, MimeError> {
+        let registry = self.registry.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let succeeded = registry
+                .register_async_provider(FfprobeCommandMediaStreamClassifierProvider)
+                .is_ok();
+            let _ = sender.send(succeeded);
+        });
+        self.reentry_succeeded.store(
+            receiver.recv_timeout(Duration::from_secs(1)).unwrap_or(false),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        Err(MimeError::AsyncUnsupported)
+    }
+}
+
+#[test]
+fn test_async_classifier_factory_runs_without_holding_catalog_lock() {
+    let registry = MediaStreamClassifierRegistry::default();
+    let reentry_succeeded = Arc::new(AtomicBool::new(false));
+    registry
+        .register_async_provider(ReentrantClassifierProvider {
+            registry: registry.clone(),
+            descriptor: ProviderDescriptor::new(ProviderId::new("reentrant-classifier").unwrap()),
+            reentry_succeeded: Arc::clone(&reentry_succeeded),
+        })
+        .unwrap();
+
+    let manager = OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+    let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 32).unwrap();
+    assert!(
+        registry
+            .create_async_backend(
+                &ProviderSelection::named("reentrant-classifier").unwrap(),
+                &MimeConfig::default(),
+                &services,
+            )
+            .is_err()
+    );
+    assert!(reentry_succeeded.load(std::sync::atomic::Ordering::SeqCst));
 }

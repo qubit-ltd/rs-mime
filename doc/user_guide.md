@@ -299,6 +299,13 @@ separate registry. Application providers implement `ProviderMetadata` and
 `ServiceProvider<MimeDetectorSpec>`; `examples/custom_provider.rs` shows the
 complete registration and resolution path.
 
+Register synchronous and asynchronous providers, then call `seal()` when
+startup configuration is complete. Sealing is shared by registry clones and
+rejects later registrations through either API while keeping existing
+providers available. Async creation snapshots the selected provider before
+calling its factory, so callbacks run without the async catalog lock; a
+provider registered during a callback is considered by later creations.
+
 Link-time provider discovery is opt-in. An application can enable it with:
 
 ```toml

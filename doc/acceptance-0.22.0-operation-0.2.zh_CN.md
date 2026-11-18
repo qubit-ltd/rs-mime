@@ -127,3 +127,14 @@
 | `cargo test --lib async_operation_tests` | 通过，8 tests。 |
 
 最终格式对齐、style、完整测试、文档、coverage、audit、CI 和原工作区整合验证结果待本节下方补录。
+
+## 2026-11-18 MIME-011/012 异步注册封闭与回调锁边界
+
+- MIME-011：两个 Registry 的 `seal()` 与异步注册共享异步表写锁；封闭状态仍由 `ProviderRegistry` 唯一维护。封闭后通过 clone 注册会得到明确错误，已有 canonical ID 与 alias 仍可创建。
+- MIME-012：异步创建只在读锁内按选择顺序克隆 provider 和缓存的 canonical ID，随后在锁外调用 factory。冲突诊断也使用缓存身份，不在异步表锁内调用既有 provider 的 descriptor。
+- 新增 detector 与 classifier 回调重入测试：factory 委托另一个线程注册不同 provider，并用 channel 有界观测注册是否在回调返回前完成；此测试不靠 sleep 等待。
+- 双语指南说明应先完成注册再封闭、克隆共享封闭状态和创建使用 provider 快照。
+
+### 本轮验证
+
+验证命令与结果将在提交和整合完成后补录。
