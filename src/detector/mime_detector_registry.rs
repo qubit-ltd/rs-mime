@@ -7,6 +7,7 @@
 // =============================================================================
 //! Runtime Registry and process-wide facade for MIME detector providers.
 
+use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -26,12 +27,14 @@ use super::FileCommandMimeDetectorProvider;
 use super::MimeDetectorProvider;
 use super::MimeDetectorSpec;
 use super::RepositoryMimeDetectorProvider;
+use super::internal::async_provider_entry::AsyncBackendSelection;
+use super::internal::async_provider_entry::AsyncProviderEntry;
 
 /// Process-wide MIME detector Registry initialized with built-in providers.
 static GLOBAL_MIME_DETECTOR_REGISTRY: LazyLock<MimeDetectorRegistry> = LazyLock::new(MimeDetectorRegistry::builtin);
 
 /// Async factories indexed by selector with their registration-time identity.
-type AsyncProviderMap = HashMap<String, (String, Arc<dyn AsyncMimeDetectorProvider>)>;
+type AsyncProviderMap = HashMap<String, AsyncProviderEntry>;
 
 /// Shared runtime Registry for MIME detector provider definitions.
 ///
@@ -140,6 +143,33 @@ impl MimeDetectorRegistry {
         services: &crate::MimeExecutionServices,
         classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
     ) -> Result<(String, Arc<dyn crate::AsyncMimeDetectorBackend>), crate::MimeError> {
+        self.create_async_backend_internal(selection, config, services, classifier)
+            .map(|(id, backend, _)| (id, backend))
+    }
+
+    /// Creates an async backend and retains the trusted repository belonging
+    /// to the exact built-in provider, if that provider was selected.
+    ///
+    /// # Parameters
+    /// - `selection`: Provider selector or selector chain to resolve.
+    /// - `config`: MIME detection configuration.
+    /// - `services`: Runtime execution services supplied to the provider.
+    /// - `classifier`: Optional async classifier attached to supporting
+    ///   providers.
+    ///
+    /// # Returns
+    /// The selected provider ID, backend, and trusted bundled repository when
+    /// the exact built-in repository provider was selected.
+    ///
+    /// # Errors
+    /// Returns an error when the provider is unavailable or async unsupported.
+    pub(crate) fn create_async_backend_internal(
+        &self,
+        selection: &ProviderSelection,
+        config: &crate::MimeConfig,
+        services: &crate::MimeExecutionServices,
+        classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
+    ) -> Result<AsyncBackendSelection, crate::MimeError> {
         let selectors: Vec<&str> = match selection.target() {
             ProviderSelectionTargetRef::Auto => vec!["repository"],
             ProviderSelectionTargetRef::Named(selector) => vec![selector.as_str()],
@@ -152,9 +182,14 @@ impl MimeDetectorRegistry {
             let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
             selectors.iter().find_map(|selector| providers.get(*selector).cloned())
         };
-        if let Some((id, provider)) = selected {
-            let backend = provider.create_async_backend_with_classifier(config, services, classifier.clone())?;
-            return Ok((id, backend));
+        if let Some(entry) = selected {
+            let backend = entry
+                .provider
+                .create_async_backend_with_classifier(config, services, classifier)?;
+            let repository = entry
+                .uses_bundled_repository
+                .then(crate::MimeRepository::bundled_shared);
+            return Ok((entry.id, backend, repository));
         }
         // Confirm a known synchronous selector is an unsupported capability,
         // while keeping unknown-selection diagnosis on the existing resolver.
@@ -227,6 +262,7 @@ impl MimeDetectorRegistry {
     {
         let descriptor = provider.descriptor();
         let id = descriptor.id().as_str().to_owned();
+        let uses_bundled_repository = TypeId::of::<P>() == TypeId::of::<RepositoryMimeDetectorProvider>();
         let provider: Arc<dyn AsyncMimeDetectorProvider> = Arc::new(provider);
         let mut providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
         if self.providers.is_sealed() {
@@ -241,12 +277,19 @@ impl MimeDetectorRegistry {
             if let Some(existing) = providers.get(selector) {
                 return Err(format!(
                     "async provider selector `{selector}` is already owned by `{}` (attempted `{id}`)",
-                    existing.0,
+                    existing.id,
                 ));
             }
         }
         for selector in selectors {
-            providers.insert(selector, (id.clone(), Arc::clone(&provider)));
+            providers.insert(
+                selector,
+                AsyncProviderEntry {
+                    id: id.clone(),
+                    provider: Arc::clone(&provider),
+                    uses_bundled_repository,
+                },
+            );
         }
         Ok(())
     }

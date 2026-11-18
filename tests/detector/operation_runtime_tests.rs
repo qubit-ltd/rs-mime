@@ -18,10 +18,14 @@ use std::task::Waker;
 
 use qubit_mime::AsyncMediaStreamClassifierBackend;
 use qubit_mime::AsyncMediaStreamClassifierProvider;
+use qubit_mime::AsyncMimeDetectorBackend;
+use qubit_mime::AsyncMimeDetectorProvider;
 use qubit_mime::BorrowedMimeInput;
+use qubit_mime::ContentRequirement;
 use qubit_mime::InputExtent;
 use qubit_mime::MediaStreamClassifierRegistry;
 use qubit_mime::MediaStreamType;
+use qubit_mime::MimeCandidates;
 use qubit_mime::MimeConfig;
 use qubit_mime::MimeDetectorRegistry;
 use qubit_mime::MimeError;
@@ -29,6 +33,7 @@ use qubit_mime::MimeExecutionServices;
 use qubit_mime::MimeFuture;
 use qubit_mime::MimeOperationOptions;
 use qubit_mime::OwnedMimeInput;
+use qubit_mime::RandomAccessCapability;
 use qubit_mime::detector::MimeRuntime;
 use qubit_spi::ProviderDescriptor;
 use qubit_spi::ProviderId;
@@ -320,6 +325,173 @@ fn test_managed_prefix_skips_complete_media_classifier() {
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).is_ok());
     assert!(shutdown.stop_services().is_ok());
+}
+
+#[test]
+fn test_explicit_builtin_repository_selection_short_circuits_provider_reads() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let services = services(&manager, 4, Arc::new(TestExecution::default()));
+    services.prepare().unwrap();
+    let registry = MimeDetectorRegistry::builtin();
+    let classifier_registry = MediaStreamClassifierRegistry::builtin();
+    let classifier_calls = Arc::new(AtomicUsize::new(0));
+    classifier_registry
+        .register_async_provider(PrefixClassifierProvider(Arc::clone(&classifier_calls)))
+        .unwrap();
+
+    let selections = [
+        qubit_spi::ProviderSelection::named("repository").unwrap(),
+        qubit_spi::ProviderSelection::named("repository-mime-detector").unwrap(),
+        qubit_spi::ProviderSelection::chain(["missing", "repository"]).unwrap(),
+    ];
+    let mut total_opens = 0;
+    for selection in selections {
+        let opens = Arc::new(AtomicUsize::new(0));
+        let file_system = Arc::new(AsyncFileSystem::from_spi(CountingFileSystem::new(Arc::clone(&opens))).unwrap());
+        let runtime = MimeRuntime::builtin()
+            .unwrap()
+            .with_execution_services(services.clone())
+            .with_async_provider_selection_and_classifier(
+                &registry,
+                &selection,
+                &classifier_registry,
+                &qubit_spi::ProviderSelection::named("prefix-counting-classifier").unwrap(),
+            )
+            .unwrap();
+        let mut operation = runtime
+            .try_submit_detection(
+                OwnedMimeInput::Provider {
+                    file_system,
+                    path: Path::parse("/report.pdf").unwrap(),
+                },
+                MimeOperationOptions {
+                    policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_else(|failure| panic!("filename result should be admitted: {:?}", failure.reason));
+        let report = match block_on(operation.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(report) => report,
+            other => panic!("explicit built-in selection should succeed: {other:?}"),
+        };
+        assert_eq!(Some("application/pdf"), report.mime_type.as_deref());
+        assert_eq!(qubit_mime::InspectedExtent::Prefix(0), report.inspected_extent);
+        assert_eq!(0, report.budget.bytes_read);
+        assert_eq!(0, report.budget.staging_bytes);
+        total_opens += opens.load(Ordering::SeqCst);
+    }
+    assert_eq!(0, total_opens, "selected repository should avoid opening the Provider");
+    assert_eq!(
+        0,
+        classifier_calls.load(Ordering::SeqCst),
+        "filename short circuit should skip classifier"
+    );
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[derive(Debug)]
+struct RepositoryIdCustomProvider(Arc<AtomicUsize>);
+
+impl ProviderMetadata for RepositoryIdCustomProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("repository").unwrap())
+    }
+}
+
+impl AsyncMimeDetectorProvider for RepositoryIdCustomProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(RepositoryIdCustomBackend(Arc::clone(&self.0))))
+    }
+}
+
+#[derive(Debug)]
+struct RepositoryIdCustomBackend(Arc<AtomicUsize>);
+
+impl AsyncMimeDetectorBackend for RepositoryIdCustomBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Complete
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        _scope: &'a qubit_operation::OperationScope,
+        _input: BorrowedMimeInput<'a>,
+        _options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        Box::pin(async move {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(MimeCandidates {
+                candidates: Vec::new(),
+                inspected_extent: qubit_mime::InspectedExtent::Complete,
+                retained_prefix: Vec::new(),
+                staging_bytes: 0,
+            })
+        })
+    }
+}
+
+#[test]
+fn test_custom_provider_using_repository_id_does_not_get_repository_short_circuit() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let services = services(&manager, 2, Arc::new(TestExecution::default()));
+    services.prepare().unwrap();
+    let provider_calls = Arc::new(AtomicUsize::new(0));
+    let registry = MimeDetectorRegistry::default();
+    registry
+        .register_async_provider(RepositoryIdCustomProvider(Arc::clone(&provider_calls)))
+        .unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(&registry, &qubit_spi::ProviderSelection::named("repository").unwrap())
+        .unwrap();
+    let file_system =
+        Arc::new(AsyncFileSystem::from_spi(CountingFileSystem::new(Arc::new(AtomicUsize::new(0)))).unwrap());
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::Provider {
+                file_system,
+                path: Path::parse("/report.pdf").unwrap(),
+            },
+            MimeOperationOptions {
+                policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| panic!("custom backend should be admitted: {:?}", failure.reason));
+    let report = match block_on(operation.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(report) => report,
+        other => panic!("custom backend should succeed: {other:?}"),
+    };
+    assert_eq!(
+        None,
+        report.mime_type.as_deref(),
+        "custom result must not use the bundled filename match"
+    );
+    assert_eq!(1, provider_calls.load(Ordering::SeqCst), "custom backend must execute");
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
 #[test]

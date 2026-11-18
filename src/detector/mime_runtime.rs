@@ -52,7 +52,7 @@ pub struct MimeRuntime {
     /// Selected async provider identity and detector backend.
     async_backend: Option<(String, Arc<dyn crate::AsyncMimeDetectorBackend>)>,
     /// Repository selection is known to use the crate-owned async matcher.
-    async_repository_backend: bool,
+    async_repository: Option<Arc<MimeRepository>>,
 }
 
 impl fmt::Debug for MimeRuntime {
@@ -94,7 +94,7 @@ impl MimeRuntime {
             context: MimeDetectorContext::new(Arc::new(config), repository),
             execution_services: None,
             async_backend: None,
-            async_repository_backend: false,
+            async_repository: None,
         }
     }
 
@@ -159,7 +159,7 @@ impl MimeRuntime {
     pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
         let backend = OwnedRepositoryMimeDetector::new(self.context.config().clone(), self.context.repository_arc());
         self.async_backend = Some(("repository".to_owned(), Arc::new(backend)));
-        self.async_repository_backend = true;
+        self.async_repository = Some(self.context.repository_arc());
         self.execution_services = Some(Arc::new(services));
         self
     }
@@ -186,8 +186,10 @@ impl MimeRuntime {
             .execution_services
             .as_ref()
             .ok_or(crate::MimeError::ExecutionServicesRequired)?;
-        self.async_backend = Some(registry.create_async_backend(selection, self.context.config(), services)?);
-        self.async_repository_backend = false;
+        let (id, backend, repository) =
+            registry.create_async_backend_internal(selection, self.context.config(), services, None)?;
+        self.async_backend = Some((id, backend));
+        self.async_repository = repository;
         Ok(self)
     }
 
@@ -219,13 +221,14 @@ impl MimeRuntime {
             .ok_or(crate::MimeError::ExecutionServicesRequired)?;
         let (_, classifier) =
             classifier_registry.create_async_backend(classifier_selection, self.context.config(), services)?;
-        self.async_backend = Some(detector_registry.create_async_backend_with_classifier(
+        let (id, backend, repository) = detector_registry.create_async_backend_internal(
             detector_selection,
             self.context.config(),
             services,
             Some(classifier),
-        )?);
-        self.async_repository_backend = false;
+        )?;
+        self.async_backend = Some((id, backend));
+        self.async_repository = repository;
         Ok(self)
     }
 
@@ -473,7 +476,7 @@ impl MimeRuntime {
             });
         };
         let max_buffer_size = self.context.config().max_buffer_size();
-        let repository = self.async_repository_backend.then(|| self.context.repository_arc());
+        let repository = self.async_repository.clone();
         let filename_short_circuit = repository.as_ref().is_some_and(|repository| {
             let filename = match &input {
                 OwnedMimeInput::Bytes { filename, .. } => filename.as_deref(),
