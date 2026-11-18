@@ -41,7 +41,7 @@ thiserror = "^2.0"
 qubit-io = "^0.19.6"
 qubit-operation = "^0.3"
 
-qubit-fs = { version = "^0.3", default-features = false, features = ["async"] }
+qubit-fs = { version = "^0.4", path = "../rs-fs", default-features = false, features = ["async"] }
 
 qubit-codec-misc = "^0.8"
 qubit-command = { version = "^0.11" }
@@ -52,7 +52,7 @@ qubit-spi = "^0.14"
 
 
 [dev-dependencies]
-qubit-fs-local = { version = "^0.11" }
+qubit-fs-local = { version = "^0.11", path = "../rs-fs-local" }
 
 
 [lints.rust]
