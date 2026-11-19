@@ -47,7 +47,7 @@ qubit-codec-misc = "^0.8"
 qubit-command = { version = "^0.11" }
 qubit-config = { version = "^0.15" }
 qubit-datatype = { version = "^0.15", default-features = false, features = ["converter"] }
-qubit-local-files = { version = "^0.5" }
+qubit-local-files = { version = "^0.6" }
 qubit-spi = "^0.14"
 
 
@@ -75,3 +75,6 @@ name = "repository_matching"
 harness = false
 
 [workspace]
+
+[patch.crates-io]
+qubit-local-files = { path = "../rs-local-files" }
