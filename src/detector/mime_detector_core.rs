@@ -156,7 +156,7 @@ impl MimeDetectorCore {
                 return Ok(Some(result));
             }
             if matches!(
-                input,
+                &input,
                 BorrowedMimeInput::Bytes {
                     extent: crate::InputExtent::Prefix,
                     ..
@@ -164,9 +164,10 @@ impl MimeDetectorCore {
             ) {
                 return Ok(Some(result));
             }
-            let filename = match input {
-                BorrowedMimeInput::Bytes { filename, .. } => filename,
+            let filename = match &input {
+                BorrowedMimeInput::Bytes { filename, .. } => *filename,
                 BorrowedMimeInput::Provider { path, .. } => path.file_name(),
+                BorrowedMimeInput::ManagedProvider { filename, .. } => *filename,
             };
             let Some([video_type, audio_type]) = self.precise_detection_mapping(&result, filename) else {
                 return Ok(Some(result));

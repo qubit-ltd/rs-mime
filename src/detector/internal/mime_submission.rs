@@ -19,6 +19,7 @@ use crate::ContentRequirement;
 use crate::MimeDetectionReport;
 use crate::MimeError;
 use crate::MimeResult;
+use crate::MeteredReadSession;
 use crate::detector::mime_detection_report::MimeBudgetSummary;
 use crate::detector::mime_execution_services::MimeExecutionServices;
 use crate::detector::mime_input::InputExtent;
@@ -98,6 +99,7 @@ pub(in crate::detector) fn preflight(
     random_access: crate::RandomAccessCapability,
     max_buffer_size: usize,
     services: &MimeExecutionServices,
+    managed_provider_reads: bool,
 ) -> Result<crate::detector::internal::mime_budget::BudgetPermit, MimeSubmitRejection> {
     if options.max_buffer_bytes == Some(0) || options.max_staging_bytes == Some(0) || options.max_read_bytes == Some(0)
     {
@@ -112,7 +114,11 @@ pub(in crate::detector) fn preflight(
             services.reserve_allocation(content)
         }
         OwnedMimeInput::Provider { .. } => {
-            if matches!(requirement, ContentRequirement::Complete)
+            if managed_provider_reads {
+                // Managed readers reserve only their bounded scratch buffer
+                // around each read; they do not retain a whole input payload.
+                services.reserve_owned(0)
+            } else if matches!(requirement, ContentRequirement::Complete)
                 && random_access == crate::RandomAccessCapability::Unsupported
             {
                 // Complete provider input remains owned by the backend's
@@ -181,6 +187,8 @@ pub(in crate::detector) struct MimeSubmission {
     pub services: Arc<MimeExecutionServices>,
     /// Detector implementation to invoke.
     pub backend: Arc<dyn AsyncMimeDetectorBackend>,
+    /// Whether provider input must be exposed only through metered reads.
+    pub managed_provider_reads: bool,
     /// Identifier recorded in the returned report.
     pub backend_id: String,
     /// Repository used only when this runtime selected its built-in async
@@ -212,6 +220,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
         input,
         services,
         backend,
+        managed_provider_reads,
         backend_id,
         repository,
         max_buffer_size,
@@ -294,6 +303,51 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                     budget: MimeBudgetSummary::default(),
                 });
             }
+            if managed_provider_reads {
+                let request_limit = options.max_read_bytes.unwrap_or(services.max_read_bytes).min(services.max_read_bytes);
+                let payload_limit = options.max_buffer_bytes.unwrap_or(max_buffer_size).min(max_buffer_size);
+                let mut session = if backend.random_access_capability() == crate::RandomAccessCapability::SamplesSameObject {
+                    MeteredReadSession::open_random_access(
+                        &file_system,
+                        &path,
+                        Arc::clone(&services),
+                        Arc::clone(&read_tree),
+                        request_limit,
+                        payload_limit,
+                    )
+                    .await?
+                } else {
+                    MeteredReadSession::open_sequential(
+                        &file_system,
+                        &path,
+                        Arc::clone(&services),
+                        Arc::clone(&read_tree),
+                        request_limit,
+                        payload_limit,
+                    )
+                    .await?
+                };
+                let candidates = backend
+                    .guess_content_in(
+                        &_scope,
+                        BorrowedMimeInput::ManagedProvider {
+                            session: &mut session,
+                            filename: path.file_name(),
+                        },
+                        &options,
+                    )
+                    .await?;
+                (
+                    candidates
+                        .candidates
+                        .first()
+                        .map(|candidate| candidate.mime_type.clone()),
+                    candidates.inspected_extent,
+                    read_tree.consumed(),
+                    0,
+                    candidates.staging_bytes.max(read_tree.staging_usage().peak()),
+                )
+            } else {
             let candidates = if matches!(backend.content_requirement(), ContentRequirement::Complete)
                 || backend.random_access_capability() == crate::RandomAccessCapability::SamplesSameObject
             {
@@ -367,6 +421,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                 0,
                 candidates.staging_bytes.max(read_tree.staging_usage().peak()),
             )
+            }
         }
     };
     Ok(MimeDetectionReport {
@@ -461,6 +516,7 @@ mod tests {
             RandomAccessCapability::Unsupported,
             16,
             &services,
+            false,
         )
         .expect("valid in-memory input should reserve its owned bytes");
         drop(permit);
@@ -477,6 +533,7 @@ mod tests {
                 RandomAccessCapability::Unsupported,
                 16,
                 &services,
+                false,
             ),
             Err(MimeSubmitRejection::BudgetExceeded)
         ));
@@ -493,6 +550,7 @@ mod tests {
                 RandomAccessCapability::Unsupported,
                 16,
                 &services,
+                false,
             ),
             Err(MimeSubmitRejection::InvalidOptions(_))
         ));

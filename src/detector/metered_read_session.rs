@@ -341,7 +341,7 @@ mod tests {
 
         unsafe fn poll_read_unchecked(
             mut self: Pin<&mut Self>,
-            _: &mut Context<'_>,
+            context: &mut Context<'_>,
             output: &mut [u8],
             index: usize,
             count: usize,
@@ -359,6 +359,7 @@ mod tests {
                 if count > 0 {
                     output[index] = b'!';
                 }
+                context.waker().wake_by_ref();
                 return Poll::Pending;
             }
             let actual = count.min(this.content.len().saturating_sub(this.offset));
@@ -438,6 +439,49 @@ mod tests {
             .reserve_owned(16 * 1024 * 1024)
             .expect("scratch permit released");
         drop(scratch_permit);
+    }
+
+    #[test]
+    fn test_sibling_sessions_share_ancestor_read_allowance() {
+        let services = services();
+        let root = ReadTreeContext::new(5);
+        let left = root.child(5);
+        let right = root.child(5);
+        let file_system =
+            AsyncFileSystem::from_spi(MemoryFileSystem::new(b"abcdef", false)).unwrap();
+        let path = qubit_fs::Path::parse("/input").unwrap();
+        let mut left_session = block_on(MeteredReadSession::open_sequential(
+            &file_system,
+            &path,
+            Arc::clone(&services),
+            Arc::clone(&left),
+            5,
+            8,
+        ))
+        .unwrap();
+        let mut right_session = block_on(MeteredReadSession::open_sequential(
+            &file_system,
+            &path,
+            Arc::clone(&services),
+            Arc::clone(&right),
+            5,
+            8,
+        ))
+        .unwrap();
+
+        let mut output = [0xCC; 4];
+        assert_eq!(4, block_on(left_session.read(&mut output)).unwrap());
+        assert_eq!(&output, b"abcd");
+        assert_eq!(1, block_on(right_session.read(&mut output)).unwrap());
+        assert_eq!(b"a", &output[..1]);
+        assert_eq!(5, root.consumed());
+        assert_eq!(4, left.consumed());
+        assert_eq!(1, right.consumed());
+        assert!(matches!(
+            block_on(right_session.read(&mut output)),
+            Err(MimeError::BudgetExceeded { kind: "read", .. })
+        ));
+        assert_eq!(5, root.consumed());
     }
 
     #[test]

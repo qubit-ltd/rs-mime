@@ -592,6 +592,11 @@ impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
                     )
                     .await?
                 }
+                BorrowedMimeInput::ManagedProvider { .. } => {
+                    return Err(MimeError::InvalidClassifierInput {
+                        reason: "managed provider sessions are only accepted by the selected backend".into(),
+                    });
+                }
             };
             let staging_bytes = staged.staged_bytes();
             if let Some(reason) = scope.context().stop_reason() {
