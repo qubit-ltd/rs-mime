@@ -112,18 +112,13 @@ fn test_precise_detection_examples_match_compilable_consumer() {
 fn test_managed_lifecycle_examples_match_runnable_consumer() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let marker = "<!-- mime-doc-example:managed-lifecycle -->";
-    let guides = ["doc/user_guide.md", "doc/user_guide.zh_CN.md"]
-        .map(|path| read(root.join(path)));
+    let guides = ["doc/user_guide.md", "doc/user_guide.zh_CN.md"].map(|path| read(root.join(path)));
     let examples = guides
         .iter()
         .map(|guide| documented_example(guide, marker))
         .collect::<Vec<_>>();
 
-    assert_eq!(
-        examples[0],
-        examples[1],
-        "managed lifecycle examples drifted"
-    );
+    assert_eq!(examples[0], examples[1], "managed lifecycle examples drifted");
 
     let example = read(root.join("examples/managed_lifecycle/mod.rs"));
     assert!(
@@ -133,8 +128,7 @@ fn test_managed_lifecycle_examples_match_runnable_consumer() {
 
     let fixture = read(root.join("tests/fixtures/documentation_consumer/src/main.rs"));
     assert!(
-        fixture.contains("examples/managed_lifecycle/mod.rs")
-            && fixture.contains("managed_lifecycle::run_example();"),
+        fixture.contains("examples/managed_lifecycle/mod.rs") && fixture.contains("managed_lifecycle::run_example();"),
         "consumer fixture does not execute the documented lifecycle example"
     );
 }

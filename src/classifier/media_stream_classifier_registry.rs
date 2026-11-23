@@ -130,12 +130,7 @@ impl MediaStreamClassifierRegistry {
             let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
             providers
                 .iter()
-                .map(|(selector, entry)| {
-                    (
-                        selector.clone(),
-                        (entry.id.clone(), entry.priority, entry.clone()),
-                    )
-                })
+                .map(|(selector, entry)| (selector.clone(), (entry.id.clone(), entry.priority, entry.clone())))
                 .collect::<HashMap<_, _>>()
         };
         let mut builtin_ids = async_catalog
@@ -156,11 +151,7 @@ impl MediaStreamClassifierRegistry {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        auto_priority_ids.extend(
-            async_catalog
-                .values()
-                .map(|(id, priority, _)| (id.clone(), *priority)),
-        );
+        auto_priority_ids.extend(async_catalog.values().map(|(id, priority, _)| (id.clone(), *priority)));
         let candidates = crate::async_selection::resolve(
             selection,
             &async_catalog,
@@ -185,7 +176,12 @@ impl MediaStreamClassifierRegistry {
             };
             let result = provider.map_or_else(
                 || Err(MimeError::AsyncUnsupported),
-                |entry| entry.provider.create_async_backend(config, services).map(|backend| (id, backend)),
+                |entry| {
+                    entry
+                        .provider
+                        .create_async_backend(config, services)
+                        .map(|backend| (id, backend))
+                },
             );
             match result {
                 Ok(selection) => return Ok(selection),
@@ -251,9 +247,7 @@ impl MediaStreamClassifierRegistry {
         let mut ids = providers.values().map(|entry| entry.id.clone()).collect::<Vec<_>>();
         ids.sort();
         ids.dedup();
-        ids.into_iter()
-            .filter_map(|id| ProviderId::new(&id).ok())
-            .collect()
+        ids.into_iter().filter_map(|id| ProviderId::new(&id).ok()).collect()
     }
 
     /// Registers an explicit async classifier factory without constructing a

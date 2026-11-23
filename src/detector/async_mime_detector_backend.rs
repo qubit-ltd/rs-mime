@@ -105,8 +105,8 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     /// provider reads should override this method to return `true`.
     ///
     /// # Returns
-    /// `true` when provider input should be opened once and exposed only through
-    /// [`crate::MeteredReadSession`].
+    /// `true` when provider input should be opened once and exposed only
+    /// through [`crate::MeteredReadSession`].
     fn uses_managed_provider_reads(&self) -> bool {
         self.random_access_capability() == RandomAccessCapability::SamplesSameObject
     }

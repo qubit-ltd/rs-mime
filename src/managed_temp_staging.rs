@@ -78,9 +78,7 @@ pub(crate) fn stage_owned_in<'a>(
 ) -> MimeFuture<'a, ResourceRef<StagedMimeInput>> {
     Box::pin(async move {
         match input {
-            OwnedMimeInput::Bytes {
-                content, extent, ..
-            } => stage_byte_slice_in(scope, &content, extent, limits).await,
+            OwnedMimeInput::Bytes { content, extent, .. } => stage_byte_slice_in(scope, &content, extent, limits).await,
             OwnedMimeInput::Provider { file_system, path } => {
                 stage_provider_in(scope, file_system, path, limits, read_tree).await
             }
@@ -190,24 +188,19 @@ async fn stage_byte_slice_in(
             requested: u64::MAX,
             limit: limits.max_bytes,
         })?;
-        let staging_permit =
-            limits
-                .budget
-                .try_reserve(chunk_size)
-                .ok_or(MimeError::BudgetExceeded {
-                    kind: "staging",
-                    requested: chunk_size,
-                    limit: limits.max_bytes,
-                })?;
-        let owned_permit =
-            limits
-                .budget
-                .try_reserve_owned(bytes.len())
-                .ok_or(MimeError::BudgetExceeded {
-                    kind: "owned",
-                    requested: bytes.len() as u64,
-                    limit: 16 * 1024 * 1024,
-                })?;
+        let staging_permit = limits.budget.try_reserve(chunk_size).ok_or(MimeError::BudgetExceeded {
+            kind: "staging",
+            requested: chunk_size,
+            limit: limits.max_bytes,
+        })?;
+        let owned_permit = limits
+            .budget
+            .try_reserve_owned(bytes.len())
+            .ok_or(MimeError::BudgetExceeded {
+                kind: "owned",
+                requested: bytes.len() as u64,
+                limit: 16 * 1024 * 1024,
+            })?;
         write_chunk_in(
             scope,
             &limits.worker,
@@ -261,15 +254,14 @@ async fn stage_provider_in(
         .map_err(|_| MimeError::ExecutionServicesRequired)?;
     ensure_not_stopped(scope)?;
     let staged = create_empty_staged(scope, reservation, &limits).await?;
-    let _chunk_buffer_permit =
-        limits
-            .budget
-            .try_reserve_owned(8 * 1024)
-            .ok_or(MimeError::BudgetExceeded {
-                kind: "owned",
-                requested: 8 * 1024,
-                limit: 16 * 1024 * 1024,
-            })?;
+    let _chunk_buffer_permit = limits
+        .budget
+        .try_reserve_owned(8 * 1024)
+        .ok_or(MimeError::BudgetExceeded {
+            kind: "owned",
+            requested: 8 * 1024,
+            limit: 16 * 1024 * 1024,
+        })?;
     let mut total = 0_u64;
     let mut chunk = vec![0_u8; 8 * 1024];
     loop {
@@ -292,24 +284,19 @@ async fn stage_provider_in(
             });
         }
         let ask_u64 = staging_request.min(tree_remaining);
-        let permit: ReadPermit = read_tree
-            .reserve(ask_u64)
-            .ok_or(MimeError::BudgetExceeded {
-                kind: "read",
-                requested: staging_request,
-                limit: tree_remaining,
-            })?;
+        let permit: ReadPermit = read_tree.reserve(ask_u64).ok_or(MimeError::BudgetExceeded {
+            kind: "read",
+            requested: staging_request,
+            limit: tree_remaining,
+        })?;
         let ask = usize::try_from(ask_u64).expect("request is capped by fixed chunk size");
         ensure_not_stopped(scope)?;
-        let count = reader
-            .read_async(&mut chunk[..ask])
-            .await
-            .map_err(|error| {
-                // A single AsyncInput read either transfers its returned count or
-                // transfers no bytes on error, so dropping the permit rolls back
-                // the reservation safely.
-                MimeError::Io(error)
-            })?;
+        let count = reader.read_async(&mut chunk[..ask]).await.map_err(|error| {
+            // A single AsyncInput read either transfers its returned count or
+            // transfers no bytes on error, so dropping the permit rolls back
+            // the reservation safely.
+            MimeError::Io(error)
+        })?;
         let count_u64 = u64::try_from(count).map_err(|_| MimeError::BudgetExceeded {
             kind: "read",
             requested: u64::MAX,
@@ -320,13 +307,11 @@ async fn stage_provider_in(
         if count == 0 {
             return Ok(staged);
         }
-        let new_total = total
-            .checked_add(count_u64)
-            .ok_or(MimeError::BudgetExceeded {
-                kind: "staging",
-                requested: u64::MAX,
-                limit: limits.max_bytes,
-            })?;
+        let new_total = total.checked_add(count_u64).ok_or(MimeError::BudgetExceeded {
+            kind: "staging",
+            requested: u64::MAX,
+            limit: limits.max_bytes,
+        })?;
         if new_total > limits.max_bytes {
             return Err(MimeError::BudgetExceeded {
                 kind: "staging",
@@ -334,33 +319,21 @@ async fn stage_provider_in(
                 limit: limits.max_bytes,
             });
         }
-        let permit = limits
+        let permit = limits.budget.try_reserve(count_u64).ok_or(MimeError::BudgetExceeded {
+            kind: "staging",
+            requested: new_total,
+            limit: limits.max_bytes,
+        })?;
+        let owned_permit = limits
             .budget
-            .try_reserve(count_u64)
+            .try_reserve_owned(count)
             .ok_or(MimeError::BudgetExceeded {
-                kind: "staging",
-                requested: new_total,
-                limit: limits.max_bytes,
+                kind: "owned",
+                requested: count as u64,
+                limit: 16 * 1024 * 1024,
             })?;
-        let owned_permit =
-            limits
-                .budget
-                .try_reserve_owned(count)
-                .ok_or(MimeError::BudgetExceeded {
-                    kind: "owned",
-                    requested: count as u64,
-                    limit: 16 * 1024 * 1024,
-                })?;
         let bytes = chunk[..count].to_vec();
-        write_chunk_in(
-            scope,
-            &limits.worker,
-            staged.clone(),
-            bytes,
-            permit,
-            owned_permit,
-        )
-        .await?;
+        write_chunk_in(scope, &limits.worker, staged.clone(), bytes, permit, owned_permit).await?;
         total = new_total;
     }
 }
@@ -394,9 +367,7 @@ async fn create_empty_staged(
                 return Err(stopped_error(reason));
             }
             let fs = LocalFileSystem::host().map_err(|e| MimeError::Io(e.into_io_error()))?;
-            let temp = fs
-                .create_temp_file()
-                .map_err(|e| MimeError::Io(e.into_io_error()))?;
+            let temp = fs.create_temp_file().map_err(|e| MimeError::Io(e.into_io_error()))?;
             let staged = StagedMimeInput {
                 owner: Mutex::new(temp),
                 permits: Mutex::new(Vec::new()),
@@ -506,17 +477,13 @@ pub(crate) fn commit_staged(
     });
     match reservation.commit_with(staged, Arc::clone(&policy)) {
         Ok(resource) => {
-            *cleanup_id
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner()) = Some(resource.id());
+            *cleanup_id.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(resource.id());
             Ok(resource)
         }
         Err(error) => {
             let (_, partial, cleanup, reservation) = error.into_parts();
             let id = reservation.retain_with_for_cleanup(partial, cleanup);
-            *cleanup_id
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner()) = Some(id);
+            *cleanup_id.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(id);
             Err(MimeError::ExecutionServicesRequired)
         }
     }
@@ -555,11 +522,7 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<String>()
         .cloned()
-        .or_else(|| {
-            payload
-                .downcast_ref::<&'static str>()
-                .map(|text| (*text).to_owned())
-        })
+        .or_else(|| payload.downcast_ref::<&'static str>().map(|text| (*text).to_owned()))
         .unwrap_or_else(|| "temporary cleanup panicked".to_owned())
 }
 
@@ -655,8 +618,7 @@ mod lifecycle_tests {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
-        let services =
-            Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
         services.prepare().unwrap();
 
         let content = vec![b'b'; 8 * 1024 + 17];
@@ -667,12 +629,9 @@ mod lifecycle_tests {
             budget: services.staging_budget(),
             worker: MimeExecutionWorker::new(port.clone()),
         };
-        let mut operation = block_on(group.try_submit_async(
-            Default::default(),
-            move |scope| async move {
-                stage_borrowed_bytes_in(&scope, &body_content, InputExtent::Complete, limits).await
-            },
-        ))
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            stage_borrowed_bytes_in(&scope, &body_content, InputExtent::Complete, limits).await
+        }))
         .unwrap();
 
         let resource = match block_on(operation.wait_outcome()).unwrap() {
@@ -685,10 +644,7 @@ mod lifecycle_tests {
 
         drop(resource);
         assert!(block_on(operation.wait_settlement()).all_released());
-        assert!(
-            !path.exists(),
-            "the registered owner is deleted after settlement"
-        );
+        assert!(!path.exists(), "the registered owner is deleted after settlement");
         assert_eq!(0, services.staging_budget().used_bytes());
 
         let shutdown = services.shutdown();
@@ -702,8 +658,7 @@ mod lifecycle_tests {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
-        let services =
-            Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
         services.prepare().unwrap();
         let limits = ManagedStagingLimits {
             max_bytes: 0,
@@ -711,12 +666,9 @@ mod lifecycle_tests {
             worker: MimeExecutionWorker::new(port),
         };
 
-        let mut operation = block_on(group.try_submit_async(
-            Default::default(),
-            move |scope| async move {
-                stage_borrowed_bytes_in(&scope, &[], InputExtent::Complete, limits).await
-            },
-        ))
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            stage_borrowed_bytes_in(&scope, &[], InputExtent::Complete, limits).await
+        }))
         .unwrap();
         let resource = match block_on(operation.wait_outcome()).unwrap() {
             qubit_operation::OperationOutcome::Succeeded(resource) => resource,
@@ -741,8 +693,7 @@ mod lifecycle_tests {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
-        let services =
-            Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
         services.prepare().unwrap();
         let limits = ManagedStagingLimits {
             max_bytes: 3,
@@ -750,12 +701,9 @@ mod lifecycle_tests {
             worker: MimeExecutionWorker::new(port),
         };
         let content = b"four".to_vec();
-        let mut operation = block_on(group.try_submit_async(
-            Default::default(),
-            move |scope| async move {
-                stage_borrowed_bytes_in(&scope, &content, InputExtent::Complete, limits).await
-            },
-        ))
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            stage_borrowed_bytes_in(&scope, &content, InputExtent::Complete, limits).await
+        }))
         .unwrap();
 
         assert!(matches!(
@@ -780,8 +728,7 @@ mod lifecycle_tests {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
-        let services =
-            Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap());
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap());
         services.prepare().unwrap();
         let budget = services.staging_budget();
         let occupied = budget.try_reserve(256 * 1024 * 1024 - 1).unwrap();
@@ -790,12 +737,9 @@ mod lifecycle_tests {
             budget: budget.clone(),
             worker: MimeExecutionWorker::new(port),
         };
-        let mut operation = block_on(group.try_submit_async(
-            Default::default(),
-            move |scope| async move {
-                stage_borrowed_bytes_in(&scope, b"xy", InputExtent::Complete, limits).await
-            },
-        ))
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            stage_borrowed_bytes_in(&scope, b"xy", InputExtent::Complete, limits).await
+        }))
         .unwrap();
 
         assert!(matches!(
@@ -808,11 +752,7 @@ mod lifecycle_tests {
         ));
         assert!(block_on(operation.wait_settlement()).all_released());
         drop(occupied);
-        assert_eq!(
-            0,
-            budget.used_bytes(),
-            "failed chunk and occupied permits are released"
-        );
+        assert_eq!(0, budget.used_bytes(), "failed chunk and occupied permits are released");
 
         let shutdown = services.shutdown();
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
@@ -825,21 +765,16 @@ mod lifecycle_tests {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
-        let services =
-            MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
+        let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
         let budget = services.staging_budget();
         let limits = ManagedStagingLimits {
             max_bytes: 16,
             budget: budget.clone(),
             worker: MimeExecutionWorker::new(port),
         };
-        let mut operation = block_on(group.try_submit_async(
-            Default::default(),
-            move |scope| async move {
-                stage_borrowed_bytes_in(&scope, b"queued nowhere", InputExtent::Complete, limits)
-                    .await
-            },
-        ))
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            stage_borrowed_bytes_in(&scope, b"queued nowhere", InputExtent::Complete, limits).await
+        }))
         .unwrap();
 
         assert!(matches!(
@@ -855,8 +790,7 @@ mod lifecycle_tests {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
-        let services =
-            Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap());
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap());
         services.prepare().unwrap();
         let budget = services.staging_budget();
         let limits = ManagedStagingLimits {
@@ -866,20 +800,11 @@ mod lifecycle_tests {
         };
         let (entered_tx, entered_rx) = mpsc::channel();
         let (continue_tx, continue_rx) = mpsc::channel();
-        let mut operation = block_on(group.try_submit_async(
-            Default::default(),
-            move |scope| async move {
-                entered_tx.send(()).unwrap();
-                continue_rx.recv().unwrap();
-                stage_borrowed_bytes_in(
-                    &scope,
-                    b"cancel before stage",
-                    InputExtent::Complete,
-                    limits,
-                )
-                .await
-            },
-        ))
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            entered_tx.send(()).unwrap();
+            continue_rx.recv().unwrap();
+            stage_borrowed_bytes_in(&scope, b"cancel before stage", InputExtent::Complete, limits).await
+        }))
         .unwrap();
 
         entered_rx.recv().unwrap();
@@ -948,8 +873,7 @@ mod lifecycle_tests {
             dispatch_started: std::sync::Mutex::new(Some(dispatch_tx)),
             job_finished: std::sync::Mutex::new(Some(job_finished_tx)),
         });
-        let services =
-            Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
         services.prepare().unwrap();
 
         let (blocker_started_tx, blocker_started_rx) = mpsc::channel();
@@ -970,13 +894,10 @@ mod lifecycle_tests {
             worker: MimeExecutionWorker::new(port),
         };
         let (body_started_tx, body_started_rx) = mpsc::channel();
-        let mut operation = block_on(group.try_submit_async(
-            Default::default(),
-            move |scope| async move {
-                body_started_tx.send(()).unwrap();
-                stage_borrowed_bytes_in(&scope, b"payload", InputExtent::Complete, limits).await
-            },
-        ))
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            body_started_tx.send(()).unwrap();
+            stage_borrowed_bytes_in(&scope, b"payload", InputExtent::Complete, limits).await
+        }))
         .unwrap();
 
         body_started_rx.recv().unwrap();

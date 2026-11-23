@@ -105,9 +105,9 @@
 //! # }
 //! ```
 
+mod async_selection;
 pub mod classifier;
 pub mod detector;
-mod async_selection;
 pub mod repository;
 
 mod candidate_selection;
@@ -218,11 +218,10 @@ pub use detector::MimeExecutionDispatchFailure;
 pub use detector::MimeExecutionDispatchFailureKind;
 pub use detector::MimeExecutionPort;
 pub use detector::MimeExecutionServices;
-pub use detector::MimeServiceLifecycle;
 pub use detector::MimeFuture;
 pub use detector::MimeOperation;
 pub use detector::MimeOperationOptions;
-pub use detector::metered_read_session::MeteredReadSession;
+pub use detector::MimeServiceLifecycle;
 pub use detector::MimeSubmitFailure;
 pub use detector::MimeSubmitRejection;
 pub use detector::OwnedMimeInput;
@@ -230,6 +229,7 @@ pub use detector::RandomAccessCapability;
 pub use detector::RepositoryMimeDetector;
 pub use detector::RepositoryMimeDetectorProvider;
 pub use detector::StreamBasedMimeDetector;
+pub use detector::metered_read_session::MeteredReadSession;
 pub use mime_config::MimeConfig;
 pub use mime_error::MimeCapability;
 pub use mime_error::MimeError;

@@ -24,7 +24,8 @@ pub(crate) enum AsyncProviderCandidate<T> {
     SyncOnly { id: String },
 }
 
-/// Resolves selectors against async and sync catalogs without running factories.
+/// Resolves selectors against async and sync catalogs without running
+/// factories.
 pub(crate) fn resolve<T: Clone>(
     selection: &ProviderSelection,
     async_catalog: &HashMap<String, (String, i32, T)>,
@@ -51,9 +52,7 @@ pub(crate) fn resolve<T: Clone>(
                     .collect::<Vec<_>>(),
             );
             auto_priority_ids.sort_by(|(left_id, left_priority), (right_id, right_priority)| {
-                right_priority
-                    .cmp(left_priority)
-                    .then_with(|| left_id.cmp(right_id))
+                right_priority.cmp(left_priority).then_with(|| left_id.cmp(right_id))
             });
             for (id, _) in auto_priority_ids {
                 push_candidate(&mut candidates, &mut seen, &id, async_catalog);
@@ -94,9 +93,7 @@ pub(crate) fn resolve<T: Clone>(
         }
     }
 
-    if !unknown.is_empty()
-        && !matches!(selection.target(), ProviderSelectionTargetRef::Chain { .. })
-    {
+    if !unknown.is_empty() && !matches!(selection.target(), ProviderSelectionTargetRef::Chain { .. }) {
         return Err(unknown_selection_error(service, &unknown));
     }
     if candidates.is_empty() {
@@ -156,8 +153,5 @@ fn push_async<T: Clone>(
 }
 
 fn unknown_selection_error(service: &str, selectors: &[String]) -> MimeError {
-    MimeError::ProviderSelection(format!(
-        "unknown {service} selector(s): {}",
-        selectors.join(", ")
-    ))
+    MimeError::ProviderSelection(format!("unknown {service} selector(s): {}", selectors.join(", ")))
 }

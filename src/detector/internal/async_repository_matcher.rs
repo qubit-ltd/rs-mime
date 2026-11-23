@@ -168,18 +168,13 @@ pub(in crate::detector) fn select_candidates(
         .iter()
         .filter_map(|candidate| repository.get(&candidate.mime_type))
         .collect::<Vec<_>>();
-    crate::candidate_selection::select_candidate(
-        &from_filename,
-        &from_content,
-        policy,
-        |left, right| {
-            if policy == MimeDetectionPolicy::Freedesktop {
-                repository.is_a(left.name(), right.name())
-            } else {
-                left.name() == right.name()
-            }
-        },
-    )
+    crate::candidate_selection::select_candidate(&from_filename, &from_content, policy, |left, right| {
+        if policy == MimeDetectionPolicy::Freedesktop {
+            repository.is_a(left.name(), right.name())
+        } else {
+            left.name() == right.name()
+        }
+    })
     .map(|mime| {
         vec![MimeCandidate {
             mime_type: mime.name().to_owned(),
@@ -210,10 +205,17 @@ async fn yield_to_executor() {
 mod cooperative_matcher_tests {
     use std::future::Future;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::task::{Context, Poll, Wake, Waker};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
+    use std::task::Context;
+    use std::task::Poll;
+    use std::task::Wake;
+    use std::task::Waker;
 
-    use qubit_operation::{GroupOptions, OperationManager, OperationOutcome, StopReason};
+    use qubit_operation::GroupOptions;
+    use qubit_operation::OperationManager;
+    use qubit_operation::OperationOutcome;
+    use qubit_operation::StopReason;
 
     use super::match_content;
     use crate::MimeRepository;
@@ -242,9 +244,7 @@ mod cooperative_matcher_tests {
         let xml = format!(
             "<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\"><mime-type type=\"application/x-wide\"><magic priority=\"50\">{}</magic></mime-type></mime-info>",
             (0..4)
-                .map(|index| format!(
-                    "<match type=\"string\" value=\"NEVER{index}\" offset=\"0:65535\"/>"
-                ))
+                .map(|index| format!("<match type=\"string\" value=\"NEVER{index}\" offset=\"0:65535\"/>"))
                 .collect::<String>(),
         );
         let repository = Arc::new(MimeRepository::from_xml(&xml).unwrap());
@@ -276,9 +276,7 @@ mod cooperative_matcher_tests {
             probe_polled.load(Ordering::SeqCst),
             "the matcher should yield within a single wide rule"
         );
-        assert!(
-            matches!(outcome, OperationOutcome::Stopped(report) if report.reason == StopReason::UserCancelled)
-        );
+        assert!(matches!(outcome, OperationOutcome::Stopped(report) if report.reason == StopReason::UserCancelled));
     }
 
     #[test]
@@ -315,10 +313,7 @@ mod cooperative_matcher_tests {
             other => panic!("async matcher should complete: {other:?}"),
         };
         assert_eq!(asynchronous, synchronous);
-        assert_eq!(
-            asynchronous,
-            ["application/x-high-a", "application/x-high-b"]
-        );
+        assert_eq!(asynchronous, ["application/x-high-a", "application/x-high-b"]);
     }
 
     #[test]
@@ -344,11 +339,9 @@ mod cooperative_matcher_tests {
         );
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
-        let mut operation = block_on(
-            group.try_submit_async(Default::default(), move |scope| async move {
-                match_content(&scope, &repository, b"X").await
-            }),
-        )
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            match_content(&scope, &repository, b"X").await
+        }))
         .unwrap();
         let outcome = block_on(operation.wait_outcome()).unwrap();
         let candidates = match outcome {

@@ -7,11 +7,12 @@
 // =============================================================================
 //! MIME content magic matcher.
 
+use qubit_operation::OperationScope;
+use qubit_operation::StopReason;
+
 use crate::MagicValueType;
 use crate::MimeError;
 use crate::MimeResult;
-use qubit_operation::OperationScope;
-use qubit_operation::StopReason;
 
 /// Maximum number of matcher work units evaluated before yielding.
 pub(crate) const MATCH_WORK_PER_BATCH: usize = 4096;
@@ -199,14 +200,11 @@ impl MimeMagicMatcher {
         if !parent_matches {
             return false;
         }
-        self.sub_matchers.is_empty()
-            || self
-                .sub_matchers
-                .iter()
-                .any(|sub_matcher| sub_matcher.matches(bytes))
+        self.sub_matchers.is_empty() || self.sub_matchers.iter().any(|sub_matcher| sub_matcher.matches(bytes))
     }
 
-    /// Tests this matcher with bounded cooperative work and cancellation checks.
+    /// Tests this matcher with bounded cooperative work and cancellation
+    /// checks.
     ///
     /// The explicit stack preserves the parser's maximum-depth guarantee and
     /// evaluates nested alternatives in their original depth-first order.
@@ -220,11 +218,7 @@ impl MimeMagicMatcher {
     ///
     /// # Errors
     /// Returns the accepted stop reason when the operation is cancelled.
-    pub(crate) async fn matches_cooperatively(
-        &self,
-        bytes: &[u8],
-        scope: &OperationScope,
-    ) -> Result<bool, StopReason> {
+    pub(crate) async fn matches_cooperatively(&self, bytes: &[u8], scope: &OperationScope) -> Result<bool, StopReason> {
         let mut pending = vec![self];
         while let Some(matcher) = pending.pop() {
             if let Some(reason) = scope.context().stop_reason() {
@@ -251,15 +245,9 @@ impl MimeMagicMatcher {
     ///
     /// # Errors
     /// Returns the accepted stop reason when the operation is cancelled.
-    async fn matches_parent_cooperatively(
-        &self,
-        bytes: &[u8],
-        scope: &OperationScope,
-    ) -> Result<bool, StopReason> {
+    async fn matches_parent_cooperatively(&self, bytes: &[u8], scope: &OperationScope) -> Result<bool, StopReason> {
         match self.value_type {
-            MagicValueType::String | MagicValueType::Byte => {
-                self.matches_bytes_cooperatively(bytes, scope).await
-            }
+            MagicValueType::String | MagicValueType::Byte => self.matches_bytes_cooperatively(bytes, scope).await,
             MagicValueType::Host16
             | MagicValueType::Host32
             | MagicValueType::Big16
@@ -280,15 +268,8 @@ impl MimeMagicMatcher {
     ///
     /// # Errors
     /// Returns the accepted stop reason when the operation is cancelled.
-    async fn matches_bytes_cooperatively(
-        &self,
-        bytes: &[u8],
-        scope: &OperationScope,
-    ) -> Result<bool, StopReason> {
-        if self.value.is_empty()
-            || bytes.len() < self.value.len()
-            || self.offset_begin >= bytes.len()
-        {
+    async fn matches_bytes_cooperatively(&self, bytes: &[u8], scope: &OperationScope) -> Result<bool, StopReason> {
+        if self.value.is_empty() || bytes.len() < self.value.len() || self.offset_begin >= bytes.len() {
             return Ok(false);
         }
         let end = self.offset_end.min(bytes.len() - self.value.len());
@@ -296,10 +277,7 @@ impl MimeMagicMatcher {
             return Ok(false);
         }
         for (count, offset) in (self.offset_begin..=end).enumerate() {
-            if self
-                .value_matches_cooperatively(bytes, offset, scope)
-                .await?
-            {
+            if self.value_matches_cooperatively(bytes, offset, scope).await? {
                 return Ok(true);
             }
             if count % MATCH_WORK_PER_BATCH == MATCH_WORK_PER_BATCH - 1 {
@@ -360,11 +338,7 @@ impl MimeMagicMatcher {
     ///
     /// # Errors
     /// Returns the accepted stop reason when the operation is cancelled.
-    async fn matches_numeric_cooperatively(
-        &self,
-        bytes: &[u8],
-        scope: &OperationScope,
-    ) -> Result<bool, StopReason> {
+    async fn matches_numeric_cooperatively(&self, bytes: &[u8], scope: &OperationScope) -> Result<bool, StopReason> {
         if bytes.len() < self.value.len() || self.offset_begin >= bytes.len() {
             return Ok(false);
         }
@@ -504,9 +478,7 @@ fn validate_offsets(offset_begin: usize, offset_end: usize) -> MimeResult<()> {
 /// when a numeric value has the wrong width.
 fn validate_value_width(value_type: MagicValueType, value: &[u8]) -> MimeResult<()> {
     if value.is_empty() {
-        return Err(MimeError::invalid_matcher(
-            "magic matcher value must not be empty",
-        ));
+        return Err(MimeError::invalid_matcher("magic matcher value must not be empty"));
     }
     if let Some(width) = value_type.numeric_width()
         && value.len() != width
@@ -553,15 +525,11 @@ fn validate_mask_width(value: &[u8], mask: Option<&[u8]>) -> MimeResult<()> {
 #[inline]
 fn value_matches_at(bytes: &[u8], offset: usize, value: &[u8], mask: Option<&[u8]>) -> bool {
     match mask {
-        Some(mask) => {
-            value
-                .iter()
-                .zip(mask.iter())
-                .enumerate()
-                .all(|(index, (value_byte, mask_byte))| {
-                    (bytes[offset + index] & mask_byte) == (*value_byte & mask_byte)
-                })
-        }
+        Some(mask) => value
+            .iter()
+            .zip(mask.iter())
+            .enumerate()
+            .all(|(index, (value_byte, mask_byte))| (bytes[offset + index] & mask_byte) == (*value_byte & mask_byte)),
         None => value
             .iter()
             .enumerate()

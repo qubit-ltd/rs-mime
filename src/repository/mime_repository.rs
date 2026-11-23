@@ -360,10 +360,7 @@ impl MimeRepository {
     }
 
     /// Returns the parsed magic rule referenced by an index entry.
-    pub(crate) fn magic_rule(
-        &self,
-        entry: &super::internal::magic_entry::MagicEntry,
-    ) -> Option<&MimeMagic> {
+    pub(crate) fn magic_rule(&self, entry: &super::internal::magic_entry::MagicEntry) -> Option<&MimeMagic> {
         self.mime_types
             .get(entry.mime_index)
             .and_then(|mime_type| mime_type.magics().get(entry.magic_index))

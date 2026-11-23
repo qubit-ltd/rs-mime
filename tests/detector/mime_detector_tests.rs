@@ -67,8 +67,8 @@ use qubit_mime::MimeDetectorBackend;
 use qubit_mime::MimeDetectorCore;
 use qubit_mime::MimeDetectorRegistry;
 use qubit_mime::MimeError;
-use qubit_mime::MimeResult;
 use qubit_mime::MimeRepository;
+use qubit_mime::MimeResult;
 use qubit_mime::RepositoryMimeDetector;
 use qubit_spi::ProviderSelection;
 
@@ -686,13 +686,25 @@ fn test_repository_legacy_async_hook_requires_explicit_backend() {
         run_ready(detector.detect_async_path(&filesystem, &path, 16, MimeDetectionPolicy::PreferFilename))
             .expect("unique filename candidate should retain its short-circuit"),
     );
-    assert_eq!(0, opens.load(Ordering::Relaxed), "filename short-circuit must not open the provider path");
+    assert_eq!(
+        0,
+        opens.load(Ordering::Relaxed),
+        "filename short-circuit must not open the provider path"
+    );
 
     let error = run_ready(detector.detect_async_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent))
         .expect_err("legacy async hook must not run the synchronous repository backend");
     assert!(matches!(error, MimeError::AsyncUnsupported));
-    assert_eq!(0, opens.load(Ordering::Relaxed), "unsupported content must fail before opening the provider path");
-    assert_eq!(0, reads.load(Ordering::Relaxed), "unsupported content must fail before reading provider bytes");
+    assert_eq!(
+        0,
+        opens.load(Ordering::Relaxed),
+        "unsupported content must fail before opening the provider path"
+    );
+    assert_eq!(
+        0,
+        reads.load(Ordering::Relaxed),
+        "unsupported content must fail before reading provider bytes"
+    );
 }
 
 #[test]
@@ -1329,13 +1341,8 @@ fn test_detect_path_preserves_backslash_in_object_key_basename() {
         AsyncFileSystem::from_spi(PrefixAsyncFileSystemSpi::new(b"")).expect("async fixture should be created");
     assert_eq!(
         Some("application/x-native-basename".to_owned()),
-        run_ready(detector.detect_async_path(
-            &async_filesystem,
-            &path,
-            0,
-            MimeDetectionPolicy::PreferFilename,
-        ))
-        .expect("typed async provider path should match its native basename"),
+        run_ready(detector.detect_async_path(&async_filesystem, &path, 0, MimeDetectionPolicy::PreferFilename,))
+            .expect("typed async provider path should match its native basename"),
     );
 }
 

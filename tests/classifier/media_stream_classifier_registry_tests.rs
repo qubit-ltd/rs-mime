@@ -362,17 +362,22 @@ fn test_async_registry_resolves_auto_alias_chain_and_unknown_selection() {
 
     let strict_chain = ProviderSelection::chain(["not-registered", "ffprobe-command"])
         .expect("strict chain selectors should be valid");
-    assert!(registry
-        .create_async_backend(&strict_chain, &config, &services)
-        .is_err(), "strict chains should diagnose missing selectors instead of skipping them");
+    assert!(
+        registry
+            .create_async_backend(&strict_chain, &config, &services)
+            .is_err(),
+        "strict chains should diagnose missing selectors instead of skipping them"
+    );
 
     let empty = MediaStreamClassifierRegistry::default();
     assert!(empty.async_provider_ids().is_empty());
-    assert!(empty
-        .create_async_backend(&ProviderSelection::auto(), &config, &services)
-        .expect_err("empty async catalog should have a selection diagnostic")
-        .to_string()
-        .contains("no media stream classifier candidates"));
+    assert!(
+        empty
+            .create_async_backend(&ProviderSelection::auto(), &config, &services)
+            .expect_err("empty async catalog should have a selection diagnostic")
+            .to_string()
+            .contains("no media stream classifier candidates")
+    );
 }
 
 #[test]
@@ -499,7 +504,11 @@ fn test_async_classifier_absence_fallback_tries_next_registered_factory() {
 
     assert!(matches!(result, Err(MimeError::AsyncUnsupported)));
     assert_eq!(1, first_creations.load(Ordering::SeqCst));
-    assert_eq!(1, second_creations.load(Ordering::SeqCst), "AsyncUnsupported is absence and should fall through");
+    assert_eq!(
+        1,
+        second_creations.load(Ordering::SeqCst),
+        "AsyncUnsupported is absence and should fall through"
+    );
 }
 
 #[derive(Debug)]

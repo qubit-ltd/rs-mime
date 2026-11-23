@@ -61,13 +61,8 @@ fn managed_lifecycle(
     let group = manager
         .group(GroupOptions { capacity: 8 })
         .expect("MIME operation group");
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 8)),
-        1024 * 1024,
-    )
-    .expect("execution services");
+    let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 8)), 1024 * 1024)
+        .expect("execution services");
     services.prepare().expect("prepare MIME services");
 
     let runtime = MimeRuntime::builtin()
@@ -83,8 +78,7 @@ fn managed_lifecycle(
             eprintln!("submission rejected: {:?}", failure.reason);
             retry_queue.push(failure.input);
             let shutdown = services.shutdown();
-            let settled =
-                block_on(shutdown.wait_services_settled()).expect("settle service operations");
+            let settled = block_on(shutdown.wait_services_settled()).expect("settle service operations");
             assert!(settled.operations_settled);
             let stopped = shutdown.stop_services().expect("stop MIME services");
             assert!(stopped.services_stopped);
@@ -103,10 +97,7 @@ fn managed_lifecycle(
     }
 
     let settlement = block_on(operation.wait_settlement());
-    assert!(
-        settlement.all_released(),
-        "operation resources should be settled"
-    );
+    assert!(settlement.all_released(), "operation resources should be settled");
     drop(operation);
 
     let shutdown = services.shutdown();
@@ -168,10 +159,7 @@ impl AsyncFileSystemSpi for MemoryProvider {
         })
     }
 
-    fn open_reader<'a>(
-        &'a self,
-        request: OpenReaderRequest<'a>,
-    ) -> SpiFuture<'a, FsResult<OpenedAsyncReader>> {
+    fn open_reader<'a>(&'a self, request: OpenReaderRequest<'a>) -> SpiFuture<'a, FsResult<OpenedAsyncReader>> {
         let path = request.path().clone();
         let info = OpenedFileInfo::new(self.id.clone(), path);
         let input = MemoryInput {
@@ -199,8 +187,7 @@ impl AsyncInput for MemoryInput {
     ) -> Poll<std::io::Result<usize>> {
         let this = self.get_mut();
         let read = count.min(this.content.len().saturating_sub(this.position));
-        output[index..index + read]
-            .copy_from_slice(&this.content[this.position..this.position + read]);
+        output[index..index + read].copy_from_slice(&this.content[this.position..this.position + read]);
         this.position += read;
         Poll::Ready(Ok(read))
     }
@@ -231,16 +218,11 @@ fn block_on<F: Future>(future: F) -> F::Output {
 }
 
 pub fn run_example() {
-    let file_system =
-        Arc::new(AsyncFileSystem::from_spi(MemoryProvider::sample_pdf()).expect("memory provider"));
-    let recovery_store =
-        RecoveryStore::new(RecoveryStoreOptions::default()).expect("recovery store");
+    let file_system = Arc::new(AsyncFileSystem::from_spi(MemoryProvider::sample_pdf()).expect("memory provider"));
+    let recovery_store = RecoveryStore::new(RecoveryStoreOptions::default()).expect("recovery store");
     let mut retry_queue = Vec::new();
     managed_lifecycle(file_system, &recovery_store, &mut retry_queue);
-    assert!(
-        retry_queue.is_empty(),
-        "the sample submission should be accepted"
-    );
+    assert!(retry_queue.is_empty(), "the sample submission should be accepted");
     if recovery_store.snapshot().groups == 0 {
         recovery_store
             .request_shutdown()

@@ -21,11 +21,7 @@ fn rule(priority: u16, value: &[u8]) -> MimeMagic {
 }
 
 fn mime_types_with_rules(entries: &[(usize, u16, &[u8])]) -> Vec<MimeType> {
-    let count = entries
-        .iter()
-        .map(|(index, _, _)| index + 1)
-        .max()
-        .unwrap_or(0);
+    let count = entries.iter().map(|(index, _, _)| index + 1).max().unwrap_or(0);
     let mut magics = vec![Vec::new(); count];
     for (mime_index, priority, value) in entries {
         magics[*mime_index].push(rule(*priority, value));
@@ -37,9 +33,7 @@ fn mime_types_with_rules(entries: &[(usize, u16, &[u8])]) -> Vec<MimeType> {
             let name = format!("application/x-{index}");
             rules
                 .into_iter()
-                .fold(MimeType::builder(&name), |builder, magic| {
-                    builder.magic(magic)
-                })
+                .fold(MimeType::builder(&name), |builder, magic| builder.magic(magic))
                 .build()
                 .expect("test MIME type should be valid")
         })

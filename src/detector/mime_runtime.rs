@@ -111,10 +111,7 @@ impl MimeRuntime {
     /// values and returns `Ok`. The result type is retained for consistency
     /// with detector creation APIs.
     pub fn builtin() -> MimeResult<Self> {
-        Ok(Self::new(
-            MimeConfig::default(),
-            MimeRepository::bundled_shared(),
-        ))
+        Ok(Self::new(MimeConfig::default(), MimeRepository::bundled_shared()))
     }
 
     /// Creates a detector using this runtime's configuration and repository.
@@ -160,10 +157,7 @@ impl MimeRuntime {
     /// # Returns
     /// This runtime configured for managed operations.
     pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
-        let backend = OwnedRepositoryMimeDetector::new(
-            self.context.config().clone(),
-            self.context.repository_arc(),
-        );
+        let backend = OwnedRepositoryMimeDetector::new(self.context.config().clone(), self.context.repository_arc());
         self.async_backend = Some(("repository".to_owned(), Arc::new(backend)));
         self.async_repository = Some(self.context.repository_arc());
         self.execution_services = Some(Arc::new(services));
@@ -192,12 +186,8 @@ impl MimeRuntime {
             .execution_services
             .as_ref()
             .ok_or(crate::MimeError::ExecutionServicesRequired)?;
-        let (id, backend, repository) = registry.create_async_backend_internal(
-            selection,
-            self.context.config(),
-            services,
-            None,
-        )?;
+        let (id, backend, repository) =
+            registry.create_async_backend_internal(selection, self.context.config(), services, None)?;
         self.async_backend = Some((id, backend));
         self.async_repository = repository;
         Ok(self)
@@ -229,11 +219,8 @@ impl MimeRuntime {
             .execution_services
             .as_ref()
             .ok_or(crate::MimeError::ExecutionServicesRequired)?;
-        let (_, classifier) = classifier_registry.create_async_backend(
-            classifier_selection,
-            self.context.config(),
-            services,
-        )?;
+        let (_, classifier) =
+            classifier_registry.create_async_backend(classifier_selection, self.context.config(), services)?;
         let (id, backend, repository) = detector_registry.create_async_backend_internal(
             detector_selection,
             self.context.config(),
@@ -336,9 +323,7 @@ impl MimeRuntime {
             Ok(detector) => detector,
             Err(_) => {
                 return Err(MimeSubmitFailure {
-                    reason: MimeSubmitRejection::InvalidOptions(
-                        "detector construction failed".into(),
-                    ),
+                    reason: MimeSubmitRejection::InvalidOptions("detector construction failed".into()),
                     input,
                 });
             }
@@ -380,8 +365,7 @@ impl MimeRuntime {
                     extent,
                     filename,
                 } => {
-                    let filename_short_circuit = options.policy
-                        == crate::MimeDetectionPolicy::PreferFilename
+                    let filename_short_circuit = options.policy == crate::MimeDetectionPolicy::PreferFilename
                         && filename
                             .as_deref()
                             .is_some_and(|name| repository.detect_by_filename(name).len() == 1);
@@ -391,11 +375,7 @@ impl MimeRuntime {
                         content.len().min(repository_max_test_bytes)
                     };
                     let mime_type = if filename_short_circuit {
-                        detector.detect_by_filename(
-                            filename
-                                .as_deref()
-                                .expect("short circuit requires filename"),
-                        )?
+                        detector.detect_by_filename(filename.as_deref().expect("short circuit requires filename"))?
                     } else {
                         match extent {
                             super::mime_input::InputExtent::Prefix => detector.detect_prefix(
@@ -411,9 +391,7 @@ impl MimeRuntime {
                     Ok(crate::MimeDetectionReport {
                         mime_type,
                         backend_id: "repository".into(),
-                        inspected_extent: super::mime_input::InspectedExtent::Prefix(
-                            inspected_bytes,
-                        ),
+                        inspected_extent: super::mime_input::InspectedExtent::Prefix(inspected_bytes),
                         budget: super::mime_detection_report::MimeBudgetSummary {
                             owned_bytes: content.len(),
                             ..Default::default()
@@ -501,20 +479,16 @@ impl MimeRuntime {
         let max_buffer_size = self.context.config().max_buffer_size();
         let repository = self.async_repository.clone();
         let filename_winner = repository.as_ref().and_then(|repository| match &input {
-            OwnedMimeInput::Bytes { filename, .. } => {
-                super::internal::async_repository_matcher::preferred_filename(
-                    repository,
-                    filename.as_deref(),
-                    options.policy,
-                )
-            }
-            OwnedMimeInput::Provider { path, .. } => {
-                super::internal::async_repository_matcher::preferred_basename(
-                    repository,
-                    path.file_name(),
-                    options.policy,
-                )
-            }
+            OwnedMimeInput::Bytes { filename, .. } => super::internal::async_repository_matcher::preferred_filename(
+                repository,
+                filename.as_deref(),
+                options.policy,
+            ),
+            OwnedMimeInput::Provider { path, .. } => super::internal::async_repository_matcher::preferred_basename(
+                repository,
+                path.file_name(),
+                options.policy,
+            ),
         });
         let filename_short_circuit = filename_winner.is_some();
         let requirement = if filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }) {
@@ -572,9 +546,7 @@ impl MimeRuntime {
         let body_filename_winner = filename_winner.map(|mime| mime.name().to_owned());
         let body = move |scope: OperationScope| async move {
             let read_tree = if let Some(pending_tree) = body_pending_tree {
-                pending_tree
-                    .commit()
-                    .map_err(crate::MimeError::ReadBudgetBinding)?
+                pending_tree.commit().map_err(crate::MimeError::ReadBudgetBinding)?
             } else {
                 body_standalone_tree.expect("root submissions have a standalone read tree")
             };
@@ -604,9 +576,7 @@ impl MimeRuntime {
                 }
             }
         } else {
-            services
-                .async_root_group
-                .try_submit(options.operation, body)
+            services.async_root_group.try_submit(options.operation, body)
         };
         match result {
             Ok(handle) => {

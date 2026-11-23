@@ -463,7 +463,8 @@ where
             // cannot be represented as UTF-8.
             let filename = file.to_string_lossy();
             let from_filename = self.guess_from_filename(&filename);
-            let (from_content, _content) = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+            let (from_content, _content) = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename
+            {
                 (Vec::new(), Vec::new())
             } else {
                 self.guess_from_file(file)?
@@ -524,9 +525,13 @@ where
             .map(|value| self.guess_from_filename_basename(value))
             .unwrap_or_default();
         if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
-            return self
-                .core()
-                .select_result_for_basename(&from_filename, &[], filename, policy, DetectionSource::None);
+            return self.core().select_result_for_basename(
+                &from_filename,
+                &[],
+                filename,
+                policy,
+                DetectionSource::None,
+            );
         }
         let (from_content, content) = self.guess_from_provider_path(file_system, path, max_bytes)?;
         let source = content
@@ -572,9 +577,13 @@ where
                 .map(|value| self.guess_from_filename_basename(value))
                 .unwrap_or_default();
             if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
-                return self
-                    .core()
-                    .select_result_for_basename(&from_filename, &[], filename, policy, DetectionSource::None);
+                return self.core().select_result_for_basename(
+                    &from_filename,
+                    &[],
+                    filename,
+                    policy,
+                    DetectionSource::None,
+                );
             }
             if matches!(self.content_requirement(), ContentRequirement::Prefix(_))
                 && !self.supports_async_content_detection()

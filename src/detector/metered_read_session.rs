@@ -139,12 +139,7 @@ impl MeteredReadSession {
         self.read_at_inner(offset, output, false).await
     }
 
-    async fn read_at_inner(
-        &mut self,
-        offset: u64,
-        output: &mut [u8],
-        advance: bool,
-    ) -> MimeResult<usize> {
+    async fn read_at_inner(&mut self, offset: u64, output: &mut [u8], advance: bool) -> MimeResult<usize> {
         let available = self.request_remaining.min(self.read_tree.remaining());
         let ask = output
             .len()
@@ -159,36 +154,26 @@ impl MeteredReadSession {
             });
         }
 
-        let read_permit = self
-            .read_tree
-            .reserve(ask as u64)
-            .ok_or(MimeError::BudgetExceeded {
-                kind: "read",
-                requested: ask as u64,
-                limit: self.read_tree.remaining(),
-            })?;
-        let _scratch_permit =
-            self.services
-                .reserve_owned(ask)
-                .ok_or(MimeError::BudgetExceeded {
-                    kind: "owned",
-                    requested: ask as u64,
-                    limit: MAX_OWNED_BYTES as u64,
-                })?;
+        let read_permit = self.read_tree.reserve(ask as u64).ok_or(MimeError::BudgetExceeded {
+            kind: "read",
+            requested: ask as u64,
+            limit: self.read_tree.remaining(),
+        })?;
+        let _scratch_permit = self.services.reserve_owned(ask).ok_or(MimeError::BudgetExceeded {
+            kind: "owned",
+            requested: ask as u64,
+            limit: MAX_OWNED_BYTES as u64,
+        })?;
         let mut scratch = Vec::new();
         scratch
             .try_reserve_exact(ask)
-            .map_err(|source| MimeError::BufferAllocationFailed {
-                requested: ask,
-                source,
-            })?;
+            .map_err(|source| MimeError::BufferAllocationFailed { requested: ask, source })?;
         scratch.resize(ask, 0);
 
         let count = match &mut self.reader {
-            OpenedReader::Sequential(reader) if advance => reader
-                .read_async(&mut scratch)
-                .await
-                .map_err(MimeError::Io)?,
+            OpenedReader::Sequential(reader) if advance => {
+                reader.read_async(&mut scratch).await.map_err(MimeError::Io)?
+            }
             OpenedReader::Sequential(_) => {
                 return Err(MimeError::InvalidClassifierInput {
                     reason: "random access is unavailable for this metered read session".into(),
@@ -199,8 +184,7 @@ impl MeteredReadSession {
                 .await
                 .map_err(MimeError::FileSystem)?,
         };
-        let count_u64 =
-            u64::try_from(count).expect("a provider count fits the bounded scratch buffer");
+        let count_u64 = u64::try_from(count).expect("a provider count fits the bounded scratch buffer");
         output[..count].copy_from_slice(&scratch[..count]);
         read_permit.commit(count_u64);
         self.request_remaining -= count_u64;
@@ -289,17 +273,12 @@ mod tests {
             self.properties.clone()
         }
 
-        fn stat<'a>(
-            &'a self,
-            request: StatRequest<'a>,
-        ) -> qubit_fs::spi::SpiFuture<'a, FsResult<StatResponse>> {
+        fn stat<'a>(&'a self, request: StatRequest<'a>) -> qubit_fs::spi::SpiFuture<'a, FsResult<StatResponse>> {
             Box::pin(async move {
-                Err(FsError::new(
-                    FsErrorKind::UnsupportedOperation,
-                    FsOperation::Stat,
-                    "not supported",
+                Err(
+                    FsError::new(FsErrorKind::UnsupportedOperation, FsOperation::Stat, "not supported")
+                        .with_path(request.path().clone()),
                 )
-                .with_path(request.path().clone()))
             })
         }
 
@@ -311,10 +290,7 @@ mod tests {
             let error_first_read = self.error_first_read;
             let pending_first_read = self.pending_first_read;
             Box::pin(async move {
-                let info = OpenedFileInfo::new(
-                    FileSystemId::new("metered-test").unwrap(),
-                    request.path().clone(),
-                );
+                let info = OpenedFileInfo::new(FileSystemId::new("metered-test").unwrap(), request.path().clone());
                 Ok(OpenedAsyncReader::new(
                     info,
                     Box::new(MemoryInput {
@@ -362,8 +338,7 @@ mod tests {
                 return Poll::Pending;
             }
             let actual = count.min(this.content.len().saturating_sub(this.offset));
-            output[index..index + actual]
-                .copy_from_slice(&this.content[this.offset..this.offset + actual]);
+            output[index..index + actual].copy_from_slice(&this.content[this.offset..this.offset + actual]);
             this.offset += actual;
             Poll::Ready(Ok(actual))
         }
@@ -372,15 +347,7 @@ mod tests {
     fn services() -> Arc<MimeExecutionServices> {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
-        Arc::new(
-            MimeExecutionServices::new(
-                manager,
-                group,
-                Arc::new(FixedMimeExecutionPort::new(1, 1)),
-                16,
-            )
-            .unwrap(),
-        )
+        Arc::new(MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 16).unwrap())
     }
 
     fn block_on<F: Future>(future: F) -> F::Output {
@@ -409,8 +376,7 @@ mod tests {
         let services = services();
         let root = ReadTreeContext::new(8);
         let parent = root.child(3);
-        let file_system =
-            AsyncFileSystem::from_spi(MemoryFileSystem::new(b"abcdef", false)).unwrap();
+        let file_system = AsyncFileSystem::from_spi(MemoryFileSystem::new(b"abcdef", false)).unwrap();
         let path = qubit_fs::Path::parse("/input").unwrap();
         let mut session = block_on(MeteredReadSession::open_sequential(
             &file_system,
@@ -446,8 +412,7 @@ mod tests {
         let root = ReadTreeContext::new(5);
         let left = root.child(5);
         let right = root.child(5);
-        let file_system =
-            AsyncFileSystem::from_spi(MemoryFileSystem::new(b"abcdef", false)).unwrap();
+        let file_system = AsyncFileSystem::from_spi(MemoryFileSystem::new(b"abcdef", false)).unwrap();
         let path = qubit_fs::Path::parse("/input").unwrap();
         let mut left_session = block_on(MeteredReadSession::open_sequential(
             &file_system,
@@ -501,10 +466,7 @@ mod tests {
 
         let mut output = [0xCC; 4];
         assert!(block_on(session.read(&mut output)).is_err());
-        assert_eq!(
-            [0xCC; 4], output,
-            "partial bytes remain private on provider error"
-        );
+        assert_eq!([0xCC; 4], output, "partial bytes remain private on provider error");
         assert_eq!(0, root.consumed());
         assert_eq!(8, root.remaining());
         let scratch_permit = services
@@ -521,8 +483,7 @@ mod tests {
     fn test_metered_session_caps_each_payload_and_cumulative_request_reads() {
         let services = services();
         let root = ReadTreeContext::new(8);
-        let file_system =
-            AsyncFileSystem::from_spi(MemoryFileSystem::new(b"abcdef", false)).unwrap();
+        let file_system = AsyncFileSystem::from_spi(MemoryFileSystem::new(b"abcdef", false)).unwrap();
         let path = qubit_fs::Path::parse("/input").unwrap();
         let mut session = block_on(MeteredReadSession::open_sequential(
             &file_system,
@@ -579,10 +540,7 @@ mod tests {
         let mut read = Box::pin(session.read(&mut output));
         assert!(read.as_mut().poll(&mut context).is_pending());
         drop(read);
-        assert_eq!(
-            [0xCC; 4], output,
-            "pending scratch is not delivered to the backend"
-        );
+        assert_eq!([0xCC; 4], output, "pending scratch is not delivered to the backend");
         assert_eq!(0, root.consumed());
         assert_eq!(8, root.remaining());
         let scratch_permit = services

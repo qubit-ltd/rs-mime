@@ -144,7 +144,9 @@ impl MimeShutdownObserver {
                 .request_shutdown(ShutdownMode::Drain)
                 .as_async();
             *self.services.group_shutdown.lock().unwrap_or_else(|e| e.into_inner()) = Some(shutdown);
-            self.services.lifecycle.store(MimeServiceLifecycle::Stopped as u8, Ordering::Release);
+            self.services
+                .lifecycle
+                .store(MimeServiceLifecycle::Stopped as u8, Ordering::Release);
         }
         Ok(self.snapshot())
     }
@@ -428,10 +430,8 @@ mod tests {
         .unwrap();
         services.prepare().unwrap();
 
-        let mut completed = block_on(group.try_submit_async(Default::default(), |_| async {
-            Ok::<_, ()>("settled")
-        }))
-        .unwrap();
+        let mut completed =
+            block_on(group.try_submit_async(Default::default(), |_| async { Ok::<_, ()>("settled") })).unwrap();
         services.track_observer(completed.observer());
         assert!(matches!(
             block_on(completed.wait_outcome()).unwrap(),
@@ -462,10 +462,7 @@ mod tests {
         block_on(direct_parent.wait_settlement());
         drop(direct_parent);
 
-        assert!(matches!(
-            first_stop,
-            Err(MimeError::OperationShutdownPending)
-        ));
+        assert!(matches!(first_stop, Err(MimeError::OperationShutdownPending)));
         assert_eq!(0, shutdown_calls.load(Ordering::SeqCst));
         assert!(shutdown.stop_services().unwrap().services_stopped);
         let report = block_on(shutdown.wait_group_shutdown()).unwrap();

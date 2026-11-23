@@ -16,10 +16,10 @@ use qubit_operation::OperationScope;
 use crate::AsyncMimeDetectorBackend;
 use crate::BorrowedMimeInput;
 use crate::ContentRequirement;
+use crate::MeteredReadSession;
 use crate::MimeDetectionReport;
 use crate::MimeError;
 use crate::MimeResult;
-use crate::MeteredReadSession;
 use crate::detector::mime_detection_report::MimeBudgetSummary;
 use crate::detector::mime_execution_services::MimeExecutionServices;
 use crate::detector::mime_input::InputExtent;
@@ -300,29 +300,33 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                 });
             }
             if managed_provider_reads {
-                let request_limit = options.max_read_bytes.unwrap_or(services.max_read_bytes).min(services.max_read_bytes);
+                let request_limit = options
+                    .max_read_bytes
+                    .unwrap_or(services.max_read_bytes)
+                    .min(services.max_read_bytes);
                 let payload_limit = options.max_buffer_bytes.unwrap_or(max_buffer_size).min(max_buffer_size);
-                let mut session = if backend.random_access_capability() == crate::RandomAccessCapability::SamplesSameObject {
-                    MeteredReadSession::open_random_access(
-                        &file_system,
-                        &path,
-                        Arc::clone(&services),
-                        Arc::clone(&read_tree),
-                        request_limit,
-                        payload_limit,
-                    )
-                    .await?
-                } else {
-                    MeteredReadSession::open_sequential(
-                        &file_system,
-                        &path,
-                        Arc::clone(&services),
-                        Arc::clone(&read_tree),
-                        request_limit,
-                        payload_limit,
-                    )
-                    .await?
-                };
+                let mut session =
+                    if backend.random_access_capability() == crate::RandomAccessCapability::SamplesSameObject {
+                        MeteredReadSession::open_random_access(
+                            &file_system,
+                            &path,
+                            Arc::clone(&services),
+                            Arc::clone(&read_tree),
+                            request_limit,
+                            payload_limit,
+                        )
+                        .await?
+                    } else {
+                        MeteredReadSession::open_sequential(
+                            &file_system,
+                            &path,
+                            Arc::clone(&services),
+                            Arc::clone(&read_tree),
+                            request_limit,
+                            payload_limit,
+                        )
+                        .await?
+                    };
                 let candidates = backend
                     .guess_content_in(
                         &_scope,
@@ -344,79 +348,79 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                     candidates.staging_bytes.max(read_tree.staging_usage().peak()),
                 )
             } else {
-            let candidates = if matches!(backend.content_requirement(), ContentRequirement::Complete)
-                || backend.random_access_capability() == crate::RandomAccessCapability::SamplesSameObject
-            {
-                backend
-                    .guess_content_in(
-                        &_scope,
-                        BorrowedMimeInput::Provider {
-                            file_system: &file_system,
-                            path: &path,
-                        },
+                let candidates = if matches!(backend.content_requirement(), ContentRequirement::Complete)
+                    || backend.random_access_capability() == crate::RandomAccessCapability::SamplesSameObject
+                {
+                    backend
+                        .guess_content_in(
+                            &_scope,
+                            BorrowedMimeInput::Provider {
+                                file_system: &file_system,
+                                path: &path,
+                            },
+                            &options,
+                        )
+                        .await?
+                } else {
+                    let max_bytes = prefix_buffer_bytes(
                         &options,
-                    )
-                    .await?
-            } else {
-                let max_bytes = prefix_buffer_bytes(
-                    &options,
-                    match backend.content_requirement() {
-                        ContentRequirement::Prefix(required) => required,
-                        ContentRequirement::Complete => unreachable!("complete content was handled above"),
-                    },
-                    max_buffer_size,
-                    services.max_read_bytes(),
-                );
-                let read_permit = read_tree.reserve(max_bytes as u64).ok_or(MimeError::BudgetExceeded {
-                    kind: "read",
-                    requested: max_bytes as u64,
-                    limit: read_tree.remaining(),
-                })?;
-                let outcome = file_system.read_prefix(&path, ReadOptions::default(), max_bytes).await;
-                let content = match outcome {
-                    Ok(outcome) => outcome.into_bytes(),
-                    Err(error) => {
-                        read_permit.commit(max_bytes as u64);
-                        return Err(error.into());
-                    }
+                        match backend.content_requirement() {
+                            ContentRequirement::Prefix(required) => required,
+                            ContentRequirement::Complete => unreachable!("complete content was handled above"),
+                        },
+                        max_buffer_size,
+                        services.max_read_bytes(),
+                    );
+                    let read_permit = read_tree.reserve(max_bytes as u64).ok_or(MimeError::BudgetExceeded {
+                        kind: "read",
+                        requested: max_bytes as u64,
+                        limit: read_tree.remaining(),
+                    })?;
+                    let outcome = file_system.read_prefix(&path, ReadOptions::default(), max_bytes).await;
+                    let content = match outcome {
+                        Ok(outcome) => outcome.into_bytes(),
+                        Err(error) => {
+                            read_permit.commit(max_bytes as u64);
+                            return Err(error.into());
+                        }
+                    };
+                    let bytes_read = content.len() as u64;
+                    let _read = read_permit.commit(bytes_read);
+                    let candidates = backend
+                        .guess_content_in(
+                            &_scope,
+                            BorrowedMimeInput::Bytes {
+                                content: &content,
+                                extent: InputExtent::Prefix,
+                                filename: path.file_name(),
+                            },
+                            &options,
+                        )
+                        .await?;
+                    return Ok(MimeDetectionReport {
+                        mime_type: candidates
+                            .candidates
+                            .first()
+                            .map(|candidate| candidate.mime_type.clone()),
+                        backend_id,
+                        inspected_extent: candidates.inspected_extent,
+                        budget: MimeBudgetSummary {
+                            owned_bytes: content.len(),
+                            bytes_read,
+                            staging_bytes: candidates.staging_bytes.max(read_tree.staging_usage().peak()),
+                        },
+                    });
                 };
-                let bytes_read = content.len() as u64;
-                let _read = read_permit.commit(bytes_read);
-                let candidates = backend
-                    .guess_content_in(
-                        &_scope,
-                        BorrowedMimeInput::Bytes {
-                            content: &content,
-                            extent: InputExtent::Prefix,
-                            filename: path.file_name(),
-                        },
-                        &options,
-                    )
-                    .await?;
-                return Ok(MimeDetectionReport {
-                    mime_type: candidates
+                (
+                    candidates
                         .candidates
                         .first()
                         .map(|candidate| candidate.mime_type.clone()),
-                    backend_id,
-                    inspected_extent: candidates.inspected_extent,
-                    budget: MimeBudgetSummary {
-                        owned_bytes: content.len(),
-                        bytes_read,
-                        staging_bytes: candidates.staging_bytes.max(read_tree.staging_usage().peak()),
-                    },
-                });
-            };
-            (
-                candidates
-                    .candidates
-                    .first()
-                    .map(|candidate| candidate.mime_type.clone()),
-                candidates.inspected_extent,
-                read_tree.consumed(),
-                0,
-                candidates.staging_bytes.max(read_tree.staging_usage().peak()),
-            )
+                    candidates.inspected_extent,
+                    read_tree.consumed(),
+                    0,
+                    candidates.staging_bytes.max(read_tree.staging_usage().peak()),
+                )
             }
         }
     };

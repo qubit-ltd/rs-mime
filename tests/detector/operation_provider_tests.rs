@@ -211,15 +211,10 @@ fn test_operation_provider_random_access_backend_preserves_sample_extent() {
     let (read_started, _read_started_rx) = mpsc::channel();
     let released = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let read_waker = Arc::new(Mutex::new(None));
-    let file_system = qubit_fs::AsyncFileSystem::from_spi(SnapshotGateFileSystem::new(
-        content,
-        Arc::clone(&opens),
-        read_started,
-        released,
-        read_waker,
-        None,
+    let file_system = qubit_fs::AsyncFileSystem::from_spi(
+        SnapshotGateFileSystem::new(content, Arc::clone(&opens), read_started, released, read_waker, None)
+            .with_random_error_first_read(),
     )
-    .with_random_error_first_read())
     .unwrap();
 
     let registry = MimeDetectorRegistry::default();
@@ -227,10 +222,7 @@ fn test_operation_provider_random_access_backend_preserves_sample_extent() {
     let runtime = MimeRuntime::builtin()
         .unwrap()
         .with_execution_services(services.clone())
-        .with_async_provider_selection(
-            &registry,
-            &qubit_spi::ProviderSelection::named("file").unwrap(),
-        )
+        .with_async_provider_selection(&registry, &qubit_spi::ProviderSelection::named("file").unwrap())
         .unwrap();
     let mut operation = runtime
         .try_submit_detection(
@@ -246,7 +238,10 @@ fn test_operation_provider_random_access_backend_preserves_sample_extent() {
         qubit_operation::OperationOutcome::Succeeded(report) => {
             assert_eq!(report.mime_type.as_deref(), Some("application/x-sampled"));
             assert_eq!(report.inspected_extent, InspectedExtent::RandomAccessSamples);
-            assert_eq!(report.budget.bytes_read, 6, "repeated sample bytes are charged each time");
+            assert_eq!(
+                report.budget.bytes_read, 6,
+                "repeated sample bytes are charged each time"
+            );
         }
         other => panic!("random-access backend should report its sample extent: {other:?}"),
     }
@@ -303,7 +298,10 @@ fn test_complete_extension_opts_into_metered_sequential_reads_and_eof_probe() {
     match block_on(operation.wait_outcome()).unwrap() {
         qubit_operation::OperationOutcome::Succeeded(report) => {
             assert_eq!(report.mime_type.as_deref(), Some("application/x-complete-session"));
-            assert_eq!(report.budget.bytes_read, 4, "the EOF probe transfers no additional bytes");
+            assert_eq!(
+                report.budget.bytes_read, 4,
+                "the EOF probe transfers no additional bytes"
+            );
         }
         other => panic!("complete session backend should inspect its opened stream: {other:?}"),
     }

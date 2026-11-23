@@ -216,9 +216,7 @@ fn test_public_ffprobe_async_provider_classifies_complete_bytes() {
     let _path_guard = PathEnvGuard::prepend(directory.path());
 
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 1 })
-        .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
     let services = Arc::new(
         MimeExecutionServices::new(
             manager.clone(),

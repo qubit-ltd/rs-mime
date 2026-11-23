@@ -31,10 +31,7 @@ pub struct MimeExecutionDispatchFailure {
 }
 
 impl MimeExecutionDispatchFailure {
-    pub(crate) fn new(
-        kind: MimeExecutionDispatchFailureKind,
-        job: Box<dyn FnOnce() + Send + 'static>,
-    ) -> Self {
+    pub(crate) fn new(kind: MimeExecutionDispatchFailureKind, job: Box<dyn FnOnce() + Send + 'static>) -> Self {
         Self { kind, job }
     }
 
@@ -98,10 +95,7 @@ pub trait MimeExecutionPort: Debug + Send + Sync + 'static {
     /// # Returns
     /// `Ok(())` after acceptance, or the unchanged job after rejection.
     #[inline]
-    fn try_dispatch(
-        &self,
-        job: Box<dyn FnOnce() + Send + 'static>,
-    ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+    fn try_dispatch(&self, job: Box<dyn FnOnce() + Send + 'static>) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
         Err(job)
     }
 
@@ -116,9 +110,8 @@ pub trait MimeExecutionPort: Debug + Send + Sync + 'static {
         &self,
         job: Box<dyn FnOnce() + Send + 'static>,
     ) -> Result<(), MimeExecutionDispatchFailure> {
-        self.try_dispatch(job).map_err(|job| {
-            MimeExecutionDispatchFailure::new(MimeExecutionDispatchFailureKind::Unavailable, job)
-        })
+        self.try_dispatch(job)
+            .map_err(|job| MimeExecutionDispatchFailure::new(MimeExecutionDispatchFailureKind::Unavailable, job))
     }
 
     /// Stops accepting new work and observes actual worker exit.

@@ -108,10 +108,7 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
     /// command job.
     fn activate(self: Arc<Self>, _scope: OperationScope) -> Result<(), ExecutionFailure> {
         if let Some(reason) = *self.stop_reason.lock().unwrap_or_else(|e| e.into_inner()) {
-            self.request
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .take();
+            self.request.lock().unwrap_or_else(|e| e.into_inner()).take();
             self.publish(OperationOutcome::Stopped(StopReport {
                 reason,
                 accepted_at: None,
@@ -191,12 +188,8 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
                     .unwrap_or_else(|e| e.into_inner())
                     .expect("bound before activation"),
                 summary: DiagnosticSummary::new(match kind {
-                    MimeExecutionDispatchFailureKind::QueueFull => {
-                        "MIME command worker queue is full"
-                    }
-                    MimeExecutionDispatchFailureKind::Unavailable => {
-                        "MIME execution worker is unavailable"
-                    }
+                    MimeExecutionDispatchFailureKind::QueueFull => "MIME command worker queue is full",
+                    MimeExecutionDispatchFailureKind::Unavailable => "MIME execution worker is unavailable",
                 }),
                 source: Some(Arc::new(kind)),
             });
@@ -206,10 +199,7 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
 
     /// Releases an unactivated command request after adapter abandonment.
     fn abandon(self: Arc<Self>) {
-        self.request
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
+        self.request.lock().unwrap_or_else(|e| e.into_inner()).take();
         self.released.store(true, Ordering::Release);
         self.publish_release();
     }
@@ -221,10 +211,7 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
     ///
     /// # Returns
     /// The command outcome when ready, or `Pending` with a registered waker.
-    fn poll_take_outcome(
-        &self,
-        cx: &mut Context<'_>,
-    ) -> Poll<OperationOutcome<MimeCommandOutput, CommandError>> {
+    fn poll_take_outcome(&self, cx: &mut Context<'_>) -> Poll<OperationOutcome<MimeCommandOutput, CommandError>> {
         self.outcome.poll_take(cx)
     }
 }
@@ -258,11 +245,9 @@ impl OperationControl for PreparedCommand {
             } else {
                 ExecutionPhase::Queued
             },
-            stop: (*self.stop_reason.lock().unwrap_or_else(|e| e.into_inner())).map(|reason| {
-                StopReport {
-                    reason,
-                    accepted_at: None,
-                }
+            stop: (*self.stop_reason.lock().unwrap_or_else(|e| e.into_inner())).map(|reason| StopReport {
+                reason,
+                accepted_at: None,
             }),
             outcome: self.summary.value(),
             input_released: self.released.load(Ordering::Acquire),
@@ -346,13 +331,9 @@ impl PreparedCommand {
             OperationOutcome::Succeeded(_) => (ChildOutcomeKind::Succeeded, "child succeeded"),
             OperationOutcome::Failed(_) => (ChildOutcomeKind::Failed, "child failed"),
             OperationOutcome::Stopped(_) => (ChildOutcomeKind::Stopped, "child stopped"),
-            OperationOutcome::Panicked(panic) => {
-                (ChildOutcomeKind::Panicked, panic.summary.as_str())
-            }
+            OperationOutcome::Panicked(panic) => (ChildOutcomeKind::Panicked, panic.summary.as_str()),
             OperationOutcome::ChildFailed(_) => (ChildOutcomeKind::Failed, "child failed"),
-            OperationOutcome::ExecutionFailed(failure) => {
-                (ChildOutcomeKind::ExecutionFailed, failure.summary.as_str())
-            }
+            OperationOutcome::ExecutionFailed(failure) => (ChildOutcomeKind::ExecutionFailed, failure.summary.as_str()),
         };
         let summary = ChildOutcomeSummary {
             operation_id: self
@@ -471,13 +452,9 @@ mod tests {
         ChildSnapshot,
     ) {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 4 })
-            .unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
-        let services = Arc::new(
-            MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap(),
-        );
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap());
         services.prepare().unwrap();
         let limits = ManagedStagingLimits {
             max_bytes: 64,
@@ -486,139 +463,109 @@ mod tests {
         };
         let read_tree = services.new_read_tree(64);
         let body_services = Arc::clone(&services);
-        let input = OwnedMimeInput::bytes(
-            Arc::from(b"prepared-command-input".as_slice()),
-            InputExtent::Complete,
-        );
-        let mut operation = block_on(group.try_submit_async(
-            Default::default(),
-            move |scope| async move {
-                let staged = stage_owned_in(&scope, input, limits, read_tree).await?;
-                let command_worker = Arc::new(FixedMimeExecutionPort::new(
-                    1,
-                    if reject_dispatch { 1 } else { 4 },
-                ));
-                command_worker.prepare()?;
-                let (release_blocker, queued_job_done) = if reject_dispatch {
-                    let (started_tx, started_rx) = std::sync::mpsc::channel();
-                    let (release_tx, release_rx) = std::sync::mpsc::channel();
-                    assert!(
-                        command_worker
-                            .try_dispatch(Box::new(move || {
-                                started_tx.send(()).unwrap();
-                                release_rx.recv().unwrap();
-                            }))
-                            .is_ok()
-                    );
-                    started_rx.recv().unwrap();
-                    let (done_tx, done_rx) = std::sync::mpsc::channel();
-                    assert!(
-                        command_worker
-                            .try_dispatch(Box::new(move || done_tx.send(()).unwrap()))
-                            .is_ok()
-                    );
-                    (Some(release_tx), Some(done_rx))
-                } else {
-                    (None, None)
-                };
-                let runner = CommandRunner::new(timeout).disable_logging(true);
-                let runner = if strict_output_limit {
-                    runner.bounded_output(1)
-                } else {
-                    runner
-                };
-                let prepared = Arc::new(PreparedCommand::new(
-                    MimeExecutionWorker::new(command_worker.clone()),
-                    runner,
-                    command,
-                    staged,
-                ));
-                let operation_id = scope.id();
-                prepared.bind(operation_id).unwrap();
-                let activation = Arc::clone(&prepared).activate(scope);
-                let result = match activation {
-                    Ok(()) => {
-                        if observe_running {
-                            let deadline =
-                                std::time::Instant::now() + std::time::Duration::from_secs(5);
-                            loop {
-                                let snapshot = prepared.snapshot();
-                                if snapshot.execution == qubit_operation::ExecutionPhase::Running {
-                                    assert!(!snapshot.input_released);
-                                    {
-                                        let waker = Waker::from(Arc::new(ThreadWake(
-                                            std::thread::current(),
-                                        )));
-                                        let mut context = Context::from_waker(&waker);
-                                        assert!(matches!(
-                                            prepared.poll_take_outcome(&mut context),
-                                            Poll::Pending
-                                        ));
-                                        assert!(matches!(
-                                            prepared.poll_outcome(&mut context),
-                                            Poll::Pending
-                                        ));
-                                        assert!(matches!(
-                                            prepared.poll_release(&mut context),
-                                            Poll::Pending
-                                        ));
-                                        assert!(matches!(
-                                            prepared.poll_settlement(&mut context),
-                                            Poll::Pending
-                                        ));
-                                    }
-                                    if stop_when_running {
-                                        prepared.request_stop(StopReason::Timeout);
-                                    }
-                                    break;
+        let input = OwnedMimeInput::bytes(Arc::from(b"prepared-command-input".as_slice()), InputExtent::Complete);
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let staged = stage_owned_in(&scope, input, limits, read_tree).await?;
+            let command_worker = Arc::new(FixedMimeExecutionPort::new(1, if reject_dispatch { 1 } else { 4 }));
+            command_worker.prepare()?;
+            let (release_blocker, queued_job_done) = if reject_dispatch {
+                let (started_tx, started_rx) = std::sync::mpsc::channel();
+                let (release_tx, release_rx) = std::sync::mpsc::channel();
+                assert!(
+                    command_worker
+                        .try_dispatch(Box::new(move || {
+                            started_tx.send(()).unwrap();
+                            release_rx.recv().unwrap();
+                        }))
+                        .is_ok()
+                );
+                started_rx.recv().unwrap();
+                let (done_tx, done_rx) = std::sync::mpsc::channel();
+                assert!(
+                    command_worker
+                        .try_dispatch(Box::new(move || done_tx.send(()).unwrap()))
+                        .is_ok()
+                );
+                (Some(release_tx), Some(done_rx))
+            } else {
+                (None, None)
+            };
+            let runner = CommandRunner::new(timeout).disable_logging(true);
+            let runner = if strict_output_limit {
+                runner.bounded_output(1)
+            } else {
+                runner
+            };
+            let prepared = Arc::new(PreparedCommand::new(
+                MimeExecutionWorker::new(command_worker.clone()),
+                runner,
+                command,
+                staged,
+            ));
+            let operation_id = scope.id();
+            prepared.bind(operation_id).unwrap();
+            let activation = Arc::clone(&prepared).activate(scope);
+            let result = match activation {
+                Ok(()) => {
+                    if observe_running {
+                        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                        loop {
+                            let snapshot = prepared.snapshot();
+                            if snapshot.execution == qubit_operation::ExecutionPhase::Running {
+                                assert!(!snapshot.input_released);
+                                {
+                                    let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+                                    let mut context = Context::from_waker(&waker);
+                                    assert!(matches!(prepared.poll_take_outcome(&mut context), Poll::Pending));
+                                    assert!(matches!(prepared.poll_outcome(&mut context), Poll::Pending));
+                                    assert!(matches!(prepared.poll_release(&mut context), Poll::Pending));
+                                    assert!(matches!(prepared.poll_settlement(&mut context), Poll::Pending));
                                 }
-                                assert!(
-                                    std::time::Instant::now() < deadline,
-                                    "worker never reported running"
-                                );
-                                std::thread::yield_now();
+                                if stop_when_running {
+                                    prepared.request_stop(StopReason::Timeout);
+                                }
+                                break;
                             }
+                            assert!(std::time::Instant::now() < deadline, "worker never reported running");
+                            std::thread::yield_now();
                         }
-                        let mut outcome = None;
-                        let mut release = None;
-                        std::future::poll_fn(|cx| {
-                            if outcome.is_none()
-                                && let std::task::Poll::Ready(value) =
-                                    prepared.poll_take_outcome(cx)
-                            {
-                                outcome = Some(value);
-                            }
-                            if release.is_none()
-                                && let std::task::Poll::Ready(value) = prepared.poll_release(cx)
-                            {
-                                release = Some(value);
-                            }
-                            if outcome.is_some() && release.is_some() {
-                                std::task::Poll::Ready(())
-                            } else {
-                                std::task::Poll::Pending
-                            }
-                        })
-                        .await;
-                        assert_eq!(
-                            operation_id,
-                            release
-                                .expect("release signal must be observed")
-                                .operation_id
-                        );
-                        Ok(outcome.expect("outcome signal must be observed"))
                     }
-                    Err(error) => Err(error),
-                };
-                let snapshot = prepared.snapshot();
-                if let Some(release) = release_blocker {
-                    release.send(()).unwrap();
-                    queued_job_done.expect("queued callback").recv().unwrap();
+                    let mut outcome = None;
+                    let mut release = None;
+                    std::future::poll_fn(|cx| {
+                        if outcome.is_none()
+                            && let std::task::Poll::Ready(value) = prepared.poll_take_outcome(cx)
+                        {
+                            outcome = Some(value);
+                        }
+                        if release.is_none()
+                            && let std::task::Poll::Ready(value) = prepared.poll_release(cx)
+                        {
+                            release = Some(value);
+                        }
+                        if outcome.is_some() && release.is_some() {
+                            std::task::Poll::Ready(())
+                        } else {
+                            std::task::Poll::Pending
+                        }
+                    })
+                    .await;
+                    assert_eq!(
+                        operation_id,
+                        release.expect("release signal must be observed").operation_id
+                    );
+                    Ok(outcome.expect("outcome signal must be observed"))
                 }
-                command_worker.shutdown()?;
-                Ok::<_, MimeError>((result, snapshot))
-            },
-        ))
+                Err(error) => Err(error),
+            };
+            let snapshot = prepared.snapshot();
+            if let Some(release) = release_blocker {
+                release.send(()).unwrap();
+                queued_job_done.expect("queued callback").recv().unwrap();
+            }
+            command_worker.shutdown()?;
+            Ok::<_, MimeError>((result, snapshot))
+        }))
         .unwrap();
         let result = match block_on(operation.wait_outcome()).unwrap() {
             OperationOutcome::Succeeded(value) => value,
@@ -634,13 +581,9 @@ mod tests {
     #[test]
     fn test_stop_before_activation_publishes_terminal_outcome_and_release() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 4 })
-            .unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
-        let services = Arc::new(
-            MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap(),
-        );
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap());
         services.prepare().unwrap();
         let limits = ManagedStagingLimits {
             max_bytes: 64,
@@ -649,10 +592,7 @@ mod tests {
         };
         let read_tree = services.new_read_tree(64);
         let body_services = Arc::clone(&services);
-        let input = OwnedMimeInput::bytes(
-            Arc::from(b"cancel before dispatch".as_slice()),
-            InputExtent::Complete,
-        );
+        let input = OwnedMimeInput::bytes(Arc::from(b"cancel before dispatch".as_slice()), InputExtent::Complete);
 
         let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
             let abandoned_input = stage_owned_in(
@@ -749,12 +689,9 @@ mod tests {
     #[test]
     fn test_prepared_command_recovers_poisoned_state_locks_before_stopping() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 1 })
-            .unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
-        let services =
-            Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
         services.prepare().unwrap();
         let worker = MimeExecutionWorker::new(port);
         let limits = ManagedStagingLimits {
@@ -846,10 +783,7 @@ mod tests {
         };
         assert_eq!(Some(0), output.exit_code);
         assert!(output.stdout.starts_with(b"rustc "));
-        assert_eq!(
-            qubit_operation::ExecutionPhase::Finished,
-            snapshot.execution
-        );
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
         assert!(snapshot.input_released);
         assert_eq!(
             Some(ChildOutcomeKind::Succeeded),
@@ -868,13 +802,8 @@ mod tests {
             std::time::Duration::from_secs(10),
             false,
         );
-        assert!(
-            matches!(result, Ok(OperationOutcome::Failed(error)) if error.kind() == CommandErrorKind::SpawnFailed)
-        );
-        assert_eq!(
-            qubit_operation::ExecutionPhase::Finished,
-            failed_snapshot.execution
-        );
+        assert!(matches!(result, Ok(OperationOutcome::Failed(error)) if error.kind() == CommandErrorKind::SpawnFailed));
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, failed_snapshot.execution);
         assert_eq!(
             Some(ChildOutcomeKind::Failed),
             failed_snapshot.outcome.map(|summary| summary.kind)
@@ -891,10 +820,7 @@ mod tests {
             false,
         );
         assert!(result.is_err(), "a full command queue rejects activation");
-        assert_eq!(
-            qubit_operation::ExecutionPhase::Finished,
-            rejected_snapshot.execution
-        );
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, rejected_snapshot.execution);
         assert!(rejected_snapshot.input_released);
         assert!(
             rejected_snapshot.outcome.is_none(),
@@ -915,10 +841,7 @@ mod tests {
             false,
         );
         assert!(matches!(result, Ok(OperationOutcome::Succeeded(_))));
-        assert_eq!(
-            qubit_operation::ExecutionPhase::Finished,
-            snapshot.execution
-        );
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
         assert!(snapshot.input_released);
         assert_eq!(
             Some(ChildOutcomeKind::Succeeded),
@@ -938,13 +861,8 @@ mod tests {
             false,
         );
 
-        assert!(
-            matches!(result, Ok(OperationOutcome::Stopped(report)) if report.reason == StopReason::Timeout)
-        );
-        assert_eq!(
-            qubit_operation::ExecutionPhase::Finished,
-            snapshot.execution
-        );
+        assert!(matches!(result, Ok(OperationOutcome::Stopped(report)) if report.reason == StopReason::Timeout));
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
         assert!(snapshot.input_released);
         assert_eq!(
             Some(ChildOutcomeKind::Stopped),
@@ -965,13 +883,8 @@ mod tests {
             false,
         );
 
-        assert!(
-            matches!(result, Ok(OperationOutcome::Failed(error)) if error.kind() == CommandErrorKind::TimedOut)
-        );
-        assert_eq!(
-            qubit_operation::ExecutionPhase::Finished,
-            snapshot.execution
-        );
+        assert!(matches!(result, Ok(OperationOutcome::Failed(error)) if error.kind() == CommandErrorKind::TimedOut));
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
         assert!(snapshot.input_released);
         assert_eq!(
             Some(ChildOutcomeKind::Failed),
@@ -994,10 +907,7 @@ mod tests {
         assert!(
             matches!(result, Ok(OperationOutcome::Failed(error)) if error.kind() == CommandErrorKind::OutputTruncated)
         );
-        assert_eq!(
-            qubit_operation::ExecutionPhase::Finished,
-            snapshot.execution
-        );
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
         assert!(snapshot.input_released);
         assert_eq!(
             Some(ChildOutcomeKind::Failed),
@@ -1022,10 +932,7 @@ mod tests {
         assert!(
             matches!(result, Ok(OperationOutcome::Failed(error)) if error.kind() == CommandErrorKind::OpenInputFailed)
         );
-        assert_eq!(
-            qubit_operation::ExecutionPhase::Finished,
-            snapshot.execution
-        );
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
         assert!(snapshot.input_released);
         assert_eq!(
             Some(ChildOutcomeKind::Failed),
@@ -1038,13 +945,9 @@ mod tests {
     #[test]
     fn test_stop_after_dispatch_but_before_worker_start_releases_without_spawning() {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 4 })
-            .unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
-        let services = Arc::new(
-            MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap(),
-        );
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap());
         services.prepare().unwrap();
         let limits = ManagedStagingLimits {
             max_bytes: 64,

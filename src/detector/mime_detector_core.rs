@@ -249,7 +249,8 @@ impl MimeDetectorCore {
         if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
             return Ok(Some(result));
         }
-        self.refine_detected_mime_type_for_basename(&result, basename, source).map(Some)
+        self.refine_detected_mime_type_for_basename(&result, basename, source)
+            .map(Some)
     }
 
     /// Installs the relations for the repository this core uses.
@@ -621,7 +622,10 @@ mod tests {
 
     #[test]
     fn typed_basename_extension_keeps_backslash_as_filename_data() {
-        assert_eq!(Some("webm\\part".to_owned()), extension_from_basename(r"clip.webm\part"));
+        assert_eq!(
+            Some("webm\\part".to_owned()),
+            extension_from_basename(r"clip.webm\part")
+        );
         assert_eq!(None, extension_from_filename(r"clip.webm\part"));
     }
 }

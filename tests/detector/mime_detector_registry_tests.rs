@@ -470,9 +470,11 @@ fn test_async_registry_aliases_are_shared_by_clones_and_failed_registration_is_a
     let duplicate_alias_chain = ProviderSelection::chain(["async-alias", "async-owner"])
         .unwrap()
         .with_fallback_policy(FallbackPolicy::OnAnyError);
-    assert!(clone
-        .create_async_backend(&duplicate_alias_chain, &MimeConfig::default(), &services)
-        .is_err());
+    assert!(
+        clone
+            .create_async_backend(&duplicate_alias_chain, &MimeConfig::default(), &services)
+            .is_err()
+    );
     assert_eq!(
         2,
         creations.load(Ordering::SeqCst),
@@ -504,7 +506,11 @@ fn test_async_detector_absence_fallback_tries_next_registered_factory() {
 
     assert!(matches!(result, Err(MimeError::AsyncUnsupported)));
     assert_eq!(1, first_creations.load(Ordering::SeqCst));
-    assert_eq!(1, second_creations.load(Ordering::SeqCst), "AsyncUnsupported is absence and should fall through");
+    assert_eq!(
+        1,
+        second_creations.load(Ordering::SeqCst),
+        "AsyncUnsupported is absence and should fall through"
+    );
 }
 
 #[test]
@@ -858,12 +864,14 @@ fn test_builtin_async_providers_create_backends_without_spawning_commands() {
 #[test]
 fn test_async_provider_strict_chain_reports_unknown_selector() {
     let registry = MimeDetectorRegistry::builtin();
-    let selection = ProviderSelection::chain(["not-registered", "file"])
-        .expect("chain selectors should be valid");
+    let selection = ProviderSelection::chain(["not-registered", "file"]).expect("chain selectors should be valid");
 
-    assert!(registry
-        .create_async_backend(&selection, &MimeConfig::default(), &services())
-        .is_err(), "strict chains should diagnose missing selectors instead of skipping them");
+    assert!(
+        registry
+            .create_async_backend(&selection, &MimeConfig::default(), &services())
+            .is_err(),
+        "strict chains should diagnose missing selectors instead of skipping them"
+    );
 }
 
 #[test]
@@ -964,10 +972,12 @@ fn test_async_resolution_of_unknown_selector_reports_diagnostic() {
     let registry = MimeDetectorRegistry::builtin();
     let services = services();
 
-    let error = registry.create_async_backend(
+    let error = registry
+        .create_async_backend(
             &ProviderSelection::named("not-registered").unwrap(),
             &MimeConfig::default(),
-            &services
-        ).expect_err("unknown selector should have a selection diagnostic");
+            &services,
+        )
+        .expect_err("unknown selector should have a selection diagnostic");
     assert!(error.to_string().contains("not-registered"));
 }

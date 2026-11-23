@@ -93,12 +93,8 @@ impl AsyncMimeCommandExecutor for ManagedCommandExecutor {
             {
                 OperationOutcome::Succeeded(output) => Ok(output),
                 OperationOutcome::Failed(error) => Err(MimeError::from(error)),
-                OperationOutcome::Stopped(report) => {
-                    Err(MimeError::OperationStopped(Box::new(report)))
-                }
-                OperationOutcome::Panicked(summary) => {
-                    Err(MimeError::OperationPanicked(Box::new(summary)))
-                }
+                OperationOutcome::Stopped(report) => Err(MimeError::OperationStopped(Box::new(report))),
+                OperationOutcome::Panicked(summary) => Err(MimeError::OperationPanicked(Box::new(summary))),
                 OperationOutcome::ExecutionFailed(failure) => {
                     if failure.source.as_ref().is_some_and(|source| {
                         source.downcast_ref::<MimeExecutionDispatchFailureKind>()
@@ -109,9 +105,7 @@ impl AsyncMimeCommandExecutor for ManagedCommandExecutor {
                         Err(MimeError::OperationExecutionFailed(Box::new(failure)))
                     }
                 }
-                OperationOutcome::ChildFailed(failure) => {
-                    Err(MimeError::ChildOperationFailed(Box::new(failure)))
-                }
+                OperationOutcome::ChildFailed(failure) => Err(MimeError::ChildOperationFailed(Box::new(failure))),
             }
         })
     }

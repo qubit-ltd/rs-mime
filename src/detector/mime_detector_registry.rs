@@ -185,12 +185,7 @@ impl MimeDetectorRegistry {
             let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
             providers
                 .iter()
-                .map(|(selector, entry)| {
-                    (
-                        selector.clone(),
-                        (entry.id.clone(), entry.priority, entry.clone()),
-                    )
-                })
+                .map(|(selector, entry)| (selector.clone(), (entry.id.clone(), entry.priority, entry.clone())))
                 .collect::<HashMap<_, _>>()
         };
         let mut builtin_ids = async_catalog
@@ -214,11 +209,7 @@ impl MimeDetectorRegistry {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        auto_priority_ids.extend(
-            async_catalog
-                .values()
-                .map(|(id, priority, _)| (id.clone(), *priority)),
-        );
+        auto_priority_ids.extend(async_catalog.values().map(|(id, priority, _)| (id.clone(), *priority)));
         let candidates = crate::async_selection::resolve(
             selection,
             &async_catalog,
@@ -312,7 +303,8 @@ impl MimeDetectorRegistry {
         self.providers.provider_ids()
     }
 
-    /// Lists canonical IDs with registered asynchronous MIME detector factories.
+    /// Lists canonical IDs with registered asynchronous MIME detector
+    /// factories.
     ///
     /// Alias selectors are omitted and every ID is returned once.
     #[must_use]
@@ -321,9 +313,7 @@ impl MimeDetectorRegistry {
         let mut ids = providers.values().map(|entry| entry.id.clone()).collect::<Vec<_>>();
         ids.sort();
         ids.dedup();
-        ids.into_iter()
-            .filter_map(|id| ProviderId::new(&id).ok())
-            .collect()
+        ids.into_iter().filter_map(|id| ProviderId::new(&id).ok()).collect()
     }
 
     /// Registers explicit async construction for a provider already available
@@ -349,7 +339,8 @@ impl MimeDetectorRegistry {
         let descriptor = provider.descriptor();
         let id = descriptor.id().as_str().to_owned();
         let uses_bundled_repository = TypeId::of::<P>() == TypeId::of::<RepositoryMimeDetectorProvider>();
-        let is_builtin = uses_bundled_repository || TypeId::of::<P>() == TypeId::of::<FileCommandMimeDetectorProvider>();
+        let is_builtin =
+            uses_bundled_repository || TypeId::of::<P>() == TypeId::of::<FileCommandMimeDetectorProvider>();
         let provider: Arc<dyn AsyncMimeDetectorProvider> = Arc::new(provider);
         let mut providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
         if self.providers.is_sealed() {

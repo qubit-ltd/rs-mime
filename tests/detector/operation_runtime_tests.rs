@@ -431,8 +431,8 @@ fn test_managed_provider_uses_native_basename_for_filename_short_circuit() {
     services.prepare().unwrap();
     let opens = Arc::new(AtomicUsize::new(0));
     let file_system = Arc::new(AsyncFileSystem::from_spi(CountingFileSystem::new(Arc::clone(&opens))).unwrap());
-    let runtime = MimeRuntime::new(MimeConfig::default(), Arc::new(repository))
-        .with_execution_services(services.clone());
+    let runtime =
+        MimeRuntime::new(MimeConfig::default(), Arc::new(repository)).with_execution_services(services.clone());
 
     let mut operation = runtime
         .try_submit_detection(
@@ -453,7 +453,11 @@ fn test_managed_provider_uses_native_basename_for_filename_short_circuit() {
 
     assert_eq!(Some("application/x-native-basename"), report.mime_type.as_deref());
     assert_eq!(qubit_mime::InspectedExtent::Prefix(0), report.inspected_extent);
-    assert_eq!(0, opens.load(Ordering::SeqCst), "filename short circuit must not read the provider path");
+    assert_eq!(
+        0,
+        opens.load(Ordering::SeqCst),
+        "filename short circuit must not read the provider path"
+    );
 
     let mut operation = runtime
         .try_submit_detection(
@@ -471,7 +475,11 @@ fn test_managed_provider_uses_native_basename_for_filename_short_circuit() {
     };
     assert_eq!(Some("application/x-string-basename"), report.mime_type.as_deref());
     assert_eq!(qubit_mime::InspectedExtent::Prefix(0), report.inspected_extent);
-    assert_eq!(0, opens.load(Ordering::SeqCst), "string filename matching must not open the unrelated provider");
+    assert_eq!(
+        0,
+        opens.load(Ordering::SeqCst),
+        "string filename matching must not open the unrelated provider"
+    );
 
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
@@ -869,13 +877,7 @@ fn test_operation_runtime_drain_accepts_external_parent_child_until_stop_freezes
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
     let port = Arc::new(TestExecution::default());
-    let services = qubit_mime::MimeExecutionServices::new(
-        manager,
-        group.clone(),
-        port.clone(),
-        1024,
-    )
-    .unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap();
     services.prepare().unwrap();
     let runtime = MimeRuntime::builtin()
         .unwrap()
@@ -1675,13 +1677,8 @@ fn test_managed_provider_sibling_children_share_external_parent_read_budget() {
 
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
-    let services = qubit_mime::MimeExecutionServices::new(
-        manager.clone(),
-        group,
-        Arc::new(TestExecution::default()),
-        4,
-    )
-    .unwrap();
+    let services =
+        qubit_mime::MimeExecutionServices::new(manager.clone(), group, Arc::new(TestExecution::default()), 4).unwrap();
     services.prepare().unwrap();
 
     let backend_calls = Arc::new(AtomicUsize::new(0));
@@ -1712,8 +1709,9 @@ fn test_managed_provider_sibling_children_share_external_parent_read_budget() {
         },
         ..Default::default()
     };
-    let mut parent = manager.as_async().try_submit(parent_options, move |scope| {
-        async move {
+    let mut parent = manager
+        .as_async()
+        .try_submit(parent_options, move |scope| async move {
             let child_options = MimeOperationOptions {
                 max_buffer_bytes: Some(4),
                 max_read_bytes: Some(4),
@@ -1801,9 +1799,8 @@ fn test_managed_provider_sibling_children_share_external_parent_read_budget() {
                 }
             }
             Ok::<_, ()>((reported_bytes, successful_reports, budget_failures))
-        }
-    })
-    .unwrap();
+        })
+        .unwrap();
 
     let (reported_bytes, successful_reports, budget_failures) = match block_on(parent.wait_outcome()).unwrap() {
         OperationOutcome::Succeeded(result) => result,
@@ -1812,10 +1809,25 @@ fn test_managed_provider_sibling_children_share_external_parent_read_budget() {
     block_on(parent.wait_settlement());
     assert_eq!(1, successful_reports);
     assert_eq!(1, budget_failures);
-    assert_eq!(2, backend_calls.load(Ordering::SeqCst), "both admitted children reach the extension backend");
-    assert_eq!(2, opens.load(Ordering::SeqCst), "each admitted child opens its selected provider once");
-    assert_eq!(4, transferred.load(Ordering::SeqCst), "the shared parent budget allows only four delivered bytes");
-    assert_eq!(4, reported_bytes, "the successful child report accounts for all delivered bytes");
+    assert_eq!(
+        2,
+        backend_calls.load(Ordering::SeqCst),
+        "both admitted children reach the extension backend"
+    );
+    assert_eq!(
+        2,
+        opens.load(Ordering::SeqCst),
+        "each admitted child opens its selected provider once"
+    );
+    assert_eq!(
+        4,
+        transferred.load(Ordering::SeqCst),
+        "the shared parent budget allows only four delivered bytes"
+    );
+    assert_eq!(
+        4, reported_bytes,
+        "the successful child report accounts for all delivered bytes"
+    );
     assert_eq!(transferred.load(Ordering::SeqCst) as u64, reported_bytes);
 
     let shutdown = services.shutdown();
@@ -1832,13 +1844,8 @@ fn test_managed_provider_child_admission_rejection_returns_original_input() {
 
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
-    let services = qubit_mime::MimeExecutionServices::new(
-        manager.clone(),
-        group,
-        Arc::new(TestExecution::default()),
-        4,
-    )
-    .unwrap();
+    let services =
+        qubit_mime::MimeExecutionServices::new(manager.clone(), group, Arc::new(TestExecution::default()), 4).unwrap();
     services.prepare().unwrap();
 
     let backend_calls = Arc::new(AtomicUsize::new(0));
@@ -1872,13 +1879,13 @@ fn test_managed_provider_child_admission_rejection_returns_original_input() {
         .as_async()
         .try_submit(parent_options, move |scope| async move {
             let failure = match parent_runtime.try_submit_detection_in(
-                    &scope,
-                    OwnedMimeInput::Provider {
-                        file_system: Arc::clone(&child_file_system),
-                        path: child_path.clone(),
-                    },
-                    MimeOperationOptions::default(),
-                ) {
+                &scope,
+                OwnedMimeInput::Provider {
+                    file_system: Arc::clone(&child_file_system),
+                    path: child_path.clone(),
+                },
+                MimeOperationOptions::default(),
+            ) {
                 Ok(_) => panic!("parent child-operation limit should reject managed input"),
                 Err(failure) => failure,
             };
@@ -1899,9 +1906,16 @@ fn test_managed_provider_child_admission_rejection_returns_original_input() {
     };
     block_on(parent.wait_settlement());
     assert!(admission_rejected);
-    assert!(input_returned, "rejection must return the original provider filesystem and path");
+    assert!(
+        input_returned,
+        "rejection must return the original provider filesystem and path"
+    );
     assert_eq!(0, opens.load(Ordering::SeqCst), "rejected input must never be opened");
-    assert_eq!(0, backend_calls.load(Ordering::SeqCst), "rejected input must never reach the backend");
+    assert_eq!(
+        0,
+        backend_calls.load(Ordering::SeqCst),
+        "rejected input must never reach the backend"
+    );
 
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
