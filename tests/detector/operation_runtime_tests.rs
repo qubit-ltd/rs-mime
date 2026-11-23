@@ -718,6 +718,91 @@ fn test_operation_runtime_child_does_not_reserve_root() {
 }
 
 #[test]
+fn test_operation_runtime_drain_accepts_external_parent_child_until_stop_freezes() {
+    use std::sync::mpsc;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let port = Arc::new(TestExecution::default());
+    let services = qubit_mime::MimeExecutionServices::new(
+        manager,
+        group.clone(),
+        port.clone(),
+        1024,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
+    let body_runtime = runtime.clone();
+    let (parent_started_tx, parent_started_rx) = mpsc::channel();
+    let (submit_first_tx, submit_first_rx) = mpsc::channel();
+    let (first_accepted_tx, first_accepted_rx) = mpsc::channel();
+    let (submit_second_tx, submit_second_rx) = mpsc::channel();
+    let (second_rejected_tx, second_rejected_rx) = mpsc::channel();
+
+    let mut external_parent = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+        parent_started_tx.send(()).unwrap();
+        submit_first_rx.recv().unwrap();
+        let mut first_child = body_runtime
+            .try_submit_detection_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::from(b"%PDF-1.7".as_slice()), InputExtent::Complete),
+                MimeOperationOptions::default(),
+            )
+            .unwrap_or_else(|_| panic!("valid external parent child should be accepted during Drain"));
+        first_accepted_tx.send(()).unwrap();
+
+        submit_second_rx.recv().unwrap();
+        let second_was_rejected = body_runtime
+            .try_submit_detection_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::from(b"%PDF-1.7".as_slice()), InputExtent::Complete),
+                MimeOperationOptions::default(),
+            )
+            .is_err();
+        second_rejected_tx.send(second_was_rejected).unwrap();
+
+        assert!(matches!(
+            first_child.wait_outcome().await.unwrap(),
+            qubit_operation::OperationOutcome::Succeeded(_)
+        ));
+        Ok::<_, ()>(())
+    }))
+    .unwrap();
+    parent_started_rx.recv().unwrap();
+
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+
+    submit_first_tx.send(()).unwrap();
+    first_accepted_rx.recv().unwrap();
+    assert!(!shutdown.snapshot().operations_settled);
+    assert!(matches!(
+        shutdown.stop_services(),
+        Err(MimeError::OperationShutdownPending)
+    ));
+    assert_eq!(0, port.shutdowns.load(Ordering::SeqCst));
+
+    submit_second_tx.send(()).unwrap();
+    assert!(second_rejected_rx.recv().unwrap());
+    assert!(matches!(
+        block_on(external_parent.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(())
+    ));
+    block_on(external_parent.wait_settlement());
+    drop(external_parent);
+
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+    assert!(shutdown.stop_services().unwrap().services_stopped);
+    assert_eq!(1, port.shutdowns.load(Ordering::SeqCst));
+    let report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    assert_eq!(0, report.snapshot.active_operations);
+    assert_eq!(0, report.snapshot.queued_operations);
+}
+
+#[test]
 fn test_operation_runtime_queue_and_budget_boundaries() {
     use std::sync::mpsc;
 

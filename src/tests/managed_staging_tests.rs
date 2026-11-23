@@ -874,7 +874,6 @@ fn test_managed_staging_unconsumed_outcome_does_not_hold_temp() {
     }))
     .unwrap();
     // Deliberately never consume the unit outcome. It contains no resource ref.
-    services.track_observer(handle.observer());
     let report = block_on(handle.wait_settlement());
     assert!(report.all_released());
     assert!(!path_slot.lock().unwrap().as_ref().unwrap().exists());
