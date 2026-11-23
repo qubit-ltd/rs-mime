@@ -53,6 +53,7 @@ mod registration;
 pub(crate) use read_permit::ReadPermit;
 #[path = "mime_budget/read_tree_registry.rs"]
 mod read_tree_registry;
+pub(in crate::detector) use read_tree_registry::PendingReadTreeBinding;
 pub(in crate::detector) use read_tree_registry::ReadTreeRegistry;
 #[path = "mime_budget/limits.rs"]
 mod limits;
@@ -77,7 +78,10 @@ mod tests {
 
     #[test]
     fn test_refinement_shares_owned_memory_and_staging_budgets() {
-        let budget = MimeBudget::new(Limits { owned: 16, staging: 8 });
+        let budget = MimeBudget::new(Limits {
+            owned: 16,
+            staging: 8,
+        });
         let first: Arc<[u8]> = Arc::from([1u8; 8]);
         let alias = Arc::clone(&first);
         let permit_a = budget.reserve_allocation(&first).unwrap();
@@ -117,7 +121,10 @@ mod tests {
 
     #[test]
     fn test_mime_budget_alias_permits_share_reservation_until_last_drop() {
-        let budget = MimeBudget::new(Limits { owned: 16, staging: 2 });
+        let budget = MimeBudget::new(Limits {
+            owned: 16,
+            staging: 2,
+        });
         let allocation: Arc<[u8]> = Arc::from([7u8; 8]);
         let alias = Arc::clone(&allocation);
         let permit = budget.reserve_allocation(&allocation).unwrap();

@@ -29,6 +29,7 @@ use qubit_operation::ResourceManageErrorKind;
 use super::internal::mime_budget::BudgetPermit;
 use super::internal::mime_budget::Limits;
 use super::internal::mime_budget::MimeBudget;
+use super::internal::mime_budget::PendingReadTreeBinding;
 use super::internal::mime_budget::ReadTreeContext;
 use super::internal::mime_budget::ReadTreeRegistry;
 use super::internal::mime_budget::StagingBudget;
@@ -37,6 +38,8 @@ mod mime_execution_port;
 mod mime_shutdown_observer;
 mod mime_shutdown_snapshot;
 
+pub use mime_execution_port::MimeExecutionDispatchFailure;
+pub use mime_execution_port::MimeExecutionDispatchFailureKind;
 pub use mime_execution_port::MimeExecutionPort;
 pub use mime_shutdown_observer::MimeShutdownObserver;
 pub use mime_shutdown_snapshot::MimeShutdownSnapshot;
@@ -219,11 +222,15 @@ impl MimeExecutionServices {
 
     /// Starts MIME-owned fixed-capacity workers explicitly.
     pub fn prepare(&self) -> Result<(), crate::MimeError> {
-        let _guard = self.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = self
+            .lifecycle_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         match self.lifecycle() {
             MimeServiceLifecycle::NotStarted => {
                 self.execution.prepare()?;
-                self.lifecycle.store(MimeServiceLifecycle::Running as u8, Ordering::Release);
+                self.lifecycle
+                    .store(MimeServiceLifecycle::Running as u8, Ordering::Release);
                 Ok(())
             }
             MimeServiceLifecycle::Running => Ok(()),
@@ -235,8 +242,14 @@ impl MimeExecutionServices {
     /// Await operation settlements, call `stop_services` from an external
     /// synchronous context, then observe group Drain separately.
     pub fn shutdown(&self) -> MimeShutdownObserver {
-        let _guard = self.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
-        if !matches!(self.lifecycle(), MimeServiceLifecycle::Stopped | MimeServiceLifecycle::ClosedWithoutStart) {
+        let _guard = self
+            .lifecycle_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if !matches!(
+            self.lifecycle(),
+            MimeServiceLifecycle::Stopped | MimeServiceLifecycle::ClosedWithoutStart
+        ) {
             self.top_closed.store(true, Ordering::Release);
             let next = if self.lifecycle() == MimeServiceLifecycle::NotStarted {
                 MimeServiceLifecycle::ClosedWithoutStart
@@ -245,7 +258,9 @@ impl MimeExecutionServices {
             };
             self.lifecycle.store(next as u8, Ordering::Release);
         }
-        MimeShutdownObserver { services: self.clone() }
+        MimeShutdownObserver {
+            services: self.clone(),
+        }
     }
 
     /// Locks submissions while a caller performs a coordinated transition.
@@ -253,7 +268,9 @@ impl MimeExecutionServices {
     /// # Returns
     /// A guard that unlocks submissions when dropped.
     pub(in crate::detector) fn submission_guard(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.submission_lock.lock().unwrap_or_else(|e| e.into_inner())
+        self.submission_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     /// Retains an observer and harvests recovery handles from older settled
@@ -324,7 +341,8 @@ impl MimeExecutionServices {
     #[inline]
     #[must_use]
     pub(in crate::detector) fn is_prepared(&self) -> bool {
-        self.lifecycle() == MimeServiceLifecycle::Running && !self.top_closed.load(Ordering::Acquire)
+        self.lifecycle() == MimeServiceLifecycle::Running
+            && !self.top_closed.load(Ordering::Acquire)
     }
     /// Returns whether child submissions can still be accepted.
     #[inline]
@@ -353,19 +371,9 @@ impl MimeExecutionServices {
         self.budget.reserve_owned(bytes)
     }
 
-    /// Creates a child read-budget context for a parent operation.
-    ///
-    /// # Parameters
-    /// - `parent`: Parent operation whose resource scope retains the tree.
-    /// - `tree_limit`: Cumulative read allowance for the operation tree.
-    /// - `scope_limit`: Read allowance for the child operation.
-    ///
-    /// # Returns
-    /// The child context sharing its parent tree's accounting.
-    ///
-    /// # Errors
-    /// Returns the parent's resource-scope error when it cannot retain the
-    /// cumulative read-tree anchor.
+    /// Creates a child read-budget context for a parent operation after
+    /// admission has already succeeded.
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn read_tree_for_parent(
         &self,
@@ -373,7 +381,33 @@ impl MimeExecutionServices {
         tree_limit: u64,
         scope_limit: u64,
     ) -> Result<Arc<ReadTreeContext>, ResourceManageErrorKind> {
-        self.read_trees.child_for_parent(parent, tree_limit, scope_limit)
+        self.read_trees
+            .child_for_parent(parent, tree_limit, scope_limit)
+    }
+
+    /// Prepares a parent read-tree binding that an admitted body commits.
+    ///
+    /// # Parameters
+    /// - `parent`: Parent operation whose resource scope will retain the tree.
+    /// - `tree_limit`: Cumulative read allowance for the operation tree.
+    /// - `scope_limit`: Read allowance requested for this child.
+    ///
+    /// # Returns
+    /// A pending binding that releases reserved capacity if admission fails
+    /// and commits the parent anchor when its body starts.
+    ///
+    /// # Errors
+    /// Returns the parent resource-scope failure when capacity cannot be
+    /// reserved.
+    #[inline]
+    pub(crate) fn prepare_read_tree_for_parent(
+        &self,
+        parent: &OperationScope,
+        tree_limit: u64,
+        scope_limit: u64,
+    ) -> Result<PendingReadTreeBinding, ResourceManageErrorKind> {
+        self.read_trees
+            .reserve_child_for_parent(parent, tree_limit, scope_limit)
     }
 
     /// Creates a standalone read-budget context with the given limit.
@@ -429,7 +463,10 @@ impl MimeExecutionServices {
     /// # Returns
     /// A permit when the allocation fits the owned-memory budget.
     #[inline]
-    pub(in crate::detector) fn reserve_allocation(&self, bytes: &Arc<[u8]>) -> Option<BudgetPermit> {
+    pub(in crate::detector) fn reserve_allocation(
+        &self,
+        bytes: &Arc<[u8]>,
+    ) -> Option<BudgetPermit> {
         self.budget.reserve_allocation(bytes)
     }
     /// Reserves staging budget for a temporary-file write.
@@ -609,7 +646,8 @@ mod tests {
             fail_first: false,
             calls: AtomicUsize::new(0),
         });
-        let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 32).unwrap();
+        let services =
+            MimeExecutionServices::new(manager, group.clone(), port.clone(), 32).unwrap();
         let preparing = services.clone();
         let prepare_thread = std::thread::spawn(move || preparing.prepare());
 
@@ -687,11 +725,14 @@ mod tests {
 
         let (scope_tx, scope_rx) = mpsc::sync_channel(0);
         let (parent_release_tx, parent_release_rx) = mpsc::channel();
-        let mut parent = block_on(group.try_submit_async(Default::default(), move |scope| async move {
-            scope_tx.send(scope).unwrap();
-            parent_release_rx.recv().unwrap();
-            Ok::<_, MimeError>(())
-        }))
+        let mut parent = block_on(group.try_submit_async(
+            Default::default(),
+            move |scope| async move {
+                scope_tx.send(scope).unwrap();
+                parent_release_rx.recv().unwrap();
+                Ok::<_, MimeError>(())
+            },
+        ))
         .unwrap();
         let parent_scope = scope_rx.recv().unwrap();
 
@@ -743,6 +784,125 @@ mod tests {
     }
 
     #[test]
+    fn test_child_admission_rejection_releases_uncommitted_read_tree_binding() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let services = MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 16).unwrap();
+        services.prepare().unwrap();
+        let runtime = MimeRuntime::builtin()
+            .unwrap()
+            .with_execution_services(services.clone());
+        let body_services = services.clone();
+        let body_runtime = runtime.clone();
+        let options = qubit_operation::OperationOptions {
+            limits: qubit_operation::ScopeLimits {
+                resources: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut parent = services
+            .async_root_group
+            .try_submit(options, move |scope| async move {
+                let original: Arc<[u8]> = Arc::from(b"child bytes".as_slice());
+                let failure = match body_runtime.try_submit_detection_in(
+                    &scope,
+                    OwnedMimeInput::bytes(Arc::clone(&original), InputExtent::Complete),
+                    Default::default(),
+                ) {
+                    Err(failure) => failure,
+                    Ok(_) => panic!("the occupied capacity-one group must reject its child"),
+                };
+                let admission_rejected = matches!(
+                    failure.reason,
+                    crate::detector::MimeSubmitRejection::Admission(_)
+                );
+                let input_returned = match failure.input {
+                    OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(&content, &original),
+                    OwnedMimeInput::Provider { .. } => false,
+                };
+                let no_tree_registered = body_services.read_tree_for_operation(scope.id()).is_err();
+                let capacity_released = match scope.reserve_resource() {
+                    Ok(reservation) => {
+                        drop(reservation);
+                        true
+                    }
+                    Err(_) => false,
+                };
+                Ok::<_, MimeError>((
+                    admission_rejected,
+                    input_returned,
+                    no_tree_registered,
+                    capacity_released,
+                ))
+            })
+            .unwrap();
+        let result = match block_on(parent.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(result) => result,
+            other => panic!("parent operation should complete: {other:?}"),
+        };
+        block_on(parent.wait_settlement());
+        assert_eq!((true, true, true, true), result);
+
+        let body_services = services.clone();
+        let body_runtime = runtime.clone();
+        let sync_options = qubit_operation::OperationOptions {
+            limits: qubit_operation::ScopeLimits {
+                resources: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut parent = services
+            .async_root_group
+            .try_submit(sync_options, move |scope| async move {
+                let original: Arc<[u8]> = Arc::from(b"sync child bytes".as_slice());
+                let failure = match body_runtime.try_submit_detection_sync_in(
+                    &scope,
+                    OwnedMimeInput::bytes(Arc::clone(&original), InputExtent::Complete),
+                    Default::default(),
+                ) {
+                    Err(failure) => failure,
+                    Ok(_) => panic!("the occupied capacity-one group must reject its sync child"),
+                };
+                let admission_rejected = matches!(
+                    failure.reason,
+                    crate::detector::MimeSubmitRejection::Admission(_)
+                );
+                let input_returned = match failure.input {
+                    OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(&content, &original),
+                    OwnedMimeInput::Provider { .. } => false,
+                };
+                let no_tree_registered = body_services.read_tree_for_operation(scope.id()).is_err();
+                let capacity_released = match scope.reserve_resource() {
+                    Ok(reservation) => {
+                        drop(reservation);
+                        true
+                    }
+                    Err(_) => false,
+                };
+                Ok::<_, MimeError>((
+                    admission_rejected,
+                    input_returned,
+                    no_tree_registered,
+                    capacity_released,
+                ))
+            })
+            .unwrap();
+        let result = match block_on(parent.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(result) => result,
+            other => panic!("sync parent operation should complete: {other:?}"),
+        };
+        block_on(parent.wait_settlement());
+        assert_eq!((true, true, true, true), result);
+
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
     fn test_shutdown_waits_for_prepare_and_prevents_late_ready_state() {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
@@ -788,7 +948,10 @@ mod tests {
             !services.is_prepared(),
             "shutdown must close services after preparation finishes"
         );
-        assert!(matches!(services.prepare(), Err(MimeError::ExecutionServicesRequired)));
+        assert!(matches!(
+            services.prepare(),
+            Err(MimeError::ExecutionServicesRequired)
+        ));
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
         let _ = shutdown.stop_services().unwrap();
     }
@@ -800,7 +963,9 @@ mod tests {
         let services = MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 32).unwrap();
         let allocation: Arc<[u8]> = Arc::from(b"shared allocation".as_slice());
 
-        let first = services.reserve_allocation(&allocation).expect("allocation should fit");
+        let first = services
+            .reserve_allocation(&allocation)
+            .expect("allocation should fit");
         let alias = services
             .reserve_allocation(&allocation)
             .expect("same allocation should be shared");
@@ -824,7 +989,10 @@ mod tests {
             .reserve_owned(16 * 1024 * 1024)
             .expect("the full owned-memory budget should be reservable");
         assert_eq!(16 * 1024 * 1024, clone.budget.owned_bytes());
-        assert!(clone.reserve_owned(1).is_none(), "clones share the same hard limit");
+        assert!(
+            clone.reserve_owned(1).is_none(),
+            "clones share the same hard limit"
+        );
         drop(owned);
         assert_eq!(0, clone.budget.owned_bytes());
         assert!(
@@ -840,7 +1008,10 @@ mod tests {
         let port = Arc::new(FailOncePort(AtomicUsize::new(0)));
         let services = MimeExecutionServices::new(manager, group, port.clone(), 32).unwrap();
 
-        assert!(matches!(services.prepare(), Err(MimeError::ExecutionServicesRequired)));
+        assert!(matches!(
+            services.prepare(),
+            Err(MimeError::ExecutionServicesRequired)
+        ));
         assert!(!services.is_prepared());
         assert!(!services.accepts_children());
         services.prepare().unwrap();
@@ -855,7 +1026,10 @@ mod tests {
         let shutdown = services.shutdown();
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
         let _ = shutdown.stop_services().unwrap();
-        assert!(matches!(services.prepare(), Err(MimeError::ExecutionServicesRequired)));
+        assert!(matches!(
+            services.prepare(),
+            Err(MimeError::ExecutionServicesRequired)
+        ));
         assert_eq!(
             2,
             port.0.load(Ordering::SeqCst),
@@ -867,22 +1041,31 @@ mod tests {
     fn test_operation_read_tree_must_be_bound_and_keeps_parent_accounting() {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
-        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), Arc::new(NoopPort), 32).unwrap());
+        let services = Arc::new(
+            MimeExecutionServices::new(manager, group.clone(), Arc::new(NoopPort), 32).unwrap(),
+        );
         let body_services = Arc::clone(&services);
-        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
-            assert!(matches!(
-                body_services.read_tree_for_operation(scope.id()),
-                Err(MimeError::ExecutionServicesRequired)
-            ));
-            let tree = body_services.read_tree_for_parent(&scope, 16, 16).unwrap();
-            body_services.bind_read_tree(scope.id(), &tree);
-            let bound = body_services.read_tree_for_operation(scope.id()).unwrap();
-            assert!(Arc::ptr_eq(&tree, &bound));
-            assert_eq!(16, bound.remaining());
-            assert_eq!(4, bound.reserve(4).unwrap().commit(4));
-            assert_eq!(12, tree.remaining(), "bound reads consume the shared parent allowance");
-            Ok::<_, MimeError>(())
-        }))
+        let mut operation = block_on(group.try_submit_async(
+            Default::default(),
+            move |scope| async move {
+                assert!(matches!(
+                    body_services.read_tree_for_operation(scope.id()),
+                    Err(MimeError::ExecutionServicesRequired)
+                ));
+                let tree = body_services.read_tree_for_parent(&scope, 16, 16).unwrap();
+                body_services.bind_read_tree(scope.id(), &tree);
+                let bound = body_services.read_tree_for_operation(scope.id()).unwrap();
+                assert!(Arc::ptr_eq(&tree, &bound));
+                assert_eq!(16, bound.remaining());
+                assert_eq!(4, bound.reserve(4).unwrap().commit(4));
+                assert_eq!(
+                    12,
+                    tree.remaining(),
+                    "bound reads consume the shared parent allowance"
+                );
+                Ok::<_, MimeError>(())
+            },
+        ))
         .unwrap();
         assert!(matches!(
             block_on(operation.wait_outcome()).unwrap(),
@@ -909,7 +1092,9 @@ mod tests {
             .join()
             .is_err()
         );
-        services.prepare().expect("prepare should recover the poisoned lock");
+        services
+            .prepare()
+            .expect("prepare should recover the poisoned lock");
         assert!(services.is_prepared());
 
         let submission = Arc::clone(&services.submission_lock);
@@ -924,7 +1109,11 @@ mod tests {
         drop(services.submission_guard());
 
         let shutdown = services.shutdown();
-        assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+        assert!(
+            block_on(shutdown.wait_services_settled())
+                .unwrap()
+                .operations_settled
+        );
         assert!(shutdown.stop_services().unwrap().services_stopped);
     }
 
@@ -932,7 +1121,8 @@ mod tests {
     fn test_service_tracking_and_shutdown_recover_poisoned_tracking_locks() {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
-        let services = MimeExecutionServices::new(manager, group.clone(), Arc::new(NoopPort), 32).unwrap();
+        let services =
+            MimeExecutionServices::new(manager, group.clone(), Arc::new(NoopPort), 32).unwrap();
 
         for lock in [
             Arc::clone(&services.lifecycle_lock),
@@ -966,8 +1156,10 @@ mod tests {
             .is_err()
         );
 
-        let mut operation = block_on(group.try_submit_async(Default::default(), |_| async { Ok::<_, MimeError>(()) }))
-            .expect("a no-op operation should be accepted");
+        let mut operation = block_on(
+            group.try_submit_async(Default::default(), |_| async { Ok::<_, MimeError>(()) }),
+        )
+        .expect("a no-op operation should be accepted");
         assert!(matches!(
             block_on(operation.wait_outcome()).unwrap(),
             qubit_operation::OperationOutcome::Succeeded(())

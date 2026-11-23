@@ -214,6 +214,8 @@ pub use detector::MimeDetectorCore;
 pub use detector::MimeDetectorProvider;
 pub use detector::MimeDetectorRegistry;
 pub use detector::MimeDetectorSpec;
+pub use detector::MimeExecutionDispatchFailure;
+pub use detector::MimeExecutionDispatchFailureKind;
 pub use detector::MimeExecutionPort;
 pub use detector::MimeExecutionServices;
 pub use detector::MimeServiceLifecycle;

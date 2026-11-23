@@ -104,7 +104,10 @@ impl std::fmt::Debug for FileCommandMimeDetector<'_> {
             .debug_struct("FileCommandMimeDetector")
             .field("repository", &self.repository)
             .field("command_runner", &self.command_runner)
-            .field("execution_services_configured", &self.execution_services.is_some())
+            .field(
+                "execution_services_configured",
+                &self.execution_services.is_some(),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -128,7 +131,11 @@ impl FileCommandMimeDetector<'static> {
     /// File command detector.
     #[must_use]
     pub fn from_mime_config(config: MimeConfig) -> Self {
-        Self::with_repository_runner_and_config(default_repository(), Self::default_command_runner(&config), config)
+        Self::with_repository_runner_and_config(
+            default_repository(),
+            Self::default_command_runner(&config),
+            config,
+        )
     }
 }
 
@@ -150,7 +157,11 @@ impl<'a> FileCommandMimeDetector<'a> {
     #[must_use]
     pub fn with_repository(repository: &'a MimeRepository) -> Self {
         let config = MimeConfig::default();
-        Self::with_repository_runner_and_config(repository, Self::default_command_runner(&config), config)
+        Self::with_repository_runner_and_config(
+            repository,
+            Self::default_command_runner(&config),
+            config,
+        )
     }
 
     /// Creates a detector using an explicit repository and command runner.
@@ -163,7 +174,10 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// File command detector borrowing `repository` and owning the supplied
     /// runner.
     #[must_use]
-    pub fn with_repository_and_runner(repository: &'a MimeRepository, command_runner: CommandRunner) -> Self {
+    pub fn with_repository_and_runner(
+        repository: &'a MimeRepository,
+        command_runner: CommandRunner,
+    ) -> Self {
         Self::with_repository_runner_and_config(repository, command_runner, MimeConfig::default())
     }
 
@@ -302,7 +316,11 @@ impl<'a> FileCommandMimeDetector<'a> {
     /// command without `-L`; the command's treatment of links, dangling links,
     /// and directories depends on platform, version, and environment. A custom
     /// executor defines its own behavior.
-    pub fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
+    pub fn detect_file(
+        &self,
+        file: &Path,
+        policy: MimeDetectionPolicy,
+    ) -> MimeResult<Option<String>> {
         <Self as MimeDetector>::detect_file(self, file, policy)
     }
 
@@ -361,13 +379,18 @@ impl<'a> FileCommandMimeDetector<'a> {
     ///
     /// # Returns
     /// `true` when the probe succeeds and its output is complete.
-    pub(crate) fn is_available_with_executor(config: &MimeConfig, executor: &dyn MimeCommandExecutor) -> bool {
+    pub(crate) fn is_available_with_executor(
+        config: &MimeConfig,
+        executor: &dyn MimeCommandExecutor,
+    ) -> bool {
         executor
             .run(
                 &Self::default_command_runner(config).disable_logging(true),
                 Self::command_for_path(Path::new(".")),
             )
-            .is_ok_and(|output| output.exit_code == Some(0) && require_complete_stdout(&output).is_ok())
+            .is_ok_and(|output| {
+                output.exit_code == Some(0) && require_complete_stdout(&output).is_ok()
+            })
     }
 
     #[cfg(test)]
@@ -452,8 +475,8 @@ impl<'a> FileCommandMimeDetector<'a> {
                 format!("file exited with code {:?}", output.exit_code),
             ));
         }
-        let text =
-            require_complete_stdout(&output).map_err(|reason| MimeError::detector_backend(Self::COMMAND, reason))?;
+        let text = require_complete_stdout(&output)
+            .map_err(|reason| MimeError::detector_backend(Self::COMMAND, reason))?;
         let result = text.trim();
         if result.is_empty() {
             Ok(Vec::new())
@@ -576,9 +599,9 @@ impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
             };
             // Byte staging does not consult or charge provider-read context.
             let staged = match input {
-                BorrowedMimeInput::Bytes { content, extent, .. } => {
-                    stage_borrowed_bytes_in(scope, content, extent, limits).await?
-                }
+                BorrowedMimeInput::Bytes {
+                    content, extent, ..
+                } => stage_borrowed_bytes_in(scope, content, extent, limits).await?,
                 BorrowedMimeInput::Provider { file_system, path } => {
                     let read_tree = services.read_tree_for_operation(scope.id())?;
                     stage_owned_in(
@@ -835,7 +858,11 @@ mod file_operation_tests {
     }
 
     type ProviderStopContext = Arc<std::sync::Mutex<Option<OperationContext>>>;
-    type ProviderBuild = (Arc<AsyncFileSystem>, Arc<AtomicUsize>, Option<ProviderStopContext>);
+    type ProviderBuild = (
+        Arc<AsyncFileSystem>,
+        Arc<AtomicUsize>,
+        Option<ProviderStopContext>,
+    );
     type RecordedCommand = (std::path::PathBuf, Vec<OsString>, String);
 
     impl ProviderFs {
@@ -846,11 +873,15 @@ mod file_operation_tests {
 
         fn stopping(bytes: &[u8]) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>, ProviderStopContext) {
             let stop_context = Arc::new(std::sync::Mutex::new(None));
-            let (filesystem, reads, stop_context) = Self::with_optional_stop(bytes, Some(stop_context));
+            let (filesystem, reads, stop_context) =
+                Self::with_optional_stop(bytes, Some(stop_context));
             (filesystem, reads, stop_context.unwrap())
         }
 
-        fn with_optional_stop(bytes: &[u8], stop_context: Option<ProviderStopContext>) -> ProviderBuild {
+        fn with_optional_stop(
+            bytes: &[u8],
+            stop_context: Option<ProviderStopContext>,
+        ) -> ProviderBuild {
             let properties = ProviderProperties::new(
                 FileSystemInfo::new(
                     FileSystemId::new("mime-file-operation-test").unwrap(),
@@ -885,7 +916,10 @@ mod file_operation_tests {
             Box::pin(async { panic!("file staging must not stat provider input") })
         }
 
-        fn open_reader<'a>(&'a self, request: OpenReaderRequest<'a>) -> SpiFuture<'a, FsResult<OpenedAsyncReader>> {
+        fn open_reader<'a>(
+            &'a self,
+            request: OpenReaderRequest<'a>,
+        ) -> SpiFuture<'a, FsResult<OpenedAsyncReader>> {
             let id = FileSystemId::new("mime-file-operation-test").unwrap();
             let info = OpenedFileInfo::new(id, request.path().clone());
             let bytes = self.bytes.clone();
@@ -923,9 +957,14 @@ mod file_operation_tests {
         ) -> Poll<std::io::Result<usize>> {
             self.reads.fetch_add(1, Ordering::SeqCst);
             let count = count.min(self.bytes.len().saturating_sub(self.offset));
-            output[index..index + count].copy_from_slice(&self.bytes[self.offset..self.offset + count]);
+            output[index..index + count]
+                .copy_from_slice(&self.bytes[self.offset..self.offset + count]);
             self.offset += count;
-            if let Some(context) = self.stop_context.as_ref().and_then(|slot| slot.lock().unwrap().take()) {
+            if let Some(context) = self
+                .stop_context
+                .as_ref()
+                .and_then(|slot| slot.lock().unwrap().take())
+            {
                 let _ = context.request_stop(StopReason::UserCancelled);
             }
             Poll::Ready(Ok(count))
@@ -976,7 +1015,12 @@ mod file_operation_tests {
             if let Some(helper_ref) = &self.helper_ref {
                 *helper_ref.lock().unwrap() = Some(input.clone());
             }
-            let output = self.output.lock().unwrap().take().expect("one output per call");
+            let output = self
+                .output
+                .lock()
+                .unwrap()
+                .take()
+                .expect("one output per call");
             Box::pin(async move { output })
         }
     }
@@ -990,8 +1034,13 @@ mod file_operation_tests {
     fn harness(executor: Arc<RecordingExecutor>) -> Harness {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
-        let services =
-            MimeExecutionServices::new(manager.clone(), group.clone(), Arc::new(ImmediatePort), 1024).unwrap();
+        let services = MimeExecutionServices::new(
+            manager.clone(),
+            group.clone(),
+            Arc::new(ImmediatePort),
+            1024,
+        )
+        .unwrap();
         services.prepare().unwrap();
         Harness {
             detector: FileCommandMimeDetector::new()
@@ -1127,7 +1176,8 @@ mod file_operation_tests {
         let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
         let dispatches = Arc::new(AtomicUsize::new(0));
         let port = Arc::new(CountingPort(Arc::clone(&dispatches)));
-        let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
+        let services =
+            MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
         services.prepare().unwrap();
         let worker = MimeExecutionWorker::new(port);
         let budget = services.staging_budget();
@@ -1248,7 +1298,9 @@ mod file_operation_tests {
             MimeOperationOptions::default(),
             false,
         );
-        assert!(matches!(outcome, OperationOutcome::Succeeded(ref result) if result.candidates.is_empty()));
+        assert!(
+            matches!(outcome, OperationOutcome::Succeeded(ref result) if result.candidates.is_empty())
+        );
         block_on(handle.wait_settlement());
         cleanup(&harness_empty);
     }
@@ -1264,7 +1316,10 @@ mod file_operation_tests {
         let (handle, outcome) = submit(&harness, Arc::from(b"five!".as_slice()), options, false);
         assert!(matches!(
             outcome,
-            OperationOutcome::Failed(MimeError::BudgetExceeded { kind: "staging", .. })
+            OperationOutcome::Failed(MimeError::BudgetExceeded {
+                kind: "staging",
+                ..
+            })
         ));
         assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
         block_on(handle.wait_settlement());
@@ -1302,7 +1357,11 @@ mod file_operation_tests {
             })
         ));
         assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
-        assert_eq!(reads.load(Ordering::SeqCst), 2, "data and L+1 sentinel are read");
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            2,
+            "data and L+1 sentinel are read"
+        );
         block_on(handle.wait_settlement());
         cleanup(&harness);
     }
@@ -1316,11 +1375,16 @@ mod file_operation_tests {
             max_staging_bytes: Some(2),
             ..Default::default()
         };
-        let (handle, outcome, read_tree) = submit_provider(&harness, filesystem, options, Some(stop_context));
+        let (handle, outcome, read_tree) =
+            submit_provider(&harness, filesystem, options, Some(stop_context));
         assert!(matches!(outcome, OperationOutcome::Stopped(_)));
         assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
         assert_eq!(reads.load(Ordering::SeqCst), 1, "no read begins after stop");
-        assert_eq!(read_tree.remaining(), 1022, "the returned bytes remain charged");
+        assert_eq!(
+            read_tree.remaining(),
+            1022,
+            "the returned bytes remain charged"
+        );
         assert!(block_on(handle.wait_settlement()).all_released());
         assert_eq!(harness.services.staging_budget().used_bytes(), 0);
         cleanup(&harness);
@@ -1330,10 +1394,12 @@ mod file_operation_tests {
     fn test_file_operation_executor_error_keeps_typed_timeout_error() {
         let held = Arc::new(std::sync::Mutex::new(None));
         let fake = Arc::new(RecordingExecutor {
-            output: std::sync::Mutex::new(Some(Err(MimeError::OperationStopped(Box::new(StopReport {
-                reason: StopReason::Timeout,
-                accepted_at: None,
-            }))))),
+            output: std::sync::Mutex::new(Some(Err(MimeError::OperationStopped(Box::new(
+                StopReport {
+                    reason: StopReason::Timeout,
+                    accepted_at: None,
+                },
+            ))))),
             calls: AtomicUsize::new(0),
             observation: Arc::new(std::sync::Mutex::new(None)),
             helper_ref: Some(Arc::clone(&held)),
@@ -1353,7 +1419,10 @@ mod file_operation_tests {
         assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
         let resource = held.lock().unwrap().take().unwrap();
         let path = resource.path().unwrap();
-        assert!(path.exists(), "helper reference keeps the staged file alive");
+        assert!(
+            path.exists(),
+            "helper reference keeps the staged file alive"
+        );
         let sandbox = path.parent().unwrap().to_path_buf();
         let blocker = sandbox.join("command-cleanup-blocker");
         std::fs::write(&blocker, b"force retryable cleanup failure").unwrap();
@@ -1375,13 +1444,18 @@ mod file_operation_tests {
     #[test]
     fn test_file_operation_runs_managed_command_through_fixed_worker() {
         let manager = OperationManager::new(Default::default()).unwrap();
-        let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let port = Arc::new(crate::FixedMimeExecutionPort::new(1, 4));
-        let services = MimeExecutionServices::new(manager.clone(), group.clone(), port, 1024).unwrap();
+        let services =
+            MimeExecutionServices::new(manager.clone(), group.clone(), port, 1024).unwrap();
         services.prepare().unwrap();
         let detector = FileCommandMimeDetector::new()
-            .with_command_runner(qubit_command::CommandRunner::new(std::time::Duration::from_secs(5)))
+            .with_command_runner(qubit_command::CommandRunner::new(
+                std::time::Duration::from_secs(5),
+            ))
             .with_execution_services(services.clone());
+        assert!(services.is_prepared());
+        assert!(detector.execution_services.is_some());
         let content: Arc<[u8]> = Arc::from(&b"hello managed worker\n"[..]);
         let content_len = content.len() as u64;
         let mut operation = group
@@ -1409,6 +1483,127 @@ mod file_operation_tests {
         );
         let settlement = block_on(operation.wait_settlement());
         assert_eq!(settlement.status, SettlementStatus::Released);
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_file_command_child_is_admitted_after_parent_group_drain() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(crate::FixedMimeExecutionPort::new(1, 2));
+        let services =
+            MimeExecutionServices::new(manager.clone(), group.clone(), port, 1024).unwrap();
+        services.prepare().unwrap();
+        let detector = FileCommandMimeDetector::new()
+            .with_command_runner(qubit_command::CommandRunner::new(
+                std::time::Duration::from_secs(5),
+            ))
+            .with_execution_services(services.clone());
+        let content: Arc<[u8]> = Arc::from(&b"hello managed drain\n"[..]);
+        let content_len = content.len() as u64;
+        let drain_group = group.clone();
+        let mut operation = group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                drain_group.close_admission();
+                detector
+                    .guess_content_in(
+                        &scope,
+                        BorrowedMimeInput::Bytes {
+                            content: &content,
+                            extent: InputExtent::Complete,
+                            filename: None,
+                        },
+                        &MimeOperationOptions::default(),
+                    )
+                    .await
+            })
+            .unwrap();
+        let outcome = block_on(operation.wait_outcome()).unwrap();
+        assert!(
+            matches!(&outcome, OperationOutcome::Succeeded(result)
+            if result.candidates.iter().any(|candidate| candidate.mime_type == "text/plain")
+                && result.staging_bytes == content_len),
+            "a child with an inherited group permit should survive Drain: {outcome:?}"
+        );
+        assert_eq!(
+            SettlementStatus::Released,
+            block_on(operation.wait_settlement()).status
+        );
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_full_command_queue_returns_typed_busy_after_preserving_lifecycle() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(crate::FixedMimeExecutionPort::new(1, 1));
+        let services =
+            MimeExecutionServices::new(manager.clone(), group.clone(), port.clone(), 1024).unwrap();
+        services.prepare().unwrap();
+        let detector = FileCommandMimeDetector::new()
+            .with_command_runner(qubit_command::CommandRunner::new(
+                std::time::Duration::from_secs(5),
+            ))
+            .with_execution_services(services.clone());
+        assert!(services.is_prepared());
+        assert!(detector.execution_services.is_some());
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        assert!(
+            port.try_dispatch(Box::new(move || {
+                started_tx.send(()).unwrap();
+                let _ = release_rx.recv();
+            }))
+            .is_ok()
+        );
+        started_rx.recv().unwrap();
+        assert!(port.try_dispatch(Box::new(|| {})).is_ok());
+        let full = port
+            .try_dispatch_with_status(Box::new(|| {}))
+            .expect_err("the second job must occupy the only queue slot");
+        assert_eq!(
+            crate::MimeExecutionDispatchFailureKind::QueueFull,
+            full.kind()
+        );
+        drop(full.into_job());
+
+        let content: Arc<[u8]> = Arc::from(&b"queue pressure\n"[..]);
+        let mut operation = group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                detector
+                    .guess_content_in(
+                        &scope,
+                        BorrowedMimeInput::Bytes {
+                            content: &content,
+                            extent: InputExtent::Complete,
+                            filename: None,
+                        },
+                        &MimeOperationOptions::default(),
+                    )
+                    .await
+            })
+            .unwrap();
+        let outcome = block_on(operation.wait_outcome()).unwrap();
+        let queue_busy = matches!(
+            outcome,
+            OperationOutcome::Failed(crate::MimeError::CommandQueueBusy)
+        );
+        release_tx.send(()).unwrap();
+        let settlement = block_on(operation.wait_settlement());
+        assert_eq!(SettlementStatus::Released, settlement.status);
+        assert!(
+            queue_busy,
+            "unexpected managed command outcome: {outcome:?}"
+        );
         let shutdown = services.shutdown();
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
         let _ = shutdown.stop_services().unwrap();
