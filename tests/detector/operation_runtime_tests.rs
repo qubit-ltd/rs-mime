@@ -1099,7 +1099,7 @@ fn test_operation_runtime_ended_parent_returns_original_input() {
     };
     assert!(matches!(
         failure.reason,
-        qubit_mime::MimeSubmitRejection::ReadBudgetBinding(qubit_operation::ResourceManageErrorKind::ScopeEnded)
+        qubit_mime::MimeSubmitRejection::GroupBinding(qubit_operation::GroupBindingError::ScopeEnded)
     ));
     match failure.input {
         OwnedMimeInput::Bytes { content, .. } => assert!(Arc::ptr_eq(&bytes, &content)),
@@ -1925,16 +1925,35 @@ fn test_managed_provider_child_admission_rejection_returns_original_input() {
 
 #[test]
 fn test_external_parent_read_budget_binding_failures_return_input() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let port = Arc::new(TestExecution::default());
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
     let services = qubit_mime::MimeExecutionServices::new(manager.clone(), group, port, 16).unwrap();
     services.prepare().unwrap();
+
+    let backend_calls = Arc::new(AtomicUsize::new(0));
+    let registry = MimeDetectorRegistry::default();
+    registry
+        .register_async_provider(ManagedParentBudgetProvider(Arc::clone(&backend_calls)))
+        .unwrap();
     let runtime = MimeRuntime::builtin()
         .unwrap()
-        .with_execution_services(services.clone());
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("managed-parent-budget").unwrap(),
+        )
+        .unwrap();
+    let opens = Arc::new(AtomicUsize::new(0));
+    let file_system = Arc::new(AsyncFileSystem::from_spi(CountingFileSystem::new(Arc::clone(&opens))).unwrap());
+    let path = Path::parse("/budget-probe.unmatched").unwrap();
 
     let body_runtime = runtime.clone();
+    let body_file_system = Arc::clone(&file_system);
+    let body_path = path.clone();
     let capacity_parent_options = qubit_operation::OperationOptions {
         limits: qubit_operation::ScopeLimits {
             resources: 1,
@@ -1946,10 +1965,12 @@ fn test_external_parent_read_budget_binding_failures_return_input() {
         .as_async()
         .try_submit(capacity_parent_options, move |scope| async move {
             let _occupied = scope.manage(Arc::new(())).unwrap();
-            let original: Arc<[u8]> = Arc::from(b"%PDF".as_slice());
             let result = body_runtime.try_submit_detection_in(
                 &scope,
-                OwnedMimeInput::bytes(Arc::clone(&original), InputExtent::Complete),
+                OwnedMimeInput::Provider {
+                    file_system: Arc::clone(&body_file_system),
+                    path: body_path.clone(),
+                },
                 MimeOperationOptions::default(),
             );
             let (capacity_rejected, input_returned) = match result {
@@ -1961,8 +1982,10 @@ fn test_external_parent_read_budget_binding_failures_return_input() {
                         )
                     );
                     let input_returned = match failure.input {
-                        OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(&original, &content),
-                        OwnedMimeInput::Provider { .. } => false,
+                        OwnedMimeInput::Provider { file_system, path } => {
+                            Arc::ptr_eq(&body_file_system, &file_system) && path == body_path
+                        }
+                        OwnedMimeInput::Bytes { .. } => false,
                     };
                     (capacity_rejected, input_returned)
                 }
@@ -1980,6 +2003,8 @@ fn test_external_parent_read_budget_binding_failures_return_input() {
     assert!(capacity_input_returned);
 
     let body_runtime = runtime.clone();
+    let body_file_system = Arc::clone(&file_system);
+    let body_path = path.clone();
     let mut ended_parent = manager
         .as_async()
         .try_submit(
@@ -1993,10 +2018,12 @@ fn test_external_parent_read_budget_binding_failures_return_input() {
     };
     block_on(ended_parent.wait_settlement());
 
-    let original: Arc<[u8]> = Arc::from(b"%PDF".as_slice());
     let failure = match body_runtime.try_submit_detection_in(
         &ended_scope,
-        OwnedMimeInput::bytes(Arc::clone(&original), InputExtent::Complete),
+        OwnedMimeInput::Provider {
+            file_system: Arc::clone(&body_file_system),
+            path: body_path.clone(),
+        },
         MimeOperationOptions::default(),
     ) {
         Ok(_) => panic!("an ended parent must not start a child with a fresh budget"),
@@ -2007,11 +2034,16 @@ fn test_external_parent_read_budget_binding_failures_return_input() {
         qubit_mime::MimeSubmitRejection::ReadBudgetBinding(qubit_operation::ResourceManageErrorKind::ScopeEnded)
     ));
     match failure.input {
-        OwnedMimeInput::Bytes { content, .. } => assert!(Arc::ptr_eq(&original, &content)),
-        OwnedMimeInput::Provider { .. } => panic!("the rejected input changed kind"),
+        OwnedMimeInput::Provider { file_system, path } => {
+            assert!(Arc::ptr_eq(&body_file_system, &file_system));
+            assert_eq!(body_path, path);
+        }
+        OwnedMimeInput::Bytes { .. } => panic!("the rejected input changed kind"),
     }
 
     let body_runtime = runtime.clone();
+    let body_file_system = Arc::clone(&file_system);
+    let body_path = path.clone();
     let stopped_rejection = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stopped_rejection_body = Arc::clone(&stopped_rejection);
     let mut stopped_parent = manager
@@ -2021,10 +2053,12 @@ fn test_external_parent_read_budget_binding_failures_return_input() {
                 scope.request_stop(qubit_operation::StopReason::UserCancelled),
                 qubit_operation::StopRequestStatus::Accepted
             );
-            let original: Arc<[u8]> = Arc::from(b"%PDF".as_slice());
             let result = body_runtime.try_submit_detection_in(
                 &scope,
-                OwnedMimeInput::bytes(Arc::clone(&original), InputExtent::Complete),
+                OwnedMimeInput::Provider {
+                    file_system: Arc::clone(&body_file_system),
+                    path: body_path.clone(),
+                },
                 MimeOperationOptions::default(),
             );
             let rejected = match result {
@@ -2036,8 +2070,10 @@ fn test_external_parent_read_budget_binding_failures_return_input() {
                         )
                     );
                     let returned = match failure.input {
-                        OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(&original, &content),
-                        OwnedMimeInput::Provider { .. } => false,
+                        OwnedMimeInput::Provider { file_system, path } => {
+                            Arc::ptr_eq(&body_file_system, &file_system) && path == body_path
+                        }
+                        OwnedMimeInput::Bytes { .. } => false,
                     };
                     stopped && returned
                 }
@@ -2050,6 +2086,8 @@ fn test_external_parent_read_budget_binding_failures_return_input() {
     let _stopped_outcome = block_on(stopped_parent.wait_outcome()).unwrap();
     block_on(stopped_parent.wait_settlement());
     assert!(stopped_rejection.load(Ordering::SeqCst));
+    assert_eq!(0, opens.load(Ordering::SeqCst), "rejected provider input must not be opened");
+    assert_eq!(0, backend_calls.load(Ordering::SeqCst), "rejected provider input must not reach the backend");
 
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
