@@ -32,6 +32,7 @@ use qubit_mime::MimeError;
 use qubit_mime::MimeExecutionServices;
 use qubit_mime::MimeFuture;
 use qubit_mime::MimeOperationOptions;
+use qubit_mime::MimeRepository;
 use qubit_mime::OwnedMimeInput;
 use qubit_mime::RandomAccessCapability;
 use qubit_mime::detector::MimeRuntime;
@@ -389,6 +390,75 @@ fn test_explicit_builtin_repository_selection_short_circuits_provider_reads() {
         classifier_calls.load(Ordering::SeqCst),
         "filename short circuit should skip classifier"
     );
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_managed_provider_uses_native_basename_for_filename_short_circuit() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-native-basename">
+    <glob pattern="left\right.mimecase" weight="80"/>
+  </mime-type>
+  <mime-type type="application/x-string-basename">
+    <glob pattern="right.mimecase" weight="50"/>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("custom filename repository should parse");
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let services = services(&manager, 4, Arc::new(TestExecution::default()));
+    services.prepare().unwrap();
+    let opens = Arc::new(AtomicUsize::new(0));
+    let file_system = Arc::new(AsyncFileSystem::from_spi(CountingFileSystem::new(Arc::clone(&opens))).unwrap());
+    let runtime = MimeRuntime::new(MimeConfig::default(), Arc::new(repository))
+        .with_execution_services(services.clone());
+
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::Provider {
+                file_system,
+                path: Path::parse(r"/left\right.mimecase").unwrap(),
+            },
+            MimeOperationOptions {
+                policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| panic!("filename result should be admitted: {:?}", failure.reason));
+    let report = match block_on(operation.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(report) => report,
+        other => panic!("native basename short circuit should succeed: {other:?}"),
+    };
+
+    assert_eq!(Some("application/x-native-basename"), report.mime_type.as_deref());
+    assert_eq!(qubit_mime::InspectedExtent::Prefix(0), report.inspected_extent);
+    assert_eq!(0, opens.load(Ordering::SeqCst), "filename short circuit must not read the provider path");
+
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(b"".as_slice()), InputExtent::Complete)
+                .with_filename(r"left\right.mimecase"),
+            MimeOperationOptions {
+                policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| panic!("string filename result should be admitted: {:?}", failure.reason));
+    let report = match block_on(operation.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(report) => report,
+        other => panic!("string filename short circuit should succeed: {other:?}"),
+    };
+    assert_eq!(Some("application/x-string-basename"), report.mime_type.as_deref());
+    assert_eq!(qubit_mime::InspectedExtent::Prefix(0), report.inspected_extent);
+    assert_eq!(0, opens.load(Ordering::SeqCst), "string filename matching must not open the unrelated provider");
 
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
