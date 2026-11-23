@@ -541,7 +541,7 @@ impl MimeRuntime {
             .unwrap_or(services.max_read_bytes())
             .min(services.max_read_bytes());
         let (pending_tree, standalone_tree) = match parent {
-            Some(parent) => {
+            Some(parent) if matches!(&input, OwnedMimeInput::Provider { .. }) => {
                 match services.prepare_read_tree_for_parent(parent, tree_limit, tree_limit) {
                     Ok(binding) => (Some(binding), None),
                     Err(kind) => {
@@ -552,7 +552,7 @@ impl MimeRuntime {
                     }
                 }
             }
-            None => (None, Some(services.new_read_tree(tree_limit))),
+            Some(_) | None => (None, Some(services.new_read_tree(tree_limit))),
         };
         let cell = mime_submission::cell(input);
         let body_cell = Arc::clone(&cell);

@@ -1119,15 +1119,15 @@ fn test_operation_runtime_closed_group_returns_original_input() {
                 Ok(_) => return Ok(false),
                 Err(failure) => failure,
             };
-            let group_closed = matches!(
+            let services_closed = matches!(
                 failure.reason,
-                qubit_mime::MimeSubmitRejection::GroupBinding(qubit_operation::GroupBindingError::Closed)
+                qubit_mime::MimeSubmitRejection::ExecutionServicesRequired
             );
             let same_input = match failure.input {
                 OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(&bytes, &content),
                 OwnedMimeInput::Provider { .. } => false,
             };
-            Ok::<_, ()>(group_closed && same_input)
+            Ok::<_, ()>(services_closed && same_input)
         })
         .unwrap();
     entered_rx.recv().unwrap();
