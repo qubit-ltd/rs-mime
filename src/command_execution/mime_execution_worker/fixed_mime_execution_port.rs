@@ -136,6 +136,35 @@ impl FixedMimeExecutionPort {
     }
 }
 
+impl Drop for FixedMimeExecutionPort {
+    /// Closes the queue when the final port owner disappears. A worker may
+    /// release that owner itself, so its own join handle is detached while
+    /// every other worker is still joined.
+    fn drop(&mut self) {
+        let slot = self.running.get_mut().unwrap_or_else(|e| e.into_inner());
+        let Some(running) = slot.take() else {
+            return;
+        };
+        self.stopped.store(true, Ordering::Release);
+        {
+            let mut state = running.queue.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.closed = true;
+        }
+        running.queue.ready.notify_all();
+        let current = std::thread::current().id();
+        let mut panicked = false;
+        for worker in running.threads {
+            if worker.thread().id() != current {
+                panicked |= worker.join().is_err();
+            }
+        }
+        let result = self.shutdown_failed.get_mut().unwrap_or_else(|e| e.into_inner());
+        if result.is_none() {
+            *result = Some(panicked);
+        }
+    }
+}
+
 impl MimeExecutionPort for FixedMimeExecutionPort {
     /// Starts the fixed worker pool once and is otherwise idempotent.
     ///
@@ -316,6 +345,29 @@ mod tests {
             rejected_ran.load(Ordering::SeqCst),
             "shutdown returns ownership of rejected work"
         );
+    }
+
+    #[test]
+    fn test_last_port_owner_can_be_released_by_its_worker() {
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        port.prepare().unwrap();
+        let weak = Arc::downgrade(&port);
+        let worker_owner = Arc::clone(&port);
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        assert!(port.try_dispatch(Box::new(move || {
+            drop(worker_owner);
+            dropped_tx.send(()).unwrap();
+        })).is_ok());
+        drop(port);
+
+        dropped_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("worker-side final drop must not join itself");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while weak.upgrade().is_some() && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(weak.upgrade().is_none(), "last worker owner should be released");
     }
 
     #[test]

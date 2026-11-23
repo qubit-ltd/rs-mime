@@ -72,6 +72,7 @@ pub use mime_detector_registry::MimeDetectorRegistry;
 pub use mime_detector_spec::MimeDetectorSpec;
 pub use mime_execution_services::MimeExecutionPort;
 pub use mime_execution_services::MimeExecutionServices;
+pub use mime_execution_services::MimeServiceLifecycle;
 pub use mime_input::BorrowedMimeInput;
 pub use mime_input::InputExtent;
 pub use mime_input::InspectedExtent;
