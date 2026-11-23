@@ -1,15 +1,15 @@
 # rs-mime 0.22.0 详细设计：可取消的异步检测与受控后端组合
 
-- 状态：待评审设计，尚未实现。
+- 状态：历史设计草案，不再作为当前实施依据。当前用法见[英文用户指南](user_guide.md)和[中文用户指南](user_guide.zh_CN.md)；实现状态与验收证据见[0.22.0 验收记录](acceptance-0.22.0-operation-0.2.zh_CN.md)。
 - 初稿日期：2026-11-11；缺失恢复与上游核对：2026-11-13。
-- 当前版本：qubit-mime 0.21.1；下一破坏性版本：0.22.0。
-- 上游设计基线：qubit-command 0.12.0、qubit-local-files 0.6.0；Magika 适配对应 qubit-magika 0.19.0。
+- 初稿时版本：qubit-mime 0.21.1；计划目标：0.22.0。
+- 初稿时上游基线：qubit-command 0.12.0、qubit-local-files 0.6.0；Magika 适配对应 qubit-magika 0.19.0。
 
-## 0. 实施前置条件：先实现 rs-operation
+## 0. 实施前置条件（历史约束）：先实现 rs-operation
 
-**必须先实现并验收 rs-operation 0.1.0 的基础协议，再开始本设计的库实现。** 只有设计文档或空 crate 不满足此前置条件；本轮仅修订设计，不修改实现或 Cargo 清单。
+**本设计当时要求先实现并验收 rs-operation 0.1.0 的基础协议，再开始库实现。** 只有设计文档或空 crate 不满足此前置条件；起草阶段仅修订设计，没有修改实现或 Cargo 清单。
 
-上游入口为 [rs-operation 设计](../../rs-operation/doc/design-0.1.0.zh_CN.md)。开始实施前，必须固定其已验收版本/不可变提交并验证：同步/异步观察同一操作、取消树与单调期限、子操作 reserve/attach/commit、ResourceUse、OwnedCleanup、恢复所有权、结果与释放分离、Drop 托管及 shutdown 超期继续观察。若上游缺少必需能力，应先在 rs-operation 补齐契约和测试，不在下游复制一套替代机制。
+本节引用的 rs-operation 0.1.0 设计仅记录当时的前置设想，不再是当前契约入口。当前行为和实施证据见上方用户指南与验收记录。以下列出的同步/异步观察、取消、子操作登记、资源清理、恢复所有权及结果与释放分离要求保留为历史设计背景；不得据此推断当前公开 API 名称或版本。
 
 ### 0.1 统一职责与接口规则
 
@@ -166,7 +166,7 @@ qubit-magika ^0.19 为下游，不加入本库依赖。rs-fs-local 同步/异步
 
 迁移全异步链后删除 rs-mime 对 blocking 的直接依赖；保留同步候选排序与检测策略。async trait、classifier/context 注入及 fs 依赖变化为本次 minor 破坏性变更，不改 Cargo 版本直到实现完成。
 
-关联设计：[command](../../rs-command/doc/design-0.12.0.zh_CN.md)、[local-files](../../rs-local-files/doc/design-0.6.0.zh_CN.md)、[fs](../../rs-fs/doc/design-0.4.0.zh_CN.md)、[magika](../../rs-magika/doc/design-0.19.0.zh_CN.md)。
+关联的历史设计基线：rs-command 0.12.0、rs-local-files 0.6.0、rs-fs 0.4.0 和 qubit-magika 0.19.0。这些版本仅用于追溯草案背景，不代表当前实施依赖或契约。
 
 ## 12. 实施与验收
 
