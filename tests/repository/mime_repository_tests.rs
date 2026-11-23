@@ -336,6 +336,7 @@ fn test_literal_punctuation_precedes_higher_weight_wildcard() {
         ("report{", "report*"),
         ("report}", "report*"),
         ("report]", "report*"),
+        ("report[", "report*"),
     ] {
         let xml = format!(
             r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
