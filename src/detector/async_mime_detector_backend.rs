@@ -96,6 +96,21 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     /// The backend's declared random-access capability for one opened input.
     fn random_access_capability(&self) -> RandomAccessCapability;
 
+    /// Returns whether provider inputs must be delivered through a metered
+    /// same-object read session instead of an unbounded filesystem handle.
+    ///
+    /// The default enables metered sessions when the backend declares
+    /// [`RandomAccessCapability::SamplesSameObject`]. Prefix backends continue
+    /// to receive bounded bytes. A backend that requires complete sequential
+    /// provider reads should override this method to return `true`.
+    ///
+    /// # Returns
+    /// `true` when provider input should be opened once and exposed only through
+    /// [`crate::MeteredReadSession`].
+    fn uses_managed_provider_reads(&self) -> bool {
+        self.random_access_capability() == RandomAccessCapability::SamplesSameObject
+    }
+
     /// Inspects input within this operation's context.
     ///
     /// # Parameters

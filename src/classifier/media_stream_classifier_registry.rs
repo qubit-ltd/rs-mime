@@ -7,6 +7,7 @@
 // =============================================================================
 //! Runtime Registry and global facade for media stream classifier providers.
 
+use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -16,7 +17,6 @@ use qubit_spi::ProviderDefinition;
 use qubit_spi::ProviderId;
 use qubit_spi::ProviderRegistry;
 use qubit_spi::ProviderSelection;
-use qubit_spi::ProviderSelectionTargetRef;
 use qubit_spi::ResolvingServiceProvider;
 use qubit_spi::error::ProviderResolutionError;
 use qubit_spi::error::RegistryMutationError;
@@ -27,13 +27,23 @@ use super::MediaStreamClassifierProvider;
 use super::MediaStreamClassifierSpec;
 use crate::MimeConfig;
 use crate::MimeError;
+use crate::async_selection::AsyncProviderCandidate;
 
 /// Process-wide classifier Registry initialized with the built-in provider.
 static GLOBAL_MEDIA_STREAM_CLASSIFIER_REGISTRY: LazyLock<MediaStreamClassifierRegistry> =
     LazyLock::new(MediaStreamClassifierRegistry::builtin);
 
 /// Async factories indexed by selector with their registration-time identity.
-type AsyncProviderMap = HashMap<String, (String, Arc<dyn AsyncMediaStreamClassifierProvider>)>;
+type AsyncProviderMap = HashMap<String, AsyncProviderEntry>;
+
+/// Async classifier factory and descriptor snapshot retained for its selectors.
+#[derive(Clone, Debug)]
+struct AsyncProviderEntry {
+    id: String,
+    priority: i32,
+    is_builtin: bool,
+    provider: Arc<dyn AsyncMediaStreamClassifierProvider>,
+}
 
 /// Shared runtime Registry for media stream classifier definitions.
 ///
@@ -105,32 +115,91 @@ impl MediaStreamClassifierRegistry {
     /// The selected provider ID and its asynchronous classifier backend.
     ///
     /// # Errors
-    /// Returns [`MimeError::AsyncUnsupported`] when no async-capable provider
-    /// matches, or the provider error when backend construction fails. The
-    /// selected provider is snapshotted before its factory runs, so factory
-    /// callbacks run without holding the async catalog lock.
+    /// Returns [`MimeError::ProviderSelection`] when selectors cannot resolve,
+    /// [`MimeError::AsyncUnsupported`] for a selected sync-only provider, or
+    /// the final factory error after applying the selection's fallback policy.
+    /// The candidates are snapshotted before factories run, so callbacks run
+    /// without holding the async catalog lock.
     pub fn create_async_backend(
         &self,
         selection: &ProviderSelection,
         config: &MimeConfig,
         services: &crate::detector::MimeExecutionServices,
     ) -> Result<(String, Arc<dyn crate::AsyncMediaStreamClassifierBackend>), MimeError> {
-        let selectors: Vec<&str> = match selection.target() {
-            ProviderSelectionTargetRef::Auto => vec!["ffprobe"],
-            ProviderSelectionTargetRef::Named(selector) => vec![selector.as_str()],
-            ProviderSelectionTargetRef::Chain { selectors, .. } => {
-                selectors.iter().map(|selector| selector.as_str()).collect()
-            }
-            _ => return Err(MimeError::AsyncUnsupported),
-        };
-        let selected = {
+        let async_catalog = {
             let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
-            selectors.iter().find_map(|selector| providers.get(*selector).cloned())
+            providers
+                .iter()
+                .map(|(selector, entry)| {
+                    (
+                        selector.clone(),
+                        (entry.id.clone(), entry.priority, entry.clone()),
+                    )
+                })
+                .collect::<HashMap<_, _>>()
         };
-        if let Some((id, provider)) = selected {
-            return Ok((id, provider.create_async_backend(config, services)?));
+        let mut builtin_ids = async_catalog
+            .values()
+            .filter(|(_, _, entry)| entry.is_builtin)
+            .map(|(id, priority, _)| (id.clone(), *priority))
+            .collect::<Vec<_>>();
+        builtin_ids.sort_by(|(left_id, left_priority), (right_id, right_priority)| {
+            right_priority.cmp(left_priority).then_with(|| left_id.cmp(right_id))
+        });
+        let auto_builtin_ids = builtin_ids.into_iter().map(|(id, _)| id).collect();
+        let mut auto_priority_ids = self
+            .resolve_selected(&ProviderSelection::auto())
+            .map(|resolved| {
+                resolved
+                    .candidate_descriptors()
+                    .map(|descriptor| (descriptor.id().as_str().to_owned(), descriptor.priority()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        auto_priority_ids.extend(
+            async_catalog
+                .values()
+                .map(|(id, priority, _)| (id.clone(), *priority)),
+        );
+        let candidates = crate::async_selection::resolve(
+            selection,
+            &async_catalog,
+            |selector| {
+                let selection = ProviderSelection::named(selector).ok()?;
+                self.resolve_selected(&selection)
+                    .ok()?
+                    .candidate_descriptors()
+                    .next()
+                    .map(|descriptor| descriptor.id().as_str().to_owned())
+            },
+            auto_builtin_ids,
+            auto_priority_ids,
+            "media stream classifier",
+        )?;
+
+        let mut last_error = None;
+        for candidate in candidates {
+            let (id, provider) = match candidate {
+                AsyncProviderCandidate::Async { id, provider } => (id, Some(provider)),
+                AsyncProviderCandidate::SyncOnly { id } => (id, None),
+            };
+            let result = provider.map_or_else(
+                || Err(MimeError::AsyncUnsupported),
+                |entry| entry.provider.create_async_backend(config, services).map(|backend| (id, backend)),
+            );
+            match result {
+                Ok(selection) => return Ok(selection),
+                Err(error) => {
+                    if !crate::async_selection::should_fallback(selection.fallback_policy(), &error) {
+                        return Err(error);
+                    }
+                    last_error = Some(error);
+                }
+            }
         }
-        Err(MimeError::AsyncUnsupported)
+        Err(last_error.unwrap_or_else(|| {
+            MimeError::ProviderSelection("no media stream classifier candidates match the selection".to_owned())
+        }))
     }
 
     /// Returns the process-wide media stream classifier Registry.
@@ -173,6 +242,20 @@ impl MediaStreamClassifierRegistry {
         self.providers.provider_ids()
     }
 
+    /// Lists canonical IDs with registered asynchronous classifier factories.
+    ///
+    /// Alias selectors are omitted and every ID is returned once.
+    #[must_use]
+    pub fn async_provider_ids(&self) -> Vec<ProviderId> {
+        let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
+        let mut ids = providers.values().map(|entry| entry.id.clone()).collect::<Vec<_>>();
+        ids.sort();
+        ids.dedup();
+        ids.into_iter()
+            .filter_map(|id| ProviderId::new(&id).ok())
+            .collect()
+    }
+
     /// Registers an explicit async classifier factory without constructing a
     /// classifier or starting its execution resources.
     ///
@@ -196,6 +279,8 @@ impl MediaStreamClassifierRegistry {
     {
         let descriptor = provider.descriptor();
         let id = descriptor.id().as_str().to_owned();
+        let priority = descriptor.priority();
+        let is_builtin = TypeId::of::<P>() == TypeId::of::<FfprobeCommandMediaStreamClassifierProvider>();
         let provider: Arc<dyn AsyncMediaStreamClassifierProvider> = Arc::new(provider);
         let mut providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
         if self.providers.is_sealed() {
@@ -210,12 +295,20 @@ impl MediaStreamClassifierRegistry {
             if let Some(existing) = providers.get(selector) {
                 return Err(format!(
                     "async classifier selector `{selector}` is already owned by `{}` (attempted `{id}`)",
-                    existing.0
+                    existing.id
                 ));
             }
         }
         for selector in selectors {
-            providers.insert(selector, (id.clone(), Arc::clone(&provider)));
+            providers.insert(
+                selector,
+                AsyncProviderEntry {
+                    id: id.clone(),
+                    priority,
+                    is_builtin,
+                    provider: Arc::clone(&provider),
+                },
+            );
         }
         Ok(())
     }

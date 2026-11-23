@@ -346,6 +346,12 @@ impl AsyncMimeDetectorBackend for RepositoryMimeDetector<'_> {
                         "provider-backed input must be resolved by the managed execution service",
                     ));
                 }
+                BorrowedMimeInput::ManagedProvider { .. } => {
+                    return Err(MimeError::detector_backend(
+                        "repository",
+                        "managed provider input must be resolved by the selected third-party backend",
+                    ));
+                }
             };
             if let Some(mime) =
                 super::internal::async_repository_matcher::preferred_filename(self.repository, filename, options.policy)
@@ -421,6 +427,12 @@ impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
     #[inline]
     fn max_test_bytes(&self) -> usize {
         self.repository.max_test_bytes()
+    }
+
+    /// Reports that repository content matching has no asynchronous hook.
+    #[inline]
+    fn supports_async_content_detection(&self) -> bool {
+        false
     }
 
     /// Guesses MIME type names from filename rules.

@@ -197,8 +197,13 @@ fn test_operation_provider_driver_loss_is_pending() {
 fn test_operation_provider_random_access_backend_preserves_sample_extent() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
-    let services =
-        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
+    let services = MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 2)),
+        16 * 1024 * 1024,
+    )
+    .unwrap();
     services.prepare().unwrap();
 
     let content = Arc::new(Mutex::new(b"sample-object".to_vec()));
@@ -213,7 +218,8 @@ fn test_operation_provider_random_access_backend_preserves_sample_extent() {
         released,
         read_waker,
         None,
-    ))
+    )
+    .with_random_error_first_read())
     .unwrap();
 
     let registry = MimeDetectorRegistry::default();
@@ -223,7 +229,7 @@ fn test_operation_provider_random_access_backend_preserves_sample_extent() {
         .with_execution_services(services.clone())
         .with_async_provider_selection(
             &registry,
-            &qubit_spi::ProviderSelection::named("random-access").unwrap(),
+            &qubit_spi::ProviderSelection::named("file").unwrap(),
         )
         .unwrap();
     let mut operation = runtime
@@ -240,14 +246,68 @@ fn test_operation_provider_random_access_backend_preserves_sample_extent() {
         qubit_operation::OperationOutcome::Succeeded(report) => {
             assert_eq!(report.mime_type.as_deref(), Some("application/x-sampled"));
             assert_eq!(report.inspected_extent, InspectedExtent::RandomAccessSamples);
+            assert_eq!(report.budget.bytes_read, 6, "repeated sample bytes are charged each time");
         }
         other => panic!("random-access backend should report its sample extent: {other:?}"),
     }
     assert_eq!(
         opens.load(Ordering::SeqCst),
-        0,
-        "the runtime must not flatten random-access input to a prefix"
+        1,
+        "random sampling must retain one opened provider object"
     );
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).is_ok());
+    assert!(shutdown.stop_services().is_ok());
+}
+
+#[test]
+fn test_complete_extension_opts_into_metered_sequential_reads_and_eof_probe() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
+    services.prepare().unwrap();
+
+    let opens = Arc::new(AtomicUsize::new(0));
+    let (read_started, _read_started_rx) = mpsc::channel();
+    let file_system = qubit_fs::AsyncFileSystem::from_spi(SnapshotGateFileSystem::new(
+        Arc::new(Mutex::new(b"full".to_vec())),
+        Arc::clone(&opens),
+        read_started,
+        Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        Arc::new(Mutex::new(None)),
+        None,
+    ))
+    .unwrap();
+
+    let registry = MimeDetectorRegistry::default();
+    registry.register_async_provider(CompleteSessionProvider).unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("complete-session").unwrap(),
+        )
+        .unwrap();
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::Provider {
+                file_system: Arc::new(file_system),
+                path: qubit_fs::Path::parse("/complete").unwrap(),
+            },
+            MimeOperationOptions::default(),
+        )
+        .unwrap_or_else(|_| panic!("complete session operation should be admitted"));
+
+    match block_on(operation.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(report) => {
+            assert_eq!(report.mime_type.as_deref(), Some("application/x-complete-session"));
+            assert_eq!(report.budget.bytes_read, 4, "the EOF probe transfers no additional bytes");
+        }
+        other => panic!("complete session backend should inspect its opened stream: {other:?}"),
+    }
+    assert_eq!(1, opens.load(Ordering::SeqCst));
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).is_ok());
     assert!(shutdown.stop_services().is_ok());
@@ -293,8 +353,8 @@ impl AsyncMimeDetectorBackend for SnapshotBackend {
         Box::pin(async move {
             let content = match input {
                 BorrowedMimeInput::Bytes { content, .. } => content,
-                BorrowedMimeInput::Provider { .. } => {
-                    panic!("prefix input should be read once by runtime")
+                BorrowedMimeInput::Provider { .. } | BorrowedMimeInput::ManagedProvider { .. } => {
+                    panic!("default Prefix backends must receive bounded bytes")
                 }
             };
             assert_eq!(content, b"%PDF", "the opened reader must retain its original snapshot");
@@ -316,7 +376,7 @@ struct RandomAccessProvider;
 
 impl ProviderMetadata for RandomAccessProvider {
     fn descriptor(&self) -> ProviderDescriptor {
-        ProviderDescriptor::new(ProviderId::new("random-access").unwrap())
+        ProviderDescriptor::new(ProviderId::new("file").unwrap())
     }
 }
 
@@ -349,16 +409,84 @@ impl AsyncMimeDetectorBackend for RandomAccessBackend {
         _options: &'a MimeOperationOptions,
     ) -> MimeFuture<'a, MimeCandidates> {
         Box::pin(async move {
-            let BorrowedMimeInput::Provider { file_system, path } = input else {
-                panic!("random-access provider must receive its provider input directly")
+            let BorrowedMimeInput::ManagedProvider { session, .. } = input else {
+                panic!("random-access provider must receive its metered session")
             };
-            let _ = (file_system, path);
+            let mut failed_sample = [0xCC; 3];
+            assert!(session.read_at(7, &mut failed_sample).await.is_err());
+            assert_eq!([0xCC; 3], failed_sample, "partial error bytes stay in private scratch");
+            let mut sample = [0; 3];
+            assert_eq!(3, session.read_at(7, &mut sample).await?);
+            assert_eq!(&sample, b"obj");
+            assert_eq!(3, session.read_at(7, &mut sample).await?);
             Ok(MimeCandidates {
                 candidates: vec![MimeCandidate {
                     mime_type: "application/x-sampled".into(),
                     rank: 0,
                 }],
                 inspected_extent: InspectedExtent::RandomAccessSamples,
+                retained_prefix: Vec::new(),
+                staging_bytes: 0,
+            })
+        })
+    }
+}
+
+#[derive(Debug)]
+struct CompleteSessionProvider;
+
+impl ProviderMetadata for CompleteSessionProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("complete-session").unwrap())
+    }
+}
+
+impl AsyncMimeDetectorProvider for CompleteSessionProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(CompleteSessionBackend))
+    }
+}
+
+#[derive(Debug)]
+struct CompleteSessionBackend;
+
+impl AsyncMimeDetectorBackend for CompleteSessionBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Complete
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
+    fn uses_managed_provider_reads(&self) -> bool {
+        true
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        _scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        _options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        Box::pin(async move {
+            let BorrowedMimeInput::ManagedProvider { session, .. } = input else {
+                panic!("complete extension backend must opt into a metered session")
+            };
+            let mut bytes = [0; 8];
+            assert_eq!(4, session.read(&mut bytes).await?);
+            assert_eq!(&bytes[..4], b"full");
+            assert_eq!(0, session.read(&mut bytes).await?, "complete reads need an EOF probe");
+            Ok(MimeCandidates {
+                candidates: vec![MimeCandidate {
+                    mime_type: "application/x-complete-session".into(),
+                    rank: 0,
+                }],
+                inspected_extent: InspectedExtent::Complete,
                 retained_prefix: Vec::new(),
                 staging_bytes: 0,
             })
@@ -374,6 +502,7 @@ struct SnapshotGateFileSystem {
     released: Arc<std::sync::atomic::AtomicBool>,
     read_waker: Arc<Mutex<Option<Waker>>>,
     owner_dropped: Option<Arc<std::sync::atomic::AtomicBool>>,
+    random_error_first_read: bool,
 }
 
 impl SnapshotGateFileSystem {
@@ -401,8 +530,12 @@ impl SnapshotGateFileSystem {
                 "mime-operation-snapshot",
                 PathSemantics::Hierarchical,
             ),
-            ProviderOperations::new().with(ProviderOperation::OpenReader),
-            FileSystemCapabilities::new().with_guaranteed(FileSystemCapability::Read),
+            ProviderOperations::new()
+                .with(ProviderOperation::OpenReader)
+                .with(ProviderOperation::OpenRandomAccessReader),
+            FileSystemCapabilities::new()
+                .with_guaranteed(FileSystemCapability::Read)
+                .with_guaranteed(FileSystemCapability::RangeRead),
             FileSystemLimits::unknown(),
             PathConstraints::absolute(),
             SymlinkPolicy::Reject,
@@ -416,7 +549,13 @@ impl SnapshotGateFileSystem {
             released,
             read_waker,
             owner_dropped,
+            random_error_first_read: false,
         }
+    }
+
+    fn with_random_error_first_read(mut self) -> Self {
+        self.random_error_first_read = true;
+        self
     }
 }
 
@@ -444,6 +583,7 @@ impl qubit_fs::spi::AsyncFileSystemSpi for SnapshotGateFileSystem {
         );
         let input = SnapshotGateInput {
             bytes: snapshot,
+            offset: 0,
             read_started: Some(self.read_started.clone()),
             released: Arc::clone(&self.released),
             read_waker: Arc::clone(&self.read_waker),
@@ -451,10 +591,69 @@ impl qubit_fs::spi::AsyncFileSystemSpi for SnapshotGateFileSystem {
         };
         Box::pin(async move { Ok(qubit_fs::spi::OpenedAsyncReader::new(info, Box::new(input))) })
     }
+
+    fn open_random_access_reader<'a>(
+        &'a self,
+        request: qubit_fs::spi::OpenReaderRequest<'a>,
+    ) -> qubit_fs::spi::SpiFuture<'a, qubit_fs::FsResult<qubit_fs::spi::OpenedAsyncRandomAccessReader>> {
+        self.opens.fetch_add(1, Ordering::SeqCst);
+        let snapshot = self.content.lock().unwrap().clone();
+        let error_first_read = self.random_error_first_read;
+        let info = qubit_fs::metadata::OpenedFileInfo::new(
+            qubit_fs::metadata::FileSystemId::new("mime-operation-snapshot").unwrap(),
+            request.path().clone(),
+        )
+        .with_metadata(
+            qubit_fs::metadata::FileMetadata::new(qubit_fs::metadata::FileKind::File)
+                .with_len(Some(snapshot.len() as u64)),
+        );
+        Box::pin(async move {
+            Ok(qubit_fs::spi::OpenedAsyncRandomAccessReader::new(
+                info,
+                Box::new(SnapshotRandomSession {
+                    content: snapshot,
+                    error_first_read,
+                }),
+            ))
+        })
+    }
+}
+
+struct SnapshotRandomSession {
+    content: Vec<u8>,
+    error_first_read: bool,
+}
+
+impl qubit_fs::spi::AsyncRandomAccessReadSession for SnapshotRandomSession {
+    fn read_at_async<'a>(
+        self: Pin<&'a mut Self>,
+        offset: u64,
+        output: &'a mut [u8],
+    ) -> qubit_fs::spi::SpiFuture<'a, qubit_fs::FsResult<usize>> {
+        Box::pin(async move {
+            let this = self.get_mut();
+            if this.error_first_read {
+                this.error_first_read = false;
+                if !output.is_empty() {
+                    output[0] = b'!';
+                }
+                return Err(qubit_fs::FsError::new(
+                    qubit_fs::error::FsErrorKind::Io,
+                    qubit_fs::error::FsOperation::Read,
+                    "injected partial random-access failure",
+                ));
+            }
+            let offset = usize::try_from(offset).unwrap_or(usize::MAX);
+            let count = output.len().min(this.content.len().saturating_sub(offset));
+            output[..count].copy_from_slice(&this.content[offset..offset + count]);
+            Ok(count)
+        })
+    }
 }
 
 struct SnapshotGateInput {
     bytes: Vec<u8>,
+    offset: usize,
     read_started: Option<mpsc::Sender<()>>,
     released: Arc<std::sync::atomic::AtomicBool>,
     read_waker: Arc<Mutex<Option<Waker>>>,
@@ -487,8 +686,9 @@ impl qubit_io::AsyncInput for SnapshotGateInput {
             }
             return Poll::Pending;
         }
-        let length = count.min(this.bytes.len());
-        output[index..index + length].copy_from_slice(&this.bytes[..length]);
+        let length = count.min(this.bytes.len().saturating_sub(this.offset));
+        output[index..index + length].copy_from_slice(&this.bytes[this.offset..this.offset + length]);
+        this.offset += length;
         Poll::Ready(Ok(length))
     }
 }
@@ -640,8 +840,8 @@ impl AsyncMimeDetectorBackend for AsyncTestBackend {
         Box::pin(async move {
             let inspected = match input {
                 BorrowedMimeInput::Bytes { content, .. } => content.len(),
-                BorrowedMimeInput::Provider { .. } => {
-                    panic!("prefix provider input must be read once")
+                BorrowedMimeInput::Provider { .. } | BorrowedMimeInput::ManagedProvider { .. } => {
+                    panic!("default Prefix backends must receive bounded bytes")
                 }
             };
             self.0.fetch_add(1, Ordering::SeqCst);
@@ -859,6 +1059,7 @@ impl AsyncMimeDetectorBackend for RefinementBackend {
             let filename = match input {
                 BorrowedMimeInput::Bytes { filename, .. } => filename,
                 BorrowedMimeInput::Provider { path, .. } => path.file_name(),
+                BorrowedMimeInput::ManagedProvider { filename, .. } => filename,
             };
             let from_filename = filename
                 .filter(|name| name.ends_with(".webm"))

@@ -30,12 +30,18 @@ use super::mime_detection_policy::MimeDetectionPolicy;
 pub struct MimeOperationOptions {
     /// Candidate resolution policy.
     pub policy: MimeDetectionPolicy,
-    /// Maximum owned buffer bytes for this request, if further restricted.
+    /// Maximum input-payload bytes this request may hold, if further
+    /// restricted. This does not set the size of the staging read buffer or
+    /// copied staging chunks; those work buffers are charged separately to
+    /// the service-wide owned-memory budget.
     pub max_buffer_bytes: Option<usize>,
     /// Maximum staging bytes for this request, if further restricted.
     pub max_staging_bytes: Option<u64>,
-    /// Maximum cumulative provider reads for this request, if further
-    /// restricted.
+    /// Maximum cumulative bytes returned by provider reads for this request,
+    /// including repeated reads and reads by descendants, if further
+    /// restricted. Complete provider reads need remaining allowance to probe
+    /// EOF; an exhausted budget cannot distinguish an exact-length object
+    /// from a longer one.
     pub max_read_bytes: Option<u64>,
     /// Shared operation context, deadline, and stop options.
     pub operation: OperationOptions,

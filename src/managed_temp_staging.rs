@@ -7,6 +7,14 @@
 // =============================================================================
 
 //! Managed temporary-file staging for MIME command inputs.
+//!
+//! `max_buffer_bytes` limits the input payload retained by one request; it
+//! does not size these streaming work buffers. Provider staging uses an 8 KiB
+//! read buffer, while byte-slice staging copies at most 8 KiB per chunk. The
+//! buffer and each live chunk copy reserve owned memory against the shared
+//! service budget. Request staging limits count bytes written to the staged
+//! file, and the provider path may read one additional byte to prove that the
+//! staging limit was not exceeded.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -217,6 +225,8 @@ async fn stage_byte_slice_in(
 ///
 /// Reads are charged to the shared tree budget, and a one-byte sentinel is
 /// used when needed to prove the per-request staging limit was not exceeded.
+/// Complete staging requires remaining read allowance for a read that returns
+/// EOF; reaching the byte limit alone does not prove that the object ended.
 ///
 /// # Parameters
 /// - `scope`: Operation scope that owns the staged resource.
