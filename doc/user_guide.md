@@ -396,13 +396,8 @@ fn managed_lifecycle(
     let group = manager
         .group(GroupOptions { capacity: 8 })
         .expect("MIME operation group");
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 8)),
-        1024 * 1024,
-    )
-    .expect("execution services");
+    let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 8)), 1024 * 1024)
+        .expect("execution services");
     services.prepare().expect("prepare MIME services");
 
     let runtime = MimeRuntime::builtin()
@@ -418,8 +413,7 @@ fn managed_lifecycle(
             eprintln!("submission rejected: {:?}", failure.reason);
             retry_queue.push(failure.input);
             let shutdown = services.shutdown();
-            let settled =
-                block_on(shutdown.wait_services_settled()).expect("settle service operations");
+            let settled = block_on(shutdown.wait_services_settled()).expect("settle service operations");
             assert!(settled.operations_settled);
             let stopped = shutdown.stop_services().expect("stop MIME services");
             assert!(stopped.services_stopped);
@@ -438,10 +432,7 @@ fn managed_lifecycle(
     }
 
     let settlement = block_on(operation.wait_settlement());
-    assert!(
-        settlement.all_released(),
-        "operation resources should be settled"
-    );
+    assert!(settlement.all_released(), "operation resources should be settled");
     drop(operation);
 
     let shutdown = services.shutdown();
