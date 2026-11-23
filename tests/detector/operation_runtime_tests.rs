@@ -345,7 +345,7 @@ fn test_explicit_builtin_repository_selection_short_circuits_provider_reads() {
     let selections = [
         qubit_spi::ProviderSelection::named("repository").unwrap(),
         qubit_spi::ProviderSelection::named("repository-mime-detector").unwrap(),
-        qubit_spi::ProviderSelection::chain(["missing", "repository"]).unwrap(),
+        qubit_spi::ProviderSelection::chain_allowing_missing(["missing", "repository"]).unwrap(),
     ];
     let mut total_opens = 0;
     for selection in selections {
