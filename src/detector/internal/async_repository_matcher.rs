@@ -46,6 +46,20 @@ pub(in crate::detector) fn preferred_filename(
     (matches.len() == 1).then(|| matches[0].clone())
 }
 
+/// Returns the unique filename result for an already extracted native
+/// basename when policy permits skipping content inspection.
+pub(in crate::detector) fn preferred_basename(
+    repository: &MimeRepository,
+    basename: Option<&str>,
+    policy: MimeDetectionPolicy,
+) -> Option<MimeType> {
+    if policy != MimeDetectionPolicy::PreferFilename {
+        return None;
+    }
+    let matches = repository.detect_by_filename_basename(basename?);
+    (matches.len() == 1).then(|| matches[0].clone())
+}
+
 /// Match content rules in bounded batches while preserving the synchronous
 /// repository's highest-priority and insertion-order behavior.
 ///
