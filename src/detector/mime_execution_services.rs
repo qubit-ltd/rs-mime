@@ -34,43 +34,19 @@ use super::internal::mime_budget::ReadTreeContext;
 use super::internal::mime_budget::ReadTreeRegistry;
 use super::internal::mime_budget::StagingBudget;
 
+mod mime_execution_dispatch_failure;
+mod mime_execution_dispatch_failure_kind;
 mod mime_execution_port;
+mod mime_service_lifecycle;
 mod mime_shutdown_observer;
 mod mime_shutdown_snapshot;
 
-pub use mime_execution_port::MimeExecutionDispatchFailure;
-pub use mime_execution_port::MimeExecutionDispatchFailureKind;
+pub use mime_execution_dispatch_failure::MimeExecutionDispatchFailure;
+pub use mime_execution_dispatch_failure_kind::MimeExecutionDispatchFailureKind;
 pub use mime_execution_port::MimeExecutionPort;
+pub use mime_service_lifecycle::MimeServiceLifecycle;
 pub use mime_shutdown_observer::MimeShutdownObserver;
 pub use mime_shutdown_snapshot::MimeShutdownSnapshot;
-
-/// Lifecycle phase shared by every clone of a MIME execution service.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum MimeServiceLifecycle {
-    /// The service has not started its execution port.
-    NotStarted = 0,
-    /// Preparation succeeded and the service accepts root and child work.
-    Running = 1,
-    /// Root work is closed; valid child work remains admissible until frozen.
-    Draining = 2,
-    /// Shutdown began before preparation, so no requests were ever accepted.
-    ClosedWithoutStart = 4,
-    /// The execution port has stopped and the group drain was requested.
-    Stopped = 3,
-}
-
-impl MimeServiceLifecycle {
-    fn from_raw(value: u8) -> Self {
-        match value {
-            1 => Self::Running,
-            2 => Self::Draining,
-            3 => Self::Stopped,
-            4 => Self::ClosedWithoutStart,
-            _ => Self::NotStarted,
-        }
-    }
-}
 
 /// Services shared by MIME requests. Runtime construction is explicit so a
 /// closed service cannot silently create replacement workers.
@@ -356,6 +332,14 @@ impl MimeExecutionServices {
 
     /// Creates a child read-budget context for a parent operation after
     /// admission has already succeeded.
+    ///
+    /// # Parameters
+    /// - `parent`: Parent operation whose resource scope will retain the tree.
+    /// - `tree_limit`: Cumulative read allowance for the operation tree.
+    /// - `scope_limit`: Read allowance requested for this child.
+    ///
+    /// # Returns
+    /// An independent child context charged to the parent resource scope.
     #[allow(dead_code)]
     #[inline]
     pub(crate) fn read_tree_for_parent(
@@ -368,6 +352,13 @@ impl MimeExecutionServices {
     }
 
     /// Borrows an existing parent tree without reserving another resource.
+    ///
+    /// # Parameters
+    /// - `parent`: Parent operation whose tree should be reused.
+    /// - `scope_limit`: Read allowance requested for this child.
+    ///
+    /// # Returns
+    /// The existing child context when the parent tree can cover the request.
     #[inline]
     pub(crate) fn existing_read_tree_for_parent(
         &self,
