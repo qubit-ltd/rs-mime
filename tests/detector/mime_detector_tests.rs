@@ -68,6 +68,7 @@ use qubit_mime::MimeDetectorCore;
 use qubit_mime::MimeDetectorRegistry;
 use qubit_mime::MimeError;
 use qubit_mime::MimeResult;
+use qubit_mime::MimeRepository;
 use qubit_mime::RepositoryMimeDetector;
 use qubit_spi::ProviderSelection;
 
@@ -1285,6 +1286,46 @@ fn test_detect_path_uses_guaranteed_prefix_range() {
     assert_eq!(spi.opened(), 1);
     assert_eq!(spi.stat_calls(), 0);
     assert!(spi.requested_read_bytes() <= 16);
+}
+
+#[test]
+fn test_detect_path_preserves_backslash_in_object_key_basename() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-native-basename">
+    <glob pattern="left\right.mimecase" weight="80"/>
+  </mime-type>
+  <mime-type type="application/x-string-basename">
+    <glob pattern="right.mimecase" weight="50"/>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("custom filename repository should parse");
+    let detector = RepositoryMimeDetector::with_repository(&repository);
+    let spi = PrefixFileSystemSpi::object_key(Vec::new());
+    let filesystem = FileSystem::from_spi(spi.clone()).expect("filesystem fixture should be created");
+    let path = FsPath::parse_literal(r"large/left\right.mimecase").expect("object-key path should parse");
+
+    assert_eq!(
+        Some("application/x-native-basename".to_owned()),
+        detector
+            .detect_path(&filesystem, &path, 0, MimeDetectionPolicy::PreferFilename)
+            .expect("typed provider path should match its native basename"),
+    );
+    assert_eq!(0, spi.opened(), "filename-only detection must skip provider reads");
+
+    let async_filesystem =
+        AsyncFileSystem::from_spi(PrefixAsyncFileSystemSpi::new(b"")).expect("async fixture should be created");
+    assert_eq!(
+        Some("application/x-native-basename".to_owned()),
+        run_ready(detector.detect_async_path(
+            &async_filesystem,
+            &path,
+            0,
+            MimeDetectionPolicy::PreferFilename,
+        ))
+        .expect("typed async provider path should match its native basename"),
+    );
 }
 
 /// Detector buffer admission happens before opening any provider reader.

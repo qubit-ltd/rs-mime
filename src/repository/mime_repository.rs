@@ -212,6 +212,23 @@ impl MimeRepository {
             .collect()
     }
 
+    /// Detects MIME types from an already extracted native basename.
+    ///
+    /// Path separators in `basename` are treated as filename characters.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename to match.
+    ///
+    /// # Returns
+    /// Matching MIME types ordered by best glob weight and pattern length.
+    pub(crate) fn detect_by_filename_basename(&self, basename: &str) -> Vec<&MimeType> {
+        self.glob_index
+            .matches_basename(basename)
+            .into_iter()
+            .filter_map(|entry| self.mime_types.get(entry.mime_index))
+            .collect()
+    }
+
     /// Detects MIME types from content bytes.
     ///
     /// # Parameters
