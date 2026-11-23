@@ -124,10 +124,9 @@ impl MeteredReadSession {
 
     /// Reads bytes at an offset from the same opened object.
     ///
-    /// This method is available only for a session opened with
-    /// [`open_random_access`](Self::open_random_access). Repeated or
-    /// overlapping reads are each charged by their successful returned byte
-    /// count.
+    /// This method is available only for a session opened for random-access
+    /// reads. Repeated or overlapping reads are charged by the number of
+    /// bytes each read returns successfully.
     pub async fn read_at(&mut self, offset: u64, output: &mut [u8]) -> MimeResult<usize> {
         if output.is_empty() {
             return Ok(0);
