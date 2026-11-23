@@ -19,6 +19,8 @@ mod internal;
 pub mod mime_detection_report;
 pub mod mime_execution_services;
 pub mod mime_input;
+/// Metered same-object reads for managed provider backends.
+pub mod metered_read_session;
 pub mod mime_operation;
 pub mod mime_operation_options;
 pub(crate) use internal::mime_budget::OwnedMemoryPermit;

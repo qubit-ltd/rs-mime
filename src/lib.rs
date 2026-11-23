@@ -214,6 +214,7 @@ pub use detector::MimeExecutionServices;
 pub use detector::MimeFuture;
 pub use detector::MimeOperation;
 pub use detector::MimeOperationOptions;
+pub use detector::metered_read_session::MeteredReadSession;
 pub use detector::MimeSubmitFailure;
 pub use detector::MimeSubmitRejection;
 pub use detector::OwnedMimeInput;
