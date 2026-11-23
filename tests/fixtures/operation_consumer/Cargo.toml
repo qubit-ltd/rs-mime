@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 qubit-mime = { path = "../../.." }
-qubit-operation = { version = "^0.3", path = "../../../../rs-operation" }
+qubit-operation = { version = "^0.3.2", path = "../../../../rs-operation" }
 
 [workspace]
 

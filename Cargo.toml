@@ -39,7 +39,7 @@ roxmltree = "^0.21"
 thiserror = "^2.0"
 
 qubit-io = "^0.19.6"
-qubit-operation = { version = "^0.3", path = "../rs-operation" }
+qubit-operation = { version = "^0.3.2", path = "../rs-operation" }
 
 qubit-fs = { version = "^0.4", path = "../rs-fs", default-features = false, features = ["async"] }
 
