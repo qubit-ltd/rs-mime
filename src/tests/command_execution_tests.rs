@@ -263,11 +263,12 @@ mod managed_command_executor_tests {
     }
 
     #[test]
-    fn test_managed_executor_maps_child_admission_rejection() {
-        let outcome = run_managed_command(Command::new("must-not-start"), 1, false, false);
+    fn test_managed_executor_reuses_parent_group_capacity() {
+        let outcome = run_managed_command(Command::new("rustc").arg("--version"), 1, false, false);
         assert!(matches!(
             outcome,
-            OperationOutcome::Failed(MimeError::OperationAdmission(_))
+            OperationOutcome::Succeeded(ref output)
+                if output.exit_code == Some(0) && output.stdout.starts_with(b"rustc ")
         ));
     }
 
