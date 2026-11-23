@@ -444,6 +444,13 @@ impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
         RepositoryMimeDetector::guess_from_filename(self, filename)
     }
 
+    /// Returns repository candidate names matched against a native basename.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename matched against repository glob rules.
+    ///
+    /// # Returns
+    /// Candidate MIME names in repository detection order.
     fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
         self.repository
             .detect_by_filename_basename(basename)
