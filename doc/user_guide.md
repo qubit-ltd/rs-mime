@@ -380,6 +380,93 @@ While `prepare()` is running, root and child submissions are rejected; readiness
 is published only after the execution port returns success. Wait for
 `prepare()` to return `Ok(())` before submitting work.
 
+The following function is copied from the runnable
+[`managed_lifecycle` example](../examples/managed_lifecycle.rs). The example's
+in-memory provider keeps the run deterministic; an application passes its own
+`AsyncFileSystem` facade and retains its recovery store and retry queue.
+
+<!-- mime-doc-example:managed-lifecycle -->
+```rust
+fn managed_lifecycle(
+    file_system: Arc<AsyncFileSystem>,
+    recovery_store: &RecoveryStore,
+    retry_queue: &mut Vec<OwnedMimeInput>,
+) {
+    let manager = OperationManager::new(ManagerOptions::default()).expect("operation manager");
+    let group = manager
+        .group(GroupOptions { capacity: 8 })
+        .expect("MIME operation group");
+    let services = MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 8)),
+        1024 * 1024,
+    )
+    .expect("execution services");
+    services.prepare().expect("prepare MIME services");
+
+    let runtime = MimeRuntime::builtin()
+        .expect("built-in repository")
+        .with_execution_services(services.clone());
+    let input = OwnedMimeInput::Provider {
+        file_system,
+        path: Path::parse("/upload/report.pdf").expect("provider path"),
+    };
+    let mut operation = match runtime.try_submit_detection(input, MimeOperationOptions::default()) {
+        Ok(operation) => operation,
+        Err(failure) => {
+            eprintln!("submission rejected: {:?}", failure.reason);
+            retry_queue.push(failure.input);
+            let shutdown = services.shutdown();
+            let settled =
+                block_on(shutdown.wait_services_settled()).expect("settle service operations");
+            assert!(settled.operations_settled);
+            let stopped = shutdown.stop_services().expect("stop MIME services");
+            assert!(stopped.services_stopped);
+            let report = block_on(shutdown.wait_group_shutdown()).expect("drain MIME group");
+            assert_eq!(report.snapshot.active_operations, 0);
+            return;
+        }
+    };
+
+    let outcome = block_on(operation.wait_outcome()).expect("observe MIME outcome");
+    if let OperationOutcome::Succeeded(report) = outcome {
+        println!(
+            "{}: {:?} ({:?}, {} bytes read)",
+            report.backend_id, report.mime_type, report.inspected_extent, report.budget.bytes_read,
+        );
+    }
+
+    let settlement = block_on(operation.wait_settlement());
+    assert!(
+        settlement.all_released(),
+        "operation resources should be settled"
+    );
+    drop(operation);
+
+    let shutdown = services.shutdown();
+    let settled = block_on(shutdown.wait_services_settled()).expect("settle tracked operations");
+    assert!(settled.operations_settled);
+    for recovery in shutdown.recovery_handles_snapshot() {
+        recovery
+            .transfer_to(recovery_store)
+            .expect("transfer unresolved cleanup to the application recovery store");
+    }
+    let stopped = shutdown
+        .stop_services()
+        .expect("stop MIME services from this sync context");
+    assert!(stopped.services_stopped && stopped.unresolved_recoveries == 0);
+    let report = block_on(shutdown.wait_group_shutdown()).expect("wait for MIME group Drain");
+    assert_eq!(report.snapshot.active_operations, 0);
+}
+```
+
+The submission branch returns rejected input to the caller's retry queue. For
+accepted work, the example observes the MIME report and operation settlement
+separately, then drops the typed handle before waiting for group Drain. Recovery
+handles are transferred to the application's long-lived store before workers
+stop. Run the complete example with `cargo run --example managed_lifecycle`.
+
 Select an async-capable provider with `MimeRuntime::with_async_provider_selection`
 when the runtime needs an async implementation. The built-in `repository` and
 `file` providers both expose managed async backends. `file` requires complete

@@ -500,17 +500,23 @@ impl MimeRuntime {
         let managed_provider_reads = backend.uses_managed_provider_reads();
         let max_buffer_size = self.context.config().max_buffer_size();
         let repository = self.async_repository.clone();
-        let filename_short_circuit = repository.as_ref().is_some_and(|repository| {
-            let filename = match &input {
-                OwnedMimeInput::Bytes { filename, .. } => filename.as_deref(),
-                OwnedMimeInput::Provider { path, .. } => path.file_name(),
-            };
-            super::internal::async_repository_matcher::preferred_filename(
-                repository,
-                filename,
-                options.policy,
-            )
-            .is_some()
+        let filename_short_circuit = repository.as_ref().is_some_and(|repository| match &input {
+            OwnedMimeInput::Bytes { filename, .. } => {
+                super::internal::async_repository_matcher::preferred_filename(
+                    repository,
+                    filename.as_deref(),
+                    options.policy,
+                )
+                .is_some()
+            }
+            OwnedMimeInput::Provider { path, .. } => {
+                super::internal::async_repository_matcher::preferred_basename(
+                    repository,
+                    path.file_name(),
+                    options.policy,
+                )
+                .is_some()
+            }
         });
         let requirement =
             if filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }) {

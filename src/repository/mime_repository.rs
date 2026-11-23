@@ -214,6 +214,23 @@ impl MimeRepository {
             .collect()
     }
 
+    /// Detects MIME types from an already extracted native basename.
+    ///
+    /// Path separators in `basename` are treated as filename characters.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename to match.
+    ///
+    /// # Returns
+    /// Matching MIME types ordered by best glob weight and pattern length.
+    pub(crate) fn detect_by_filename_basename(&self, basename: &str) -> Vec<&MimeType> {
+        self.glob_index
+            .matches_basename(basename)
+            .into_iter()
+            .filter_map(|entry| self.mime_types.get(entry.mime_index))
+            .collect()
+    }
+
     /// Detects MIME types from content bytes.
     ///
     /// # Parameters
@@ -225,7 +242,7 @@ impl MimeRepository {
     #[must_use]
     pub fn detect_by_content(&self, bytes: &[u8]) -> Vec<&MimeType> {
         self.magic_index
-            .matches(bytes)
+            .matches(&self.mime_types, bytes)
             .into_iter()
             .filter_map(|index| self.mime_types.get(index))
             .collect()
@@ -332,9 +349,24 @@ impl MimeRepository {
     /// - `mime_index`: Index assigned to `mime_type` in the repository.
     /// - `mime_type`: MIME type whose magic rules should be inspected.
     fn index_magics(&mut self, mime_index: usize, mime_type: &MimeType) {
-        for magic in mime_type.magics() {
-            self.magic_index.add(mime_index, magic);
+        for (magic_index, magic) in mime_type.magics().iter().enumerate() {
+            self.magic_index.add(mime_index, magic_index, magic);
         }
+    }
+
+    /// Returns the ordered content rule index for asynchronous matching.
+    pub(crate) fn magic_rules(&self) -> &[super::internal::magic_entry::MagicEntry] {
+        &self.magic_index.entries
+    }
+
+    /// Returns the parsed magic rule referenced by an index entry.
+    pub(crate) fn magic_rule(
+        &self,
+        entry: &super::internal::magic_entry::MagicEntry,
+    ) -> Option<&MimeMagic> {
+        self.mime_types
+            .get(entry.mime_index)
+            .and_then(|mime_type| mime_type.magics().get(entry.magic_index))
     }
 }
 
