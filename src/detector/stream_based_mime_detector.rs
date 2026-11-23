@@ -84,6 +84,16 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     #[must_use]
     fn guess_from_filename(&self, filename: &str) -> Vec<String>;
 
+    /// Guesses MIME type names from an already extracted native basename.
+    ///
+    /// Implementations with path-aware filename rules may override this hook.
+    /// The default preserves the ordinary-string behavior.
+    #[doc(hidden)]
+    #[must_use]
+    fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
+        self.guess_from_filename(basename)
+    }
+
     /// Guesses MIME type names from content bytes.
     ///
     /// # Parameters

@@ -444,6 +444,14 @@ impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
         RepositoryMimeDetector::guess_from_filename(self, filename)
     }
 
+    fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
+        self.repository
+            .detect_by_filename_basename(basename)
+            .into_iter()
+            .map(|mime_type| mime_type.name().to_owned())
+            .collect()
+    }
+
     /// Guesses MIME type names from content magic rules.
     ///
     /// # Parameters

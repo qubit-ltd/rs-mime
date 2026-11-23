@@ -100,6 +100,16 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     #[must_use]
     fn guess_from_filename(&self, filename: &str) -> Vec<String>;
 
+    /// Guesses MIME type names from an already extracted native basename.
+    ///
+    /// Existing backends default to their filename hook. Built-in repository
+    /// backends override this through [`StreamBasedMimeDetector`].
+    #[doc(hidden)]
+    #[must_use]
+    fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
+        self.guess_from_filename(basename)
+    }
+
     /// Guesses MIME type names from content bytes.
     ///
     /// # Parameters
@@ -448,17 +458,34 @@ where
     /// # Errors
     /// Returns an error when opening, reading, or detection fails.
     fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
-        let filename = file.to_string_lossy();
-        let from_filename = self.guess_from_filename(&filename);
+        let Some(basename) = file.file_name().and_then(std::ffi::OsStr::to_str) else {
+            // Keep the existing lossy-path behavior when the native basename
+            // cannot be represented as UTF-8.
+            let filename = file.to_string_lossy();
+            let from_filename = self.guess_from_filename(&filename);
+            let (from_content, _content) = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+                (Vec::new(), Vec::new())
+            } else {
+                self.guess_from_file(file)?
+            };
+            return self.core().select_result(
+                &from_filename,
+                &from_content,
+                Some(&filename),
+                policy,
+                DetectionSource::Path(file),
+            );
+        };
+        let from_filename = self.guess_from_filename_basename(basename);
         let (from_content, _content) = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
             (Vec::new(), Vec::new())
         } else {
             self.guess_from_file(file)?
         };
-        self.core().select_result(
+        self.core().select_result_for_basename(
             &from_filename,
             &from_content,
-            Some(&filename),
+            Some(basename),
             policy,
             DetectionSource::Path(file),
         )
@@ -494,19 +521,19 @@ where
         }
         let filename = path.file_name();
         let from_filename = filename
-            .map(|value| self.guess_from_filename(value))
+            .map(|value| self.guess_from_filename_basename(value))
             .unwrap_or_default();
         if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
             return self
                 .core()
-                .select_result(&from_filename, &[], filename, policy, DetectionSource::None);
+                .select_result_for_basename(&from_filename, &[], filename, policy, DetectionSource::None);
         }
         let (from_content, content) = self.guess_from_provider_path(file_system, path, max_bytes)?;
         let source = content
             .as_deref()
             .map_or(DetectionSource::None, DetectionSource::Prefix);
         self.core()
-            .select_result(&from_filename, &from_content, filename, policy, source)
+            .select_result_for_basename(&from_filename, &from_content, filename, policy, source)
     }
 
     /// Detects a MIME type through an asynchronous provider-neutral filesystem
@@ -542,12 +569,12 @@ where
             }
             let filename = path.file_name();
             let from_filename = filename
-                .map(|value| self.guess_from_filename(value))
+                .map(|value| self.guess_from_filename_basename(value))
                 .unwrap_or_default();
             if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
                 return self
                     .core()
-                    .select_result(&from_filename, &[], filename, policy, DetectionSource::None);
+                    .select_result_for_basename(&from_filename, &[], filename, policy, DetectionSource::None);
             }
             if matches!(self.content_requirement(), ContentRequirement::Prefix(_))
                 && !self.supports_async_content_detection()
@@ -561,7 +588,7 @@ where
                 .as_deref()
                 .map_or(DetectionSource::None, DetectionSource::Prefix);
             self.core()
-                .select_result(&from_filename, &from_content, filename, policy, source)
+                .select_result_for_basename(&from_filename, &from_content, filename, policy, source)
         })
     }
 }
@@ -604,6 +631,11 @@ where
     #[inline]
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         StreamBasedMimeDetector::guess_from_filename(self, filename)
+    }
+
+    #[inline]
+    fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
+        StreamBasedMimeDetector::guess_from_filename_basename(self, basename)
     }
 
     /// Guesses MIME type names from content bytes.

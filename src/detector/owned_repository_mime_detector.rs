@@ -98,6 +98,14 @@ impl StreamBasedMimeDetector for OwnedRepositoryMimeDetector {
             .collect()
     }
 
+    fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
+        self.repository
+            .detect_by_filename_basename(basename)
+            .into_iter()
+            .map(|mime| mime.name().to_owned())
+            .collect()
+    }
+
     /// Returns repository candidate names matched against content bytes.
     ///
     /// # Parameters
