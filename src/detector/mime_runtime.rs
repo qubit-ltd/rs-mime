@@ -500,14 +500,13 @@ impl MimeRuntime {
         let managed_provider_reads = backend.uses_managed_provider_reads();
         let max_buffer_size = self.context.config().max_buffer_size();
         let repository = self.async_repository.clone();
-        let filename_short_circuit = repository.as_ref().is_some_and(|repository| match &input {
+        let filename_winner = repository.as_ref().and_then(|repository| match &input {
             OwnedMimeInput::Bytes { filename, .. } => {
                 super::internal::async_repository_matcher::preferred_filename(
                     repository,
                     filename.as_deref(),
                     options.policy,
                 )
-                .is_some()
             }
             OwnedMimeInput::Provider { path, .. } => {
                 super::internal::async_repository_matcher::preferred_basename(
@@ -515,15 +514,14 @@ impl MimeRuntime {
                     path.file_name(),
                     options.policy,
                 )
-                .is_some()
             }
         });
-        let requirement =
-            if filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }) {
-                crate::ContentRequirement::Prefix(0)
-            } else {
-                backend.content_requirement()
-            };
+        let filename_short_circuit = filename_winner.is_some();
+        let requirement = if filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }) {
+            crate::ContentRequirement::Prefix(0)
+        } else {
+            backend.content_requirement()
+        };
         let permit = match mime_submission::preflight(
             &input,
             &options,
@@ -563,7 +561,7 @@ impl MimeRuntime {
         let body_backend_id = backend_id.clone();
         let body_max_buffer_size = max_buffer_size;
         let body_managed_provider_reads = managed_provider_reads;
-        let body_repository = repository;
+        let body_filename_winner = filename_winner.map(|mime| mime.name().to_owned());
         let body = move |scope: OperationScope| async move {
             let read_tree = if let Some(pending_tree) = body_pending_tree {
                 pending_tree
@@ -579,7 +577,7 @@ impl MimeRuntime {
                 backend,
                 managed_provider_reads: body_managed_provider_reads,
                 backend_id: body_backend_id,
-                repository: body_repository,
+                filename_winner: body_filename_winner,
                 max_buffer_size: body_max_buffer_size,
                 options: body_options,
                 permit: Some(permit),
