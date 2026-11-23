@@ -11,23 +11,20 @@ use std::sync::Arc;
 
 use qubit_fs::AsyncFileSystem;
 use qubit_fs::Path as FsPath;
-use qubit_fs::read::AsyncFileReader;
-use qubit_fs::read::AsyncRandomAccessReader;
 use qubit_fs::read::ReadOptions;
 use qubit_io::AsyncInput;
 
+// Keeps the provider reader representation private to this session module.
+mod internal;
+
 use super::ReadTreeContext;
 use super::mime_execution_services::MimeExecutionServices;
+use self::internal::OpenedReader;
 use crate::MimeError;
 use crate::MimeResult;
 
 const MAX_READ_CHUNK: usize = 8 * 1024;
 const MAX_OWNED_BYTES: usize = 16 * 1024 * 1024;
-
-enum OpenedReader {
-    Sequential(AsyncFileReader),
-    RandomAccess(AsyncRandomAccessReader),
-}
 
 /// A provider object whose reads are charged to request and ancestor budgets.
 ///
@@ -39,16 +36,35 @@ enum OpenedReader {
 /// data is discarded and is never exposed to the backend.
 #[must_use = "retain the session for all provider reads in one backend call"]
 pub struct MeteredReadSession {
+    /// The one opened provider object used for every read in this session.
     reader: OpenedReader,
+    /// The request services that account for temporary owned scratch memory.
     services: Arc<MimeExecutionServices>,
+    /// The shared ancestor tree that accounts for bytes delivered to the backend.
     read_tree: Arc<ReadTreeContext>,
+    /// The remaining cumulative allowance for this provider request.
     request_remaining: u64,
+    /// The maximum number of bytes any individual read may deliver.
     payload_limit: usize,
+    /// The next sequential offset, advanced only by successful sequential reads.
     next_offset: u64,
 }
 
 impl MeteredReadSession {
     /// Opens one sequential reader for a managed Provider input.
+    ///
+    /// # Parameters
+    ///
+    /// - `file_system` is the provider whose object will be opened.
+    /// - `path` identifies the object to open.
+    /// - `services` supplies request-level owned-memory accounting and read limits.
+    /// - `read_tree` supplies the shared ancestor read allowance.
+    /// - `request_limit` caps bytes delivered by this session.
+    /// - `payload_limit` caps each individual read.
+    ///
+    /// # Errors
+    ///
+    /// Returns the provider's open error when the object cannot be opened.
     pub(crate) async fn open_sequential(
         file_system: &AsyncFileSystem,
         path: &FsPath,
@@ -71,6 +87,19 @@ impl MeteredReadSession {
     }
 
     /// Opens one random-access reader for reads at offsets in the same object.
+    ///
+    /// # Parameters
+    ///
+    /// - `file_system` is the provider whose object will be opened.
+    /// - `path` identifies the object to open.
+    /// - `services` supplies request-level owned-memory accounting and read limits.
+    /// - `read_tree` supplies the shared ancestor read allowance.
+    /// - `request_limit` caps bytes delivered by this session.
+    /// - `payload_limit` caps each individual read.
+    ///
+    /// # Errors
+    ///
+    /// Returns the provider's open error when the object cannot be opened.
     pub(crate) async fn open_random_access(
         file_system: &AsyncFileSystem,
         path: &FsPath,
@@ -92,6 +121,15 @@ impl MeteredReadSession {
         ))
     }
 
+    /// Creates a session around an already opened reader and its accounting limits.
+    ///
+    /// # Parameters
+    ///
+    /// - `reader` is the provider reader retained for this session.
+    /// - `services` accounts for temporary scratch memory.
+    /// - `read_tree` is the shared ancestor read budget.
+    /// - `request_limit` is the maximum cumulative transfer for this session.
+    /// - `payload_limit` is the maximum transfer for one read.
     fn new(
         reader: OpenedReader,
         services: Arc<MimeExecutionServices>,
@@ -115,6 +153,19 @@ impl MeteredReadSession {
     /// Empty output returns zero without observing EOF. A nonempty read is
     /// clipped to the fixed work-buffer size, remaining request allowance,
     /// and all ancestor and service read-tree allowances.
+    ///
+    /// # Parameters
+    ///
+    /// - `output` receives only bytes from a successful provider read.
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes copied into `output` and charged to the budgets.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O, allocation, or budget error without exposing partial
+    /// provider bytes in `output`.
     pub async fn read(&mut self, output: &mut [u8]) -> MimeResult<usize> {
         if output.is_empty() {
             return Ok(0);
@@ -127,6 +178,20 @@ impl MeteredReadSession {
     /// This method is available only for a session opened for random-access
     /// reads. Repeated or overlapping reads are charged by the number of
     /// bytes each read returns successfully.
+    ///
+    /// # Parameters
+    ///
+    /// - `offset` is the byte position in the opened object.
+    /// - `output` receives only bytes from a successful provider read.
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes copied into `output` and charged to the budgets.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if random access is unavailable, the read fails, or a
+    /// request or ancestor budget cannot reserve the next read.
     pub async fn read_at(&mut self, offset: u64, output: &mut [u8]) -> MimeResult<usize> {
         if output.is_empty() {
             return Ok(0);
@@ -139,7 +204,28 @@ impl MeteredReadSession {
         self.read_at_inner(offset, output, false).await
     }
 
-    async fn read_at_inner(&mut self, offset: u64, output: &mut [u8], advance: bool) -> MimeResult<usize> {
+    /// Reads one bounded chunk and commits only bytes delivered successfully.
+    ///
+    /// # Parameters
+    ///
+    /// - `offset` is the provider object position for this read.
+    /// - `output` receives bytes only after the provider returns successfully.
+    /// - `advance` updates the sequential offset after a successful transfer.
+    ///
+    /// # Returns
+    ///
+    /// The number of bytes copied into `output` and charged to the budgets.
+    ///
+    /// # Errors
+    ///
+    /// Returns an allocation, provider, or budget error without transferring
+    /// partial scratch contents to `output`.
+    async fn read_at_inner(
+        &mut self,
+        offset: u64,
+        output: &mut [u8],
+        advance: bool,
+    ) -> MimeResult<usize> {
         let available = self.request_remaining.min(self.read_tree.remaining());
         let ask = output
             .len()
