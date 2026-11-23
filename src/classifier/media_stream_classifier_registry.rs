@@ -23,6 +23,7 @@ use qubit_spi::error::RegistryMutationError;
 
 use super::AsyncMediaStreamClassifierProvider;
 use super::FfprobeCommandMediaStreamClassifierProvider;
+use super::internal::async_provider_entry::AsyncProviderEntry;
 use super::MediaStreamClassifierProvider;
 use super::MediaStreamClassifierSpec;
 use crate::MimeConfig;
@@ -35,15 +36,6 @@ static GLOBAL_MEDIA_STREAM_CLASSIFIER_REGISTRY: LazyLock<MediaStreamClassifierRe
 
 /// Async factories indexed by selector with their registration-time identity.
 type AsyncProviderMap = HashMap<String, AsyncProviderEntry>;
-
-/// Async classifier factory and descriptor snapshot retained for its selectors.
-#[derive(Clone, Debug)]
-struct AsyncProviderEntry {
-    id: String,
-    priority: i32,
-    is_builtin: bool,
-    provider: Arc<dyn AsyncMediaStreamClassifierProvider>,
-}
 
 /// Shared runtime Registry for media stream classifier definitions.
 ///

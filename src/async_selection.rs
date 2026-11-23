@@ -15,17 +15,27 @@ use qubit_spi::ProviderSelectionTargetRef;
 
 use crate::MimeError;
 
-/// A canonical asynchronous provider candidate, or a known sync-only provider.
-#[derive(Clone)]
-pub(crate) enum AsyncProviderCandidate<T> {
-    /// A snapshotted factory that can construct the requested backend.
-    Async { id: String, provider: T },
-    /// A registered provider that does not expose an async factory.
-    SyncOnly { id: String },
-}
+mod internal;
+pub(crate) use internal::async_provider_candidate::AsyncProviderCandidate;
 
-/// Resolves selectors against async and sync catalogs without running
-/// factories.
+/// Resolves a selection against async and sync catalogs without running factories.
+///
+/// # Type Parameters
+/// - `T`: Cloneable async factory entry retained in the resolved candidate snapshot.
+///
+/// # Parameters
+/// - `selection`: Validated provider selection, including missing-selector and fallback policies.
+/// - `async_catalog`: Selector-to-canonical-ID, priority, and async factory snapshots.
+/// - `sync_provider_id`: Lookup that returns a canonical ID for a known sync provider.
+/// - `auto_builtin_ids`: Built-in IDs in the registry's stable Auto order.
+/// - `auto_priority_ids`: Other registered candidates with their descriptor priorities.
+/// - `service`: Human-readable provider category used in diagnostics.
+///
+/// # Returns
+/// An ordered snapshot of async factories and sync-only candidates eligible for this selection.
+///
+/// # Errors
+/// Returns a selection diagnostic when required selectors are unknown or no candidates match.
 pub(crate) fn resolve<T: Clone>(
     selection: &ProviderSelection,
     async_catalog: &HashMap<String, (String, i32, T)>,
@@ -109,7 +119,14 @@ pub(crate) fn resolve<T: Clone>(
     Ok(candidates)
 }
 
-/// Returns whether a factory error allows candidate fallback.
+/// Returns whether the fallback policy permits continuing after a factory error.
+///
+/// # Parameters
+/// - `policy`: Selection policy that controls candidate fallback.
+/// - `error`: Factory error to classify for absence-based fallback.
+///
+/// # Returns
+/// `true` when the selection permits another candidate to be tried.
 pub(crate) fn should_fallback(policy: FallbackPolicy, error: &MimeError) -> bool {
     match policy {
         FallbackPolicy::Never => false,
@@ -125,6 +142,16 @@ pub(crate) fn should_fallback(policy: FallbackPolicy, error: &MimeError) -> bool
     }
 }
 
+/// Adds a registered selector's canonical provider once to the candidate list.
+///
+/// # Type Parameters
+/// - `T`: Cloneable async factory entry stored in the catalog.
+///
+/// # Parameters
+/// - `candidates`: Candidate snapshot being built.
+/// - `seen`: Canonical IDs already included in the snapshot.
+/// - `id`: Selector or canonical provider ID to resolve.
+/// - `async_catalog`: Async factories indexed by canonical IDs and aliases.
 fn push_candidate<T: Clone>(
     candidates: &mut Vec<AsyncProviderCandidate<T>>,
     seen: &mut HashSet<String>,
@@ -138,6 +165,16 @@ fn push_candidate<T: Clone>(
     }
 }
 
+/// Adds an async provider factory once by its canonical ID.
+///
+/// # Type Parameters
+/// - `T`: Async factory entry stored in the catalog.
+///
+/// # Parameters
+/// - `candidates`: Candidate snapshot being built.
+/// - `seen`: Canonical IDs already included in the snapshot.
+/// - `id`: Canonical provider ID to add.
+/// - `provider`: Snapshotted async factory entry.
 fn push_async<T: Clone>(
     candidates: &mut Vec<AsyncProviderCandidate<T>>,
     seen: &mut HashSet<String>,
@@ -152,6 +189,14 @@ fn push_async<T: Clone>(
     }
 }
 
+/// Creates a selector-resolution diagnostic that retains each unknown selector.
+///
+/// # Parameters
+/// - `service`: Human-readable provider category.
+/// - `selectors`: Unknown selectors in input order.
+///
+/// # Returns
+/// A MIME error whose display text names the provider category and selectors.
 fn unknown_selection_error(service: &str, selectors: &[String]) -> MimeError {
     MimeError::ProviderSelection(format!("unknown {service} selector(s): {}", selectors.join(", ")))
 }
