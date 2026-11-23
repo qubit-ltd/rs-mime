@@ -111,7 +111,10 @@ impl MimeRuntime {
     /// values and returns `Ok`. The result type is retained for consistency
     /// with detector creation APIs.
     pub fn builtin() -> MimeResult<Self> {
-        Ok(Self::new(MimeConfig::default(), MimeRepository::bundled_shared()))
+        Ok(Self::new(
+            MimeConfig::default(),
+            MimeRepository::bundled_shared(),
+        ))
     }
 
     /// Creates a detector using this runtime's configuration and repository.
@@ -157,7 +160,10 @@ impl MimeRuntime {
     /// # Returns
     /// This runtime configured for managed operations.
     pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
-        let backend = OwnedRepositoryMimeDetector::new(self.context.config().clone(), self.context.repository_arc());
+        let backend = OwnedRepositoryMimeDetector::new(
+            self.context.config().clone(),
+            self.context.repository_arc(),
+        );
         self.async_backend = Some(("repository".to_owned(), Arc::new(backend)));
         self.async_repository = Some(self.context.repository_arc());
         self.execution_services = Some(Arc::new(services));
@@ -186,8 +192,12 @@ impl MimeRuntime {
             .execution_services
             .as_ref()
             .ok_or(crate::MimeError::ExecutionServicesRequired)?;
-        let (id, backend, repository) =
-            registry.create_async_backend_internal(selection, self.context.config(), services, None)?;
+        let (id, backend, repository) = registry.create_async_backend_internal(
+            selection,
+            self.context.config(),
+            services,
+            None,
+        )?;
         self.async_backend = Some((id, backend));
         self.async_repository = repository;
         Ok(self)
@@ -219,8 +229,11 @@ impl MimeRuntime {
             .execution_services
             .as_ref()
             .ok_or(crate::MimeError::ExecutionServicesRequired)?;
-        let (_, classifier) =
-            classifier_registry.create_async_backend(classifier_selection, self.context.config(), services)?;
+        let (_, classifier) = classifier_registry.create_async_backend(
+            classifier_selection,
+            self.context.config(),
+            services,
+        )?;
         let (id, backend, repository) = detector_registry.create_async_backend_internal(
             detector_selection,
             self.context.config(),
@@ -265,9 +278,11 @@ impl MimeRuntime {
     ///
     /// # Errors
     /// Returns `MimeSubmitFailure` if services or an async backend are
-    /// unavailable, the parent cannot accept a child, preflight, read-budget
-    /// or group binding fails, or admission is rejected. The failure retains
-    /// the input for recovery.
+    /// unavailable, the parent cannot accept a child, preflight, parent
+    /// resource reservation, group binding, or admission fails. These
+    /// failures retain the input for recovery. If committing the parent
+    /// read-budget anchor fails after admission, the operation returns
+    /// [`crate::MimeError::ReadBudgetBinding`].
     pub fn try_submit_detection_in(
         &self,
         parent: &OperationScope,
@@ -290,8 +305,10 @@ impl MimeRuntime {
     /// # Errors
     /// Returns `MimeSubmitFailure` if the parent cannot accept a child, the
     /// provider-backed input is unsupported, detector creation or preflight
-    /// fails, read-budget or group binding fails, or admission is rejected.
-    /// The failure retains the input for recovery.
+    /// fails, parent resource reservation, group binding, or admission fails.
+    /// These failures retain the input for recovery. If committing the parent
+    /// read-budget anchor fails after admission, the operation returns
+    /// [`crate::MimeError::ReadBudgetBinding`].
     pub fn try_submit_detection_sync_in(
         &self,
         parent: &OperationScope,
@@ -321,7 +338,9 @@ impl MimeRuntime {
             Ok(detector) => detector,
             Err(_) => {
                 return Err(MimeSubmitFailure {
-                    reason: MimeSubmitRejection::InvalidOptions("detector construction failed".into()),
+                    reason: MimeSubmitRejection::InvalidOptions(
+                        "detector construction failed".into(),
+                    ),
                     input,
                 });
             }
@@ -342,22 +361,26 @@ impl MimeRuntime {
             .max_read_bytes
             .unwrap_or(services.max_read_bytes)
             .min(services.max_read_bytes);
-        let read_tree = match services.read_tree_for_parent(parent, tree_limit, tree_limit) {
-            Ok(tree) => tree,
-            Err(kind) => {
-                return Err(MimeSubmitFailure {
-                    reason: MimeSubmitRejection::ReadBudgetBinding(kind),
-                    input,
-                });
-            }
-        };
+        let pending_tree =
+            match services.prepare_read_tree_for_parent(parent, tree_limit, tree_limit) {
+                Ok(binding) => binding,
+                Err(kind) => {
+                    return Err(MimeSubmitFailure {
+                        reason: MimeSubmitRejection::ReadBudgetBinding(kind),
+                        input,
+                    });
+                }
+            };
         let cell = mime_submission::cell(input);
         let body_cell = Arc::clone(&cell);
         let body_services = Arc::clone(&services);
-        let body_tree = Arc::clone(&read_tree);
+        let body_pending_tree = pending_tree;
         let repository_max_test_bytes = self.context.repository().max_test_bytes();
         let repository = self.context.repository_arc();
         let body = move |scope: OperationScope| {
+            let body_tree = body_pending_tree
+                .commit()
+                .map_err(crate::MimeError::ReadBudgetBinding)?;
             body_services.bind_read_tree(scope.id(), &body_tree);
             let input = mime_submission::take(&body_cell);
             let result = match input {
@@ -366,7 +389,8 @@ impl MimeRuntime {
                     extent,
                     filename,
                 } => {
-                    let filename_short_circuit = options.policy == crate::MimeDetectionPolicy::PreferFilename
+                    let filename_short_circuit = options.policy
+                        == crate::MimeDetectionPolicy::PreferFilename
                         && filename
                             .as_deref()
                             .is_some_and(|name| repository.detect_by_filename(name).len() == 1);
@@ -376,7 +400,11 @@ impl MimeRuntime {
                         content.len().min(repository_max_test_bytes)
                     };
                     let mime_type = if filename_short_circuit {
-                        detector.detect_by_filename(filename.as_deref().expect("short circuit requires filename"))?
+                        detector.detect_by_filename(
+                            filename
+                                .as_deref()
+                                .expect("short circuit requires filename"),
+                        )?
                     } else {
                         match extent {
                             super::mime_input::InputExtent::Prefix => detector.detect_prefix(
@@ -392,7 +420,9 @@ impl MimeRuntime {
                     Ok(crate::MimeDetectionReport {
                         mime_type,
                         backend_id: "repository".into(),
-                        inspected_extent: super::mime_input::InspectedExtent::Prefix(inspected_bytes),
+                        inspected_extent: super::mime_input::InspectedExtent::Prefix(
+                            inspected_bytes,
+                        ),
                         budget: super::mime_detection_report::MimeBudgetSummary {
                             owned_bytes: content.len(),
                             ..Default::default()
@@ -484,14 +514,19 @@ impl MimeRuntime {
                 OwnedMimeInput::Bytes { filename, .. } => filename.as_deref(),
                 OwnedMimeInput::Provider { path, .. } => path.file_name(),
             };
-            super::internal::async_repository_matcher::preferred_filename(repository, filename, options.policy)
-                .is_some()
+            super::internal::async_repository_matcher::preferred_filename(
+                repository,
+                filename,
+                options.policy,
+            )
+            .is_some()
         });
-        let requirement = if filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }) {
-            crate::ContentRequirement::Prefix(0)
-        } else {
-            backend.content_requirement()
-        };
+        let requirement =
+            if filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }) {
+                crate::ContentRequirement::Prefix(0)
+            } else {
+                backend.content_requirement()
+            };
         let permit = match mime_submission::preflight(
             &input,
             &options,
@@ -508,28 +543,38 @@ impl MimeRuntime {
             .max_read_bytes
             .unwrap_or(services.max_read_bytes)
             .min(services.max_read_bytes);
-        let read_tree = match parent {
-            Some(parent) => match services.read_tree_for_parent(parent, tree_limit, tree_limit) {
-                Ok(tree) => tree,
-                Err(kind) => {
-                    return Err(MimeSubmitFailure {
-                        reason: MimeSubmitRejection::ReadBudgetBinding(kind),
-                        input,
-                    });
+        let (pending_tree, standalone_tree) = match parent {
+            Some(parent) => {
+                match services.prepare_read_tree_for_parent(parent, tree_limit, tree_limit) {
+                    Ok(binding) => (Some(binding), None),
+                    Err(kind) => {
+                        return Err(MimeSubmitFailure {
+                            reason: MimeSubmitRejection::ReadBudgetBinding(kind),
+                            input,
+                        });
+                    }
                 }
-            },
-            None => services.new_read_tree(tree_limit),
+            }
+            None => (None, Some(services.new_read_tree(tree_limit))),
         };
         let cell = mime_submission::cell(input);
         let body_cell = Arc::clone(&cell);
         let body_services = Arc::clone(&services);
         let body_options = options.clone();
-        let body_tree = Arc::clone(&read_tree);
+        let body_pending_tree = pending_tree;
+        let body_standalone_tree = standalone_tree;
         let body_backend_id = backend_id.clone();
         let body_max_buffer_size = max_buffer_size;
         let body_managed_provider_reads = managed_provider_reads;
         let body_repository = repository;
-        let body = move |scope: OperationScope| {
+        let body = move |scope: OperationScope| async move {
+            let read_tree = if let Some(pending_tree) = body_pending_tree {
+                pending_tree
+                    .commit()
+                    .map_err(crate::MimeError::ReadBudgetBinding)?
+            } else {
+                body_standalone_tree.expect("root submissions have a standalone read tree")
+            };
             mime_submission::detect(mime_submission::MimeSubmission {
                 scope,
                 input: mime_submission::take(&body_cell),
@@ -541,8 +586,9 @@ impl MimeRuntime {
                 max_buffer_size: body_max_buffer_size,
                 options: body_options,
                 permit: Some(permit),
-                read_tree: body_tree,
+                read_tree,
             })
+            .await
         };
         let result = if let Some(parent) = parent {
             match parent.manager().with_group(&services.root_group) {
@@ -555,7 +601,9 @@ impl MimeRuntime {
                 }
             }
         } else {
-            services.async_root_group.try_submit(options.operation, body)
+            services
+                .async_root_group
+                .try_submit(options.operation, body)
         };
         match result {
             Ok(handle) => {
