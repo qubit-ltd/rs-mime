@@ -216,9 +216,17 @@ fn test_public_ffprobe_async_provider_classifies_complete_bytes() {
     let _path_guard = PathEnvGuard::prepend(directory.path());
 
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let group = manager
+        .group(qubit_operation::GroupOptions { capacity: 1 })
+        .unwrap();
     let services = Arc::new(
-        MimeExecutionServices::new(manager.clone(), group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 64).unwrap(),
+        MimeExecutionServices::new(
+            manager.clone(),
+            group.clone(),
+            Arc::new(FixedMimeExecutionPort::new(1, 2)),
+            64,
+        )
+        .unwrap(),
     );
     services.prepare().unwrap();
     let provider = FfprobeCommandMediaStreamClassifierProvider;
@@ -226,7 +234,7 @@ fn test_public_ffprobe_async_provider_classifies_complete_bytes() {
         .create_async_backend(&MimeConfig::default(), &services)
         .unwrap();
     let incomplete_backend = Arc::clone(&backend);
-    let mut incomplete = manager
+    let mut incomplete = group
         .as_async()
         .try_submit(Default::default(), move |scope| async move {
             incomplete_backend
@@ -249,7 +257,7 @@ fn test_public_ffprobe_async_provider_classifies_complete_bytes() {
     assert!(block_on(incomplete.wait_settlement()).all_released());
 
     let zero_limit_backend = Arc::clone(&backend);
-    let mut zero_limit = manager
+    let mut zero_limit = group
         .as_async()
         .try_submit(Default::default(), move |scope| async move {
             zero_limit_backend
@@ -274,7 +282,7 @@ fn test_public_ffprobe_async_provider_classifies_complete_bytes() {
     ));
     assert!(block_on(zero_limit.wait_settlement()).all_released());
 
-    let mut operation = manager
+    let mut operation = group
         .as_async()
         .try_submit(Default::default(), move |scope| async move {
             let options = MimeOperationOptions::default();
