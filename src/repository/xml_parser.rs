@@ -109,6 +109,13 @@ fn has_invalid_post_doctype_prolog(bytes: &[u8], mut position: usize) -> bool {
 }
 
 /// Tests whether a processing instruction starts an XML declaration.
+///
+/// # Parameters
+/// - `bytes`: XML source bytes containing the processing instruction.
+/// - `position`: Byte offset of the opening `<?`.
+///
+/// # Returns
+/// `true` when the instruction begins with `xml` followed by whitespace or `?`.
 fn is_xml_declaration(bytes: &[u8], position: usize) -> bool {
     bytes.get(position..).is_some_and(|remaining| {
         remaining.starts_with(b"<?xml")

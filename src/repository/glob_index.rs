@@ -50,6 +50,13 @@ impl GlobIndex {
     ///
     /// Unlike [`Self::matches`], this method treats path separators in
     /// `basename` as ordinary filename characters.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename matched without path-component splitting.
+    ///
+    /// # Returns
+    /// Matching glob entries selected by precedence and deduplicated by MIME
+    /// index.
     #[must_use]
     pub(crate) fn matches_basename<'a>(&'a self, basename: &str) -> Vec<&'a GlobEntry> {
         if basename.is_empty() {

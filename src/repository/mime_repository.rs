@@ -360,6 +360,12 @@ impl MimeRepository {
     }
 
     /// Returns the parsed magic rule referenced by an index entry.
+    ///
+    /// # Parameters
+    /// - `entry`: Ordered index entry identifying the MIME type and rule.
+    ///
+    /// # Returns
+    /// The referenced rule, or `None` if the indexes no longer resolve.
     pub(crate) fn magic_rule(&self, entry: &super::internal::magic_entry::MagicEntry) -> Option<&MimeMagic> {
         self.mime_types
             .get(entry.mime_index)
