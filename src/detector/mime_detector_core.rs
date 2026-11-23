@@ -235,6 +235,19 @@ impl MimeDetectorCore {
 
     /// Selects and refines a result using a native basename for extension
     /// mapping.
+    ///
+    /// # Parameters
+    /// - `from_filename`: Candidate MIME names matched from the filename.
+    /// - `from_content`: Candidate MIME names matched from content inspection.
+    /// - `basename`: Optional native basename used for extension mapping.
+    /// - `policy`: Strategy for resolving filename and content results.
+    /// - `source`: Source available for optional media stream refinement.
+    ///
+    /// # Returns
+    /// Selected and optionally refined MIME type name, or `None` if no candidate exists.
+    ///
+    /// # Errors
+    /// Propagates errors from media stream classification when refinement runs.
     pub(crate) fn select_result_for_basename(
         &self,
         from_filename: &[String],
@@ -382,6 +395,17 @@ impl MimeDetectorCore {
     }
 
     /// Refines using extension semantics for an already extracted basename.
+    ///
+    /// # Parameters
+    /// - `detected_mime_type`: Initially selected MIME type name.
+    /// - `basename`: Optional native basename used to select an extension mapping.
+    /// - `source`: Content or path available for optional stream classification.
+    ///
+    /// # Returns
+    /// The refined MIME type name, or the original name when no refinement applies.
+    ///
+    /// # Errors
+    /// Propagates errors from media stream classification when refinement runs.
     fn refine_detected_mime_type_for_basename(
         &self,
         detected_mime_type: &str,
@@ -473,6 +497,13 @@ impl MimeDetectorCore {
     }
 
     /// Gets an ambiguous mapping pair from a native basename.
+    ///
+    /// # Parameters
+    /// - `detected_mime_type`: Initially selected MIME type name.
+    /// - `basename`: Optional native basename whose extension selects a mapping.
+    ///
+    /// # Returns
+    /// Video/audio MIME pair when precise detection should run.
     fn precise_detection_mapping_for_basename(
         &self,
         detected_mime_type: &str,
@@ -607,6 +638,12 @@ fn extension_from_filename(filename: &str) -> Option<String> {
 
 /// Extracts the extension from a native basename without interpreting path
 /// separators inside it.
+///
+/// # Parameters
+/// - `basename`: Native basename whose final suffix is examined.
+///
+/// # Returns
+/// Lowercase extension without a leading dot, or `None` when no suffix exists.
 fn extension_from_basename(basename: &str) -> Option<String> {
     basename
         .rsplit_once('.')
@@ -621,7 +658,7 @@ mod tests {
     use super::extension_from_filename;
 
     #[test]
-    fn typed_basename_extension_keeps_backslash_as_filename_data() {
+    fn test_native_basename_extension_preserves_backslash_data() {
         assert_eq!(
             Some("webm\\part".to_owned()),
             extension_from_basename(r"clip.webm\part")

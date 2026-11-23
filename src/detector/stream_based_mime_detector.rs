@@ -88,6 +88,12 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     ///
     /// Implementations with path-aware filename rules may override this hook.
     /// The default preserves the ordinary-string behavior.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename with path separators already removed.
+    ///
+    /// # Returns
+    /// Candidate MIME type names ordered by backend confidence.
     #[doc(hidden)]
     #[must_use]
     fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {

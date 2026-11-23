@@ -642,6 +642,13 @@ where
         StreamBasedMimeDetector::guess_from_filename(self, filename)
     }
 
+    /// Guesses MIME type names from an already extracted native basename.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename whose filename rules are matched.
+    ///
+    /// # Returns
+    /// Candidate MIME type names ordered by backend confidence.
     #[inline]
     fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
         StreamBasedMimeDetector::guess_from_filename_basename(self, basename)
