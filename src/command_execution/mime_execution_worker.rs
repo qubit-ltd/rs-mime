@@ -51,6 +51,12 @@ impl MimeExecutionWorker {
     }
 
     /// Offers a job and retains a typed queue-full or unavailable reason.
+    ///
+    /// # Parameters
+    /// - `job`: Owned job to offer to the execution port.
+    ///
+    /// # Returns
+    /// `Ok(())` when accepted, or the rejected job and its reason.
     pub(crate) fn try_dispatch_with_status(
         &self,
         job: Box<dyn FnOnce() + Send + 'static>,

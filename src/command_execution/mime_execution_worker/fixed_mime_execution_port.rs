@@ -231,6 +231,12 @@ impl MimeExecutionPort for FixedMimeExecutionPort {
 
     /// Adds a job and reports whether rejection came from queue saturation or
     /// service unavailability.
+    ///
+    /// # Parameters
+    /// - `job`: Owned job to enqueue without blocking.
+    ///
+    /// # Returns
+    /// `Ok(())` when queued, or the unmodified job and its rejection reason.
     fn try_dispatch_with_status(
         &self,
         job: Box<dyn FnOnce() + Send + 'static>,
