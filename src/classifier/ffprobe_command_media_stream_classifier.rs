@@ -473,7 +473,7 @@ impl AsyncMediaStreamClassifierBackend for FfprobeCommandMediaStreamClassifier {
                     )
                 }
             };
-            let worker = MimeExecutionWorker::new(Arc::clone(&services.execution));
+            let worker = MimeExecutionWorker::new(Arc::clone(services.execution()));
             let limits = ManagedStagingLimits {
                 max_bytes: max_staging_size,
                 budget: services.staging_budget_for_operation(scope.id()),

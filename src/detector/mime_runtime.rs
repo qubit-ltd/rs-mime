@@ -339,8 +339,8 @@ impl MimeRuntime {
         };
         let tree_limit = options
             .max_read_bytes
-            .unwrap_or(services.max_read_bytes)
-            .min(services.max_read_bytes);
+            .unwrap_or(services.max_read_bytes())
+            .min(services.max_read_bytes());
         let read_tree = match services.read_tree_for_parent(parent, tree_limit, tree_limit) {
             Ok(tree) => tree,
             Err(kind) => {
@@ -503,8 +503,8 @@ impl MimeRuntime {
         };
         let tree_limit = options
             .max_read_bytes
-            .unwrap_or(services.max_read_bytes)
-            .min(services.max_read_bytes);
+            .unwrap_or(services.max_read_bytes())
+            .min(services.max_read_bytes());
         let read_tree = match parent {
             Some(parent) => match services.read_tree_for_parent(parent, tree_limit, tree_limit) {
                 Ok(tree) => tree,

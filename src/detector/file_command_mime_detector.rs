@@ -568,7 +568,7 @@ impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
             if max_bytes == 0 {
                 return Err(MimeError::InvalidOperationBudget);
             }
-            let worker = MimeExecutionWorker::new(Arc::clone(&services.execution));
+            let worker = MimeExecutionWorker::new(Arc::clone(services.execution()));
             let limits = ManagedStagingLimits {
                 max_bytes,
                 budget: services.staging_budget(),

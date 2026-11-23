@@ -129,13 +129,13 @@ pub(in crate::detector) fn preflight(
                         ContentRequirement::Complete => unreachable!("complete content was handled above"),
                     },
                     max_buffer_size,
-                    services.max_read_bytes,
+                    services.max_read_bytes(),
                 ))
             } else {
                 let read_limit = options
                     .max_read_bytes
-                    .unwrap_or(services.max_read_bytes)
-                    .min(services.max_read_bytes)
+                    .unwrap_or(services.max_read_bytes())
+                    .min(services.max_read_bytes())
                     .min(u64::try_from(limit).unwrap_or(u64::MAX));
                 let read_limit = usize::try_from(read_limit).unwrap_or(usize::MAX);
                 services.reserve_owned(read_limit)
@@ -315,7 +315,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                         ContentRequirement::Complete => unreachable!("complete content was handled above"),
                     },
                     max_buffer_size,
-                    services.max_read_bytes,
+                    services.max_read_bytes(),
                 );
                 let read_permit = read_tree.reserve(max_bytes as u64).ok_or(MimeError::BudgetExceeded {
                     kind: "read",
