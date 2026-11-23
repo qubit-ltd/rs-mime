@@ -17,7 +17,9 @@ use std::sync::Weak;
 
 use qubit_operation::OperationId;
 use qubit_operation::OperationScope;
+use qubit_operation::ResourceCapacityError;
 use qubit_operation::ResourceManageErrorKind;
+use qubit_operation::ResourceReservation;
 
 use super::ReadTreeContext;
 use super::parent_read_budget_anchor::ParentReadBudgetAnchor;
@@ -30,24 +32,121 @@ pub(in crate::detector) struct ReadTreeRegistry {
     /// Root contexts retained only while an operation or descendant owns them.
     roots: Arc<Roots>,
     /// Serializes first registration with the external parent resource scope.
-    registrations: Mutex<()>,
+    registrations: Arc<Mutex<()>>,
+    /// Pending first bindings shared by sibling submissions before one body
+    /// commits the root.
+    pending_roots: Arc<PendingRoots>,
+}
+
+/// A parent read-tree binding that is committed only after child admission.
+pub(crate) struct PendingReadTreeBinding {
+    binding: PendingBinding,
+    scope_limit: u64,
+}
+
+enum PendingBinding {
+    Existing(Arc<ReadTreeContext>),
+    First {
+        roots: Arc<Roots>,
+        pending_roots: Arc<PendingRoots>,
+        registrations: Arc<Mutex<()>>,
+        operation: OperationId,
+        pending_root: Arc<PendingReadTreeRoot>,
+    },
+}
+
+type PendingRoots = Mutex<std::collections::HashMap<OperationId, Weak<PendingReadTreeRoot>>>;
+
+struct PendingReadTreeRoot {
+    root: Arc<ReadTreeContext>,
+    state: Mutex<PendingReadTreeRootState>,
+}
+
+enum PendingReadTreeRootState {
+    Reserved(Option<ResourceReservation>),
+    Failed(ResourceManageErrorKind),
+}
+
+impl PendingReadTreeBinding {
+    /// Commits the parent anchor and returns a child context after admission.
+    ///
+    /// # Errors
+    /// Returns the resource-scope failure if the accepted child can no longer
+    /// commit its reserved parent anchor.
+    pub(crate) fn commit(self) -> Result<Arc<ReadTreeContext>, ResourceManageErrorKind> {
+        match self.binding {
+            PendingBinding::Existing(root) => Ok(root.child(self.scope_limit)),
+            PendingBinding::First {
+                roots,
+                pending_roots,
+                registrations,
+                operation,
+                pending_root,
+            } => {
+                let _registration = registrations.lock().unwrap_or_else(|e| e.into_inner());
+                let mut roots_map = roots.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(existing) = roots_map.get(&operation).and_then(Weak::upgrade) {
+                    let mut pending_state =
+                        pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
+                    if let PendingReadTreeRootState::Reserved(reservation) = &mut *pending_state {
+                        drop(reservation.take());
+                    }
+                    pending_roots
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(&operation);
+                    return Ok(existing.child(self.scope_limit));
+                }
+                roots_map.remove(&operation);
+
+                let mut pending_state =
+                    pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
+                let reservation = match &mut *pending_state {
+                    PendingReadTreeRootState::Reserved(reservation) => reservation.take(),
+                    PendingReadTreeRootState::Failed(kind) => return Err(*kind),
+                };
+                let Some(reservation) = reservation else {
+                    return Err(ResourceManageErrorKind::ScopeEnded);
+                };
+
+                let root = Arc::clone(&pending_root.root);
+                let anchor = ParentReadBudgetAnchor::new(Arc::clone(&root));
+                match reservation.commit(anchor) {
+                    Ok(resource) => drop(resource),
+                    Err(error) => {
+                        let (kind, _anchor, reservation) = error.into_parts();
+                        drop(reservation);
+                        *pending_state = PendingReadTreeRootState::Failed(kind);
+                        pending_roots
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .remove(&operation);
+                        return Err(kind);
+                    }
+                }
+
+                roots_map.insert(operation, Arc::downgrade(&root));
+                pending_roots
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&operation);
+                root.register(Registration {
+                    roots: Arc::downgrade(&roots),
+                    operation,
+                });
+                Ok(root.child(self.scope_limit))
+            }
+        }
+    }
 }
 
 impl ReadTreeRegistry {
-    /// Creates a child context for an operation, creating its root if needed.
+    /// Creates a child context using the immediate parent resource API.
     ///
-    /// # Parameters
-    /// - `parent`: External parent operation whose resource scope owns the
-    ///   tree.
-    /// - `tree_limit`: Root-tree allowance used when no root is registered.
-    /// - `scope_limit`: Allowance requested for the new child scope.
-    ///
-    /// # Returns
-    /// A child context that shares the operation's root accounting.
-    ///
-    /// # Errors
-    /// Returns the resource-scope failure when the parent cannot retain its
-    /// cumulative read-tree anchor.
+    /// This compatibility path remains for internal consumers that already
+    /// run after admission. New external-parent submissions should use
+    /// [`reserve_child_for_parent`](Self::reserve_child_for_parent) and commit
+    /// from their accepted body.
     pub(in crate::detector) fn child_for_parent(
         &self,
         parent: &OperationScope,
@@ -78,6 +177,69 @@ impl ReadTreeRegistry {
             operation,
         });
         Ok(root.child(scope_limit))
+    }
+
+    /// Reserves a parent binding whose anchor will be committed by an
+    /// admitted child's body.
+    pub(in crate::detector) fn reserve_child_for_parent(
+        &self,
+        parent: &OperationScope,
+        tree_limit: u64,
+        scope_limit: u64,
+    ) -> Result<PendingReadTreeBinding, ResourceManageErrorKind> {
+        let _registration = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
+        let operation = parent.id();
+        {
+            let mut roots = self.roots.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(root) = roots.get(&operation).and_then(Weak::upgrade) {
+                return Ok(PendingReadTreeBinding {
+                    binding: PendingBinding::Existing(root),
+                    scope_limit,
+                });
+            }
+            roots.remove(&operation);
+        }
+
+        {
+            let mut pending_roots = self.pending_roots.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(pending_root) = pending_roots.get(&operation).and_then(Weak::upgrade) {
+                return Ok(PendingReadTreeBinding {
+                    binding: PendingBinding::First {
+                        roots: Arc::clone(&self.roots),
+                        pending_roots: Arc::clone(&self.pending_roots),
+                        registrations: Arc::clone(&self.registrations),
+                        operation,
+                        pending_root,
+                    },
+                    scope_limit,
+                });
+            }
+            pending_roots.remove(&operation);
+        }
+
+        let reservation = parent.reserve_resource().map_err(|error| match error {
+            ResourceCapacityError::ScopeEnded => ResourceManageErrorKind::ScopeEnded,
+            ResourceCapacityError::Stopped => ResourceManageErrorKind::Stopped,
+            ResourceCapacityError::CapacityExceeded => ResourceManageErrorKind::CapacityExceeded,
+        })?;
+        let pending_root = Arc::new(PendingReadTreeRoot {
+            root: ReadTreeContext::new(tree_limit),
+            state: Mutex::new(PendingReadTreeRootState::Reserved(Some(reservation))),
+        });
+        self.pending_roots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(operation, Arc::downgrade(&pending_root));
+        Ok(PendingReadTreeBinding {
+            binding: PendingBinding::First {
+                roots: Arc::clone(&self.roots),
+                pending_roots: Arc::clone(&self.pending_roots),
+                registrations: Arc::clone(&self.registrations),
+                operation,
+                pending_root,
+            },
+            scope_limit,
+        })
     }
 
     /// Looks up a live context registered for an operation.
@@ -138,6 +300,8 @@ mod tests {
     use qubit_operation::OperationManager;
     use qubit_operation::OperationOutcome;
     use qubit_operation::OperationScope;
+    use qubit_operation::ResourceManageErrorKind;
+    use qubit_operation::StopReason;
 
     use super::ReadTreeContext;
     use super::ReadTreeRegistry;
@@ -174,7 +338,9 @@ mod tests {
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let mut operation = group
             .as_async()
-            .try_submit(Default::default(), |scope| async move { Ok::<_, ()>(scope.id()) })
+            .try_submit(Default::default(), |scope| async move {
+                Ok::<_, ()>(scope.id())
+            })
             .unwrap();
 
         match block_on(operation.wait_outcome()).unwrap() {
@@ -185,15 +351,16 @@ mod tests {
 
     /// Runs a test closure in a managed parent operation and waits for
     /// settlement.
-    fn with_parent_scope<T: Send + 'static>(body: impl FnOnce(&OperationScope) -> T + Send + 'static) -> T {
+    fn with_parent_scope<T: Send + 'static>(
+        body: impl FnOnce(&OperationScope) -> T + Send + 'static,
+    ) -> T {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let mut operation = group
             .as_async()
-            .try_submit(
-                Default::default(),
-                move |scope| async move { Ok::<_, ()>(body(&scope)) },
-            )
+            .try_submit(Default::default(), move |scope| async move {
+                Ok::<_, ()>(body(&scope))
+            })
             .unwrap();
         let result = match block_on(operation.wait_outcome()).unwrap() {
             OperationOutcome::Succeeded(result) => result,
@@ -201,6 +368,19 @@ mod tests {
         };
         let _settlement = block_on(operation.wait_settlement());
         result
+    }
+
+    fn bind_child(
+        registry: &ReadTreeRegistry,
+        parent: &OperationScope,
+        tree_limit: u64,
+        scope_limit: u64,
+    ) -> Arc<ReadTreeContext> {
+        registry
+            .reserve_child_for_parent(parent, tree_limit, scope_limit)
+            .unwrap()
+            .commit()
+            .unwrap()
     }
 
     #[test]
@@ -220,7 +400,7 @@ mod tests {
                     .expect("bound root should be discoverable")
             ));
 
-            let child = registry_body.child_for_parent(scope, 100, 5).unwrap();
+            let child = bind_child(&registry_body, scope, 100, 5);
             assert!(Arc::ptr_eq(&root.tree, &child.tree));
             assert_eq!(child.reserve(5).unwrap().commit(5), 5);
             assert_eq!(root.consumed(), 5);
@@ -239,19 +419,98 @@ mod tests {
         let registry = Arc::new(ReadTreeRegistry::default());
         let registry_body = Arc::clone(&registry);
         let operation = with_parent_scope(move |scope| {
-            let first = registry_body.child_for_parent(scope, 3, 3).unwrap();
+            let first = bind_child(&registry_body, scope, 3, 3);
             assert_eq!(first.reserve(3).unwrap().commit(3), 3);
             let tree = Arc::clone(&first.tree);
             drop(first);
             assert!(registry_body.for_operation(scope.id()).is_some());
 
-            let second = registry_body.child_for_parent(scope, 6, 6).unwrap();
+            let second = bind_child(&registry_body, scope, 6, 6);
             assert!(Arc::ptr_eq(&tree, &second.tree));
             assert_eq!(second.tree.consumed(), 3);
             assert!(second.reserve(1).is_none());
             scope.id()
         });
         assert!(registry.for_operation(operation).is_none());
+    }
+
+    #[test]
+    fn test_uncommitted_parent_binding_leaves_no_root_and_releases_capacity() {
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let registry_body = Arc::clone(&registry);
+        let operation = with_parent_scope(move |scope| {
+            let operation = scope.id();
+            let pending = registry_body.reserve_child_for_parent(scope, 8, 4).unwrap();
+
+            assert!(registry_body.for_operation(operation).is_none());
+            drop(pending);
+            assert!(registry_body.for_operation(operation).is_none());
+
+            let capacity = scope
+                .reserve_resource()
+                .expect("dropped ticket releases its slot");
+            drop(capacity);
+            operation
+        });
+        assert!(registry.for_operation(operation).is_none());
+    }
+
+    #[test]
+    fn test_concurrent_parent_binding_tickets_reuse_first_committed_root() {
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let registry_body = Arc::clone(&registry);
+        let operation = with_parent_scope(move |scope| {
+            let operation = scope.id();
+            let first = registry_body.reserve_child_for_parent(scope, 8, 4).unwrap();
+            let second = registry_body
+                .reserve_child_for_parent(scope, 16, 6)
+                .unwrap();
+            assert!(registry_body.for_operation(operation).is_none());
+
+            let first = first
+                .commit()
+                .expect("first accepted child commits its root");
+            let second = second
+                .commit()
+                .expect("later accepted child reuses the root");
+            assert!(Arc::ptr_eq(&first.tree, &second.tree));
+            assert_eq!(first.remaining(), 4);
+            assert_eq!(second.remaining(), 6);
+            operation
+        });
+        assert!(registry.for_operation(operation).is_none());
+    }
+
+    #[test]
+    fn test_accepted_binding_commit_returns_parent_stop_reason() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let body_registry = Arc::clone(&registry);
+        let (reason_tx, reason_rx) = std::sync::mpsc::channel();
+        let mut parent = block_on(group.try_submit_async(
+            Default::default(),
+            move |scope| async move {
+                let pending = body_registry
+                    .reserve_child_for_parent(&scope, 8, 4)
+                    .unwrap();
+                assert_eq!(
+                    qubit_operation::StopRequestStatus::Accepted,
+                    scope.request_stop(StopReason::UserCancelled)
+                );
+                let kind = pending
+                    .commit()
+                    .expect_err("a stopped accepted parent rejects commit");
+                assert!(body_registry.for_operation(scope.id()).is_none());
+                reason_tx.send(kind).unwrap();
+                Ok::<_, ()>(())
+            },
+        ))
+        .unwrap();
+
+        assert_eq!(ResourceManageErrorKind::Stopped, reason_rx.recv().unwrap());
+        let _outcome = block_on(parent.wait_outcome()).unwrap();
+        let _settlement = block_on(parent.wait_settlement());
     }
 
     #[test]
@@ -267,7 +526,7 @@ mod tests {
                 .insert(scope.id(), Arc::downgrade(&old_root));
             drop(old_root);
 
-            let child = registry_body.child_for_parent(scope, 8, 4).unwrap();
+            let child = bind_child(&registry_body, scope, 8, 4);
             assert_eq!(4, child.remaining());
             let registered = registry_body.for_operation(scope.id()).unwrap();
             assert!(Arc::ptr_eq(&child.tree, &registered.tree));
@@ -285,7 +544,9 @@ mod tests {
         for _ in 0..32 {
             let mut operation = group
                 .as_async()
-                .try_submit(Default::default(), |scope| async move { Ok::<_, ()>(scope.id()) })
+                .try_submit(Default::default(), |scope| async move {
+                    Ok::<_, ()>(scope.id())
+                })
                 .unwrap();
             let id = match block_on(operation.wait_outcome()).unwrap() {
                 OperationOutcome::Succeeded(id) => id,
@@ -313,7 +574,9 @@ mod tests {
 
         assert!(Arc::ptr_eq(
             &replacement,
-            &registry.for_operation(id).expect("replacement should remain bound")
+            &registry
+                .for_operation(id)
+                .expect("replacement should remain bound")
         ));
         assert_eq!(1, registry.roots.lock().unwrap().len());
         drop(replacement);
@@ -357,6 +620,12 @@ mod tests {
         );
 
         drop(context);
-        assert!(registry.roots.lock().unwrap_or_else(|e| e.into_inner()).is_empty());
+        assert!(
+            registry
+                .roots
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        );
     }
 }
