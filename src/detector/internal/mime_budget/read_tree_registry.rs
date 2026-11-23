@@ -97,7 +97,8 @@ impl PendingReadTreeBinding {
                         pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
                     match &mut *pending_state {
                         PendingReadTreeRootState::Reserved(reservation) => drop(reservation.take()),
-                        PendingReadTreeRootState::Detached | PendingReadTreeRootState::Failed(_) => {}
+                        PendingReadTreeRootState::Detached
+                        | PendingReadTreeRootState::Failed(_) => {}
                     }
                     pending_roots
                         .lock()
@@ -203,6 +204,36 @@ impl ReadTreeRegistry {
             operation,
         });
         Ok(root.child(scope_limit))
+    }
+
+    /// Borrows a child context when the parent already has a committed or
+    /// pending read tree, without reserving another parent resource.
+    pub(in crate::detector) fn existing_child_for_parent(
+        &self,
+        parent: &OperationScope,
+        scope_limit: u64,
+    ) -> Option<Arc<ReadTreeContext>> {
+        let _registration = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
+        let operation = parent.id();
+        {
+            let mut roots = self.roots.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(root) = roots.get(&operation).and_then(Weak::upgrade) {
+                return Some(root.child(scope_limit));
+            }
+            roots.remove(&operation);
+        }
+
+        let pending_root = {
+            let mut pending_roots = self.pending_roots.lock().unwrap_or_else(|e| e.into_inner());
+            let pending_root = pending_roots.get(&operation).and_then(Weak::upgrade);
+            if pending_root.is_none() {
+                pending_roots.remove(&operation);
+            }
+            pending_root
+        }?;
+        let pending_state = pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
+        matches!(&*pending_state, PendingReadTreeRootState::Reserved(_))
+            .then(|| pending_root.root.child(scope_limit))
     }
 
     /// Reserves a parent binding whose anchor will be committed by an
@@ -322,6 +353,7 @@ mod tests {
     use std::thread;
 
     use qubit_operation::GroupOptions;
+    use qubit_operation::ManagerOptions;
     use qubit_operation::OperationId;
     use qubit_operation::OperationManager;
     use qubit_operation::OperationOutcome;
@@ -505,6 +537,44 @@ mod tests {
             operation
         });
         assert!(registry.for_operation(operation).is_none());
+    }
+
+    #[test]
+    fn test_existing_parent_tree_is_borrowed_without_another_resource_slot() {
+        let mut manager_options = ManagerOptions::default();
+        manager_options.scope_limits.resources = 1;
+        let manager = OperationManager::new(manager_options).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let body_registry = Arc::clone(&registry);
+        let mut parent = group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                let first = bind_child(&body_registry, &scope, 8, 8);
+                assert_eq!(3, first.reserve(3).unwrap().commit(3));
+
+                let borrowed = body_registry
+                    .existing_child_for_parent(&scope, 5)
+                    .expect("the parent's registered read tree should be borrowed");
+                assert!(Arc::ptr_eq(&first.tree, &borrowed.tree));
+                assert_eq!(3, borrowed.tree.consumed());
+                assert_eq!(5, borrowed.remaining());
+                assert_eq!(5, borrowed.reserve(5).unwrap().commit(5));
+                assert_eq!(8, borrowed.tree.consumed());
+
+                assert!(matches!(
+                    scope.reserve_resource(),
+                    Err(qubit_operation::ResourceCapacityError::CapacityExceeded)
+                ));
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+
+        assert!(matches!(
+            block_on(parent.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+        let _settlement = block_on(parent.wait_settlement());
     }
 
     #[test]

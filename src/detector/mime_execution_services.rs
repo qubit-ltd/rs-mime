@@ -379,6 +379,17 @@ impl MimeExecutionServices {
             .child_for_parent(parent, tree_limit, scope_limit)
     }
 
+    /// Borrows an existing parent tree without reserving another resource.
+    #[inline]
+    pub(crate) fn existing_read_tree_for_parent(
+        &self,
+        parent: &OperationScope,
+        scope_limit: u64,
+    ) -> Option<Arc<ReadTreeContext>> {
+        self.read_trees
+            .existing_child_for_parent(parent, scope_limit)
+    }
+
     /// Prepares a parent read-tree binding that an admitted body commits.
     ///
     /// # Parameters

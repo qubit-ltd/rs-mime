@@ -360,11 +360,11 @@ impl MimeRuntime {
             .unwrap_or(services.max_read_bytes())
             .min(services.max_read_bytes());
         // This synchronous path accepts complete byte inputs only, so it does
-        // not read from an external provider and needs no parent read-tree
-        // anchor. The standalone context keeps the body shape aligned with
-        // async submissions without reserving a parent resource that could
-        // outlive the parent's scope.
-        let read_tree = services.new_read_tree(tree_limit);
+        // not create a parent read-tree anchor. It borrows an existing parent
+        // tree when available; otherwise it uses a standalone context.
+        let read_tree = services
+            .existing_read_tree_for_parent(parent, tree_limit)
+            .unwrap_or_else(|| services.new_read_tree(tree_limit));
         let cell = mime_submission::cell(input);
         let body_cell = Arc::clone(&cell);
         let body_services = Arc::clone(&services);
@@ -539,7 +539,7 @@ impl MimeRuntime {
             .unwrap_or(services.max_read_bytes())
             .min(services.max_read_bytes());
         let (pending_tree, standalone_tree) = match parent {
-            Some(parent) => {
+            Some(parent) if matches!(&input, OwnedMimeInput::Provider { .. }) => {
                 match services.prepare_read_tree_for_parent(parent, tree_limit, tree_limit) {
                     Ok(binding) => (Some(binding), None),
                     Err(kind) => {
@@ -550,6 +550,14 @@ impl MimeRuntime {
                     }
                 }
             }
+            Some(parent) => (
+                None,
+                Some(
+                    services
+                        .existing_read_tree_for_parent(parent, tree_limit)
+                        .unwrap_or_else(|| services.new_read_tree(tree_limit)),
+                ),
+            ),
             None => (None, Some(services.new_read_tree(tree_limit))),
         };
         let cell = mime_submission::cell(input);
