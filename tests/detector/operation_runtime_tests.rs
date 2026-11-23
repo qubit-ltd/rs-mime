@@ -32,6 +32,7 @@ use qubit_mime::MimeError;
 use qubit_mime::MimeExecutionServices;
 use qubit_mime::MimeFuture;
 use qubit_mime::MimeOperationOptions;
+use qubit_mime::MimeRepository;
 use qubit_mime::OwnedMimeInput;
 use qubit_mime::RandomAccessCapability;
 use qubit_mime::detector::MimeRuntime;
@@ -43,6 +44,7 @@ use qubit_spi::ProviderMetadata;
 struct CountingFileSystem {
     properties: qubit_fs::spi::ProviderProperties,
     opens: Arc<AtomicUsize>,
+    transferred: Option<Arc<AtomicUsize>>,
 }
 
 impl CountingFileSystem {
@@ -73,7 +75,13 @@ impl CountingFileSystem {
             )
             .unwrap(),
             opens,
+            transferred: None,
         }
+    }
+
+    fn with_transfer_counter(mut self, transferred: Arc<AtomicUsize>) -> Self {
+        self.transferred = Some(transferred);
+        self
     }
 }
 
@@ -94,6 +102,7 @@ impl qubit_fs::spi::AsyncFileSystemSpi for CountingFileSystem {
         request: qubit_fs::spi::OpenReaderRequest<'a>,
     ) -> qubit_fs::spi::SpiFuture<'a, qubit_fs::FsResult<qubit_fs::spi::OpenedAsyncReader>> {
         self.opens.fetch_add(1, Ordering::SeqCst);
+        let transferred = self.transferred.clone();
         let info = qubit_fs::metadata::OpenedFileInfo::new(
             qubit_fs::metadata::FileSystemId::new("mime-runtime-counting").unwrap(),
             request.path().clone(),
@@ -104,6 +113,7 @@ impl qubit_fs::spi::AsyncFileSystemSpi for CountingFileSystem {
                 Box::new(PdfInput {
                     bytes: b"%PDF".to_vec(),
                     position: 0,
+                    transferred,
                 }),
             ))
         })
@@ -113,6 +123,7 @@ impl qubit_fs::spi::AsyncFileSystemSpi for CountingFileSystem {
 struct PdfInput {
     bytes: Vec<u8>,
     position: usize,
+    transferred: Option<Arc<AtomicUsize>>,
 }
 
 impl qubit_io::AsyncInput for PdfInput {
@@ -127,6 +138,9 @@ impl qubit_io::AsyncInput for PdfInput {
         let read = count.min(self.bytes.len().saturating_sub(self.position));
         output[index..index + read].copy_from_slice(&self.bytes[self.position..self.position + read]);
         self.position += read;
+        if let Some(transferred) = &self.transferred {
+            transferred.fetch_add(read, Ordering::SeqCst);
+        }
         Poll::Ready(Ok(read))
     }
 }
@@ -396,6 +410,75 @@ fn test_explicit_builtin_repository_selection_short_circuits_provider_reads() {
     let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
+#[test]
+fn test_managed_provider_uses_native_basename_for_filename_short_circuit() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-native-basename">
+    <glob pattern="left\right.mimecase" weight="80"/>
+  </mime-type>
+  <mime-type type="application/x-string-basename">
+    <glob pattern="right.mimecase" weight="50"/>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("custom filename repository should parse");
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let services = services(&manager, 4, Arc::new(TestExecution::default()));
+    services.prepare().unwrap();
+    let opens = Arc::new(AtomicUsize::new(0));
+    let file_system = Arc::new(AsyncFileSystem::from_spi(CountingFileSystem::new(Arc::clone(&opens))).unwrap());
+    let runtime = MimeRuntime::new(MimeConfig::default(), Arc::new(repository))
+        .with_execution_services(services.clone());
+
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::Provider {
+                file_system,
+                path: Path::parse(r"/left\right.mimecase").unwrap(),
+            },
+            MimeOperationOptions {
+                policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| panic!("filename result should be admitted: {:?}", failure.reason));
+    let report = match block_on(operation.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(report) => report,
+        other => panic!("native basename short circuit should succeed: {other:?}"),
+    };
+
+    assert_eq!(Some("application/x-native-basename"), report.mime_type.as_deref());
+    assert_eq!(qubit_mime::InspectedExtent::Prefix(0), report.inspected_extent);
+    assert_eq!(0, opens.load(Ordering::SeqCst), "filename short circuit must not read the provider path");
+
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(b"".as_slice()), InputExtent::Complete)
+                .with_filename(r"left\right.mimecase"),
+            MimeOperationOptions {
+                policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| panic!("string filename result should be admitted: {:?}", failure.reason));
+    let report = match block_on(operation.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(report) => report,
+        other => panic!("string filename short circuit should succeed: {other:?}"),
+    };
+    assert_eq!(Some("application/x-string-basename"), report.mime_type.as_deref());
+    assert_eq!(qubit_mime::InspectedExtent::Prefix(0), report.inspected_extent);
+    assert_eq!(0, opens.load(Ordering::SeqCst), "string filename matching must not open the unrelated provider");
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
 #[derive(Debug)]
 struct RepositoryIdCustomProvider(Arc<AtomicUsize>);
 
@@ -438,6 +521,68 @@ impl AsyncMimeDetectorBackend for RepositoryIdCustomBackend {
             Ok(MimeCandidates {
                 candidates: Vec::new(),
                 inspected_extent: qubit_mime::InspectedExtent::Complete,
+                retained_prefix: Vec::new(),
+                staging_bytes: 0,
+            })
+        })
+    }
+}
+
+#[derive(Debug)]
+struct ManagedParentBudgetProvider(Arc<AtomicUsize>);
+
+impl ProviderMetadata for ManagedParentBudgetProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("managed-parent-budget").unwrap())
+    }
+}
+
+impl AsyncMimeDetectorProvider for ManagedParentBudgetProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(ManagedParentBudgetBackend(Arc::clone(&self.0))))
+    }
+}
+
+#[derive(Debug)]
+struct ManagedParentBudgetBackend(Arc<AtomicUsize>);
+
+impl AsyncMimeDetectorBackend for ManagedParentBudgetBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(4)
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
+    fn uses_managed_provider_reads(&self) -> bool {
+        true
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        _scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        _options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        Box::pin(async move {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            let BorrowedMimeInput::ManagedProvider { session, .. } = input else {
+                panic!("managed parent-budget backend must receive a metered session")
+            };
+            let mut bytes = [0; 4];
+            let count = session.read(&mut bytes).await?;
+            assert_eq!(&bytes[..count], &b"%PDF"[..count]);
+            Ok(MimeCandidates {
+                candidates: vec![qubit_mime::MimeCandidate {
+                    mime_type: "application/x-managed-parent-budget".into(),
+                    rank: 0,
+                }],
+                inspected_extent: qubit_mime::InspectedExtent::Prefix(count),
                 retained_prefix: Vec::new(),
                 staging_bytes: 0,
             })
@@ -1334,8 +1479,8 @@ fn test_operation_runtime_parallel_children_share_actual_read_budget() {
             )
         })
         .count();
-    assert_eq!(reports.len(), 1);
-    assert_eq!(read_failures, 1);
+    assert_eq!(reports.len(), 1, "unexpected sibling outcomes: {outcomes:#?}");
+    assert_eq!(read_failures, 1, "unexpected sibling outcomes: {outcomes:#?}");
     assert_eq!(reports[0].budget.bytes_read, 4);
     assert_eq!(reports[0].budget.owned_bytes, 4);
     assert_eq!(
@@ -1434,6 +1579,249 @@ fn test_sequential_mime_children_keep_external_parent_read_budget() {
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_managed_provider_sibling_children_share_external_parent_read_budget() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+    use qubit_operation::ChildFailurePolicy;
+    use qubit_operation::OperationOutcome;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(
+        manager.clone(),
+        group,
+        Arc::new(TestExecution::default()),
+        4,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+
+    let backend_calls = Arc::new(AtomicUsize::new(0));
+    let registry = MimeDetectorRegistry::default();
+    registry
+        .register_async_provider(ManagedParentBudgetProvider(Arc::clone(&backend_calls)))
+        .unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("managed-parent-budget").unwrap(),
+        )
+        .unwrap();
+
+    let opens = Arc::new(AtomicUsize::new(0));
+    let transferred = Arc::new(AtomicUsize::new(0));
+    let parent_runtime = runtime.clone();
+    let opens_body = Arc::clone(&opens);
+    let transferred_body = Arc::clone(&transferred);
+    let parent_options = qubit_operation::OperationOptions {
+        child_failure_policy: ChildFailurePolicy::ContinueSiblings,
+        limits: qubit_operation::ScopeLimits {
+            child_operations: 2,
+            resources: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut parent = manager.as_async().try_submit(parent_options, move |scope| {
+        async move {
+            let child_options = MimeOperationOptions {
+                max_buffer_bytes: Some(4),
+                max_read_bytes: Some(4),
+                operation: qubit_operation::OperationOptions {
+                    requirement: qubit_operation::ChildRequirement::Optional,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let scope = Arc::new(scope);
+            let barrier = Arc::new(std::sync::Barrier::new(3));
+            let first_runtime = parent_runtime.clone();
+            let first_scope = Arc::clone(&scope);
+            let first_barrier = Arc::clone(&barrier);
+            let first_file_system = Arc::new(
+                AsyncFileSystem::from_spi(
+                    CountingFileSystem::new(Arc::clone(&opens_body))
+                        .with_transfer_counter(Arc::clone(&transferred_body)),
+                )
+                .unwrap(),
+            );
+            let first_options = child_options.clone();
+            let first = std::thread::spawn(move || {
+                first_barrier.wait();
+                first_runtime.try_submit_detection_in(
+                    &first_scope,
+                    OwnedMimeInput::Provider {
+                        file_system: first_file_system,
+                        path: Path::parse("/document.pdf").unwrap(),
+                    },
+                    first_options,
+                )
+            });
+
+            let second_runtime = parent_runtime.clone();
+            let second_scope = Arc::clone(&scope);
+            let second_barrier = Arc::clone(&barrier);
+            let second_file_system = Arc::new(
+                AsyncFileSystem::from_spi(
+                    CountingFileSystem::new(Arc::clone(&opens_body))
+                        .with_transfer_counter(Arc::clone(&transferred_body)),
+                )
+                .unwrap(),
+            );
+            let second = std::thread::spawn(move || {
+                second_barrier.wait();
+                second_runtime.try_submit_detection_in(
+                    &second_scope,
+                    OwnedMimeInput::Provider {
+                        file_system: second_file_system,
+                        path: Path::parse("/document.pdf").unwrap(),
+                    },
+                    child_options,
+                )
+            });
+            barrier.wait();
+            let mut first = first
+                .join()
+                .expect("first child submission thread should finish")
+                .unwrap_or_else(|failure| panic!("first managed child should be admitted: {:?}", failure.reason));
+            let mut second = second
+                .join()
+                .expect("second child submission thread should finish")
+                .unwrap_or_else(|failure| panic!("second managed child should be admitted: {:?}", failure.reason));
+
+            let first_outcome = first.wait_outcome().await.unwrap();
+            let second_outcome = second.wait_outcome().await.unwrap();
+            let _ = first.wait_settlement().await;
+            let _ = second.wait_settlement().await;
+            drop((first, second));
+
+            let mut reported_bytes = 0;
+            let mut successful_reports = 0;
+            let mut budget_failures = 0;
+            for outcome in [first_outcome, second_outcome] {
+                match outcome {
+                    OperationOutcome::Succeeded(report) => {
+                        successful_reports += 1;
+                        reported_bytes += report.budget.bytes_read;
+                    }
+                    OperationOutcome::Failed(qubit_mime::MimeError::BudgetExceeded { kind: "read", .. }) => {
+                        budget_failures += 1;
+                    }
+                    other => panic!("unexpected managed sibling result: {other:?}"),
+                }
+            }
+            Ok::<_, ()>((reported_bytes, successful_reports, budget_failures))
+        }
+    })
+    .unwrap();
+
+    let (reported_bytes, successful_reports, budget_failures) = match block_on(parent.wait_outcome()).unwrap() {
+        OperationOutcome::Succeeded(result) => result,
+        other => panic!("external parent should settle after an optional child read failure: {other:?}"),
+    };
+    block_on(parent.wait_settlement());
+    assert_eq!(1, successful_reports);
+    assert_eq!(1, budget_failures);
+    assert_eq!(2, backend_calls.load(Ordering::SeqCst), "both admitted children reach the extension backend");
+    assert_eq!(2, opens.load(Ordering::SeqCst), "each admitted child opens its selected provider once");
+    assert_eq!(4, transferred.load(Ordering::SeqCst), "the shared parent budget allows only four delivered bytes");
+    assert_eq!(4, reported_bytes, "the successful child report accounts for all delivered bytes");
+    assert_eq!(transferred.load(Ordering::SeqCst) as u64, reported_bytes);
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_managed_provider_child_admission_rejection_returns_original_input() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+    use qubit_operation::OperationOutcome;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(
+        manager.clone(),
+        group,
+        Arc::new(TestExecution::default()),
+        4,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+
+    let backend_calls = Arc::new(AtomicUsize::new(0));
+    let registry = MimeDetectorRegistry::default();
+    registry
+        .register_async_provider(ManagedParentBudgetProvider(Arc::clone(&backend_calls)))
+        .unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("managed-parent-budget").unwrap(),
+        )
+        .unwrap();
+
+    let opens = Arc::new(AtomicUsize::new(0));
+    let file_system = Arc::new(AsyncFileSystem::from_spi(CountingFileSystem::new(Arc::clone(&opens))).unwrap());
+    let input_path = Path::parse("/document.pdf").unwrap();
+    let parent_runtime = runtime.clone();
+    let child_file_system = Arc::clone(&file_system);
+    let child_path = input_path.clone();
+    let parent_options = qubit_operation::OperationOptions {
+        limits: qubit_operation::ScopeLimits {
+            child_operations: 0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut parent = manager
+        .as_async()
+        .try_submit(parent_options, move |scope| async move {
+            let failure = match parent_runtime.try_submit_detection_in(
+                    &scope,
+                    OwnedMimeInput::Provider {
+                        file_system: Arc::clone(&child_file_system),
+                        path: child_path.clone(),
+                    },
+                    MimeOperationOptions::default(),
+                ) {
+                Ok(_) => panic!("parent child-operation limit should reject managed input"),
+                Err(failure) => failure,
+            };
+            let admission_rejected = matches!(failure.reason, qubit_mime::MimeSubmitRejection::Admission(_));
+            let input_returned = match failure.input {
+                OwnedMimeInput::Provider { file_system, path } => {
+                    Arc::ptr_eq(&file_system, &child_file_system) && path == child_path
+                }
+                OwnedMimeInput::Bytes { .. } => false,
+            };
+            Ok::<_, ()>((admission_rejected, input_returned))
+        })
+        .unwrap();
+
+    let (admission_rejected, input_returned) = match block_on(parent.wait_outcome()).unwrap() {
+        OperationOutcome::Succeeded(result) => result,
+        other => panic!("parent should complete after rejecting its child: {other:?}"),
+    };
+    block_on(parent.wait_settlement());
+    assert!(admission_rejected);
+    assert!(input_returned, "rejection must return the original provider filesystem and path");
+    assert_eq!(0, opens.load(Ordering::SeqCst), "rejected input must never be opened");
+    assert_eq!(0, backend_calls.load(Ordering::SeqCst), "rejected input must never reach the backend");
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
 #[test]

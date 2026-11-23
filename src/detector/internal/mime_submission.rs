@@ -191,9 +191,9 @@ pub(in crate::detector) struct MimeSubmission {
     pub managed_provider_reads: bool,
     /// Identifier recorded in the returned report.
     pub backend_id: String,
-    /// Repository used only when this runtime selected its built-in async
-    /// repository matcher, enabling the documented filename short circuit.
-    pub repository: Option<Arc<crate::MimeRepository>>,
+    /// Unique repository filename winner determined during submission
+    /// preflight, if policy permits skipping content inspection.
+    pub filename_winner: Option<String>,
     /// Service-wide maximum content buffer.
     pub max_buffer_size: usize,
     /// Per-operation detection and resource limits.
@@ -222,7 +222,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
         backend,
         managed_provider_reads,
         backend_id,
-        repository,
+        filename_winner,
         max_buffer_size,
         options,
         permit,
@@ -245,9 +245,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                     limit,
                 });
             }
-            if let Some(mime) = repository.as_ref().and_then(|repository| {
-                super::async_repository_matcher::preferred_filename(repository, filename.as_deref(), options.policy)
-            }) {
+            if let Some(mime_type) = filename_winner.as_deref() {
                 if let Some(reason) = _scope.context().stop_reason() {
                     return Err(MimeError::DetectorBackend {
                         backend: backend_id,
@@ -255,7 +253,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                     });
                 }
                 return Ok(MimeDetectionReport {
-                    mime_type: Some(mime.name().to_owned()),
+                    mime_type: Some(mime_type.to_owned()),
                     backend_id,
                     inspected_extent: crate::InspectedExtent::Prefix(0),
                     budget: MimeBudgetSummary {
@@ -287,9 +285,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
             )
         }
         OwnedMimeInput::Provider { file_system, path } => {
-            if let Some(mime) = repository.as_ref().and_then(|repository| {
-                super::async_repository_matcher::preferred_filename(repository, path.file_name(), options.policy)
-            }) {
+            if let Some(mime_type) = filename_winner.as_deref() {
                 if let Some(reason) = _scope.context().stop_reason() {
                     return Err(MimeError::DetectorBackend {
                         backend: backend_id,
@@ -297,7 +293,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                     });
                 }
                 return Ok(MimeDetectionReport {
-                    mime_type: Some(mime.name().to_owned()),
+                    mime_type: Some(mime_type.to_owned()),
                     backend_id,
                     inspected_extent: crate::InspectedExtent::Prefix(0),
                     budget: MimeBudgetSummary::default(),

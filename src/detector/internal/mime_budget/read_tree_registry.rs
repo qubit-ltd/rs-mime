@@ -39,6 +39,8 @@ pub(in crate::detector) struct ReadTreeRegistry {
 }
 
 /// A parent read-tree binding that is committed only after child admission.
+/// Accepted sibling tickets retain their shared root if the parent body ends
+/// before their bodies start.
 pub(crate) struct PendingReadTreeBinding {
     binding: PendingBinding,
     scope_limit: u64,
@@ -64,6 +66,10 @@ struct PendingReadTreeRoot {
 
 enum PendingReadTreeRootState {
     Reserved(Option<ResourceReservation>),
+    /// The parent scope ended after sibling admission but before a child body
+    /// could commit. Accepted siblings retain this shared root without a
+    /// parent resource anchor; the ended scope cannot admit further children.
+    Detached,
     Failed(ResourceManageErrorKind),
 }
 
@@ -71,8 +77,9 @@ impl PendingReadTreeBinding {
     /// Commits the parent anchor and returns a child context after admission.
     ///
     /// # Errors
-    /// Returns the resource-scope failure if the accepted child can no longer
-    /// commit its reserved parent anchor.
+    /// Returns a non-terminal resource-scope failure such as an accepted
+    /// parent stop. If the parent scope has ended after child admission, the
+    /// accepted child receives the detached shared tree without a parent anchor.
     pub(crate) fn commit(self) -> Result<Arc<ReadTreeContext>, ResourceManageErrorKind> {
         match self.binding {
             PendingBinding::Existing(root) => Ok(root.child(self.scope_limit)),
@@ -88,8 +95,10 @@ impl PendingReadTreeBinding {
                 if let Some(existing) = roots_map.get(&operation).and_then(Weak::upgrade) {
                     let mut pending_state =
                         pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
-                    if let PendingReadTreeRootState::Reserved(reservation) = &mut *pending_state {
-                        drop(reservation.take());
+                    match &mut *pending_state {
+                        PendingReadTreeRootState::Reserved(reservation) => drop(reservation.take()),
+                        PendingReadTreeRootState::Detached
+                        | PendingReadTreeRootState::Failed(_) => {}
                     }
                     pending_roots
                         .lock()
@@ -103,6 +112,9 @@ impl PendingReadTreeBinding {
                     pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
                 let reservation = match &mut *pending_state {
                     PendingReadTreeRootState::Reserved(reservation) => reservation.take(),
+                    PendingReadTreeRootState::Detached => {
+                        return Ok(pending_root.root.child(self.scope_limit));
+                    }
                     PendingReadTreeRootState::Failed(kind) => return Err(*kind),
                 };
                 let Some(reservation) = reservation else {
@@ -114,7 +126,22 @@ impl PendingReadTreeBinding {
                 match reservation.commit(anchor) {
                     Ok(resource) => drop(resource),
                     Err(error) => {
-                        let (kind, _anchor, reservation) = error.into_parts();
+                        let (kind, anchor, reservation) = error.into_parts();
+                        drop(anchor);
+                        if kind == ResourceManageErrorKind::ScopeEnded {
+                            // Admission already succeeded, so accepted siblings
+                            // must keep sharing this in-memory tree even when
+                            // the parent body ended before this child started.
+                            // A stopped parent remains an error; ScopeEnded is
+                            // safe to detach because it cannot admit new children.
+                            drop(reservation);
+                            *pending_state = PendingReadTreeRootState::Detached;
+                            pending_roots
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .remove(&operation);
+                            return Ok(root.child(self.scope_limit));
+                        }
                         drop(reservation);
                         *pending_state = PendingReadTreeRootState::Failed(kind);
                         pending_roots
@@ -547,6 +574,47 @@ mod tests {
             block_on(parent.wait_outcome()).unwrap(),
             OperationOutcome::Succeeded(())
         ));
+        let _settlement = block_on(parent.wait_settlement());
+    }
+
+    #[test]
+    fn test_accepted_sibling_bindings_share_tree_after_parent_body_returns() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let body_registry = Arc::clone(&registry);
+        let (pending_tx, pending_rx) = std::sync::mpsc::channel();
+        let mut parent = group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                let first = body_registry
+                    .reserve_child_for_parent(&scope, 8, 4)
+                    .unwrap();
+                let second = body_registry
+                    .reserve_child_for_parent(&scope, 8, 4)
+                    .unwrap();
+                pending_tx.send((first, second)).unwrap();
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+        let (first, second) = pending_rx.recv().unwrap();
+        assert!(matches!(
+            block_on(parent.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+
+        let first = first
+            .commit()
+            .expect("accepted child retains its reserved parent tree after body return");
+        let second = second
+            .commit()
+            .expect("accepted sibling reuses the same tree after parent body return");
+        assert!(Arc::ptr_eq(&first.tree, &second.tree));
+        assert_eq!(first.reserve(4).unwrap().commit(4), 4);
+        assert_eq!(second.reserve(4).unwrap().commit(4), 4);
+        assert_eq!(8, first.tree.consumed());
+
+        drop((first, second));
         let _settlement = block_on(parent.wait_settlement());
     }
 
