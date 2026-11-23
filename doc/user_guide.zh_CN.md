@@ -391,6 +391,25 @@ Provider。内置 `repository` 和 `file` Provider 都提供受管异步 backend
 也不会把此前缀交给异步媒体 classifier。需要媒体流精化时，应以 `Complete` 提交完整字节。
 完整输入的 classifier 错误仍由 operation 报告。
 
+### 扩展 backend 的受计量 Provider 读取
+
+异步扩展 backend 若对 `BorrowedMimeInput` 做穷尽匹配，需要处理新增的
+`ManagedProvider` 变体；该枚举现在也不再实现 `Copy` 或 `Clone`。对于此变体，runtime 只打开一次
+Provider 对象，并向 backend 借出 `MeteredReadSession`。顺序读取使用 `session.read()`；要从同一已打开
+对象采样偏移时使用 `session.read_at()`。处理受管输入时不要重新打开路径或使用原始 filesystem handle。
+
+`uses_managed_provider_reads()` 用于选择该 session。默认情况下，若
+`random_access_capability()` 返回 `RandomAccessCapability::SamplesSameObject`，该方法返回 `true`。
+需要完整顺序读取的 backend 可以在保持 `RandomAccessCapability::Unsupported` 的同时覆盖该方法并返回
+`true`。使用常规有界前缀路径的 `Prefix(n)` backend 会收到 `Bytes`，最多包含 n 字节，并受请求与服务的
+buffer/read 预算进一步限制；若提前遇到 EOF，实际字节会更少，读取不会越过前缀上限。选择受管读取的
+backend 自行控制 session 读取，应遵守声明的输入范围。
+
+每次 session 读取都会受调用方 buffer、payload 上限、请求与读取额度树剩余额度以及 8 KiB 分块上限共同约束。
+runtime 在 Provider I/O 前为私有暂存区预留最多 8 KiB，并只把成功返回的字节复制给 backend。Provider
+错误不会暴露暂存区中的部分数据。EOF 返回零；读取额度按实际返回字节计费，重复或重叠的
+`read_at` 采样会重复计费。每次读取的暂存区上限与 backend 保留的输入内存或命令暂存内存是不同预算。
+
 handle 提供两种彼此独立的观察方式。`wait_outcome()` 等待 MIME 业务结果；成功时结果包含
 `MimeDetectionReport`。`wait_settlement()` 观察资源是否已释放或恢复责任是否仍待处理。提前得到
 Stopped 或 Failed 并不能证明暂存文件和后台 helper 已退出；丢弃 handle 或 future 也不代表任务

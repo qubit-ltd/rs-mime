@@ -484,6 +484,35 @@ precise-detection mapping matches. Submit the complete bytes with extent
 `Complete` when the result needs media-stream refinement; classifier errors for
 complete inputs continue to be reported by the operation.
 
+### Metered provider reads for extension backends
+
+Update async extension backends that match `BorrowedMimeInput` exhaustively:
+the enum now includes `ManagedProvider` and is no longer `Copy` or `Clone`. For
+this variant, the runtime opens the provider object once and lends the backend a
+`MeteredReadSession`. Use `session.read()` for sequential reads and
+`session.read_at()` for samples from that same opened object. Do not reopen the
+path or use a raw filesystem handle for a managed input.
+
+`uses_managed_provider_reads()` opts a backend into this session. It defaults to
+`true` when `random_access_capability()` returns
+`RandomAccessCapability::SamplesSameObject`. A backend that needs complete
+sequential provider input can override it to return `true` while declaring
+`RandomAccessCapability::Unsupported`. A `Prefix(n)` backend on the regular
+bounded-prefix route receives `Bytes` containing at most `n` bytes, further
+limited by request and service buffer/read budgets; the provider may return
+fewer bytes at EOF. No read goes past the prefix bound. A backend that opts into
+managed reads controls its own reads and should keep them within its declared
+extent.
+
+Each session read is clipped to the caller's buffer, the payload limit, the
+remaining request and ancestor read allowances, and an 8 KiB chunk. The runtime
+reserves an 8 KiB maximum private scratch buffer before provider I/O and copies
+only successfully returned bytes into the backend buffer. Provider errors do
+not expose partial scratch data. EOF returns zero, and read accounting charges
+actual returned bytes; repeated or overlapping `read_at` samples are charged
+again. This per-read scratch bound is distinct from a backend's retained input
+or command staging memory.
+
 The handle exposes two independent observations. `wait_outcome()` returns the
 MIME detection result (including `MimeDetectionReport` on success);
 `wait_settlement()` observes release or recovery responsibility. An early stopped
