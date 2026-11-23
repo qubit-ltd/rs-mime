@@ -48,6 +48,13 @@ pub(crate) fn simple_extension(pattern: &str) -> Option<&str> {
 
 /// Finds the closing bracket for a character class using the matcher's glob
 /// syntax rules.
+///
+/// # Parameters
+/// - `chars`: Pattern characters containing the class.
+/// - `start`: Index of the class's opening bracket.
+///
+/// # Returns
+/// Index of the matching closing bracket, or `None` for an unclosed class.
 pub(crate) fn character_class_end(chars: &[char], start: usize) -> Option<usize> {
     let mut content_start = start + 1;
     if chars.get(content_start) == Some(&'!') {
@@ -70,13 +77,13 @@ mod tests {
     use super::simple_extension;
 
     #[test]
-    fn unclosed_character_class_is_literal_syntax() {
+    fn test_unclosed_character_class_is_literal_syntax() {
         assert!(!has_pattern_syntax("file[.txt"));
         assert_eq!(Some("txt[ab"), simple_extension("*.txt[ab"));
     }
 
     #[test]
-    fn closed_character_class_remains_pattern_syntax() {
+    fn test_closed_character_class_remains_pattern_syntax() {
         assert!(has_pattern_syntax("file[ab].txt"));
         assert_eq!(None, simple_extension("*.txt[ab]"));
     }

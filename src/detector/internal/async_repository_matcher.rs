@@ -18,7 +18,7 @@ use crate::MimeError;
 use crate::MimeRepository;
 use crate::MimeResult;
 use crate::MimeType;
-use crate::repository::magic_index::MagicMatchState;
+use crate::repository::internal::magic_match_state::MagicMatchState;
 
 /// Maximum number of repository rules evaluated between cooperative yields.
 pub(super) const RULES_PER_BATCH: usize = 32;
@@ -48,6 +48,14 @@ pub(in crate::detector) fn preferred_filename(
 
 /// Returns the unique filename result for an already extracted native
 /// basename when policy permits skipping content inspection.
+///
+/// # Parameters
+/// - `repository`: Immutable MIME filename rules.
+/// - `basename`: Optional native basename supplied by the input.
+/// - `policy`: Candidate selection policy.
+///
+/// # Returns
+/// The sole matching MIME type for `PreferFilename`, or `None` otherwise.
 pub(in crate::detector) fn preferred_basename(
     repository: &MimeRepository,
     basename: Option<&str>,

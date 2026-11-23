@@ -7,52 +7,10 @@
 // =============================================================================
 //! Indexed content magic matching.
 
-use std::collections::HashSet;
-
 use super::MimeMagic;
 use super::MimeType;
 use super::internal::magic_entry::MagicEntry;
-
-/// Accumulates the highest-priority matching MIME indexes in source order.
-#[derive(Debug, Default)]
-pub(crate) struct MagicMatchState {
-    best_priority: Option<u16>,
-    results: Vec<usize>,
-    seen: HashSet<usize>,
-}
-
-impl MagicMatchState {
-    /// Returns whether entries below `priority` can be skipped.
-    #[must_use]
-    pub(crate) fn skips(&self, priority: u16) -> bool {
-        self.best_priority.is_some_and(|best| priority < best)
-    }
-
-    /// Records a matching rule while preserving priority and source order.
-    pub(crate) fn record(&mut self, priority: u16, mime_index: usize, matches: bool) {
-        if !matches {
-            return;
-        }
-        match self.best_priority {
-            Some(best) if priority > best => {
-                self.best_priority = Some(priority);
-                self.results.clear();
-                self.seen.clear();
-            }
-            None => self.best_priority = Some(priority),
-            _ => {}
-        }
-        if self.seen.insert(mime_index) {
-            self.results.push(mime_index);
-        }
-    }
-
-    /// Returns accumulated MIME indexes.
-    #[must_use]
-    pub(crate) fn into_results(self) -> Vec<usize> {
-        self.results
-    }
-}
+use super::internal::magic_match_state::MagicMatchState;
 
 /// Indexes content magic rules and tracks their maximum required input size.
 #[derive(Debug, Clone, Default)]
