@@ -67,7 +67,8 @@ pub trait MimeExecutionPort: Debug + Send + Sync + 'static {
     /// - `job`: Owned job to dispatch.
     ///
     /// # Returns
-    /// `Ok(())` after acceptance, or the original job with the rejection reason.
+    /// `Ok(())` after acceptance, or the original job with the rejection
+    /// reason.
     #[inline]
     fn try_dispatch_with_status(
         &self,

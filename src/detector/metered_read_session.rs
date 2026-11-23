@@ -17,9 +17,9 @@ use qubit_io::AsyncInput;
 // Keeps the provider reader representation private to this session module.
 mod internal;
 
+use self::internal::OpenedReader;
 use super::ReadTreeContext;
 use super::mime_execution_services::MimeExecutionServices;
-use self::internal::OpenedReader;
 use crate::MimeError;
 use crate::MimeResult;
 
@@ -40,13 +40,15 @@ pub struct MeteredReadSession {
     reader: OpenedReader,
     /// The request services that account for temporary owned scratch memory.
     services: Arc<MimeExecutionServices>,
-    /// The shared ancestor tree that accounts for bytes delivered to the backend.
+    /// The shared ancestor tree that accounts for bytes delivered to the
+    /// backend.
     read_tree: Arc<ReadTreeContext>,
     /// The remaining cumulative allowance for this provider request.
     request_remaining: u64,
     /// The maximum number of bytes any individual read may deliver.
     payload_limit: usize,
-    /// The next sequential offset, advanced only by successful sequential reads.
+    /// The next sequential offset, advanced only by successful sequential
+    /// reads.
     next_offset: u64,
 }
 
@@ -57,7 +59,8 @@ impl MeteredReadSession {
     ///
     /// - `file_system` is the provider whose object will be opened.
     /// - `path` identifies the object to open.
-    /// - `services` supplies request-level owned-memory accounting and read limits.
+    /// - `services` supplies request-level owned-memory accounting and read
+    ///   limits.
     /// - `read_tree` supplies the shared ancestor read allowance.
     /// - `request_limit` caps bytes delivered by this session.
     /// - `payload_limit` caps each individual read.
@@ -92,7 +95,8 @@ impl MeteredReadSession {
     ///
     /// - `file_system` is the provider whose object will be opened.
     /// - `path` identifies the object to open.
-    /// - `services` supplies request-level owned-memory accounting and read limits.
+    /// - `services` supplies request-level owned-memory accounting and read
+    ///   limits.
     /// - `read_tree` supplies the shared ancestor read allowance.
     /// - `request_limit` caps bytes delivered by this session.
     /// - `payload_limit` caps each individual read.
@@ -121,7 +125,8 @@ impl MeteredReadSession {
         ))
     }
 
-    /// Creates a session around an already opened reader and its accounting limits.
+    /// Creates a session around an already opened reader and its accounting
+    /// limits.
     ///
     /// # Parameters
     ///
@@ -220,12 +225,7 @@ impl MeteredReadSession {
     ///
     /// Returns an allocation, provider, or budget error without transferring
     /// partial scratch contents to `output`.
-    async fn read_at_inner(
-        &mut self,
-        offset: u64,
-        output: &mut [u8],
-        advance: bool,
-    ) -> MimeResult<usize> {
+    async fn read_at_inner(&mut self, offset: u64, output: &mut [u8], advance: bool) -> MimeResult<usize> {
         let available = self.request_remaining.min(self.read_tree.remaining());
         let ask = output
             .len()
@@ -599,11 +599,6 @@ mod tests {
 
     #[test]
     fn test_dropping_pending_read_releases_read_and_scratch_reservations() {
-        struct NoopWake;
-        impl Wake for NoopWake {
-            fn wake(self: Arc<Self>) {}
-        }
-
         let services = services();
         let root = ReadTreeContext::new(8);
         let mut provider = MemoryFileSystem::new(b"abcdef", false);
@@ -621,8 +616,8 @@ mod tests {
         .unwrap();
 
         let mut output = [0xCC; 4];
-        let waker = Waker::from(Arc::new(NoopWake));
-        let mut context = Context::from_waker(&waker);
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
         let mut read = Box::pin(session.read(&mut output));
         assert!(read.as_mut().poll(&mut context).is_pending());
         drop(read);

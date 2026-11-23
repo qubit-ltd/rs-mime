@@ -12,12 +12,12 @@ pub(crate) mod async_media_stream_classifier_provider;
 pub(crate) mod ffprobe_command_media_stream_classifier;
 pub(crate) mod ffprobe_command_media_stream_classifier_provider;
 pub(crate) mod file_based_media_stream_classifier;
+pub(crate) mod internal;
 pub(crate) mod media_stream_classifier;
 pub(crate) mod media_stream_classifier_backend;
 pub(crate) mod media_stream_classifier_helpers;
 #[cfg(feature = "inventory")]
 pub mod media_stream_classifier_inventory;
-pub(crate) mod internal;
 pub(crate) mod media_stream_classifier_provider;
 pub(crate) mod media_stream_classifier_registry;
 pub(crate) mod media_stream_classifier_spec;

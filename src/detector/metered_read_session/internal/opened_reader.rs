@@ -11,9 +11,9 @@ use qubit_fs::read::AsyncFileReader;
 use qubit_fs::read::AsyncRandomAccessReader;
 
 /// Holds the opened provider reader and its available access pattern.
-pub(super) enum OpenedReader {
+pub(in crate::detector::metered_read_session) enum OpenedReader {
     /// Reads sequentially from the current object position.
-    Sequential(AsyncFileReader),
+    Sequential(#[doc = "Sequential reader for the opened provider object."] AsyncFileReader),
     /// Reads at explicit offsets from the same opened object.
-    RandomAccess(AsyncRandomAccessReader),
+    RandomAccess(#[doc = "Random-access reader for the opened provider object."] AsyncRandomAccessReader),
 }

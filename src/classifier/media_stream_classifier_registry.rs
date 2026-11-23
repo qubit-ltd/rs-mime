@@ -23,9 +23,9 @@ use qubit_spi::error::RegistryMutationError;
 
 use super::AsyncMediaStreamClassifierProvider;
 use super::FfprobeCommandMediaStreamClassifierProvider;
-use super::internal::async_provider_entry::AsyncProviderEntry;
 use super::MediaStreamClassifierProvider;
 use super::MediaStreamClassifierSpec;
+use super::internal::async_provider_entry::AsyncProviderEntry;
 use crate::MimeConfig;
 use crate::MimeError;
 use crate::async_selection::AsyncProviderCandidate;

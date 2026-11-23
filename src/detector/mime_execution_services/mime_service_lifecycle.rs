@@ -25,13 +25,15 @@ pub enum MimeServiceLifecycle {
 
 /// Converts the stored lifecycle discriminant back into its public phase.
 impl MimeServiceLifecycle {
-    /// Decodes one atomic lifecycle value, treating unknown values as not started.
+    /// Decodes one atomic lifecycle value, treating unknown values as not
+    /// started.
     ///
     /// # Parameters
     /// - `value`: Stored lifecycle discriminant.
     ///
     /// # Returns
-    /// The matching lifecycle phase, or [`Self::NotStarted`] for an unknown value.
+    /// The matching lifecycle phase, or [`Self::NotStarted`] for an unknown
+    /// value.
     pub(super) fn from_raw(value: u8) -> Self {
         match value {
             1 => Self::Running,

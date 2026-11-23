@@ -2,6 +2,8 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 //! Shared selection rules for asynchronous MIME provider catalogs.
 
@@ -18,24 +20,32 @@ use crate::MimeError;
 mod internal;
 pub(crate) use internal::async_provider_candidate::AsyncProviderCandidate;
 
-/// Resolves a selection against async and sync catalogs without running factories.
+/// Resolves a selection against async and sync catalogs without running
+/// factories.
 ///
 /// # Type Parameters
-/// - `T`: Cloneable async factory entry retained in the resolved candidate snapshot.
+/// - `T`: Cloneable async factory entry retained in the resolved candidate
+///   snapshot.
 ///
 /// # Parameters
-/// - `selection`: Validated provider selection, including missing-selector and fallback policies.
-/// - `async_catalog`: Selector-to-canonical-ID, priority, and async factory snapshots.
-/// - `sync_provider_id`: Lookup that returns a canonical ID for a known sync provider.
+/// - `selection`: Validated provider selection, including missing-selector and
+///   fallback policies.
+/// - `async_catalog`: Selector-to-canonical-ID, priority, and async factory
+///   snapshots.
+/// - `sync_provider_id`: Lookup that returns a canonical ID for a known sync
+///   provider.
 /// - `auto_builtin_ids`: Built-in IDs in the registry's stable Auto order.
-/// - `auto_priority_ids`: Other registered candidates with their descriptor priorities.
+/// - `auto_priority_ids`: Other registered candidates with their descriptor
+///   priorities.
 /// - `service`: Human-readable provider category used in diagnostics.
 ///
 /// # Returns
-/// An ordered snapshot of async factories and sync-only candidates eligible for this selection.
+/// An ordered snapshot of async factories and sync-only candidates eligible for
+/// this selection.
 ///
 /// # Errors
-/// Returns a selection diagnostic when required selectors are unknown or no candidates match.
+/// Returns a selection diagnostic when required selectors are unknown or no
+/// candidates match.
 pub(crate) fn resolve<T: Clone>(
     selection: &ProviderSelection,
     async_catalog: &HashMap<String, (String, i32, T)>,
@@ -119,7 +129,8 @@ pub(crate) fn resolve<T: Clone>(
     Ok(candidates)
 }
 
-/// Returns whether the fallback policy permits continuing after a factory error.
+/// Returns whether the fallback policy permits continuing after a factory
+/// error.
 ///
 /// # Parameters
 /// - `policy`: Selection policy that controls candidate fallback.

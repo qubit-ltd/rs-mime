@@ -2086,8 +2086,16 @@ fn test_external_parent_read_budget_binding_failures_return_input() {
     let _stopped_outcome = block_on(stopped_parent.wait_outcome()).unwrap();
     block_on(stopped_parent.wait_settlement());
     assert!(stopped_rejection.load(Ordering::SeqCst));
-    assert_eq!(0, opens.load(Ordering::SeqCst), "rejected provider input must not be opened");
-    assert_eq!(0, backend_calls.load(Ordering::SeqCst), "rejected provider input must not reach the backend");
+    assert_eq!(
+        0,
+        opens.load(Ordering::SeqCst),
+        "rejected provider input must not be opened"
+    );
+    assert_eq!(
+        0,
+        backend_calls.load(Ordering::SeqCst),
+        "rejected provider input must not reach the backend"
+    );
 
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();

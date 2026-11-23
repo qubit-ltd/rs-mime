@@ -244,7 +244,8 @@ impl MimeDetectorCore {
     /// - `source`: Source available for optional media stream refinement.
     ///
     /// # Returns
-    /// Selected and optionally refined MIME type name, or `None` if no candidate exists.
+    /// Selected and optionally refined MIME type name, or `None` if no
+    /// candidate exists.
     ///
     /// # Errors
     /// Propagates errors from media stream classification when refinement runs.
@@ -398,11 +399,14 @@ impl MimeDetectorCore {
     ///
     /// # Parameters
     /// - `detected_mime_type`: Initially selected MIME type name.
-    /// - `basename`: Optional native basename used to select an extension mapping.
-    /// - `source`: Content or path available for optional stream classification.
+    /// - `basename`: Optional native basename used to select an extension
+    ///   mapping.
+    /// - `source`: Content or path available for optional stream
+    ///   classification.
     ///
     /// # Returns
-    /// The refined MIME type name, or the original name when no refinement applies.
+    /// The refined MIME type name, or the original name when no refinement
+    /// applies.
     ///
     /// # Errors
     /// Propagates errors from media stream classification when refinement runs.
@@ -500,7 +504,8 @@ impl MimeDetectorCore {
     ///
     /// # Parameters
     /// - `detected_mime_type`: Initially selected MIME type name.
-    /// - `basename`: Optional native basename whose extension selects a mapping.
+    /// - `basename`: Optional native basename whose extension selects a
+    ///   mapping.
     ///
     /// # Returns
     /// Video/audio MIME pair when precise detection should run.

@@ -16,7 +16,8 @@ use super::super::AsyncMediaStreamClassifierProvider;
 pub(crate) struct AsyncProviderEntry {
     /// Canonical classifier ID returned by resolution.
     pub(crate) id: String,
-    /// Descriptor priority used when the factory participates in Auto selection.
+    /// Descriptor priority used when the factory participates in Auto
+    /// selection.
     pub(crate) priority: i32,
     /// Whether the factory is one of the crate's built-in providers.
     pub(crate) is_builtin: bool,

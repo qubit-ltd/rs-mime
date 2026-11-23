@@ -104,6 +104,9 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     ///
     /// Existing backends default to their filename hook. Built-in repository
     /// backends override this through [`StreamBasedMimeDetector`].
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename whose filename rules are matched.
     #[doc(hidden)]
     #[must_use]
     fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {

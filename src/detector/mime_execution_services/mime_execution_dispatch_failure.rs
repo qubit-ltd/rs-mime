@@ -14,7 +14,9 @@ use super::mime_execution_dispatch_failure_kind::MimeExecutionDispatchFailureKin
 /// Rejected execution job and its dispatch reason.
 #[must_use = "recover or explicitly drop the rejected execution job"]
 pub struct MimeExecutionDispatchFailure {
+    /// Queue saturation or service availability reason for this failure.
     kind: MimeExecutionDispatchFailureKind,
+    /// Original owned job retained for caller recovery or retry.
     job: Box<dyn FnOnce() + Send + 'static>,
 }
 
@@ -27,10 +29,7 @@ impl MimeExecutionDispatchFailure {
     ///
     /// # Returns
     /// A failure carrying both the reason and the original job.
-    pub(crate) fn new(
-        kind: MimeExecutionDispatchFailureKind,
-        job: Box<dyn FnOnce() + Send + 'static>,
-    ) -> Self {
+    pub(crate) fn new(kind: MimeExecutionDispatchFailureKind, job: Box<dyn FnOnce() + Send + 'static>) -> Self {
         Self { kind, job }
     }
 
