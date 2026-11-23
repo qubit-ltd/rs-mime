@@ -509,6 +509,109 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn test_shutdown_harvests_recovery_from_child_dispatched_after_first_stop_attempt() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let worker_port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+        let shutdown_calls = Arc::new(AtomicUsize::new(0));
+        let execution = Arc::new(CountingExecutionPort {
+            worker_port: Arc::clone(&worker_port),
+            shutdown_calls: Arc::clone(&shutdown_calls),
+        });
+        let services = MimeExecutionServices::new(manager, group.clone(), execution, 1024).unwrap();
+        services.prepare().unwrap();
+
+        let (parent_started_tx, parent_started_rx) = mpsc::channel();
+        let (release_parent_tx, release_parent_rx) = mpsc::channel();
+        let (blocker_tx, blocker_rx) = mpsc::channel();
+        let child_limits = ManagedStagingLimits {
+            max_bytes: 128,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(worker_port),
+        };
+        let child_input = OwnedMimeInput::bytes(
+            Arc::from(b"direct child recovery after drain".as_slice()),
+            InputExtent::Complete,
+        );
+        let child_read_tree = services.new_read_tree(128);
+        let mut parent = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            parent_started_tx.send(()).unwrap();
+            release_parent_rx.recv().unwrap();
+
+            let child = scope
+                .manager()
+                .as_async()
+                .try_submit(Default::default(), move |child_scope| async move {
+                    stage_owned_in(&child_scope, child_input, child_limits, child_read_tree).await
+                })
+                .unwrap();
+            let mut child = child;
+            let resource = match child.wait_outcome().await.unwrap() {
+                OperationOutcome::Succeeded(resource) => resource,
+                _ => panic!("staging child should succeed before cleanup"),
+            };
+            let path = resource.path().unwrap();
+            let sandbox = path.parent().unwrap();
+            let blocker = sandbox.join("post-drain-child-recovery-blocker");
+            fs::write(&blocker, b"retain the child staging sandbox").unwrap();
+            drop(resource);
+            let _settlement = child.wait_settlement().await;
+            drop(child);
+            blocker_tx.send(blocker).unwrap();
+            Ok::<_, ()>(())
+        }))
+        .unwrap();
+        parent_started_rx
+            .recv()
+            .expect("direct parent should enter its barrier");
+
+        let shutdown = services.shutdown();
+        assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+        assert!(matches!(
+            shutdown.stop_services(),
+            Err(MimeError::OperationShutdownPending)
+        ));
+        assert_eq!(0, shutdown_calls.load(Ordering::SeqCst));
+
+        release_parent_tx.send(()).unwrap();
+        assert!(matches!(
+            block_on(parent.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+        let parent_settlement = block_on(parent.wait_settlement());
+        assert!(parent_settlement.recoveries.is_empty());
+        drop(parent);
+        let blocker = blocker_rx
+            .recv()
+            .expect("parent should publish its child cleanup blocker");
+
+        assert_eq!(1, shutdown.snapshot().unresolved_recoveries);
+        let recoveries = shutdown.recovery_handles_snapshot();
+        assert_eq!(1, recoveries.len());
+        assert_eq!(recoveries[0].id(), shutdown.recovery_handles_snapshot()[0].id());
+        assert!(matches!(
+            shutdown.stop_services(),
+            Err(MimeError::OperationShutdownPending)
+        ));
+        assert_eq!(0, shutdown_calls.load(Ordering::SeqCst));
+
+        fs::remove_file(blocker).unwrap();
+        let recovery = recoveries[0].clone();
+        let attempt = recovery.try_retry().unwrap();
+        let retry = block_on(attempt.wait_async());
+        assert!(retry.failures.is_empty());
+        assert_eq!(RecoveryPhase::Resolved, recovery.snapshot().phase);
+        assert_eq!(0, shutdown.snapshot().unresolved_recoveries);
+
+        assert!(shutdown.stop_services().unwrap().services_stopped);
+        assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
+        let report = block_on(shutdown.wait_group_shutdown()).unwrap();
+        assert_eq!(0, report.snapshot.active_operations);
+        assert_eq!(0, report.snapshot.queued_operations);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn test_shutdown_waits_for_explicit_recovery_before_stopping_workers() {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
