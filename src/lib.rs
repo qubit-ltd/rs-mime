@@ -107,6 +107,7 @@
 
 pub mod classifier;
 pub mod detector;
+mod async_selection;
 pub mod repository;
 
 mod candidate_selection;

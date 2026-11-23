@@ -39,6 +39,12 @@ pub enum MimeError {
     /// A synchronous-only backend was selected for an asynchronous request.
     #[error("selected MIME backend does not support asynchronous execution")]
     AsyncUnsupported,
+    /// An asynchronous provider selection could not be resolved.
+    #[error("{0}")]
+    ProviderSelection(
+        /// Human-readable selection diagnostic retaining unknown selectors.
+        String,
+    ),
     /// Managed asynchronous execution requires explicitly configured services.
     #[error("MIME execution services are required for this operation")]
     ExecutionServicesRequired,
