@@ -1409,8 +1409,8 @@ fn test_operation_runtime_parallel_children_share_actual_read_budget() {
             )
         })
         .count();
-    assert_eq!(reports.len(), 1);
-    assert_eq!(read_failures, 1);
+    assert_eq!(reports.len(), 1, "unexpected sibling outcomes: {outcomes:#?}");
+    assert_eq!(read_failures, 1, "unexpected sibling outcomes: {outcomes:#?}");
     assert_eq!(reports[0].budget.bytes_read, 4);
     assert_eq!(reports[0].budget.owned_bytes, 4);
     assert_eq!(
