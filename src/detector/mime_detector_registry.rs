@@ -37,6 +37,12 @@ static GLOBAL_MIME_DETECTOR_REGISTRY: LazyLock<MimeDetectorRegistry> = LazyLock:
 type AsyncProviderMap = HashMap<String, AsyncProviderEntry>;
 
 /// Returns the stable built-in order used by automatic MIME selection.
+///
+/// # Parameters
+/// - `id`: Canonical built-in detector ID.
+///
+/// # Returns
+/// A lower rank for built-ins that Auto selection must try earlier.
 fn builtin_auto_rank(id: &str) -> usize {
     match id {
         "repository" => 0,
