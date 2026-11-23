@@ -22,7 +22,11 @@
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MimeBudgetSummary {
-    /// Bytes charged to owned-memory budget at the report boundary.
+    /// Input-payload bytes held by this request at the report boundary.
+    ///
+    /// Staging read buffers and copied chunks are temporary work memory and
+    /// are not included here; they are accounted against the service-wide
+    /// owned-memory budget while in use.
     pub owned_bytes: usize,
     /// Bytes actually read from providers, including repeated reads.
     pub bytes_read: u64,
