@@ -325,6 +325,15 @@ classifier registry likewise discovers linked submissions and retains
 selectors cause inventory construction to fail. With the feature disabled,
 register providers explicitly as shown above.
 
+Inventory changes discovery only: Magika remains a synchronous registry
+provider, and its `detect_async_path` convenience method does not attach work
+to a parent `OperationScope`. The scope-aware `MimeRuntime` path uses the
+provider-level async registry and requires an async-capable provider. The
+built-in `repository` and `file` providers support that path; selecting
+`magika` there returns `AsyncUnsupported`. Keep the `use qubit_magika as _;`
+link reference when using inventory, and explicitly register Magika when
+inventory is disabled.
+
 For richer inspection, use `MimeRepository` directly to access `MimeType`
 metadata, aliases, comments, filename extensions, magic rules, and super-type
 relationships. When media extensions are ambiguous, configure the media stream

@@ -255,6 +255,13 @@ crate 通过 `qubit_spi::submit_sync_provider!` 向
 `qubit_mime::classifier::media_stream_classifier_inventory` 下的 `Entry` 提交工厂。
 重复的 selector 会导致 inventory 构建失败。未启用该 feature 时，仍按上文显式注册。
 
+Inventory 只改变发现方式：Magika 仍是同步 Registry Provider；它的
+`detect_async_path` 便捷方法不会把任务关联到父级 `OperationScope`。带 scope 的
+`MimeRuntime` 路径使用 Provider 级异步 registry，因此要求所选 Provider 明确支持异步。
+内置 `repository` 和 `file` 支持该路径；选择 `magika` 会得到
+`AsyncUnsupported`。启用 inventory 时仍须保留 `use qubit_magika as _;` 链接引用；关闭
+inventory 时则显式注册 Magika。
+
 需要更丰富的元数据时，直接使用 `MimeRepository` 访问 `MimeType` 的元数据、别名、注释、
 文件扩展名、magic 规则和父类型关系。对于媒体扩展名有歧义的情况，可以配置媒体流
 classifier；如果环境提供 `ffprobe`，再使用 `FfprobeCommandMediaStreamClassifier`。
