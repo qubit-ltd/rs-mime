@@ -39,7 +39,7 @@ roxmltree = "^0.21"
 thiserror = "^2.0"
 
 qubit-io = "^0.19.6"
-qubit-operation = "^0.3"
+qubit-operation = { version = "^0.3", path = "../rs-operation" }
 
 qubit-fs = { version = "^0.4", path = "../rs-fs", default-features = false, features = ["async"] }
 
@@ -78,3 +78,4 @@ harness = false
 
 [patch.crates-io]
 qubit-local-files = { path = "../rs-local-files" }
+qubit-operation = { path = "../rs-operation" }

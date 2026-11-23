@@ -10,3 +10,6 @@ qubit-config = { version = "^0.15" }
 qubit-spi = "^0.14"
 
 [workspace]
+
+[patch.crates-io]
+qubit-operation = { path = "../../../../rs-operation" }
