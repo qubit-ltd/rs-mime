@@ -71,9 +71,9 @@ pub struct MimeRepository {
 impl MimeRepository {
     /// Returns the process-wide repository parsed from bundled MIME data.
     ///
-    /// The embedded XML is validated when first used and shared by all
-    /// repository-backed integrations, avoiding independent copies of the
-    /// same indexes in each detector.
+    /// The embedded XML is validated lazily on the first call. Its parsed
+    /// repository and indexes are then shared by repository-backed
+    /// integrations instead of being rebuilt by each detector.
     ///
     /// # Returns
     /// A reference to the process-wide parsed repository.
@@ -95,9 +95,11 @@ impl MimeRepository {
     ///
     /// # Errors
     /// Returns [`MimeError`](crate::MimeError) when XML is malformed or a rule
-    /// contains an unsupported value. Elements in the shared MIME-info
-    /// namespace are parsed; child elements from other namespaces are ignored
-    /// as extensions.
+    /// contains an unsupported value. A supported `DOCTYPE` is masked before
+    /// parsing so XML parser error positions still refer to the original text;
+    /// an XML declaration after a `DOCTYPE` is rejected. Elements in the
+    /// shared MIME-info namespace are parsed; child elements from other
+    /// namespaces are ignored as extensions.
     pub fn from_xml(xml: &str) -> MimeResult<Self> {
         let xml = strip_doctype(xml);
         let document = Document::parse(&xml)?;
@@ -431,6 +433,8 @@ fn parse_magic(node: Node<'_, '_>) -> MimeResult<MimeMagic> {
 ///
 /// # Parameters
 /// - `node`: XML element to parse.
+/// - `depth`: One-based nesting depth, where top-level match elements have
+///   depth 1.
 ///
 /// # Returns
 /// Parsed magic matcher.
@@ -455,7 +459,18 @@ fn parse_matcher(node: Node<'_, '_>, depth: usize) -> MimeResult<MimeMagicMatche
     let (offset_begin, offset_end) = parse_offset(required_attr(node, "offset")?)?;
     let value = parse_value(value_type, required_attr(node, "value")?)?;
     let mask = match node.attribute("mask") {
-        Some(mask) => Some(parse_mask(value_type, mask)?),
+        Some(mask_text) => {
+            let mask = parse_mask(value_type, mask_text)?;
+            if mask.len() != value.len() {
+                return Err(MimeError::invalid_attr(
+                    "match",
+                    "mask",
+                    mask_text,
+                    "mask byte length must match value byte length",
+                ));
+            }
+            Some(mask)
+        }
         None => None,
     };
     let sub_matchers: MimeResult<Vec<_>> = node

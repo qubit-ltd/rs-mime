@@ -77,6 +77,14 @@ an explicitly selected async backend; a sync-only backend returns
 `AsyncUnsupported` instead of falling back to synchronous work. See the user
 guide for the managed operation lifecycle and provider capability limits.
 
+The legacy `detect_async_path` entry also preserves its unique-filename
+short-circuit under `PreferFilename`. The built-in `RepositoryMimeDetector`
+has no asynchronous content hook, so content-based calls return
+`AsyncUnsupported` before opening the provider path. Custom backends keep their
+existing async hook behavior; override `supports_async_content_detection`
+when they want an early rejection, or implement an async content or
+provider-path hook when content inspection is required.
+
 ## What It Provides
 
 - Freedesktop shared MIME-info names, aliases, filename globs, magic rules,

@@ -11,10 +11,10 @@ use std::borrow::Cow;
 
 const DOCTYPE: &str = "<!DOCTYPE";
 
-/// Removes an optional XML doctype declaration from the XML prolog.
+/// Masks an optional XML doctype declaration in the XML prolog.
 ///
 /// Comments and processing instructions are skipped while scanning the
-/// prolog. The declaration is removed without changing any other input bytes;
+/// prolog. The declaration is masked without changing line or column counts;
 /// incomplete declarations and doctype-like text outside the prolog are left
 /// for the XML parser to handle.
 ///
@@ -23,7 +23,8 @@ const DOCTYPE: &str = "<!DOCTYPE";
 ///
 /// # Returns
 /// The original XML borrowed when no complete declaration is found, or an
-/// owned string with the declaration removed.
+/// owned string with the declaration replaced by whitespace. Replacement
+/// preserves source line and column positions reported by the XML parser.
 #[must_use]
 pub(crate) fn strip_doctype(xml: &str) -> Cow<'_, str> {
     let bytes = xml.as_bytes();
@@ -52,11 +53,18 @@ pub(crate) fn strip_doctype(xml: &str) -> Cow<'_, str> {
             {
                 return Cow::Borrowed(xml);
             }
-            if has_repeated_doctype(bytes, end) {
+            if has_invalid_post_doctype_prolog(bytes, end) {
                 return Cow::Borrowed(xml);
             }
-            let mut cleaned = String::with_capacity(xml.len() - (end - position));
+            let mut cleaned = String::with_capacity(xml.len());
             cleaned.push_str(&xml[..position]);
+            for character in xml[position..end].chars() {
+                if matches!(character, '\r' | '\n') {
+                    cleaned.push(character);
+                } else {
+                    cleaned.push(' ');
+                }
+            }
             cleaned.push_str(&xml[end..]);
             return Cow::Owned(cleaned);
         } else {
@@ -73,10 +81,10 @@ pub(crate) fn strip_doctype(xml: &str) -> Cow<'_, str> {
 /// - `position`: Offset immediately after the first complete doctype.
 ///
 /// # Returns
-/// `true` when another doctype or an incomplete prolog comment/instruction is
-/// encountered before the root element.
+/// `true` when another doctype, an XML declaration, or an incomplete prolog
+/// comment/instruction is encountered before the root element.
 #[must_use]
-fn has_repeated_doctype(bytes: &[u8], mut position: usize) -> bool {
+fn has_invalid_post_doctype_prolog(bytes: &[u8], mut position: usize) -> bool {
     loop {
         while position < bytes.len() && is_xml_whitespace(bytes[position]) {
             position += 1;
@@ -90,11 +98,24 @@ fn has_repeated_doctype(bytes: &[u8], mut position: usize) -> bool {
             let Some(end) = find_bytes(bytes, position + 2, b"?>") else {
                 return true;
             };
+            if is_xml_declaration(bytes, position) {
+                return true;
+            }
             position = end + 2;
         } else {
             return bytes[position..].starts_with(DOCTYPE.as_bytes());
         }
     }
+}
+
+/// Tests whether a processing instruction starts an XML declaration.
+fn is_xml_declaration(bytes: &[u8], position: usize) -> bool {
+    bytes.get(position..).is_some_and(|remaining| {
+        remaining.starts_with(b"<?xml")
+            && remaining
+                .get(5)
+                .is_some_and(|byte| is_xml_whitespace(*byte) || *byte == b'?')
+    })
 }
 
 /// Tests whether a byte is XML whitespace.

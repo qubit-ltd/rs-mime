@@ -77,6 +77,12 @@ impl StreamBasedMimeDetector for OwnedRepositoryMimeDetector {
         self.repository.max_test_bytes()
     }
 
+    /// Reports that repository content matching has no asynchronous hook.
+    #[inline]
+    fn supports_async_content_detection(&self) -> bool {
+        false
+    }
+
     /// Returns repository candidate names matched against a filename.
     ///
     /// # Parameters

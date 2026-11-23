@@ -61,6 +61,12 @@ classifier。直接实现 `MimeDetector` 的类型自行决定其行为。受管
 异步的 backend；仅支持同步的 backend 会返回 `AsyncUnsupported`，不会在异步流程里回退到同步执行。
 受管操作的生命周期和 Provider 能力限制见用户手册。
 
+旧入口 `detect_async_path` 在 `PreferFilename` 下仍会对唯一文件名候选提前返回。内置
+`RepositoryMimeDetector` 没有异步内容 hook，因此按内容检测时会在打开 Provider 路径前返回
+`AsyncUnsupported`。自定义 backend 保留原有异步 hook 行为；需要读取内容时，应实现异步内容或
+Provider 路径 hook。若自定义 backend 希望在读取前拒绝，还可覆盖
+`supports_async_content_detection` 并返回 `false`。
+
 ## 提供的能力
 
 - 从内置仓库读取 freedesktop shared MIME-info 的名称、别名、文件名 glob、magic、

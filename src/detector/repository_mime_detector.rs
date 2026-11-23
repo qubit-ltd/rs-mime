@@ -429,6 +429,12 @@ impl<'a> StreamBasedMimeDetector for RepositoryMimeDetector<'a> {
         self.repository.max_test_bytes()
     }
 
+    /// Reports that repository content matching has no asynchronous hook.
+    #[inline]
+    fn supports_async_content_detection(&self) -> bool {
+        false
+    }
+
     /// Guesses MIME type names from filename rules.
     ///
     /// # Parameters

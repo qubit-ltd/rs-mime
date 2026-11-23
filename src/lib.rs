@@ -65,7 +65,11 @@
 //! `AsyncUnsupported`; synchronous content inspection does not become async
 //! automatically. Backends that need async inspection must implement the async
 //! hook, and managed operations need an async-capable provider with prepared
-//! execution services.
+//! execution services. The legacy `detect_async_path` entry preserves the
+//! unique-filename `PreferFilename` shortcut for `RepositoryMimeDetector`;
+//! content-dependent policies return `AsyncUnsupported` before provider IO.
+//! Custom backends retain their existing default behavior and can opt into
+//! asynchronous content inspection through their async hook.
 //! Dropping the future does not guarantee cancellation of started work, and a
 //! prefix may temporarily occupy both the provider buffer and an owned worker
 //! copy; `max_buffer_size` limits each buffer individually.
@@ -103,6 +107,7 @@
 
 pub mod classifier;
 pub mod detector;
+mod async_selection;
 pub mod repository;
 
 mod candidate_selection;
@@ -209,8 +214,11 @@ pub use detector::MimeDetectorCore;
 pub use detector::MimeDetectorProvider;
 pub use detector::MimeDetectorRegistry;
 pub use detector::MimeDetectorSpec;
+pub use detector::MimeExecutionDispatchFailure;
+pub use detector::MimeExecutionDispatchFailureKind;
 pub use detector::MimeExecutionPort;
 pub use detector::MimeExecutionServices;
+pub use detector::MimeServiceLifecycle;
 pub use detector::MimeFuture;
 pub use detector::MimeOperation;
 pub use detector::MimeOperationOptions;

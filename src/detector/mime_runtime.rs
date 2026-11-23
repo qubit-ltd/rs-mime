@@ -305,10 +305,8 @@ impl MimeRuntime {
     /// # Errors
     /// Returns `MimeSubmitFailure` if the parent cannot accept a child, the
     /// provider-backed input is unsupported, detector creation or preflight
-    /// fails, parent resource reservation, group binding, or admission fails.
-    /// These failures retain the input for recovery. If committing the parent
-    /// read-budget anchor fails after admission, the operation returns
-    /// [`crate::MimeError::ReadBudgetBinding`].
+    /// fails, group binding, or admission fails. These failures retain the
+    /// input for recovery.
     pub fn try_submit_detection_sync_in(
         &self,
         parent: &OperationScope,
@@ -359,28 +357,21 @@ impl MimeRuntime {
         };
         let tree_limit = options
             .max_read_bytes
-            .unwrap_or(services.max_read_bytes)
-            .min(services.max_read_bytes);
-        let pending_tree =
-            match services.prepare_read_tree_for_parent(parent, tree_limit, tree_limit) {
-                Ok(binding) => binding,
-                Err(kind) => {
-                    return Err(MimeSubmitFailure {
-                        reason: MimeSubmitRejection::ReadBudgetBinding(kind),
-                        input,
-                    });
-                }
-            };
+            .unwrap_or(services.max_read_bytes())
+            .min(services.max_read_bytes());
+        // This synchronous path accepts complete byte inputs only, so it does
+        // not read from an external provider and needs no parent read-tree
+        // anchor. The standalone context keeps the body shape aligned with
+        // async submissions without reserving a parent resource that could
+        // outlive the parent's scope.
+        let read_tree = services.new_read_tree(tree_limit);
         let cell = mime_submission::cell(input);
         let body_cell = Arc::clone(&cell);
         let body_services = Arc::clone(&services);
-        let body_pending_tree = pending_tree;
+        let body_tree = read_tree;
         let repository_max_test_bytes = self.context.repository().max_test_bytes();
         let repository = self.context.repository_arc();
         let body = move |scope: OperationScope| {
-            let body_tree = body_pending_tree
-                .commit()
-                .map_err(crate::MimeError::ReadBudgetBinding)?;
             body_services.bind_read_tree(scope.id(), &body_tree);
             let input = mime_submission::take(&body_cell);
             let result = match input {
@@ -541,8 +532,8 @@ impl MimeRuntime {
         };
         let tree_limit = options
             .max_read_bytes
-            .unwrap_or(services.max_read_bytes)
-            .min(services.max_read_bytes);
+            .unwrap_or(services.max_read_bytes())
+            .min(services.max_read_bytes());
         let (pending_tree, standalone_tree) = match parent {
             Some(parent) => {
                 match services.prepare_read_tree_for_parent(parent, tree_limit, tree_limit) {

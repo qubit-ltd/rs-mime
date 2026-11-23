@@ -673,14 +673,25 @@ fn test_file_command_async_shortcuts_do_not_open_provider_or_start_worker() {
 
 #[test]
 fn test_repository_legacy_async_hook_requires_explicit_backend() {
-    let filesystem = AsyncFileSystem::from_spi(PrefixAsyncFileSystemSpi::new(b"%PDF-1.7\n"))
-        .expect("async filesystem facade should be created");
+    let spi = PrefixAsyncFileSystemSpi::new(b"%PDF-1.7\n");
+    let opens = Arc::clone(&spi.opens);
+    let reads = Arc::clone(&spi.reads);
+    let filesystem = AsyncFileSystem::from_spi(spi).expect("async filesystem facade should be created");
     let path = FsPath::parse("/document.pdf").expect("logical PDF path should parse");
     let detector = RepositoryMimeDetector::new().expect("bundled repository should load");
+
+    assert_eq!(
+        Some("application/pdf".to_owned()),
+        run_ready(detector.detect_async_path(&filesystem, &path, 16, MimeDetectionPolicy::PreferFilename))
+            .expect("unique filename candidate should retain its short-circuit"),
+    );
+    assert_eq!(0, opens.load(Ordering::Relaxed), "filename short-circuit must not open the provider path");
 
     let error = run_ready(detector.detect_async_path(&filesystem, &path, 16, MimeDetectionPolicy::VerifyContent))
         .expect_err("legacy async hook must not run the synchronous repository backend");
     assert!(matches!(error, MimeError::AsyncUnsupported));
+    assert_eq!(0, opens.load(Ordering::Relaxed), "unsupported content must fail before opening the provider path");
+    assert_eq!(0, reads.load(Ordering::Relaxed), "unsupported content must fail before reading provider bytes");
 }
 
 #[test]

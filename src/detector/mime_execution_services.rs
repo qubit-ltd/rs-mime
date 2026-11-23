@@ -44,6 +44,34 @@ pub use mime_execution_port::MimeExecutionPort;
 pub use mime_shutdown_observer::MimeShutdownObserver;
 pub use mime_shutdown_snapshot::MimeShutdownSnapshot;
 
+/// Lifecycle phase shared by every clone of a MIME execution service.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum MimeServiceLifecycle {
+    /// The service has not started its execution port.
+    NotStarted = 0,
+    /// Preparation succeeded and the service accepts root and child work.
+    Running = 1,
+    /// Root work is closed; valid children may finish before the freeze point.
+    Draining = 2,
+    /// Shutdown began before preparation, so no requests were ever accepted.
+    ClosedWithoutStart = 4,
+    /// The execution port has stopped and the group drain was requested.
+    Stopped = 3,
+}
+
+impl MimeServiceLifecycle {
+    fn from_raw(value: u8) -> Self {
+        match value {
+            1 => Self::Running,
+            2 => Self::Draining,
+            3 => Self::Stopped,
+            4 => Self::ClosedWithoutStart,
+            _ => Self::NotStarted,
+        }
+    }
+}
+
 /// Services shared by MIME requests. Runtime construction is explicit so a
 /// closed service cannot silently create replacement workers.
 ///
@@ -70,7 +98,7 @@ pub use mime_shutdown_snapshot::MimeShutdownSnapshot;
 /// let manager = OperationManager::new(Default::default())?;
 /// let group = manager.group(GroupOptions { capacity: 1 })?;
 /// let services = MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 1024)?;
-/// assert_eq!(services.max_read_bytes, 1024);
+/// assert_eq!(services.max_read_bytes(), 1024);
 /// # Ok(())
 /// # }
 /// ```
@@ -87,9 +115,9 @@ pub struct MimeExecutionServices {
     /// Async root group used by MIME async requests.
     pub(crate) async_root_group: AsyncOperationGroup,
     /// MIME-specific execution adapters.
-    pub execution: Arc<dyn MimeExecutionPort>,
+    pub(crate) execution: Arc<dyn MimeExecutionPort>,
     /// Finite cumulative bytes-read limit required by construction.
-    pub max_read_bytes: u64,
+    pub(crate) max_read_bytes: u64,
     /// Shared limits for owned memory and staging allocations.
     budget: Arc<MimeBudget>,
     /// Read-budget contexts indexed by operation ID.
@@ -113,6 +141,26 @@ pub struct MimeExecutionServices {
 }
 
 impl MimeExecutionServices {
+    /// Returns the immutable execution adapter shared by this service.
+    #[inline]
+    #[must_use]
+    pub fn execution(&self) -> &Arc<dyn MimeExecutionPort> {
+        &self.execution
+    }
+
+    /// Returns the finite cumulative byte-read limit shared by this service.
+    #[inline]
+    #[must_use]
+    pub const fn max_read_bytes(&self) -> u64 {
+        self.max_read_bytes
+    }
+
+    /// Returns the shared service lifecycle phase.
+    #[must_use]
+    pub fn lifecycle(&self) -> MimeServiceLifecycle {
+        MimeServiceLifecycle::from_raw(self.lifecycle.load(Ordering::Acquire))
+    }
+
     /// Poisons read-tree registration so integration coverage can verify lock
     /// recovery.
     ///
@@ -178,13 +226,14 @@ impl MimeExecutionServices {
             .lifecycle_lock
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        match self.lifecycle.load(Ordering::Acquire) {
-            0 => {
+        match self.lifecycle() {
+            MimeServiceLifecycle::NotStarted => {
                 self.execution.prepare()?;
-                self.lifecycle.store(1, Ordering::Release);
+                self.lifecycle
+                    .store(MimeServiceLifecycle::Running as u8, Ordering::Release);
                 Ok(())
             }
-            1 => Ok(()),
+            MimeServiceLifecycle::Running => Ok(()),
             _ => Err(crate::MimeError::ExecutionServicesRequired),
         }
     }
@@ -197,9 +246,17 @@ impl MimeExecutionServices {
             .lifecycle_lock
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        if self.lifecycle.load(Ordering::Acquire) != 3 {
+        if !matches!(
+            self.lifecycle(),
+            MimeServiceLifecycle::Stopped | MimeServiceLifecycle::ClosedWithoutStart
+        ) {
             self.top_closed.store(true, Ordering::Release);
-            self.lifecycle.store(2, Ordering::Release);
+            let next = if self.lifecycle() == MimeServiceLifecycle::NotStarted {
+                MimeServiceLifecycle::ClosedWithoutStart
+            } else {
+                MimeServiceLifecycle::Draining
+            };
+            self.lifecycle.store(next as u8, Ordering::Release);
         }
         MimeShutdownObserver {
             services: self.clone(),
@@ -254,29 +311,52 @@ impl MimeExecutionServices {
     /// # Returns
     /// The count of outstanding handles requiring explicit action.
     pub(crate) fn unresolved_recovery_count(&self) -> usize {
-        let mut tracked = self.recoveries.lock().unwrap_or_else(|e| e.into_inner());
-        tracked.retain(is_unresolved_recovery);
-        tracked.len()
+        self.unresolved_recovery_handles().len()
+    }
+
+    /// Returns unresolved recovery ownership from the operation group's
+    /// authoritative ledger, including child scopes not submitted by MIME.
+    pub(crate) fn unresolved_recovery_handles(&self) -> Vec<RecoveryHandle> {
+        let mut handles = self.root_group.recovery_handles_snapshot();
+        handles.retain(is_unresolved_recovery);
+        handles
+    }
+
+    /// Returns whether the operation group contains active work not accounted
+    /// for by a settled MIME observer. Settled caller-owned typed handles may
+    /// keep group Drain pending without requiring the execution port to stay
+    /// alive.
+    pub(crate) fn has_untracked_active_operations(&self) -> bool {
+        let settled = self
+            .observers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|observer| observer.snapshot().settlement.is_some())
+            .count();
+        self.root_group.snapshot().active_operations > settled
     }
 
     /// Returns whether workers are running and root submissions remain open.
     #[inline]
     #[must_use]
     pub(in crate::detector) fn is_prepared(&self) -> bool {
-        self.lifecycle.load(Ordering::Acquire) == 1 && !self.top_closed.load(Ordering::Acquire)
+        self.lifecycle() == MimeServiceLifecycle::Running
+            && !self.top_closed.load(Ordering::Acquire)
     }
     /// Returns whether child submissions can still be accepted.
     #[inline]
     #[must_use]
     pub(in crate::detector) fn accepts_children(&self) -> bool {
-        match self.lifecycle.load(Ordering::Acquire) {
-            1 => true,
-            2 => !self.operations_settled.load(Ordering::Acquire),
-            // Let the manager return a typed GroupBinding::Closed rejection
-            // after Drain has closed the MIME group; never submit in this
-            // state.
-            3 => true,
-            _ => false,
+        match self.lifecycle() {
+            MimeServiceLifecycle::Running => true,
+            MimeServiceLifecycle::Draining => {
+                self.has_untracked_active_operations()
+                    || !self.operations_settled.load(Ordering::Acquire)
+            }
+            MimeServiceLifecycle::NotStarted
+            | MimeServiceLifecycle::ClosedWithoutStart
+            | MimeServiceLifecycle::Stopped => false,
         }
     }
     /// Reserves owned-memory budget for an input allocation.

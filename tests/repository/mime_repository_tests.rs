@@ -246,6 +246,58 @@ fn test_from_xml_still_rejects_invalid_standard_attributes() {
     assert!(matches!(error, MimeError::InvalidXmlAttribute { .. }));
 }
 
+#[test]
+fn test_from_xml_preserves_original_line_numbers_after_doctype() {
+    let error = MimeRepository::from_xml(
+        "<!DOCTYPE mime-info [\n<!ELEMENT mime-info ANY>\n]>\n<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\">\n</wrong>",
+    )
+    .expect_err("mismatched element should fail parsing");
+
+    let MimeError::Xml(error) = error else {
+        panic!("expected XML syntax error");
+    };
+    assert_eq!(5, error.pos().row);
+}
+
+#[test]
+fn test_from_xml_preserves_original_column_after_doctype() {
+    let xml = "<!DOCTYPE mime-info><mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\"></wrong>";
+    let expected_column = xml.find("</wrong>").expect("close tag should exist") as u32 + 1;
+    let error = MimeRepository::from_xml(xml).expect_err("mismatched element should fail parsing");
+    let MimeError::Xml(error) = error else {
+        panic!("expected XML syntax error");
+    };
+
+    assert_eq!(1, error.pos().row);
+    assert_eq!(expected_column, error.pos().col);
+}
+
+#[test]
+fn test_from_xml_rejects_xml_declaration_after_doctype() {
+    let error = MimeRepository::from_xml(
+        "<!DOCTYPE mime-info>\n<?xml version=\"1.0\"?>\n<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\"/>",
+    )
+    .expect_err("XML declaration after a doctype is invalid");
+
+    assert!(matches!(error, MimeError::Xml(_)));
+}
+
+#[test]
+fn test_from_xml_reports_string_mask_width_as_mask_attribute() {
+    let error = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+<mime-type type="application/x-invalid-mask"><magic><match type="string" value="abc" mask="0xff" offset="0"/></magic></mime-type>
+</mime-info>"#,
+    )
+    .expect_err("mask width must match the decoded string value");
+
+    assert!(matches!(
+        error,
+        MimeError::InvalidXmlAttribute { ref element, ref attribute, .. }
+            if element == "match" && attribute == "mask"
+    ));
+}
+
 const TEST_DATABASE: &str = r#"
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/gzip">
@@ -336,6 +388,7 @@ fn test_literal_punctuation_precedes_higher_weight_wildcard() {
         ("report{", "report*"),
         ("report}", "report*"),
         ("report]", "report*"),
+        ("report[", "report*"),
     ] {
         let xml = format!(
             r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">

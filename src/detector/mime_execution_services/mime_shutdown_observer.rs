@@ -9,10 +9,12 @@
 
 use std::sync::atomic::Ordering;
 
+use qubit_operation::RecoveryHandle;
 use qubit_operation::ShutdownMode;
 use qubit_operation::ShutdownReport;
 
 use super::MimeExecutionServices;
+use super::MimeServiceLifecycle;
 use super::MimeShutdownSnapshot;
 
 /// Repeatable MIME shutdown observer. Service settlement is independent of
@@ -49,10 +51,18 @@ impl MimeShutdownObserver {
             .clone();
         MimeShutdownSnapshot {
             operations_settled: self.services.operations_settled.load(Ordering::Acquire),
-            services_stopped: self.services.lifecycle.load(Ordering::Acquire) == 3,
+            services_stopped: self.services.lifecycle() == MimeServiceLifecycle::Stopped,
             unresolved_recoveries: self.services.unresolved_recovery_count(),
             group: handle.map(|value| value.snapshot()),
         }
+    }
+
+    /// Returns a repeatable snapshot of every unresolved recovery owned by
+    /// the operation group. Callers can retry or transfer these handles even
+    /// after their original typed operation handles have been dropped.
+    #[must_use]
+    pub fn recovery_handles_snapshot(&self) -> Vec<RecoveryHandle> {
+        self.services.unresolved_recovery_handles()
     }
 
     /// Waits asynchronously until every tracked operation publishes a
@@ -106,16 +116,23 @@ impl MimeShutdownObserver {
     /// A snapshot of service and operation-group shutdown progress.
     ///
     /// # Errors
-    /// Returns [`crate::MimeError::OperationShutdownPending`] while any
-    /// recovery is pending, running, or unconfirmed, or propagates an
-    /// execution shutdown error.
+    /// Returns [`crate::MimeError::OperationShutdownPending`] while a group
+    /// operation remains active or any recovery is unresolved, or propagates
+    /// an execution shutdown error.
     pub fn stop_services(&self) -> Result<MimeShutdownSnapshot, crate::MimeError> {
         if !self.services.operations_settled.load(Ordering::Acquire) {
             return Err(crate::MimeError::OperationShutdownPending);
         }
         let _lifecycle = self.services.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
-        if self.services.lifecycle.load(Ordering::Acquire) != 3 {
+        if self.services.lifecycle() != MimeServiceLifecycle::Stopped {
             let _submissions = self.services.submission_guard();
+            // Freeze direct group submissions before taking the authoritative
+            // recovery snapshot. Bound scopes from already-active operations
+            // may still submit children until those operations finish.
+            self.services.root_group.close_admission();
+            if self.services.has_untracked_active_operations() {
+                return Err(crate::MimeError::OperationShutdownPending);
+            }
             if self.services.unresolved_recovery_count() != 0 {
                 return Err(crate::MimeError::OperationShutdownPending);
             }
@@ -126,7 +143,7 @@ impl MimeShutdownObserver {
                 .request_shutdown(ShutdownMode::Drain)
                 .as_async();
             *self.services.group_shutdown.lock().unwrap_or_else(|e| e.into_inner()) = Some(shutdown);
-            self.services.lifecycle.store(3, Ordering::Release);
+            self.services.lifecycle.store(MimeServiceLifecycle::Stopped as u8, Ordering::Release);
         }
         Ok(self.snapshot())
     }
@@ -184,6 +201,7 @@ mod tests {
     use crate::detector::InputExtent;
     use crate::detector::MimeExecutionPort;
     use crate::detector::MimeExecutionServices;
+    use crate::detector::MimeServiceLifecycle;
     use crate::managed_temp_staging::ManagedStagingLimits;
     use crate::managed_temp_staging::stage_owned_in;
 
@@ -306,21 +324,44 @@ mod tests {
 
         assert!(!services.is_prepared());
         assert!(!services.accepts_children());
+        assert_eq!(MimeServiceLifecycle::NotStarted, services.lifecycle());
         services.prepare().unwrap();
         assert!(services.is_prepared());
+        assert_eq!(MimeServiceLifecycle::Running, services.lifecycle());
         assert!(services.accepts_children());
         services.prepare().unwrap();
         assert!(services.is_prepared());
 
         let shutdown = services.shutdown();
+        assert_eq!(MimeServiceLifecycle::Draining, services.lifecycle());
         assert!(!services.is_prepared());
         assert!(services.accepts_children());
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
         assert!(!services.accepts_children());
         let _ = shutdown.stop_services().unwrap();
         assert!(!services.is_prepared());
-        assert!(services.accepts_children());
+        assert!(!services.accepts_children());
+        assert_eq!(MimeServiceLifecycle::Stopped, services.lifecycle());
         assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_shutdown_before_prepare_has_a_distinct_closed_lifecycle() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let execution = Arc::new(CountingExecutionPort {
+            worker_port: Arc::new(FixedMimeExecutionPort::new(1, 1)),
+            shutdown_calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let services = MimeExecutionServices::new(manager, group, execution, 16).unwrap();
+
+        let shutdown = services.shutdown();
+        assert_eq!(MimeServiceLifecycle::ClosedWithoutStart, services.lifecycle());
+        assert!(!services.accepts_children());
+        assert!(services.prepare().is_err());
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        assert_eq!(MimeServiceLifecycle::Stopped, services.lifecycle());
     }
 
     #[test]
@@ -366,6 +407,48 @@ mod tests {
         let group_report = block_on(group_shutdown).unwrap();
         assert_eq!(0, group_report.snapshot.active_operations);
         assert_eq!(0, group_report.snapshot.queued_operations);
+        assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_shutdown_gate_waits_for_direct_group_operation_before_stopping_workers() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let shutdown_calls = Arc::new(AtomicUsize::new(0));
+        let services = MimeExecutionServices::new(
+            manager,
+            group.clone(),
+            Arc::new(CountingExecutionPort {
+                worker_port: Arc::new(FixedMimeExecutionPort::new(1, 1)),
+                shutdown_calls: Arc::clone(&shutdown_calls),
+            }),
+            16,
+        )
+        .unwrap();
+        services.prepare().unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |_| async move {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok::<_, ()>(())
+        }))
+        .unwrap();
+        started_rx.recv().unwrap();
+
+        let shutdown = services.shutdown();
+        assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+        assert!(services.accepts_children());
+        assert!(matches!(
+            shutdown.stop_services(),
+            Err(MimeError::OperationShutdownPending)
+        ));
+        assert_eq!(0, shutdown_calls.load(Ordering::SeqCst));
+
+        release_tx.send(()).unwrap();
+        let _ = block_on(operation.wait_outcome()).unwrap();
+        block_on(operation.wait_settlement());
+        assert!(shutdown.stop_services().unwrap().services_stopped);
         assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
     }
 
@@ -477,6 +560,11 @@ mod tests {
         let shutdown = services.shutdown();
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
         assert_eq!(shutdown.snapshot().unresolved_recoveries, 1);
+        let handles = shutdown.recovery_handles_snapshot();
+        assert_eq!(1, handles.len(), "group ledger includes the recovery owner");
+        assert_eq!(settlement.recoveries[0].id(), handles[0].id());
+        drop(operation);
+        assert_eq!(handles[0].id(), shutdown.recovery_handles_snapshot()[0].id());
         services.track_recoveries(&settlement.recoveries);
         assert_eq!(
             1,
