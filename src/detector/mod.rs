@@ -70,6 +70,8 @@ pub use mime_detector_provider::AsyncMimeDetectorProvider;
 pub use mime_detector_provider::MimeDetectorProvider;
 pub use mime_detector_registry::MimeDetectorRegistry;
 pub use mime_detector_spec::MimeDetectorSpec;
+pub use mime_execution_services::MimeExecutionDispatchFailure;
+pub use mime_execution_services::MimeExecutionDispatchFailureKind;
 pub use mime_execution_services::MimeExecutionPort;
 pub use mime_execution_services::MimeExecutionServices;
 pub use mime_input::BorrowedMimeInput;
