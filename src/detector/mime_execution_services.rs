@@ -52,7 +52,7 @@ pub enum MimeServiceLifecycle {
     NotStarted = 0,
     /// Preparation succeeded and the service accepts root and child work.
     Running = 1,
-    /// Root work is closed; valid children may finish before the freeze point.
+    /// Root work is closed; valid child work remains admissible until frozen.
     Draining = 2,
     /// Shutdown began before preparation, so no requests were ever accepted.
     ClosedWithoutStart = 4,
@@ -126,6 +126,8 @@ pub struct MimeExecutionServices {
     lifecycle: Arc<AtomicU8>,
     /// Whether new root-level submissions are closed.
     top_closed: Arc<AtomicBool>,
+    /// Whether stop has frozen all MIME-mediated child submissions.
+    admission_frozen: Arc<AtomicBool>,
     /// Serializes lifecycle transitions.
     lifecycle_lock: Arc<Mutex<()>>,
     /// Prevents submissions racing with settlement and shutdown.
@@ -211,6 +213,7 @@ impl MimeExecutionServices {
             read_trees: Arc::new(ReadTreeRegistry::default()),
             lifecycle: Arc::new(AtomicU8::new(0)),
             top_closed: Arc::new(AtomicBool::new(false)),
+            admission_frozen: Arc::new(AtomicBool::new(false)),
             lifecycle_lock: Arc::new(Mutex::new(())),
             submission_lock: Arc::new(Mutex::new(())),
             observers: Arc::new(Mutex::new(Vec::new())),
@@ -279,6 +282,7 @@ impl MimeExecutionServices {
     /// # Parameters
     /// - `observer`: Observer for a newly submitted operation.
     pub(in crate::detector) fn track_observer(&self, observer: AsyncOperationObserver) {
+        self.operations_settled.store(false, Ordering::Release);
         let mut observers = self.observers.lock().unwrap_or_else(|e| e.into_inner());
         observers.retain(|item| {
             let snapshot = item.snapshot();
@@ -322,19 +326,12 @@ impl MimeExecutionServices {
         handles
     }
 
-    /// Returns whether the operation group contains active work not accounted
-    /// for by a settled MIME observer. Settled caller-owned typed handles may
-    /// keep group Drain pending without requiring the execution port to stay
-    /// alive.
-    pub(crate) fn has_untracked_active_operations(&self) -> bool {
-        let settled = self
-            .observers
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .filter(|observer| observer.snapshot().settlement.is_some())
-            .count();
-        self.root_group.snapshot().active_operations > settled
+    /// Returns whether the group still has unsettled operation scopes.
+    ///
+    /// The group ledger excludes operations whose bodies and settlement have
+    /// completed, even when callers retain their typed outcomes.
+    pub(crate) fn has_unsettled_operations(&self) -> bool {
+        self.root_group.unsettled_operation_count() != 0
     }
 
     /// Returns whether workers are running and root submissions remain open.
@@ -350,10 +347,7 @@ impl MimeExecutionServices {
     pub(in crate::detector) fn accepts_children(&self) -> bool {
         match self.lifecycle() {
             MimeServiceLifecycle::Running => true,
-            MimeServiceLifecycle::Draining => {
-                self.has_untracked_active_operations()
-                    || !self.operations_settled.load(Ordering::Acquire)
-            }
+            MimeServiceLifecycle::Draining => !self.admission_frozen.load(Ordering::Acquire),
             MimeServiceLifecycle::NotStarted
             | MimeServiceLifecycle::ClosedWithoutStart
             | MimeServiceLifecycle::Stopped => false,

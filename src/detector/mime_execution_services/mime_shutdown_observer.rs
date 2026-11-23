@@ -116,21 +116,22 @@ impl MimeShutdownObserver {
     /// A snapshot of service and operation-group shutdown progress.
     ///
     /// # Errors
-    /// Returns [`crate::MimeError::OperationShutdownPending`] while a group
-    /// operation remains active or any recovery is unresolved, or propagates
-    /// an execution shutdown error.
+    /// Returns [`crate::MimeError::OperationShutdownPending`] while the group
+    /// has unsettled operation scopes or any recovery is unresolved, or
+    /// propagates an execution shutdown error.
     pub fn stop_services(&self) -> Result<MimeShutdownSnapshot, crate::MimeError> {
-        if !self.services.operations_settled.load(Ordering::Acquire) {
-            return Err(crate::MimeError::OperationShutdownPending);
-        }
         let _lifecycle = self.services.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
         if self.services.lifecycle() != MimeServiceLifecycle::Stopped {
             let _submissions = self.services.submission_guard();
-            // Freeze direct group submissions before taking the authoritative
-            // recovery snapshot. Bound scopes from already-active operations
-            // may still submit children until those operations finish.
-            self.services.root_group.close_admission();
-            if self.services.has_untracked_active_operations() {
+            // Freeze MIME-mediated submissions only once. Accepted direct
+            // scope descendants remain covered by the group settlement gate.
+            if !self.services.admission_frozen.swap(true, Ordering::AcqRel) {
+                self.services.root_group.close_admission();
+            }
+            if !self.services.operations_settled.load(Ordering::Acquire) {
+                return Err(crate::MimeError::OperationShutdownPending);
+            }
+            if self.services.has_unsettled_operations() {
                 return Err(crate::MimeError::OperationShutdownPending);
             }
             if self.services.unresolved_recovery_count() != 0 {
@@ -337,7 +338,7 @@ mod tests {
         assert!(!services.is_prepared());
         assert!(services.accepts_children());
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
-        assert!(!services.accepts_children());
+        assert!(services.accepts_children());
         let _ = shutdown.stop_services().unwrap();
         assert!(!services.is_prepared());
         assert!(!services.accepts_children());
@@ -407,6 +408,68 @@ mod tests {
         let group_report = block_on(group_shutdown).unwrap();
         assert_eq!(0, group_report.snapshot.active_operations);
         assert_eq!(0, group_report.snapshot.queued_operations);
+        assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_settled_tracked_observer_does_not_mask_active_direct_group_scope() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let shutdown_calls = Arc::new(AtomicUsize::new(0));
+        let services = MimeExecutionServices::new(
+            manager,
+            group.clone(),
+            Arc::new(CountingExecutionPort {
+                worker_port: Arc::new(FixedMimeExecutionPort::new(1, 1)),
+                shutdown_calls: Arc::clone(&shutdown_calls),
+            }),
+            16,
+        )
+        .unwrap();
+        services.prepare().unwrap();
+
+        let mut completed = block_on(group.try_submit_async(Default::default(), |_| async {
+            Ok::<_, ()>("settled")
+        }))
+        .unwrap();
+        services.track_observer(completed.observer());
+        assert!(matches!(
+            block_on(completed.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded("settled")
+        ));
+        block_on(completed.wait_settlement());
+        drop(completed);
+
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut direct_parent = block_on(group.try_submit_async(Default::default(), move |_| async move {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok::<_, ()>(())
+        }))
+        .unwrap();
+        started_rx.recv().unwrap();
+
+        let shutdown = services.shutdown();
+        assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+        let first_stop = shutdown.stop_services();
+
+        release_tx.send(()).unwrap();
+        assert!(matches!(
+            block_on(direct_parent.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+        block_on(direct_parent.wait_settlement());
+        drop(direct_parent);
+
+        assert!(matches!(
+            first_stop,
+            Err(MimeError::OperationShutdownPending)
+        ));
+        assert_eq!(0, shutdown_calls.load(Ordering::SeqCst));
+        assert!(shutdown.stop_services().unwrap().services_stopped);
+        let report = block_on(shutdown.wait_group_shutdown()).unwrap();
+        assert_eq!(0, report.snapshot.active_operations);
         assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
     }
 
