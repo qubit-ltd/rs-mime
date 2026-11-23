@@ -472,6 +472,11 @@ impl AsyncMediaStreamClassifierBackend for FfprobeCommandMediaStreamClassifier {
                         read_tree,
                     )
                 }
+                BorrowedMimeInput::ManagedProvider { .. } => {
+                    return Err(MimeError::InvalidClassifierInput {
+                        reason: "managed provider sessions are only accepted by the selected backend".into(),
+                    });
+                }
             };
             let worker = MimeExecutionWorker::new(Arc::clone(&services.execution));
             let limits = ManagedStagingLimits {

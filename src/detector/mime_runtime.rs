@@ -333,6 +333,7 @@ impl MimeRuntime {
             crate::RandomAccessCapability::Unsupported,
             detector.max_buffer_size(),
             &services,
+            false,
         ) {
             Ok(permit) => permit,
             Err(reason) => return Err(MimeSubmitFailure { reason, input }),
@@ -475,6 +476,7 @@ impl MimeRuntime {
                 input,
             });
         };
+        let managed_provider_reads = backend.uses_managed_provider_reads();
         let max_buffer_size = self.context.config().max_buffer_size();
         let repository = self.async_repository.clone();
         let filename_short_circuit = repository.as_ref().is_some_and(|repository| {
@@ -497,6 +499,7 @@ impl MimeRuntime {
             backend.random_access_capability(),
             max_buffer_size,
             &services,
+            managed_provider_reads,
         ) {
             Ok(permit) => permit,
             Err(reason) => return Err(MimeSubmitFailure { reason, input }),
@@ -524,6 +527,7 @@ impl MimeRuntime {
         let body_tree = Arc::clone(&read_tree);
         let body_backend_id = backend_id.clone();
         let body_max_buffer_size = max_buffer_size;
+        let body_managed_provider_reads = managed_provider_reads;
         let body_repository = repository;
         let body = move |scope: OperationScope| {
             mime_submission::detect(mime_submission::MimeSubmission {
@@ -531,6 +535,7 @@ impl MimeRuntime {
                 input: mime_submission::take(&body_cell),
                 services: body_services,
                 backend,
+                managed_provider_reads: body_managed_provider_reads,
                 backend_id: body_backend_id,
                 repository: body_repository,
                 max_buffer_size: body_max_buffer_size,

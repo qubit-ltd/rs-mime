@@ -164,6 +164,12 @@ impl AsyncMimeDetectorBackend for OwnedRepositoryMimeDetector {
                         "provider-backed input must be resolved by the managed execution service",
                     ));
                 }
+                BorrowedMimeInput::ManagedProvider { .. } => {
+                    return Err(MimeError::detector_backend(
+                        "repository",
+                        "managed provider input must be resolved by the selected third-party backend",
+                    ));
+                }
             };
             if let Some(mime) = super::internal::async_repository_matcher::preferred_filename(
                 &self.repository,
