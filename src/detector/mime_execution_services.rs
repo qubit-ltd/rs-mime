@@ -278,7 +278,7 @@ impl MimeExecutionServices {
     ///
     /// # Parameters
     /// - `observer`: Observer for a newly submitted operation.
-    pub(in crate::detector) fn track_observer(&self, observer: AsyncOperationObserver) {
+    pub(crate) fn track_observer(&self, observer: AsyncOperationObserver) {
         let mut observers = self.observers.lock().unwrap_or_else(|e| e.into_inner());
         observers.retain(|item| {
             let snapshot = item.snapshot();

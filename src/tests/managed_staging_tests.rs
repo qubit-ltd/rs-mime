@@ -874,10 +874,14 @@ fn test_managed_staging_unconsumed_outcome_does_not_hold_temp() {
     }))
     .unwrap();
     // Deliberately never consume the unit outcome. It contains no resource ref.
+    services.track_observer(handle.observer());
     let report = block_on(handle.wait_settlement());
     assert!(report.all_released());
     assert!(!path_slot.lock().unwrap().as_ref().unwrap().exists());
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    assert!(shutdown.snapshot().operations_settled);
+    assert_eq!(0, shutdown.snapshot().unresolved_recoveries);
+    assert!(group.snapshot().active_operations > 0, "outcome stays caller-owned");
     let _ = shutdown.stop_services().unwrap();
 }
