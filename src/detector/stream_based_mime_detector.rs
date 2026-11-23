@@ -60,6 +60,20 @@ pub trait StreamBasedMimeDetector: Debug + Send + Sync {
     #[must_use]
     fn max_test_bytes(&self) -> usize;
 
+    /// Reports whether the detector supports asynchronous prefix inspection.
+    ///
+    /// Existing implementations default to `true` to preserve their legacy
+    /// provider-path behavior. Built-in detectors without an asynchronous
+    /// content hook can return `false` so the legacy path fails before opening
+    /// or reading the provider resource.
+    ///
+    /// # Returns
+    /// Whether asynchronous prefix content inspection may be attempted.
+    #[must_use]
+    fn supports_async_content_detection(&self) -> bool {
+        true
+    }
+
     /// Guesses MIME type names from a filename.
     ///
     /// # Parameters

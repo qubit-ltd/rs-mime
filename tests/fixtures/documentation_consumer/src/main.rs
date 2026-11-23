@@ -41,6 +41,9 @@ fn configured_detector() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[allow(dead_code)]
+#[path = "../../../../examples/managed_lifecycle/mod.rs"]
+mod managed_lifecycle;
+
 fn detect_precisely(content: &[u8], filename: &str) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let mut source = qubit_config::Config::new();
     source.set(qubit_mime::CONFIG_MIME_ENABLE_PRECISE_DETECTION, true)?;
@@ -51,4 +54,6 @@ fn detect_precisely(content: &[u8], filename: &str) -> Result<Option<String>, Bo
     Ok(detector.detect_bytes(content, Some(filename), qubit_mime::MimeDetectionPolicy::VerifyContent)?)
 }
 
-fn main() {}
+fn main() {
+    managed_lifecycle::run_example();
+}

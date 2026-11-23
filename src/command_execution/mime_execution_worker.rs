@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use crate::detector::MimeExecutionDispatchFailure;
 use crate::detector::MimeExecutionPort;
 
 mod fixed_mime_execution_port;
@@ -47,5 +48,13 @@ impl MimeExecutionWorker {
         job: Box<dyn FnOnce() + Send + 'static>,
     ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
         self.port.try_dispatch(job)
+    }
+
+    /// Offers a job and retains a typed queue-full or unavailable reason.
+    pub(crate) fn try_dispatch_with_status(
+        &self,
+        job: Box<dyn FnOnce() + Send + 'static>,
+    ) -> Result<(), MimeExecutionDispatchFailure> {
+        self.port.try_dispatch_with_status(job)
     }
 }

@@ -77,6 +77,19 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     #[must_use]
     fn max_test_bytes(&self) -> usize;
 
+    /// Reports whether asynchronous prefix inspection is supported.
+    ///
+    /// Existing backends default to `true` so custom implementations retain
+    /// their legacy provider-path behavior. Backends without an asynchronous
+    /// content hook can return `false` to reject before provider IO.
+    ///
+    /// # Returns
+    /// Whether asynchronous prefix content inspection may be attempted.
+    #[must_use]
+    fn supports_async_content_detection(&self) -> bool {
+        true
+    }
+
     /// Guesses MIME type names from a filename.
     ///
     /// # Parameters
@@ -563,6 +576,11 @@ where
                     .core()
                     .select_result_for_basename(&from_filename, &[], filename, policy, DetectionSource::None);
             }
+            if matches!(self.content_requirement(), ContentRequirement::Prefix(_))
+                && !self.supports_async_content_detection()
+            {
+                return Err(crate::MimeError::AsyncUnsupported);
+            }
             let (from_content, content) = self
                 .guess_from_async_provider_path(file_system, path, max_bytes)
                 .await?;
@@ -595,6 +613,12 @@ where
     #[inline]
     fn max_test_bytes(&self) -> usize {
         StreamBasedMimeDetector::max_test_bytes(self)
+    }
+
+    /// Delegates asynchronous content capability to the stream-based backend.
+    #[inline]
+    fn supports_async_content_detection(&self) -> bool {
+        StreamBasedMimeDetector::supports_async_content_detection(self)
     }
 
     /// Guesses MIME type names from filename rules.

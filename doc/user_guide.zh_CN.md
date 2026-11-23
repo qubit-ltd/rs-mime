@@ -119,6 +119,10 @@ fn configured_detector() -> Result<(), Box<dyn std::error::Error>> {
 `file` Provider 在检查内容时要求系统中存在 `file` 可执行文件。当它不可用且选择策略
 允许 fallback 时，`repository` 可以继续提供检测服务。
 
+Provider 选择链默认采用严格策略：链中的 Provider ID 若未在 registry 注册，整个解析会返回诊断，
+不会静默跳过该项。若链中包含可能缺席的可选 Provider，请改用
+`ProviderSelection::chain_allowing_missing`。格式无效的 selector 和空链仍会校验失败。
+
 ## 环境配置与整体回退
 
 `MimeConfig::load()` 会读取环境变量并返回配置；进程级默认值的延迟初始化会调用这个方法。
@@ -291,6 +295,90 @@ MIME 父类型继承关系使用迭代方式遍历，因此长继承链不会为
 `prepare()` 正在执行时，根操作和子操作都会被拒绝；只有 execution port 成功返回后才会
 发布 ready 状态。调用方应等待 `prepare()` 返回 `Ok(())` 后再提交任务。
 
+下面的函数摘自可运行的
+[`managed_lifecycle` 示例](../examples/managed_lifecycle.rs)。示例使用内存 Provider 保持运行结果稳定；
+实际应用应传入自己的 `AsyncFileSystem` facade，并由应用长期持有 recovery store 和重试队列。
+
+<!-- mime-doc-example:managed-lifecycle -->
+```rust
+fn managed_lifecycle(
+    file_system: Arc<AsyncFileSystem>,
+    recovery_store: &RecoveryStore,
+    retry_queue: &mut Vec<OwnedMimeInput>,
+) {
+    let manager = OperationManager::new(ManagerOptions::default()).expect("operation manager");
+    let group = manager
+        .group(GroupOptions { capacity: 8 })
+        .expect("MIME operation group");
+    let services = MimeExecutionServices::new(
+        manager,
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 8)),
+        1024 * 1024,
+    )
+    .expect("execution services");
+    services.prepare().expect("prepare MIME services");
+
+    let runtime = MimeRuntime::builtin()
+        .expect("built-in repository")
+        .with_execution_services(services.clone());
+    let input = OwnedMimeInput::Provider {
+        file_system,
+        path: Path::parse("/upload/report.pdf").expect("provider path"),
+    };
+    let mut operation = match runtime.try_submit_detection(input, MimeOperationOptions::default()) {
+        Ok(operation) => operation,
+        Err(failure) => {
+            eprintln!("submission rejected: {:?}", failure.reason);
+            retry_queue.push(failure.input);
+            let shutdown = services.shutdown();
+            let settled =
+                block_on(shutdown.wait_services_settled()).expect("settle service operations");
+            assert!(settled.operations_settled);
+            let stopped = shutdown.stop_services().expect("stop MIME services");
+            assert!(stopped.services_stopped);
+            let report = block_on(shutdown.wait_group_shutdown()).expect("drain MIME group");
+            assert_eq!(report.snapshot.active_operations, 0);
+            return;
+        }
+    };
+
+    let outcome = block_on(operation.wait_outcome()).expect("observe MIME outcome");
+    if let OperationOutcome::Succeeded(report) = outcome {
+        println!(
+            "{}: {:?} ({:?}, {} bytes read)",
+            report.backend_id, report.mime_type, report.inspected_extent, report.budget.bytes_read,
+        );
+    }
+
+    let settlement = block_on(operation.wait_settlement());
+    assert!(
+        settlement.all_released(),
+        "operation resources should be settled"
+    );
+    drop(operation);
+
+    let shutdown = services.shutdown();
+    let settled = block_on(shutdown.wait_services_settled()).expect("settle tracked operations");
+    assert!(settled.operations_settled);
+    for recovery in shutdown.recovery_handles_snapshot() {
+        recovery
+            .transfer_to(recovery_store)
+            .expect("transfer unresolved cleanup to the application recovery store");
+    }
+    let stopped = shutdown
+        .stop_services()
+        .expect("stop MIME services from this sync context");
+    assert!(stopped.services_stopped && stopped.unresolved_recoveries == 0);
+    let report = block_on(shutdown.wait_group_shutdown()).expect("wait for MIME group Drain");
+    assert_eq!(report.snapshot.active_operations, 0);
+}
+```
+
+提交拒绝分支把原输入放回调用方的重试队列。任务接纳后，代码分别观察 MIME 报告与 operation
+settlement，再释放 typed handle，最后等待组 Drain。若存在未解决的 recovery handle，示例会在 worker
+停止前转交给应用长期持有的 recovery store。完整样例可通过 `cargo run --example managed_lifecycle` 运行。
+
 如需异步实现，使用 `MimeRuntime::with_async_provider_selection` 选择明确支持异步的
 Provider。内置 `repository` 和 `file` Provider 都提供受管异步 backend。`file` 要求完整内容；
 它不支持随机访问，只表示不能处理要求随机访问的输入。注册 Provider 不会启动检测任务。
@@ -331,11 +419,12 @@ settlement 且 handle 已释放，后续子操作也会继续使用父操作原�
 Classifier 也需要单独显式选择异步实现并满足同一对象能力要求；不能假定每种 detector 选择都能
 使用 `ffprobe`。
 
-调用 `MimeExecutionServices::shutdown()` 会关闭新的根提交并返回 observer。之后应等待已提交
-操作的 settlement，在外部同步上下文调用 `stop_services()` 停止 MIME 执行服务，再通过
-`wait_group_shutdown()` 观察组关闭。Pending 表示工作仍未解决，不是资源已释放的确认。
-如果 settlement 报告 `RecoveryRequired`，须先处理或转交其中的 recovery handle；未解决时
-`stop_services()` 会返回 `OperationShutdownPending`，不会自动重试恢复。
+调用 `MimeExecutionServices::shutdown()` 会关闭新的根提交并返回可重复观察的 observer。先用
+`wait_services_settled()` 等待已跟踪操作完成 settlement。若需要恢复，通过
+`recovery_handles_snapshot()` 获取 operation group 中仍未解决的 handle，并在停止服务前完成恢复或转交。
+随后在外部同步上下文调用 `stop_services()`，再用 `wait_group_shutdown()` 等待组 Drain。
+Pending 表示工作仍未解决，不是资源已释放的确认；调用方仍持有 typed handle 时，组关闭也可能继续等待。
+操作或 recovery 未解决时，`stop_services()` 会返回 `OperationShutdownPending`，且不会自动重试恢复。
 `FixedMimeExecutionPort::shutdown()` 必须从 worker pool 之外的同步上下文调用。并发关闭调用会等待同一批
 worker 实际退出，并观察相同的最终结果。
 0.22.0 目标仍处于验收阶段；已验证行为和未完成的生命周期检查见[验收记录](acceptance-0.22.0-operation-0.2.zh_CN.md)。
@@ -347,6 +436,7 @@ worker 实际退出，并观察相同的最终结果。
 - `Io` 或 `FileSystem`：输入无法读取；
 - `BufferLimitExceeded`：路径前缀请求超过 `MimeConfig::max_buffer_size()`；
 - `CompleteContentRequired`：后端要求完整资源；
+- `AsyncUnsupported`：后端没有异步内容 hook；
 - `Command`、`DetectorUnavailable` 或 `DetectorBackend`：Native Provider 不可用或执行失败；
 - `Config` 或 `InvalidConfigurationValue`：配置无效。
 - `InvalidXmlAttribute`：文件名 glob 无法编译，包括超出 regex 编译大小限制的模式。
@@ -366,7 +456,10 @@ worker 实际退出，并观察相同的最终结果。
 `max_buffer_size`。`ContentRequirement::Prefix` 表示后端可用的输入上限。对于内置 detector
 和通过本 crate blanket `MimeDetector` 实现接入的 backend，前缀检测不会将该前缀传给完整媒体
 classifier；直接实现 `MimeDetector` 的类型自行决定其行为。异步路径入口默认读取请求的内容
-前缀。前缀后端可以在不加载完整资源的情况下检查大文件；声明
+前缀。内置旧 `RepositoryMimeDetector` 是例外：在 `PreferFilename` 下，唯一文件名候选仍会直接返回；
+依赖内容的策略则会在打开 Provider 路径前返回 `AsyncUnsupported`。自定义
+`MimeDetectorBackend` 默认保留原有行为。覆盖 `supports_async_content_detection` 并返回 `false` 可在读取前拒绝；
+需要检查内容时则提供异步内容 hook。前缀后端可以在不加载完整资源的情况下检查大文件；声明
 `ContentRequirement::Complete` 后端不能使用前缀入口。自定义完整内容后端可以通过覆盖独立的
 `guess_from_async_provider_path` hook 检查异步 Provider 路径。受管异步操作必须显式选择异步 backend；仅支持同步的 backend 会返回
 `AsyncUnsupported`，不会在异步流程中回退到同步执行。受管路径要求注入执行服务和有限预算，并将业务

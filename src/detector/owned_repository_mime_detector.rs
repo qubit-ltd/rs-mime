@@ -77,6 +77,12 @@ impl StreamBasedMimeDetector for OwnedRepositoryMimeDetector {
         self.repository.max_test_bytes()
     }
 
+    /// Reports that repository content matching has no asynchronous hook.
+    #[inline]
+    fn supports_async_content_detection(&self) -> bool {
+        false
+    }
+
     /// Returns repository candidate names matched against a filename.
     ///
     /// # Parameters
@@ -170,6 +176,12 @@ impl AsyncMimeDetectorBackend for OwnedRepositoryMimeDetector {
                     return Err(MimeError::detector_backend(
                         "repository",
                         "provider-backed input must be resolved by the managed execution service",
+                    ));
+                }
+                BorrowedMimeInput::ManagedProvider { .. } => {
+                    return Err(MimeError::detector_backend(
+                        "repository",
+                        "managed provider input must be resolved by the selected third-party backend",
                     ));
                 }
             };

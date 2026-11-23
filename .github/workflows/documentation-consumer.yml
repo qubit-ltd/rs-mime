@@ -28,5 +28,9 @@ jobs:
         run: ./.infra/bin/prepare-local-path-dependencies.sh
       - name: Compile documentation consumer
         run: cargo check --manifest-path tests/fixtures/documentation_consumer/Cargo.toml --locked
+      - name: Run managed lifecycle example
+        run: cargo run --example managed_lifecycle --locked
+      - name: Run documentation consumer fixture
+        run: cargo run --manifest-path tests/fixtures/documentation_consumer/Cargo.toml --locked
       - name: Compile operation consumer
         run: cargo check --manifest-path tests/fixtures/operation_consumer/Cargo.toml --locked
