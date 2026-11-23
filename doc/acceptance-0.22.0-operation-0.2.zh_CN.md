@@ -164,7 +164,7 @@ rs-magika 的动态加载 CI 同步固定上述依赖及 rs-mime `edb1c737dc4efa
 
 ### operation 依赖候选与结果边界
 
-根 crate 和两个消费者当前都使用本地 `qubit-operation 0.3.2` 候选，源提交为 `96abb23b3cdff4111f558ff2bc3fa956d1df71fa`。候选提供组级 recovery handle 快照，使关闭门禁读取完整组账本，不依赖可能受诊断长度限制的单个 settlement 报告。
+根 crate 和两个消费者当前都使用本地 `qubit-operation 0.3.2` 候选，源提交为 `636ad4ebfe9d27b63e886d5935286faf27430301`。候选提供组级 recovery handle 快照，使关闭门禁读取完整组账本，不依赖可能受诊断长度限制的单个 settlement 报告。
 
 检测业务结果、单 operation 资源结算、MIME 服务结算和 operation group Drain 是不同观察结果：`wait_outcome()` 返回 MIME 结果，`wait_settlement()` 报告该 operation 的资源／恢复责任，`wait_services_settled()` 等待已跟踪操作完成结算，`wait_group_shutdown()` 返回最终组关闭报告。组级 recovery 快照用于处理完整恢复责任，不能用业务成功或单项诊断报告替代。
 
