@@ -52,7 +52,7 @@ qubit-spi = "^0.14"
 
 
 [dev-dependencies]
-qubit-fs-local = { version = "^0.11", path = "../rs-fs-local" }
+qubit-fs-local = { version = "^0.12", path = "../rs-fs-local" }
 
 
 [lints.rust]
