@@ -393,6 +393,18 @@ mod tests {
     }
 
     #[test]
+    fn test_debug_reports_shared_remaining_and_consumed_bytes() {
+        let context = ReadTreeContext::new(8);
+        let permit = context.reserve(4).expect("four bytes fit the read budget");
+        assert_eq!(3, permit.commit(3));
+
+        assert_eq!(
+            "ReadTreeContext { remaining: 5, consumed: 3, .. }",
+            format!("{context:?}")
+        );
+    }
+
+    #[test]
     fn test_read_tree_reservation_and_commit_recover_poisoned_scope_counters() {
         let root = ReadTreeContext::new(10);
         let child = root.child(8);

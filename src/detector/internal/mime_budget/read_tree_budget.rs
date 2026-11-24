@@ -73,6 +73,7 @@ mod tests {
     use std::sync::Arc;
     use std::thread;
 
+    use super::super::read_tree_context::ReadTreeContext;
     use super::ReadTreeBudget;
 
     #[test]
@@ -89,5 +90,27 @@ mod tests {
         );
 
         assert_eq!(0, budget.consumed());
+    }
+
+    #[test]
+    fn test_select_limit_recovers_poison_without_losing_in_flight_reservation() {
+        let context = ReadTreeContext::new(8);
+        let permit = context.reserve(3).expect("three bytes fit the read budget");
+        let counters = Arc::clone(&context.tree);
+        assert!(
+            thread::spawn(move || {
+                let _guard = counters.counters.lock().unwrap();
+                panic!("poison shared read-tree counters while bytes are reserved");
+            })
+            .join()
+            .is_err()
+        );
+
+        context.select_tree_limit_before_reads(2);
+        assert_eq!(8, context.tree.limit(), "in-flight bytes keep the original cap");
+        assert_eq!(5, context.remaining(), "the reservation remains charged after recovery");
+        assert_eq!(3, permit.commit(3));
+        assert_eq!(3, context.consumed());
+        assert_eq!(5, context.remaining());
     }
 }
