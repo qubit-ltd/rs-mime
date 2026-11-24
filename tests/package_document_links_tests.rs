@@ -126,6 +126,11 @@ where
             ));
         }
         let markdown = read_document(&document)?;
+        if let Some(target) = machine_local_file_link(&markdown) {
+            return Err(format!(
+                "{document} contains machine-local file URL {target:?}; use a package-relative path"
+            ));
+        }
         for (target, fragment) in local_markdown_links_with_fragments(&markdown) {
             let resolved = if target.is_empty() {
                 document.clone()
@@ -156,6 +161,39 @@ where
         documents.insert(document, markdown);
     }
     Ok(())
+}
+
+fn machine_local_file_link(markdown: &str) -> Option<String> {
+    let mut fenced = false;
+    for line in markdown.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        let mut cursor = 0;
+        while let Some(relative) = line[cursor..].find("](") {
+            let start = cursor + relative + 2;
+            let Some(end_relative) = line[start..].find(')') else {
+                break;
+            };
+            let end = start + end_relative;
+            let mut target = line[start..end].trim();
+            if target.starts_with('<') && target.ends_with('>') && target.len() >= 2 {
+                target = &target[1..target.len() - 1];
+            } else if let Some(space) = target.find(char::is_whitespace) {
+                target = &target[..space];
+            }
+            if target.to_ascii_lowercase().starts_with("file://") {
+                return Some(target.to_owned());
+            }
+            cursor = end + 1;
+        }
+    }
+    None
 }
 
 fn markdown_anchors(markdown: &str) -> HashSet<String> {
@@ -242,6 +280,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::local_markdown_links_with_fragments;
+    use super::machine_local_file_link;
     use super::resolve_link;
     use super::verify_reachable_markdown;
 
@@ -256,6 +295,35 @@ mod tests {
             local_markdown_links_with_fragments(markdown)
         );
         assert_eq!("guide.md", resolve_link("doc/page.md", "../guide.md"));
+    }
+
+    #[test]
+    fn test_machine_local_file_urls_are_rejected_but_external_urls_are_allowed() {
+        assert_eq!(
+            None,
+            machine_local_file_link(
+                "[external](https://example.test/a)\n```md\n[example](file:///tmp/example.md)\n```\n"
+            )
+        );
+        assert_eq!(
+            Some("file:///tmp/report.md".to_owned()),
+            machine_local_file_link("[report](<file:///tmp/report.md>)")
+        );
+        assert_eq!(
+            Some("FILE:///tmp/report.md".to_owned()),
+            machine_local_file_link("[report](FILE:///tmp/report.md)")
+        );
+    }
+
+    #[test]
+    fn test_reachable_document_rejects_machine_local_file_urls() {
+        let packaged = HashSet::from(["README.md".to_owned()]);
+        let error = verify_reachable_markdown(&["README.md".to_owned()], &packaged, |_| {
+            Ok("[temporary report](file:///tmp/report.md)".to_owned())
+        })
+        .unwrap_err();
+
+        assert!(error.contains("machine-local file URL"), "{error}");
     }
 
     #[test]
