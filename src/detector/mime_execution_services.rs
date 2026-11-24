@@ -655,7 +655,16 @@ mod tests {
 
     use super::MimeExecutionServices;
     use super::MimeServiceLifecycle;
+    use crate::AsyncMimeDetectorBackend;
+    use crate::AsyncMimeDetectorProvider;
+    use crate::ContentRequirement;
     use crate::MimeError;
+    use crate::InspectedExtent;
+    use crate::MimeCandidates;
+    use crate::MimeDetectorRegistry;
+    use crate::MimeFuture;
+    use crate::MimeRepository;
+    use crate::RandomAccessCapability;
     use crate::detector::InputExtent;
     use crate::detector::MimeExecutionPort;
     use crate::detector::MimeRuntime;
@@ -679,6 +688,23 @@ mod tests {
             match future.as_mut().poll(&mut context) {
                 Poll::Ready(value) => return value,
                 Poll::Pending => std::thread::park(),
+            }
+        }
+    }
+
+    fn block_on_timeout<F: Future>(future: F) -> F::Output {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(value) => return value,
+                Poll::Pending => {
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    assert!(!remaining.is_zero(), "future should complete before timeout");
+                    std::thread::park_timeout(remaining);
+                }
             }
         }
     }
@@ -725,6 +751,85 @@ mod tests {
 
         fn waker(self: &Arc<Self>) -> Waker {
             unsafe { Waker::from_raw(RawWaker::new(Arc::into_raw(Arc::clone(self)).cast(), &RAW_WAKER_VTABLE)) }
+        }
+    }
+
+    struct PanickingWake;
+
+    impl Wake for PanickingWake {
+        fn wake(self: Arc<Self>) {
+            panic!("admission settlement observer panic");
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            panic!("admission settlement observer panic");
+        }
+    }
+
+    #[derive(Debug)]
+    struct AdmissionHookGate {
+        entered: mpsc::SyncSender<()>,
+        resume: std::sync::Mutex<mpsc::Receiver<()>>,
+    }
+
+    #[derive(Debug)]
+    struct AdmissionHookProvider {
+        gate: Arc<AdmissionHookGate>,
+    }
+
+    impl qubit_spi::ProviderMetadata for AdmissionHookProvider {
+        fn descriptor(&self) -> qubit_spi::ProviderDescriptor {
+            qubit_spi::ProviderDescriptor::new(qubit_spi::ProviderId::new("admission-hook").unwrap())
+        }
+    }
+
+    impl AsyncMimeDetectorProvider for AdmissionHookProvider {
+        fn create_async_backend(
+            &self,
+            _config: &crate::MimeConfig,
+            _services: &MimeExecutionServices,
+        ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+            Ok(Arc::new(AdmissionHookBackend {
+                gate: Arc::clone(&self.gate),
+            }))
+        }
+    }
+
+    #[derive(Debug)]
+    struct AdmissionHookBackend {
+        gate: Arc<AdmissionHookGate>,
+    }
+
+    impl AsyncMimeDetectorBackend for AdmissionHookBackend {
+        fn content_requirement(&self) -> ContentRequirement {
+            self.gate.entered.send(()).expect("submitter should receive gate entry");
+            self.gate
+                .resume
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .expect("test should release content requirement");
+            ContentRequirement::Prefix(1)
+        }
+
+        fn random_access_capability(&self) -> RandomAccessCapability {
+            RandomAccessCapability::Unsupported
+        }
+
+        fn guess_content_in<'a>(
+            &'a self,
+            _scope: &'a qubit_operation::OperationScope,
+            _input: crate::BorrowedMimeInput<'a>,
+            _options: &'a crate::MimeOperationOptions,
+        ) -> MimeFuture<'a, MimeCandidates> {
+            Box::pin(async {
+                Ok(MimeCandidates {
+                    candidates: Vec::new(),
+                    inspected_extent: InspectedExtent::Prefix(0),
+                    retained_prefix: Vec::new(),
+                    staging_bytes: 0,
+                })
+            })
         }
     }
 
@@ -858,6 +963,85 @@ mod tests {
                 .unwrap()
                 .operations_settled
         );
+    }
+
+    #[test]
+    fn test_typed_submission_survives_panicking_admission_observer() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let services = MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 32).unwrap();
+        services.prepare().unwrap();
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+        let gate = Arc::new(AdmissionHookGate {
+            entered: entered_tx,
+            resume: std::sync::Mutex::new(resume_rx),
+        });
+        let registry = MimeDetectorRegistry::default();
+        registry
+            .register_async_provider(AdmissionHookProvider { gate })
+            .unwrap();
+        let runtime = MimeRuntime::new(
+            crate::MimeConfig::default(),
+            Arc::new(MimeRepository::bundled().clone()),
+        )
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("admission-hook").unwrap(),
+        )
+        .unwrap();
+        let (submit_tx, submit_rx) = mpsc::sync_channel(1);
+        let submitter = std::thread::spawn(move || {
+            let result = runtime.try_submit_detection(
+                OwnedMimeInput::bytes(Arc::from(b"X".as_slice()), InputExtent::Complete),
+                Default::default(),
+            );
+            submit_tx.send(result).unwrap();
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("submission should pause inside content_requirement");
+
+        let panicking_waker = Waker::from(Arc::new(PanickingWake));
+        let mut panicking_context = Context::from_waker(&panicking_waker);
+        let mut panicking_waiter = Box::pin(services.admissions_settled());
+        assert!(panicking_waiter.as_mut().poll(&mut panicking_context).is_pending());
+
+        let normal_wake = Arc::new(WakerProbe {
+            services: services.clone(),
+            action: WakerAction::AdmissionState,
+            thread: std::sync::Mutex::new(None),
+            clones: AtomicUsize::new(0),
+            wakes: AtomicUsize::new(0),
+            drops: AtomicUsize::new(0),
+            tracker_reentry_succeeded: std::sync::atomic::AtomicBool::new(true),
+        });
+        let normal_waker = normal_wake.waker();
+        let mut normal_context = Context::from_waker(&normal_waker);
+        let mut normal_waiter = Box::pin(services.admissions_settled());
+        assert!(normal_waiter.as_mut().poll(&mut normal_context).is_pending());
+
+        resume_tx.send(()).expect("submitter should still be waiting");
+        let mut operation = match submit_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("public submission should return after admission settles")
+        {
+            Ok(operation) => operation,
+            Err(_) => panic!("public typed submission should be accepted"),
+        };
+        submitter.join().unwrap();
+
+        assert_eq!(1, normal_wake.wakes.load(Ordering::SeqCst));
+        assert!(normal_wake.tracker_reentry_succeeded.load(Ordering::SeqCst));
+        assert!(panicking_waiter.as_mut().poll(&mut panicking_context).is_ready());
+        assert!(normal_waiter.as_mut().poll(&mut normal_context).is_ready());
+        let _ = block_on_timeout(operation.wait_outcome())
+            .expect("accepted typed operation should complete");
+        let observer = services.shutdown();
+        let _ = block_on_timeout(observer.wait_services_settled()).expect("services should settle");
+        let _ = observer.stop_services().expect("settled services should stop");
+        let _ = block_on_timeout(observer.wait_group_shutdown());
     }
 
     #[test]

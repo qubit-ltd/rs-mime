@@ -16,6 +16,7 @@ use super::AdmissionPermit;
 use super::AdmissionState;
 use super::AdmissionsSettled;
 use super::WaiterRegistration;
+use crate::safe_wake::wake_safely;
 
 /// Tracks callbacks that may still publish an operation observer.
 ///
@@ -92,7 +93,7 @@ impl AdmissionTracker {
             }
         };
         for waiter in waiters {
-            waiter.waker.wake();
+            wake_safely(waiter.waker);
         }
     }
 
@@ -164,6 +165,7 @@ impl AdmissionTracker {
 mod tests {
     use std::future::Future;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::task::Context;
@@ -183,6 +185,55 @@ mod tests {
         fn wake_by_ref(self: &Arc<Self>) {
             self.0.fetch_add(1, Ordering::SeqCst);
         }
+    }
+
+    struct PanickingWake {
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Wake for PanickingWake {
+        fn wake(self: Arc<Self>) {
+            std::panic::panic_any(PanicOnDrop(Arc::clone(&self.dropped)));
+        }
+
+        fn wake_by_ref(self: &Arc<Self>) {
+            std::panic::panic_any(PanicOnDrop(Arc::clone(&self.dropped)));
+        }
+    }
+
+    struct PanicOnDrop(Arc<AtomicBool>);
+
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+            panic!("panic payload destructor");
+        }
+    }
+
+    #[test]
+    fn test_panicking_settlement_waiter_does_not_block_other_waiters() {
+        let tracker = Arc::new(AdmissionTracker::default());
+        let permit = tracker.register();
+        let payload_dropped = Arc::new(AtomicBool::new(false));
+        let panicking_waker = Waker::from(Arc::new(PanickingWake {
+            dropped: Arc::clone(&payload_dropped),
+        }));
+        let counting_wake = Arc::new(CountingWake(AtomicUsize::new(0)));
+        let counting_waker = Waker::from(Arc::clone(&counting_wake));
+        let mut panicking_context = Context::from_waker(&panicking_waker);
+        let mut counting_context = Context::from_waker(&counting_waker);
+        let mut panicking_waiter = Box::pin(tracker.settled());
+        let mut counting_waiter = Box::pin(tracker.settled());
+
+        assert_eq!(Poll::Pending, panicking_waiter.as_mut().poll(&mut panicking_context));
+        assert_eq!(Poll::Pending, counting_waiter.as_mut().poll(&mut counting_context));
+        drop(permit);
+
+        assert!(payload_dropped.load(Ordering::SeqCst));
+        assert_eq!(1, counting_wake.0.load(Ordering::SeqCst));
+        assert!(!tracker.has_active());
+        assert_eq!(Poll::Ready(()), panicking_waiter.as_mut().poll(&mut panicking_context));
+        assert_eq!(Poll::Ready(()), counting_waiter.as_mut().poll(&mut counting_context));
     }
 
     #[test]
