@@ -226,10 +226,7 @@ impl AsyncMimeDetectorBackend for ReadyAtDeadlineBackend {
             }
             self.clock.advance_to(10);
             if self.fail {
-                Poll::Ready(Err(MimeError::detector_backend(
-                    "ready-at-deadline",
-                    "backend failed",
-                )))
+                Poll::Ready(Err(MimeError::detector_backend("ready-at-deadline", "backend failed")))
             } else {
                 Poll::Ready(Ok(MimeCandidates {
                     candidates: Vec::new(),
@@ -775,23 +772,22 @@ fn test_deadline_after_backend_ready_wins_before_result_commit() {
             )
             .unwrap();
         let clock_source: Arc<dyn ClockSource> = clock.clone();
-        let mut operation = runtime.try_submit_detection(
-            OwnedMimeInput::bytes(Arc::from(b"X".as_slice()), InputExtent::Complete),
-            MimeOperationOptions {
-                operation: OperationOptions {
-                    context: ContextOptions {
-                        clock: Some(clock_source),
-                        deadline: Some(Deadline::at(MonotonicTime::new(clock.domain, 10))),
+        let mut operation = runtime
+            .try_submit_detection(
+                OwnedMimeInput::bytes(Arc::from(b"X".as_slice()), InputExtent::Complete),
+                MimeOperationOptions {
+                    operation: OperationOptions {
+                        context: ContextOptions {
+                            clock: Some(clock_source),
+                            deadline: Some(Deadline::at(MonotonicTime::new(clock.domain, 10))),
+                            ..Default::default()
+                        },
                         ..Default::default()
                     },
                     ..Default::default()
                 },
-                ..Default::default()
-            },
-        )
-        .unwrap_or_else(|failure| {
-            panic!("backend operation should be accepted: {:?}", failure.reason)
-        });
+            )
+            .unwrap_or_else(|failure| panic!("backend operation should be accepted: {:?}", failure.reason));
 
         let outcome = block_on(operation.wait_outcome()).unwrap();
         assert!(
@@ -2267,8 +2263,7 @@ fn test_repository_prefer_filename_short_circuits_owned_bytes_and_provider() {
 
     let mut non_ascii = runtime
         .try_submit_detection(
-            OwnedMimeInput::bytes(Arc::from(b"not text".as_slice()), InputExtent::Complete)
-                .with_filename("报告.txt"),
+            OwnedMimeInput::bytes(Arc::from(b"not text".as_slice()), InputExtent::Complete).with_filename("报告.txt"),
             MimeOperationOptions {
                 policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
                 ..Default::default()
@@ -2280,7 +2275,10 @@ fn test_repository_prefer_filename_short_circuits_owned_bytes_and_provider() {
         other => panic!("non-ASCII filename result should succeed: {other:?}"),
     };
     assert_eq!(non_ascii_report.mime_type.as_deref(), Some("text/plain"));
-    assert_eq!(non_ascii_report.inspected_extent, qubit_mime::InspectedExtent::Prefix(0));
+    assert_eq!(
+        non_ascii_report.inspected_extent,
+        qubit_mime::InspectedExtent::Prefix(0)
+    );
     assert_eq!(non_ascii_report.budget.bytes_read, 0);
 
     let opens = Arc::new(AtomicUsize::new(0));
@@ -2325,8 +2323,7 @@ fn test_filename_short_circuit_rechecks_services_after_shutdown() {
     let shutdown = services.shutdown();
 
     let failure = match runtime.try_submit_detection(
-        OwnedMimeInput::bytes(Arc::from(b"ignored".as_slice()), InputExtent::Complete)
-            .with_filename("document.pdf"),
+        OwnedMimeInput::bytes(Arc::from(b"ignored".as_slice()), InputExtent::Complete).with_filename("document.pdf"),
         MimeOperationOptions {
             policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
             ..Default::default()
@@ -2336,7 +2333,10 @@ fn test_filename_short_circuit_rechecks_services_after_shutdown() {
         Err(failure) => failure,
     };
 
-    assert!(matches!(failure.reason, qubit_mime::MimeSubmitRejection::ExecutionServicesRequired));
+    assert!(matches!(
+        failure.reason,
+        qubit_mime::MimeSubmitRejection::ExecutionServicesRequired
+    ));
     assert!(matches!(failure.input, OwnedMimeInput::Bytes { .. }));
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();

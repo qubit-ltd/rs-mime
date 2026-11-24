@@ -690,10 +690,7 @@ mod rejected_provider_drop_tests {
     }
 
     impl ServiceProvider<MimeDetectorSpec> for ReentrantDropProvider {
-        fn create_configured(
-            &self,
-            config: &MimeConfig,
-        ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+        fn create_configured(&self, config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
             <RepositoryMimeDetectorProvider as ServiceProvider<MimeDetectorSpec>>::create_configured(
                 &RepositoryMimeDetectorProvider,
                 config,
@@ -718,9 +715,7 @@ mod rejected_provider_drop_tests {
         }
     }
 
-    fn rejected_provider(
-        registry: &MimeDetectorRegistry,
-    ) -> (ReentrantDropProvider, mpsc::Receiver<()>) {
+    fn rejected_provider(registry: &MimeDetectorRegistry) -> (ReentrantDropProvider, mpsc::Receiver<()>) {
         let (dropped, received) = mpsc::channel();
         (
             ReentrantDropProvider {
@@ -747,7 +742,7 @@ mod rejected_provider_drop_tests {
     }
 
     #[test]
-    fn register_releases_selector_lock_before_dropping_rejected_provider() {
+    fn test_register_releases_selector_lock_before_dropping_rejected_provider() {
         let registry = MimeDetectorRegistry::builtin();
         let existing = registry.provider_ids();
         let (dropped, received) = mpsc::channel();
@@ -764,7 +759,7 @@ mod rejected_provider_drop_tests {
     }
 
     #[test]
-    fn register_shared_releases_selector_lock_before_dropping_rejected_provider() {
+    fn test_register_shared_releases_selector_lock_before_dropping_rejected_provider() {
         let registry = MimeDetectorRegistry::builtin();
         let existing = registry.provider_ids();
         let (provider, received) = rejected_provider(&registry);
@@ -778,7 +773,7 @@ mod rejected_provider_drop_tests {
     }
 
     #[test]
-    fn async_registration_releases_selector_lock_before_dropping_rejected_provider() {
+    fn test_async_registration_releases_selector_lock_before_dropping_rejected_provider() {
         let registry = MimeDetectorRegistry::builtin();
         let existing = registry.provider_ids();
         let (provider, received) = rejected_provider(&registry);

@@ -110,6 +110,9 @@ where
     }
 
     /// Forwards native basename matching to the file-based detector.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename with path separators already removed.
     #[inline]
     fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
         FileBasedMimeDetector::guess_from_filename_basename(self, basename)

@@ -778,10 +778,11 @@ mod tests {
                 pending_roots: Arc::downgrade(&body_registry.pending_roots),
                 operation,
             });
-            body_registry.pending_roots.lock().unwrap().insert(
-                operation,
-                Arc::downgrade(&pending_root),
-            );
+            body_registry
+                .pending_roots
+                .lock()
+                .unwrap()
+                .insert(operation, Arc::downgrade(&pending_root));
             thread::scope(|threads| {
                 let locked_owner = Arc::clone(&pending_root);
                 let (locked_tx, locked_rx) = std::sync::mpsc::channel();

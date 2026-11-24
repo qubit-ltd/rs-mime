@@ -528,12 +528,14 @@ mod cooperative_matcher_tests {
         );
 
         assert!(actual.is_some_and(|actual| std::ptr::eq(actual, expected)));
-        assert!(preferred_basename(
-            &repository,
-            Some("unknown.mimecase"),
-            MimeDetectionPolicy::PreferFilename,
-        )
-        .is_none());
+        assert!(
+            preferred_basename(
+                &repository,
+                Some("unknown.mimecase"),
+                MimeDetectionPolicy::PreferFilename,
+            )
+            .is_none()
+        );
     }
 
     #[test]

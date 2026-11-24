@@ -48,14 +48,10 @@ fn test_packaged_markdown_links_resolve_inside_package_file_set() {
         .lines()
         .map(normalize_package_path)
         .collect::<HashSet<_>>();
-    assert!(
-        !packaged.is_empty(),
-        "cargo package returned an empty file list"
-    );
+    assert!(!packaged.is_empty(), "cargo package returned an empty file list");
 
     verify_reachable_markdown(&DOCUMENTS.map(str::to_owned), &packaged, |document| {
-        fs::read_to_string(package_root.join(document))
-            .map_err(|error| format!("read {document}: {error}"))
+        fs::read_to_string(package_root.join(document)).map_err(|error| format!("read {document}: {error}"))
     })
     .unwrap_or_else(|error| panic!("packaged Markdown links are invalid: {error}"));
 
@@ -102,10 +98,7 @@ fn local_markdown_links_with_fragments(markdown: &str) -> Vec<(String, Option<St
         let (path, fragment) = target.split_once('#').unwrap_or((target, ""));
         let path = path.split('?').next().unwrap_or_default();
         if path.ends_with(".md") || (path.is_empty() && !fragment.is_empty()) {
-            links.push((
-                path.to_owned(),
-                (!fragment.is_empty()).then(|| fragment.to_owned()),
-            ));
+            links.push((path.to_owned(), (!fragment.is_empty()).then(|| fragment.to_owned())));
         }
         cursor = end + 1;
     }
@@ -152,15 +145,10 @@ where
                 } else {
                     let content = read_document(&resolved)?;
                     documents.insert(resolved.clone(), content);
-                    documents
-                        .get(&resolved)
-                        .expect("document was inserted")
-                        .as_str()
+                    documents.get(&resolved).expect("document was inserted").as_str()
                 };
                 if !markdown_anchors(target_markdown).contains(&fragment) {
-                    return Err(format!(
-                        "{document} links to missing anchor #{fragment} in {resolved}"
-                    ));
+                    return Err(format!("{document} links to missing anchor #{fragment} in {resolved}"));
                 }
             }
             pending.push_back(resolved);
@@ -185,11 +173,9 @@ fn markdown_anchors(markdown: &str) -> HashSet<String> {
                 if character.is_alphanumeric() {
                     slug.push(character);
                     previous_dash = false;
-                } else if character.is_whitespace() || character == '-' {
-                    if !slug.is_empty() && !previous_dash {
-                        slug.push('-');
-                        previous_dash = true;
-                    }
+                } else if (character.is_whitespace() || character == '-') && !slug.is_empty() && !previous_dash {
+                    slug.push('-');
+                    previous_dash = true;
                 }
             }
             while slug.ends_with('-') {
@@ -201,9 +187,7 @@ fn markdown_anchors(markdown: &str) -> HashSet<String> {
 }
 
 fn resolve_link(document: &str, target: &str) -> String {
-    let parent = Path::new(document)
-        .parent()
-        .unwrap_or_else(|| Path::new(""));
+    let parent = Path::new(document).parent().unwrap_or_else(|| Path::new(""));
     let target = target.split(['#', '?']).next().unwrap_or_default();
     let mut resolved = PathBuf::new();
     for component in parent.join(target).components() {
@@ -241,10 +225,7 @@ fn temporary_target_dir() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("system clock must be after UNIX epoch")
         .as_nanos();
-    std::env::temp_dir().join(format!(
-        "qubit-mime-package-links-{}-{timestamp}",
-        std::process::id()
-    ))
+    std::env::temp_dir().join(format!("qubit-mime-package-links-{}-{timestamp}", std::process::id()))
 }
 
 struct TargetCleanup(PathBuf);

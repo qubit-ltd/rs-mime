@@ -245,10 +245,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
             if let Some(deadline) = deadline.as_mut()
                 && deadline.as_mut().poll(cx).is_ready()
             {
-                return Poll::Ready(Err(MimeError::detector_backend(
-                    "mime",
-                    "operation deadline expired",
-                )));
+                return Poll::Ready(Err(MimeError::detector_backend("mime", "operation deadline expired")));
             }
         }
         result

@@ -296,12 +296,7 @@ mod tests {
         }
 
         fn shutdown(&self) -> Result<(), MimeError> {
-            if let Some(sender) = self
-                .shutdown_started
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .take()
-            {
+            if let Some(sender) = self.shutdown_started.lock().unwrap_or_else(|e| e.into_inner()).take() {
                 sender.send(()).unwrap();
             }
             self.worker_port.shutdown()
@@ -377,33 +372,32 @@ mod tests {
         let callback_runtime = runtime.clone();
         *execution.before_shutdown.lock().unwrap() = Some(Box::new(move || {
             let failure = match callback_runtime.try_submit_detection(
-                OwnedMimeInput::bytes(
-                    Arc::clone(&callback_original),
-                    crate::detector::InputExtent::Complete,
-                ),
+                OwnedMimeInput::bytes(Arc::clone(&callback_original), crate::detector::InputExtent::Complete),
                 Default::default(),
             ) {
                 Err(failure) => failure,
                 Ok(_) => panic!("shutdown callback reentry must return its request"),
             };
             let input_returned = match failure.input {
-                crate::OwnedMimeInput::Bytes { content, .. } => {
-                    Arc::ptr_eq(&content, &callback_original)
-                }
+                crate::OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(&content, &callback_original),
                 crate::OwnedMimeInput::Provider { .. } => false,
             };
             let reentrant_stop = reentrant_observer.stop_services();
-            result_tx.send((failure.reason, input_returned, reentrant_stop)).unwrap();
+            result_tx
+                .send((failure.reason, input_returned, reentrant_stop))
+                .unwrap();
         }));
 
         let stopping_observer = observer.clone();
         let (stop_tx, stop_rx) = mpsc::channel();
         thread::spawn(move || stop_tx.send(stopping_observer.stop_services()).unwrap());
-        assert!(stop_rx
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .expect("shutdown must return after a reentrant request is rejected")
-            .unwrap()
-            .services_stopped);
+        assert!(
+            stop_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .expect("shutdown must return after a reentrant request is rejected")
+                .unwrap()
+                .services_stopped
+        );
         let (reason, input_returned, reentrant_stop) =
             result_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
         assert!(matches!(
