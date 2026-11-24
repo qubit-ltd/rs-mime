@@ -147,6 +147,7 @@ mod managed_command_executor_tests {
     use qubit_command::CommandRunner;
     use qubit_operation::GroupOptions;
     use qubit_operation::OperationManager;
+    use qubit_operation::OperationOptions;
     use qubit_operation::OperationOutcome;
     use qubit_operation::RecoveryPhase;
     use qubit_operation::ShutdownMode;
@@ -164,6 +165,120 @@ mod managed_command_executor_tests {
     use crate::detector::MimeExecutionServices;
     use crate::managed_temp_staging::ManagedStagingLimits;
     use crate::managed_temp_staging::stage_owned_in;
+
+    #[test]
+    fn test_timeout_outcome_keeps_accepted_queued_command_owner_until_worker_returns() {
+        use qubit_operation::OperationOutcome;
+        use qubit_operation::StopReason;
+
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
+        let worker_port = Arc::new(FixedMimeExecutionPort::new(1, 4));
+        let execution_port: Arc<dyn MimeExecutionPort> = worker_port.clone();
+        let services = Arc::new(MimeExecutionServices::new(
+            manager,
+            group.clone(),
+            execution_port,
+            128,
+        )
+        .unwrap());
+        services.prepare().unwrap();
+
+        let worker = MimeExecutionWorker::new(worker_port.clone());
+
+        let operation_options = OperationOptions::default();
+        let budget = services.staging_budget();
+        let limits = ManagedStagingLimits {
+            max_bytes: 64,
+            budget: budget.clone(),
+            worker: worker.clone(),
+        };
+        let read_tree = services.new_read_tree(64);
+        let executor = ManagedCommandExecutor::new(worker);
+        let runtime_group = group.clone();
+        let (staged_path_tx, staged_path_rx) = mpsc::channel();
+        let (child_pending_tx, child_pending_rx) = mpsc::channel();
+        let (allow_command_tx, allow_command_rx) = mpsc::channel();
+        let payload = b"queued command retains staged owner".to_vec();
+        let expected_bytes = payload.len() as u64;
+        let mut operation = block_on(group.try_submit_async(operation_options, move |scope| async move {
+            let staged = stage_owned_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::from(payload), InputExtent::Complete),
+                limits,
+                read_tree,
+            )
+            .await?;
+            staged_path_tx.send(staged.path()?).unwrap();
+            allow_command_rx.recv().unwrap();
+            let request = ManagedMimeCommand::new(
+                CommandRunner::new(Duration::from_secs(10)).disable_logging(true),
+                Command::new("must-not-start-after-timeout"),
+                runtime_group,
+            );
+            let mut command_future = Box::pin(executor.run_in(&scope, request, staged));
+            let mut pending_notified = false;
+            let result = std::future::poll_fn(|cx| {
+                let result = command_future.as_mut().poll(cx);
+                if result.is_pending() && !pending_notified {
+                    pending_notified = true;
+                    child_pending_tx.send(()).unwrap();
+                }
+                result
+            })
+            .await;
+            Ok::<_, MimeError>(result)
+        }))
+        .unwrap();
+
+        let staged_path = staged_path_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("staging should finish before the command is accepted");
+        let (blocker_started_tx, blocker_started_rx) = mpsc::channel();
+        let (release_blocker_tx, release_blocker_rx) = mpsc::channel();
+        assert!(worker_port
+            .try_dispatch(Box::new(move || {
+                blocker_started_tx.send(()).unwrap();
+                release_blocker_rx.recv().unwrap();
+            }))
+            .is_ok());
+        blocker_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("controlled worker should be occupied after staging completes");
+        allow_command_tx.send(()).unwrap();
+        child_pending_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("managed command should be accepted and wait behind the blocker");
+        assert!(staged_path.exists(), "staged owner remains live while command is queued");
+        assert_eq!(expected_bytes, budget.used_bytes());
+
+        let _ = operation.request_stop(StopReason::Timeout);
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            OperationOutcome::Stopped(report) if report.reason == StopReason::Timeout
+        ));
+
+        let mut settlement = Box::pin(operation.wait_settlement());
+        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        assert!(
+            matches!(settlement.as_mut().poll(&mut context), Poll::Pending),
+            "settlement must wait for the accepted worker job to return"
+        );
+        assert!(staged_path.exists(), "timeout outcome must not release the queued owner's file");
+        assert_eq!(expected_bytes, budget.used_bytes(), "the staging lease remains held");
+
+        release_blocker_tx.send(()).unwrap();
+        let settled = block_on(settlement);
+        assert!(settled.all_released());
+        assert!(!staged_path.exists(), "worker return allows staged-file cleanup");
+        assert_eq!(0, budget.used_bytes(), "settlement releases the staging lease");
+
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
 
     struct ThreadWake(std::thread::Thread);
     impl Wake for ThreadWake {
