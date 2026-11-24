@@ -45,13 +45,13 @@ impl ReadTreeBudget {
     #[must_use]
     #[allow(dead_code)]
     pub(in crate::detector) fn consumed(&self) -> u64 {
-        self.counters
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .consumed
+        self.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
     }
 
     /// Selects the cumulative limit before the first read is reserved.
+    ///
+    /// # Parameters
+    /// - `limit`: Maximum cumulative bytes allowed in this tree.
     pub(in crate::detector) fn select_limit_before_reads(&self, limit: u64) {
         let counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
         if counters.consumed == 0 && counters.reserved == 0 {

@@ -2320,13 +2320,8 @@ fn test_managed_filename_short_circuit_is_admitted_when_parent_resources_are_ful
 
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
-    let services = qubit_mime::MimeExecutionServices::new(
-        manager.clone(),
-        group,
-        Arc::new(TestExecution::default()),
-        16,
-    )
-    .unwrap();
+    let services =
+        qubit_mime::MimeExecutionServices::new(manager.clone(), group, Arc::new(TestExecution::default()), 16).unwrap();
     services.prepare().unwrap();
     let runtime = MimeRuntime::builtin()
         .unwrap()
@@ -2345,9 +2340,7 @@ fn test_managed_filename_short_circuit_is_admitted_when_parent_resources_are_ful
         .as_async()
         .try_submit(parent_options, move |scope| async move {
             let _occupied = scope.manage(Arc::new(())).unwrap();
-            let file_system = Arc::new(
-                AsyncFileSystem::from_spi(CountingFileSystem::new(opens_body)).unwrap(),
-            );
+            let file_system = Arc::new(AsyncFileSystem::from_spi(CountingFileSystem::new(opens_body)).unwrap());
             let mut child = runtime_body
                 .try_submit_detection_in(
                     &scope,
@@ -2360,9 +2353,7 @@ fn test_managed_filename_short_circuit_is_admitted_when_parent_resources_are_ful
                         ..Default::default()
                     },
                 )
-                .unwrap_or_else(|failure| {
-                    panic!("filename short circuit should be admitted: {:?}", failure.reason)
-                });
+                .unwrap_or_else(|failure| panic!("filename short circuit should be admitted: {:?}", failure.reason));
             match child.wait_outcome().await.unwrap() {
                 OperationOutcome::Succeeded(report) => Ok::<_, ()>(report),
                 other => panic!("filename short circuit should succeed: {other:?}"),

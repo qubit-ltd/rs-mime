@@ -57,14 +57,12 @@ impl PendingReadTreeBinding {
                 let mut roots_map = roots.lock().unwrap_or_else(|e| e.into_inner());
                 let existing = roots_map.get(&operation).and_then(Weak::upgrade);
                 if let Some(existing) = existing.as_ref().filter(|root| root.is_anchored()) {
-                    let mut pending_state =
-                        pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut pending_state = pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
                     match &mut *pending_state {
                         PendingReadTreeRootState::Reserved(reservation) => {
                             drop(reservation.take());
                         }
-                        PendingReadTreeRootState::Detached
-                        | PendingReadTreeRootState::Failed(_) => {}
+                        PendingReadTreeRootState::Detached | PendingReadTreeRootState::Failed(_) => {}
                     }
                     unregister_pending(&pending_roots, operation, &pending_root);
                     return Ok(existing.child(self.scope_limit));
@@ -73,8 +71,7 @@ impl PendingReadTreeBinding {
                     roots_map.remove(&operation);
                 }
 
-                let mut pending_state =
-                    pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
+                let mut pending_state = pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
                 let reservation = match &mut *pending_state {
                     PendingReadTreeRootState::Reserved(reservation) => reservation.take(),
                     PendingReadTreeRootState::Detached => {

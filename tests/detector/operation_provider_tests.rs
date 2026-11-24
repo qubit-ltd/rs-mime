@@ -278,15 +278,12 @@ fn assert_pending_prefix_child_charges_only_successful_bytes_to_sibling_budget(w
 
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
-    let services = MimeExecutionServices::new(
-        manager.clone(),
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 2)),
-        4,
-    )
-    .unwrap();
+    let services =
+        MimeExecutionServices::new(manager.clone(), group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 4).unwrap();
     services.prepare().unwrap();
-    let runtime = MimeRuntime::builtin().unwrap().with_execution_services(services.clone());
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
     let deadline_clock = with_deadline.then(|| Arc::new(super::operation_runtime_tests::DeadlineClock::new()));
     let deadline_clock_body = deadline_clock.clone();
     let opens = Arc::new(AtomicUsize::new(0));
@@ -320,17 +317,16 @@ fn assert_pending_prefix_child_charges_only_successful_bytes_to_sibling_budget(w
                     )
                     .unwrap(),
                 );
-                let operation_context = deadline_clock_body.as_ref().map_or_else(
-                    Default::default,
-                    |clock| qubit_operation::ContextOptions {
+                let operation_context = deadline_clock_body.as_ref().map_or_else(Default::default, |clock| {
+                    qubit_operation::ContextOptions {
                         clock: Some(Arc::clone(clock) as Arc<dyn qubit_operation::ClockSource>),
                         deadline: Some(qubit_operation::Deadline::at(qubit_operation::MonotonicTime::new(
                             clock.domain,
                             10,
                         ))),
                         ..Default::default()
-                    },
-                );
+                    }
+                });
                 let first_options = MimeOperationOptions {
                     max_buffer_bytes: Some(4),
                     max_read_bytes: Some(4),
@@ -355,7 +351,10 @@ fn assert_pending_prefix_child_charges_only_successful_bytes_to_sibling_budget(w
                     .recv()
                     .expect("first read should complete and the second read should pend");
                 if let Some(clock) = &deadline_clock_body {
-                    assert!(clock.active_registrations() > 0, "child should register its fake deadline");
+                    assert!(
+                        clock.active_registrations() > 0,
+                        "child should register its fake deadline"
+                    );
                     clock.advance_to(10);
                 } else {
                     assert_eq!(
@@ -452,7 +451,10 @@ fn assert_pending_prefix_child_charges_only_successful_bytes_to_sibling_budget(w
     let _ = block_on(parent.wait_settlement());
 
     assert!(first_stopped);
-    assert!(over_limit_rejected, "the sibling's full four-byte request exceeds the remaining three bytes");
+    assert!(
+        over_limit_rejected,
+        "the sibling's full four-byte request exceeds the remaining three bytes"
+    );
     assert_eq!(3, second_bytes, "the first child's one delivered byte remains charged");
     assert_eq!(2, opens.load(Ordering::SeqCst), "each sibling opens its provider once");
 
@@ -540,15 +542,12 @@ fn assert_prefix_child_then_sibling(
 
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
-    let services = MimeExecutionServices::new(
-        manager.clone(),
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 2)),
-        4,
-    )
-    .unwrap();
+    let services =
+        MimeExecutionServices::new(manager.clone(), group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 4).unwrap();
     services.prepare().unwrap();
-    let runtime = MimeRuntime::builtin().unwrap().with_execution_services(services.clone());
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
     let opens = Arc::clone(&first_file_system.opens);
     let opens_body = Arc::clone(&opens);
     let parent_options = qubit_operation::OperationOptions {
@@ -1277,15 +1276,13 @@ impl qubit_io::AsyncInput for SnapshotGateInput {
             }
             return Poll::Pending;
         }
-        let length = count
-            .min(this.bytes.len().saturating_sub(this.offset))
-            .min(if this.pending_after_first_read && this.offset == 0 {
-                1
-            } else if this.error_after_first_read && this.offset == 0 {
+        let length = count.min(this.bytes.len().saturating_sub(this.offset)).min(
+            if (this.pending_after_first_read || this.error_after_first_read) && this.offset == 0 {
                 1
             } else {
                 usize::MAX
-            });
+            },
+        );
         output[index..index + length].copy_from_slice(&this.bytes[this.offset..this.offset + length]);
         this.offset += length;
         Poll::Ready(Ok(length))

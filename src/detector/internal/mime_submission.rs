@@ -12,12 +12,12 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::task::Poll;
 
+use prefix_read_accounting::PrefixReadAccounting;
 use qubit_fs::read::ObservedReadError;
 use qubit_fs::read::ReadOptions;
 use qubit_operation::OperationScope;
 
 pub(in crate::detector) use super::provider_read_plan::ProviderReadPlan;
-use prefix_read_accounting::PrefixReadAccounting;
 
 mod prefix_read_accounting;
 

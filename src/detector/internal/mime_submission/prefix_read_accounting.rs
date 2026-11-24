@@ -24,6 +24,10 @@ pub(super) struct PrefixReadAccounting {
 
 impl PrefixReadAccounting {
     /// Creates an accounting guard for one bounded prefix request.
+    ///
+    /// # Parameters
+    /// - `permit`: Reservation that will be settled with the observed byte
+    ///   count.
     pub(super) fn new(permit: ReadPermit) -> Self {
         Self {
             permit: Some(permit),
@@ -32,11 +36,17 @@ impl PrefixReadAccounting {
     }
 
     /// Returns bytes reported by successful provider reads so far.
+    ///
+    /// # Returns
+    /// The number of bytes observed by the guard.
     pub(super) fn bytes_read(&self) -> u64 {
         self.bytes_read
     }
 
     /// Commits the observed amount and disables cancellation settlement.
+    ///
+    /// # Returns
+    /// The number of bytes committed to the read budget.
     pub(super) fn commit(mut self) -> u64 {
         self.permit
             .take()
@@ -46,6 +56,10 @@ impl PrefixReadAccounting {
 }
 
 impl ReadIoObserver for PrefixReadAccounting {
+    /// Records bytes reported by a successful provider read.
+    ///
+    /// # Parameters
+    /// - `bytes`: Number of bytes reported by the provider.
     fn on_read_bytes(&mut self, bytes: usize) {
         let bytes = u64::try_from(bytes).expect("provider read byte count fits in u64");
         self.bytes_read = self
@@ -56,6 +70,7 @@ impl ReadIoObserver for PrefixReadAccounting {
 }
 
 impl Drop for PrefixReadAccounting {
+    /// Settles the reservation when it was not explicitly committed.
     fn drop(&mut self) {
         if let Some(permit) = self.permit.take() {
             permit.commit(self.bytes_read);
