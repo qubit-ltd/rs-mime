@@ -7,12 +7,13 @@
 // =============================================================================
 //! Registration metadata retained for asynchronous classifier selectors.
 
+use std::fmt;
 use std::sync::Arc;
 
 use super::super::AsyncMediaStreamClassifierProvider;
 
 /// Factory and descriptor snapshot shared by a classifier ID and its aliases.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct AsyncProviderEntry {
     /// Canonical classifier ID returned by resolution.
     pub(crate) id: String,
@@ -23,4 +24,15 @@ pub(crate) struct AsyncProviderEntry {
     pub(crate) is_builtin: bool,
     /// Shared factory called after the async catalog lock is released.
     pub(crate) provider: Arc<dyn AsyncMediaStreamClassifierProvider>,
+}
+
+impl fmt::Debug for AsyncProviderEntry {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AsyncProviderEntry")
+            .field("id", &self.id)
+            .field("priority", &self.priority)
+            .field("is_builtin", &self.is_builtin)
+            .finish_non_exhaustive()
+    }
 }

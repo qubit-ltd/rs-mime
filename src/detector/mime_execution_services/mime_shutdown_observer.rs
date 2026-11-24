@@ -101,7 +101,9 @@ impl MimeShutdownObserver {
                 drop(submissions);
                 continue;
             }
-            self.services.operations_settled.store(true, Ordering::Release);
+            self.services
+                .operations_settled
+                .store(true, Ordering::Release);
             drop(submissions);
             return Ok(self.snapshot());
         }
@@ -121,11 +123,19 @@ impl MimeShutdownObserver {
     /// propagates an execution shutdown error.
     pub fn stop_services(&self) -> Result<MimeShutdownSnapshot, crate::MimeError> {
         {
-            let _lifecycle = self.services.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
+            let _lifecycle = self
+                .services
+                .lifecycle_lock
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if self.services.lifecycle() == MimeServiceLifecycle::Stopped {
                 return Ok(self.snapshot());
             }
             if self.services.stopping.swap(true, Ordering::AcqRel) {
+                return Err(crate::MimeError::OperationShutdownPending);
+            }
+            if self.services.preparing.load(Ordering::Acquire) {
+                self.services.stopping.store(false, Ordering::Release);
                 return Err(crate::MimeError::OperationShutdownPending);
             }
             let _submissions = self.services.submission_guard();
@@ -151,13 +161,21 @@ impl MimeShutdownObserver {
             self.services.stopping.store(false, Ordering::Release);
             return Err(error);
         }
-        let _lifecycle = self.services.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _lifecycle = self
+            .services
+            .lifecycle_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let shutdown = self
             .services
             .root_group
             .request_shutdown(ShutdownMode::Drain)
             .as_async();
-        *self.services.group_shutdown.lock().unwrap_or_else(|e| e.into_inner()) = Some(shutdown);
+        *self
+            .services
+            .group_shutdown
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(shutdown);
         self.services
             .lifecycle
             .store(MimeServiceLifecycle::Stopped as u8, Ordering::Release);
@@ -182,7 +200,10 @@ impl MimeShutdownObserver {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
             .ok_or(crate::MimeError::OperationShutdownPending)?;
-        handle.wait().await.map_err(crate::MimeError::OperationShutdown)
+        handle
+            .wait()
+            .await
+            .map_err(crate::MimeError::OperationShutdown)
     }
 }
 
@@ -296,7 +317,12 @@ mod tests {
         }
 
         fn shutdown(&self) -> Result<(), MimeError> {
-            if let Some(sender) = self.shutdown_started.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            if let Some(sender) = self
+                .shutdown_started
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take()
+            {
                 sender.send(()).unwrap();
             }
             self.worker_port.shutdown()
@@ -305,7 +331,9 @@ mod tests {
 
     impl Debug for CountingExecutionPort {
         fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
-            formatter.debug_struct("CountingExecutionPort").finish_non_exhaustive()
+            formatter
+                .debug_struct("CountingExecutionPort")
+                .finish_non_exhaustive()
         }
     }
 
@@ -372,14 +400,19 @@ mod tests {
         let callback_runtime = runtime.clone();
         *execution.before_shutdown.lock().unwrap() = Some(Box::new(move || {
             let failure = match callback_runtime.try_submit_detection(
-                OwnedMimeInput::bytes(Arc::clone(&callback_original), crate::detector::InputExtent::Complete),
+                OwnedMimeInput::bytes(
+                    Arc::clone(&callback_original),
+                    crate::detector::InputExtent::Complete,
+                ),
                 Default::default(),
             ) {
                 Err(failure) => failure,
                 Ok(_) => panic!("shutdown callback reentry must return its request"),
             };
             let input_returned = match failure.input {
-                crate::OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(&content, &callback_original),
+                crate::OwnedMimeInput::Bytes { content, .. } => {
+                    Arc::ptr_eq(&content, &callback_original)
+                }
                 crate::OwnedMimeInput::Provider { .. } => false,
             };
             let reentrant_stop = reentrant_observer.stop_services();
@@ -398,15 +431,19 @@ mod tests {
                 .unwrap()
                 .services_stopped
         );
-        let (reason, input_returned, reentrant_stop) =
-            result_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+        let (reason, input_returned, reentrant_stop) = result_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
         assert!(matches!(
             reason,
             crate::detector::MimeSubmitRejection::ExecutionServicesRequired
                 | crate::detector::MimeSubmitRejection::Admission(_)
         ));
         assert!(input_returned);
-        assert!(matches!(reentrant_stop, Err(MimeError::OperationShutdownPending)));
+        assert!(matches!(
+            reentrant_stop,
+            Err(MimeError::OperationShutdownPending)
+        ));
         assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
         assert_eq!(original.as_ref(), b"shutdown callback input");
     }
@@ -440,24 +477,34 @@ mod tests {
                 Ok(_) => panic!("shutdown must reject MIME reentry from an accepted worker job"),
             };
             let returned = match failure.input {
-                crate::OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(&content, &job_original),
+                crate::OwnedMimeInput::Bytes { content, .. } => {
+                    Arc::ptr_eq(&content, &job_original)
+                }
                 crate::OwnedMimeInput::Provider { .. } => false,
             };
             result_tx.send((failure.reason, returned)).unwrap();
         }));
-        assert!(accepted.is_ok(), "worker job should be accepted before shutdown");
+        assert!(
+            accepted.is_ok(),
+            "worker job should be accepted before shutdown"
+        );
         let observer = services.shutdown();
         let _ = block_on(observer.wait_services_settled()).unwrap();
 
         let stopping = observer.clone();
         let stop_thread = thread::spawn(move || stopping.stop_services());
-        let (reason, returned) = result_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        let (reason, returned) = result_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
         assert!(matches!(
             reason,
             crate::detector::MimeSubmitRejection::ExecutionServicesRequired
                 | crate::detector::MimeSubmitRejection::Admission(_)
         ));
-        assert!(returned, "the rejected request must return the same Arc input");
+        assert!(
+            returned,
+            "the rejected request must return the same Arc input"
+        );
         assert!(stop_thread.join().unwrap().unwrap().services_stopped);
         assert_eq!(original.as_ref(), b"accepted worker job");
     }
@@ -562,7 +609,10 @@ mod tests {
         let services = MimeExecutionServices::new(manager, group, execution, 16).unwrap();
 
         let shutdown = services.shutdown();
-        assert_eq!(MimeServiceLifecycle::ClosedWithoutStart, services.lifecycle());
+        assert_eq!(
+            MimeServiceLifecycle::ClosedWithoutStart,
+            services.lifecycle()
+        );
         assert!(!services.accepts_children());
         assert!(services.prepare().is_err());
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
@@ -583,20 +633,27 @@ mod tests {
         let services = MimeExecutionServices::new(manager, group.clone(), execution, 16).unwrap();
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
-        let operation = block_on(group.try_submit_async(Default::default(), move |_| async move {
-            started_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-            Ok::<_, ()>(())
-        }))
+        let operation = block_on(
+            group.try_submit_async(Default::default(), move |_| async move {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok::<_, ()>(())
+            }),
+        )
         .unwrap();
         services.track_observer(operation.observer());
-        started_rx.recv().expect("operation should enter its blocked body");
+        started_rx
+            .recv()
+            .expect("operation should enter its blocked body");
 
         let shutdown = services.shutdown();
         let mut settled_future = Box::pin(shutdown.wait_services_settled());
         let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
         let mut context = Context::from_waker(&waker);
-        assert!(matches!(settled_future.as_mut().poll(&mut context), Poll::Pending));
+        assert!(matches!(
+            settled_future.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
         assert!(!shutdown.snapshot().operations_settled);
 
         release_tx.send(()).unwrap();
@@ -608,7 +665,10 @@ mod tests {
         let mut group_shutdown = Box::pin(shutdown.wait_group_shutdown());
         let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
         let mut context = Context::from_waker(&waker);
-        assert!(matches!(group_shutdown.as_mut().poll(&mut context), Poll::Pending));
+        assert!(matches!(
+            group_shutdown.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
         drop(operation);
         let group_report = block_on(group_shutdown).unwrap();
         assert_eq!(0, group_report.snapshot.active_operations);
@@ -633,8 +693,10 @@ mod tests {
         .unwrap();
         services.prepare().unwrap();
 
-        let mut completed =
-            block_on(group.try_submit_async(Default::default(), |_| async { Ok::<_, ()>("settled") })).unwrap();
+        let mut completed = block_on(
+            group.try_submit_async(Default::default(), |_| async { Ok::<_, ()>("settled") }),
+        )
+        .unwrap();
         services.track_observer(completed.observer());
         assert!(matches!(
             block_on(completed.wait_outcome()).unwrap(),
@@ -645,16 +707,23 @@ mod tests {
 
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
-        let mut direct_parent = block_on(group.try_submit_async(Default::default(), move |_| async move {
-            started_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-            Ok::<_, ()>(())
-        }))
+        let mut direct_parent = block_on(group.try_submit_async(
+            Default::default(),
+            move |_| async move {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok::<_, ()>(())
+            },
+        ))
         .unwrap();
         started_rx.recv().unwrap();
 
         let shutdown = services.shutdown();
-        assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+        assert!(
+            block_on(shutdown.wait_services_settled())
+                .unwrap()
+                .operations_settled
+        );
         let first_stop = shutdown.stop_services();
 
         release_tx.send(()).unwrap();
@@ -665,7 +734,10 @@ mod tests {
         block_on(direct_parent.wait_settlement());
         drop(direct_parent);
 
-        assert!(matches!(first_stop, Err(MimeError::OperationShutdownPending)));
+        assert!(matches!(
+            first_stop,
+            Err(MimeError::OperationShutdownPending)
+        ));
         assert_eq!(0, shutdown_calls.load(Ordering::SeqCst));
         assert!(shutdown.stop_services().unwrap().services_stopped);
         let report = block_on(shutdown.wait_group_shutdown()).unwrap();
@@ -691,16 +763,23 @@ mod tests {
         services.prepare().unwrap();
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
-        let mut operation = block_on(group.try_submit_async(Default::default(), move |_| async move {
-            started_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-            Ok::<_, ()>(())
-        }))
+        let mut operation = block_on(group.try_submit_async(
+            Default::default(),
+            move |_| async move {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok::<_, ()>(())
+            },
+        ))
         .unwrap();
         started_rx.recv().unwrap();
 
         let shutdown = services.shutdown();
-        assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+        assert!(
+            block_on(shutdown.wait_services_settled())
+                .unwrap()
+                .operations_settled
+        );
         assert!(services.accepts_children());
         assert!(matches!(
             shutdown.stop_services(),
@@ -728,7 +807,8 @@ mod tests {
         let services = MimeExecutionServices::new(manager, group.clone(), execution, 16).unwrap();
 
         let mut completed =
-            block_on(group.try_submit_async(Default::default(), |_| async { Ok::<_, ()>("done") })).unwrap();
+            block_on(group.try_submit_async(Default::default(), |_| async { Ok::<_, ()>("done") }))
+                .unwrap();
         services.track_observer(completed.observer());
         assert!(matches!(
             block_on(completed.wait_outcome()).unwrap(),
@@ -738,11 +818,13 @@ mod tests {
 
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
-        let pending = block_on(group.try_submit_async(Default::default(), move |_| async move {
-            started_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-            Ok::<_, ()>("released")
-        }))
+        let pending = block_on(
+            group.try_submit_async(Default::default(), move |_| async move {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Ok::<_, ()>("released")
+            }),
+        )
         .unwrap();
         services.track_observer(pending.observer());
         started_rx.recv().expect("second operation should start");
@@ -751,7 +833,10 @@ mod tests {
         let mut settled_future = Box::pin(shutdown.wait_services_settled());
         let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
         let mut context = Context::from_waker(&waker);
-        assert!(matches!(settled_future.as_mut().poll(&mut context), Poll::Pending));
+        assert!(matches!(
+            settled_future.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
         assert!(!shutdown.snapshot().operations_settled);
 
         release_tx.send(()).unwrap();
@@ -761,7 +846,10 @@ mod tests {
         let mut group_shutdown = Box::pin(shutdown.wait_group_shutdown());
         let waker = Waker::from(Arc::new(ThreadWaker(thread::current())));
         let mut context = Context::from_waker(&waker);
-        assert!(matches!(group_shutdown.as_mut().poll(&mut context), Poll::Pending));
+        assert!(matches!(
+            group_shutdown.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
         drop(completed);
         drop(pending);
         let report = block_on(group_shutdown).unwrap();
@@ -797,39 +885,47 @@ mod tests {
             InputExtent::Complete,
         );
         let child_read_tree = services.new_read_tree(128);
-        let mut parent = block_on(group.try_submit_async(Default::default(), move |scope| async move {
-            parent_started_tx.send(()).unwrap();
-            release_parent_rx.recv().unwrap();
+        let mut parent = block_on(group.try_submit_async(
+            Default::default(),
+            move |scope| async move {
+                parent_started_tx.send(()).unwrap();
+                release_parent_rx.recv().unwrap();
 
-            let child = scope
-                .manager()
-                .as_async()
-                .try_submit(Default::default(), move |child_scope| async move {
-                    stage_owned_in(&child_scope, child_input, child_limits, child_read_tree).await
-                })
-                .unwrap();
-            let mut child = child;
-            let resource = match child.wait_outcome().await.unwrap() {
-                OperationOutcome::Succeeded(resource) => resource,
-                _ => panic!("staging child should succeed before cleanup"),
-            };
-            let path = resource.path().unwrap();
-            let sandbox = path.parent().unwrap();
-            let blocker = sandbox.join("post-drain-child-recovery-blocker");
-            fs::write(&blocker, b"retain the child staging sandbox").unwrap();
-            drop(resource);
-            let _settlement = child.wait_settlement().await;
-            drop(child);
-            blocker_tx.send(blocker).unwrap();
-            Ok::<_, ()>(())
-        }))
+                let child = scope
+                    .manager()
+                    .as_async()
+                    .try_submit(Default::default(), move |child_scope| async move {
+                        stage_owned_in(&child_scope, child_input, child_limits, child_read_tree)
+                            .await
+                    })
+                    .unwrap();
+                let mut child = child;
+                let resource = match child.wait_outcome().await.unwrap() {
+                    OperationOutcome::Succeeded(resource) => resource,
+                    _ => panic!("staging child should succeed before cleanup"),
+                };
+                let path = resource.path().unwrap();
+                let sandbox = path.parent().unwrap();
+                let blocker = sandbox.join("post-drain-child-recovery-blocker");
+                fs::write(&blocker, b"retain the child staging sandbox").unwrap();
+                drop(resource);
+                let _settlement = child.wait_settlement().await;
+                drop(child);
+                blocker_tx.send(blocker).unwrap();
+                Ok::<_, ()>(())
+            },
+        ))
         .unwrap();
         parent_started_rx
             .recv()
             .expect("direct parent should enter its barrier");
 
         let shutdown = services.shutdown();
-        assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+        assert!(
+            block_on(shutdown.wait_services_settled())
+                .unwrap()
+                .operations_settled
+        );
         assert!(matches!(
             shutdown.stop_services(),
             Err(MimeError::OperationShutdownPending)
@@ -851,7 +947,10 @@ mod tests {
         assert_eq!(1, shutdown.snapshot().unresolved_recoveries);
         let recoveries = shutdown.recovery_handles_snapshot();
         assert_eq!(1, recoveries.len());
-        assert_eq!(recoveries[0].id(), shutdown.recovery_handles_snapshot()[0].id());
+        assert_eq!(
+            recoveries[0].id(),
+            shutdown.recovery_handles_snapshot()[0].id()
+        );
         assert!(matches!(
             shutdown.stop_services(),
             Err(MimeError::OperationShutdownPending)
@@ -937,12 +1036,17 @@ mod tests {
             budget: services.staging_budget(),
             worker: MimeExecutionWorker::new(worker_port),
         };
-        let input = OwnedMimeInput::bytes(Arc::from(b"retry shutdown cleanup".as_slice()), InputExtent::Complete);
+        let input = OwnedMimeInput::bytes(
+            Arc::from(b"retry shutdown cleanup".as_slice()),
+            InputExtent::Complete,
+        );
         let read_tree = services.new_read_tree(128);
         let body_read_tree = Arc::clone(&read_tree);
-        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
-            stage_owned_in(&scope, input, limits, body_read_tree).await
-        }))
+        let mut operation = block_on(
+            group.try_submit_async(Default::default(), move |scope| async move {
+                stage_owned_in(&scope, input, limits, body_read_tree).await
+            }),
+        )
         .unwrap();
         services.track_observer(operation.observer());
         let resource = match block_on(operation.wait_outcome()).unwrap() {
@@ -958,10 +1062,13 @@ mod tests {
         let settlement = block_on(operation.wait_settlement());
         assert_eq!(settlement.status, SettlementStatus::RecoveryRequired);
         assert_eq!(settlement.recoveries.len(), 1);
-        assert!(super::super::is_unresolved_recovery(&settlement.recoveries[0]));
+        assert!(super::super::is_unresolved_recovery(
+            &settlement.recoveries[0]
+        ));
 
         let mut later_operation =
-            block_on(group.try_submit_async(Default::default(), |_| async { Ok::<_, ()>(1) })).unwrap();
+            block_on(group.try_submit_async(Default::default(), |_| async { Ok::<_, ()>(1) }))
+                .unwrap();
         services.track_observer(later_operation.observer());
         block_on(later_operation.wait_settlement());
 
@@ -972,7 +1079,10 @@ mod tests {
         assert_eq!(1, handles.len(), "group ledger includes the recovery owner");
         assert_eq!(settlement.recoveries[0].id(), handles[0].id());
         drop(operation);
-        assert_eq!(handles[0].id(), shutdown.recovery_handles_snapshot()[0].id());
+        assert_eq!(
+            handles[0].id(),
+            shutdown.recovery_handles_snapshot()[0].id()
+        );
         services.track_recoveries(&settlement.recoveries);
         assert_eq!(
             1,
@@ -1032,29 +1142,38 @@ mod tests {
         };
         let blocker_path = Arc::new(std::sync::Mutex::new(None));
         let blocker_path_for_create = Arc::clone(&blocker_path);
-        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
-            let reservation = scope.reserve_resource().unwrap();
-            create_empty_staged_with(&scope, reservation, &limits, move || {
-                let fault =
-                    qubit_local_files::test_support::install_test_fault("host-temp-file-recovery-clone-cleanup")
-                        .expect("creation and initial cleanup fault should install");
-                let result = LocalFileSystem::host()?
-                    .create_temp_file_with_options(
-                        &LocalTempFileOptions::new().with_privacy(LocalPrivacyRequirement::PlatformDefault),
+        let mut operation = block_on(group.try_submit_async(
+            Default::default(),
+            move |scope| async move {
+                let reservation = scope.reserve_resource().unwrap();
+                create_empty_staged_with(&scope, reservation, &limits, move || {
+                    let fault = qubit_local_files::test_support::install_test_fault(
+                        "host-temp-file-recovery-clone-cleanup",
                     )
-                    .map_err(Box::new);
-                if let Err(error) = &result
-                    && let Some(recovery) = error.temp_recovery()
-                {
-                    let blocker = recovery.path().parent().unwrap().join("shutdown-recovery-blocker");
-                    fs::write(&blocker, b"retain failed-creation recovery").unwrap();
-                    *blocker_path_for_create.lock().unwrap() = Some(blocker);
-                }
-                drop(fault);
-                result
-            })
-            .await
-        }))
+                    .expect("creation and initial cleanup fault should install");
+                    let result = LocalFileSystem::host()?
+                        .create_temp_file_with_options(
+                            &LocalTempFileOptions::new()
+                                .with_privacy(LocalPrivacyRequirement::PlatformDefault),
+                        )
+                        .map_err(Box::new);
+                    if let Err(error) = &result
+                        && let Some(recovery) = error.temp_recovery()
+                    {
+                        let blocker = recovery
+                            .path()
+                            .parent()
+                            .unwrap()
+                            .join("shutdown-recovery-blocker");
+                        fs::write(&blocker, b"retain failed-creation recovery").unwrap();
+                        *blocker_path_for_create.lock().unwrap() = Some(blocker);
+                    }
+                    drop(fault);
+                    result
+                })
+                .await
+            },
+        ))
         .unwrap();
         let operation_observer = operation.observer();
         services.track_observer(operation_observer.clone());
@@ -1081,14 +1200,21 @@ mod tests {
         let handles = shutdown.recovery_handles_snapshot();
         assert_eq!(1, handles.len());
         assert_eq!(settlement.recoveries[0].id(), handles[0].id());
-        assert_eq!(handles[0].id(), shutdown.recovery_handles_snapshot()[0].id());
+        assert_eq!(
+            handles[0].id(),
+            shutdown.recovery_handles_snapshot()[0].id()
+        );
         assert!(matches!(
             shutdown.stop_services(),
             Err(MimeError::OperationShutdownPending)
         ));
         assert_eq!(0, shutdown_calls.load(Ordering::SeqCst));
 
-        let blocker = blocker_path.lock().unwrap().take().expect("recovery blocker path");
+        let blocker = blocker_path
+            .lock()
+            .unwrap()
+            .take()
+            .expect("recovery blocker path");
         fs::remove_file(blocker).unwrap();
         let recovery = handles[0].clone();
         let attempt = recovery.try_retry().unwrap();
