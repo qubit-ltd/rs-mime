@@ -440,12 +440,14 @@ Provider 对象，并向 backend 借出 `MeteredReadSession`。顺序读取使�
 
 声明完整读取或 `RandomAccessCapability::SamplesSameObject` 的 backend 始终会收到该受计量 session。
 旧 `uses_managed_provider_reads()` hook 仍可供明确需要顺序 session 读取的 `Prefix(n)` backend 选择使用；
-返回 `false` 不能关闭完整读取或随机访问的计量。常规 `Prefix(n)` backend 会收到 `Bytes`，最多包含 n
-字节，并受请求与服务的 buffer/read 预算进一步限制；若提前遇到 EOF，实际字节会更少，读取不会越过前缀上限。
+返回 `false` 不能关闭完整读取或随机访问的计量。常规 `Prefix(n)` backend 会先针对请求与祖先读取额度预留所需额度，
+再收到最多 n 字节的 `Bytes`。无法预留时提交会以 typed budget error 拒绝，不会静默裁切；若提前遇到 EOF，实际字节会更少，
+读取不会越过前缀上限。
 
 顺序读取应持续调用 `read()`，直到返回零以确认 EOF；单次短读不代表 EOF。调用 `read_at(offset, buffer)`
-可从同一个已打开对象采样。每次调用单独计费，重复或重叠的采样也会计费。若读取超过请求或祖先的剩余额度，
-调用会返回读取预算错误；应将其作为检查失败处理，不要重新打开路径或改用未受计量的 handle。
+可从同一个已打开对象采样。每次调用单独计费，重复或重叠的采样也会计费。session 会将单次调用裁切到请求与祖先的
+剩余额度；若读取额度已耗尽，或无法取得独立的 owned-memory scratch 许可，则返回相应的 typed budget error。
+不要重新打开路径或改用未受计量的 handle。
 
 ```rust,ignore
 let mut buffer = [0; 4096];
@@ -460,10 +462,10 @@ let count = session.read_at(1024, &mut sample).await?;
 inspect_sample(&sample[..count]);
 ```
 
-每次 session 读取都会受调用方 buffer、payload 上限、请求与服务读取额度以及 8 KiB 分块上限共同约束。
-runtime 在 Provider I/O 前为私有暂存区预留最多 8 KiB，并只把成功返回的字节复制给 backend。Provider
-错误不会暴露暂存区中的部分数据。EOF 返回零；读取额度按实际返回字节计费，重复或重叠的
-`read_at` 采样会重复计费。每次读取的暂存区上限与 backend 保留的输入内存或命令暂存内存是不同预算。
+每次 session 读取都会受调用方 buffer、payload 上限、请求与祖先读取额度以及 8 KiB 分块上限共同约束，并可裁切到
+当前可用额度。runtime 会另行预留服务级 owned-memory 许可，用于 Provider I/O 前的私有 scratch，再把成功返回的字节复制给
+backend。Provider 错误不会暴露暂存区中的部分数据。EOF 返回零；读取额度按实际返回字节计费，重复或重叠的
+`read_at` 采样会重复计费。每次读取的 scratch 上限与 backend 保留的输入内存或命令暂存内存是不同预算。
 
 handle 提供两种彼此独立的观察方式。`wait_outcome()` 等待 MIME 业务结果；成功时结果包含
 `MimeDetectionReport`。`wait_settlement()` 观察资源是否已释放或恢复责任是否仍待处理。提前得到
@@ -488,9 +490,14 @@ settlement 和 recovery；仅看到失败 outcome 不能确认部分文件已删
 父操作的 manager 视图并绑定 MIME 组。同步子操作入口为
 `try_submit_detection_sync_in`。Provider 能力如下：
 
-嵌套 managed operation 的祖先读取额度继承与 Provider 部分读取的计量边界仍在 0.22.0 验收中。
-在这些边界完成验收前，请先查阅[验收记录](acceptance-0.22.0-operation-0.2.zh_CN.md)，不要假定
-具体的父子额度共享或结算行为。
+嵌套 MIME operation 按祖先身份和适用 scope cap 共享 Provider 读取计量。owned bytes 输入和由唯一文件名短路
+完成的输入不会绑定祖先读取树，也不预留祖先的资源槽。首个需要 Provider 读取的后代会从共享读取树预留额度。
+若准入前无法绑定，或祖先已结束，提交会拒绝并返还原输入；若任务接纳后待处理绑定提交失败，则 operation outcome
+报告 `ReadBudgetBinding`。
+
+读取额度只按成功交付的字节计费。Provider 打开失败计零；前缀读取若在错误或取消前已返回部分字节，已交付字节
+继续计费，未用额度会退还。普通 `Prefix(n)` 无法预留所需额度时会返回 typed budget error，不会静默裁切。
+`MeteredReadSession` 则会按可用读取额度裁切每次调用，单独许可临时 scratch 内存，并保留剩余额度用于 EOF 探测。
 
 | Provider | 受管异步 backend | 输入与精化限制 |
 | --- | --- | --- |

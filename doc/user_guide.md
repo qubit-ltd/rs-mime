@@ -522,6 +522,25 @@ The handle reports a detector failure as `OperationOutcome::Failed`; this is
 distinct from `MimeSubmitFailure`, which means the operation was not accepted
 and returns the original input. Observe settlement separately to confirm
 resource release.
+
+Nested MIME operations share provider-read accounting by ancestor identity and
+the applicable scope cap. An owned byte input or an input resolved by a unique
+filename short circuit does not bind the ancestor read tree or reserve its
+resource slot. The first descendant that needs provider reads reserves against
+the shared tree. If this binding cannot be established before admission, or the
+ancestor has ended, submission is rejected and returns the input. If a pending
+binding fails to commit after admission, the accepted operation reports
+`ReadBudgetBinding` through its outcome.
+
+Read reservations charge only bytes successfully delivered. A provider open
+failure charges zero. If a prefix read fails or is cancelled after returning
+some bytes, the delivered bytes stay charged and the unused reservation is
+returned. A regular `Prefix(n)` request that cannot reserve the required
+allowance is rejected with a typed budget error rather than clipped. The
+`MeteredReadSession` contract differs: it clips each call to available read
+allowance, uses an independent permit for temporary scratch memory, and keeps
+remaining allowance available for its EOF probe.
+
 The existing `FileCommandMimeDetector` synchronous APIs remain available; the
 managed backend is selected through `MimeRuntime` for operation-backed work.
 When `file` is selected with any async classifier, its factory rejects the
@@ -550,16 +569,18 @@ Complete backends and backends declaring
 session. The legacy `uses_managed_provider_reads()` hook remains available for
 `Prefix(n)` backends that explicitly need sequential session access; returning
 `false` cannot disable metering for complete or random-access reads. A regular
-`Prefix(n)` backend receives `Bytes` containing at most `n` bytes, further
-limited by request and service buffer/read budgets; the provider may return
-fewer bytes at EOF. No read goes past the prefix bound.
+`Prefix(n)` backend reserves its requested prefix against request and ancestor
+read budgets and receives `Bytes` containing at most `n` bytes. If that exact
+reservation cannot be made, submission fails with a typed budget error; a
+successful provider read may return fewer bytes at EOF. No read goes past the
+prefix bound.
 
 Read sequentially until `read()` returns zero to observe EOF; a short read alone
 does not prove EOF. Use `read_at(offset, buffer)` to sample the same opened
 object. Each call is charged independently, including repeated or overlapping
-samples. If a call exceeds the remaining request or service allowance, it
-returns a read-budget error; handle that error as a failed inspection rather
-than reopening the path or retrying through an unmetered handle.
+samples. Each call is clipped to the available read allowance, while temporary
+scratch memory is reserved independently. Do not reopen the path or retry
+through an unmetered handle.
 
 ```rust,ignore
 let mut buffer = [0; 4096];
@@ -575,13 +596,13 @@ inspect_sample(&sample[..count]);
 ```
 
 Each session read is clipped to the caller's buffer, the payload limit, the
-remaining request and service read allowances, and an 8 KiB chunk. The runtime
-reserves an 8 KiB maximum private scratch buffer before provider I/O and copies
-only successfully returned bytes into the backend buffer. Provider errors do
-not expose partial scratch data. EOF returns zero, and read accounting charges
-actual returned bytes; repeated or overlapping `read_at` samples are charged
-again. This per-read scratch bound is distinct from a backend's retained input
-or command staging memory.
+remaining request and ancestor read allowances, and an 8 KiB chunk. The runtime
+separately reserves service owned-memory capacity for private scratch before
+provider I/O, then copies only successfully returned bytes into the backend
+buffer. Provider errors do not expose partial scratch data. EOF returns zero,
+and read accounting charges actual returned bytes; repeated or overlapping
+`read_at` samples are charged again. This per-read scratch bound is distinct
+from a backend's retained input or command staging memory.
 
 The handle exposes two independent observations. `wait_outcome()` returns the
 MIME detection result (including `MimeDetectionReport` on success);
@@ -618,12 +639,8 @@ to a worker: its resource owner remains tracked until that job actually settles.
 Use `try_submit_detection_in` to submit beneath an existing
 `qubit-operation::OperationScope`; the child uses the parent's manager view and
 MIME group binding. The synchronous child entry point is
-`try_submit_detection_sync_in`. Provider capabilities are:
-
-The exact ancestor read-budget inheritance and partial provider-read accounting
-for nested managed operations remain under 0.22.0 acceptance. See the
-[acceptance record](acceptance-0.22.0-operation-0.2.zh_CN.md) before relying on
-specific parent/child sharing or settlement boundaries.
+`try_submit_detection_sync_in`. The nested budget and accounting behavior is
+described above. Provider capabilities are:
 
 | Provider | Managed async backend | Input and refinement limits |
 | --- | --- | --- |

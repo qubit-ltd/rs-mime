@@ -142,6 +142,24 @@ not preempted and observe stop only at their cooperative checks. Work already
 dispatched to command or staging workers keeps its resource owner tracked until
 the job settles.
 
+Nested MIME operations share provider-read accounting through their operation
+ancestors. Inputs resolved by a unique filename and owned byte inputs do not
+bind an ancestor read budget or reserve its resource slot. A descendant that
+needs provider reads propagates the ancestor identity and applicable scope cap;
+its first read reserves against the shared ancestor tree. If that binding cannot
+be admitted or the ancestor has ended, submission is rejected with the input
+intact. If the accepted operation cannot commit its pending binding, it fails
+with `ReadBudgetBinding`.
+
+Provider read reservations charge bytes successfully delivered. A failed open
+charges zero. If a prefix read fails or is cancelled after delivering bytes,
+those bytes remain charged and the unused reservation is returned. A regular
+`Prefix(n)` input is rejected with a typed budget error when its required
+reservation cannot be made; it is not silently clipped. `MeteredReadSession`
+instead clips each individual read to available allowances, reserves its
+temporary scratch memory independently, and can use remaining allowance to
+probe EOF.
+
 The legacy synchronous `FileCommandMimeDetector` methods remain available
 alongside the managed `file` provider. The managed provider stages input within
 the operation and accounts provider bytes internally. Its factory rejects any

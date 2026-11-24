@@ -287,6 +287,16 @@ impl MimeRuntime {
     /// failures retain the input for recovery. If committing the parent
     /// read-budget anchor fails after admission, the operation returns
     /// [`crate::MimeError::ReadBudgetBinding`].
+    ///
+    /// # Behavior
+    /// Owned byte inputs and children resolved by a unique filename do not bind
+    /// an ancestor read tree or reserve its resource slot. A descendant that
+    /// needs provider reads propagates the ancestor identity and applicable
+    /// scope cap, then reserves against the shared tree on its first read. If
+    /// that binding cannot be admitted or the parent has ended, this method
+    /// returns the input in `MimeSubmitFailure`. A pending binding that fails
+    /// to commit after admission is reported by the accepted operation as
+    /// [`crate::MimeError::ReadBudgetBinding`].
     pub fn try_submit_detection_in(
         &self,
         parent: &OperationScope,
