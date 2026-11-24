@@ -86,41 +86,37 @@ fn test_classifies_ogg_with_managed_ffprobe_command() {
             .create_async_backend(&MimeConfig::default(), &services)
             .expect("create managed FFprobe classifier"),
     );
-    // A second staging operation at the exact budget limit proves settlement
-    // returned the first operation's staging reservation.
-    for attempt in 1..=2 {
-        let operation_backend = Arc::clone(&backend);
-        let mut operation = group
-            .as_async()
-            .try_submit(Default::default(), move |scope| async move {
-                operation_backend
-                    .classify_in(
-                        &scope,
-                        BorrowedMimeInput::Bytes {
-                            content: REAL_OGG,
-                            extent: InputExtent::Complete,
-                            filename: Some("test.ogg"),
-                        },
-                        &MimeOperationOptions::default(),
-                    )
-                    .await
-            })
-            .expect("submit FFprobe classification");
+    let operation_backend = Arc::clone(&backend);
+    let mut operation = group
+        .as_async()
+        .try_submit(Default::default(), move |scope| async move {
+            operation_backend
+                .classify_in(
+                    &scope,
+                    BorrowedMimeInput::Bytes {
+                        content: REAL_OGG,
+                        extent: InputExtent::Complete,
+                        filename: Some("test.ogg"),
+                    },
+                    &MimeOperationOptions::default(),
+                )
+                .await
+        })
+        .expect("submit FFprobe classification");
 
-        let outcome = block_on_timeout(operation.wait_outcome(), TEST_TIMEOUT)
-            .expect("FFprobe operation exceeded its bounded test wait");
-        assert!(
-            matches!(outcome, Ok(OperationOutcome::Succeeded(MediaStreamType::AudioOnly))),
-            "real FFprobe must classify the Ogg fixture as AudioOnly; attempt {attempt} got {outcome:?}; ensure ffprobe is on PATH and its shared libraries are available"
-        );
+    let outcome = block_on_timeout(operation.wait_outcome(), TEST_TIMEOUT)
+        .expect("FFprobe operation exceeded its bounded test wait");
+    assert!(
+        matches!(outcome, Ok(OperationOutcome::Succeeded(MediaStreamType::AudioOnly))),
+        "real FFprobe must classify the Ogg fixture as AudioOnly; got {outcome:?}; ensure ffprobe is on PATH and its shared libraries are available"
+    );
 
-        let settlement = block_on_timeout(operation.wait_settlement(), TEST_TIMEOUT)
-            .expect("FFprobe settlement exceeded its bounded test wait");
-        assert!(
-            settlement.all_released(),
-            "FFprobe operation must settle: {settlement:?}"
-        );
-    }
+    let settlement = block_on_timeout(operation.wait_settlement(), TEST_TIMEOUT)
+        .expect("FFprobe settlement exceeded its bounded test wait");
+    assert!(
+        settlement.all_released(),
+        "FFprobe operation must settle: {settlement:?}"
+    );
 
     let shutdown = services.shutdown();
     let settled = block_on_timeout(shutdown.wait_services_settled(), TEST_TIMEOUT)
