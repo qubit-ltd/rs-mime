@@ -463,6 +463,17 @@ Stopped 或 Failed 并不能证明暂存文件和后台 helper 已退出；丢�
 settlement 诊断。`InputExtent` 说明调用方提供的是前缀还是完整输入；`InspectedExtent::Prefix(n)`
 说明交给内容匹配的有界连续窗口，不是逐字节访问计数。因此完整输入也可能对应前缀检查范围。
 
+需要为受管操作设置时限时，在 `MimeOperationOptions.operation.context.deadline` 中配置 scope
+deadline。异步检测会同时等待 deadline、stop signal 和 backend future；即使 provider read 不会自行唤醒，
+deadline 也能使该等待结束，operation 会报告 `Stopped(Timeout)`。若用户取消请求已被接受并与 deadline
+竞争，结果保留 `UserCancelled` 原因。repository matcher 只在协作批次边界检查停止状态，不会在批次中途
+被强制打断。同步子操作也不会被强制中断，只能在自身的协作检查点观察 stop。
+
+临时文件创建若在失败前已生成部分文件，文件系统错误可能携带仍需清理的 owner。runtime 会在
+返回创建错误前，把该 owner 作为清理资源登记到同一 operation scope。发生此类错误后仍应观察
+settlement 和 recovery；仅看到失败 outcome 不能确认部分文件已删除。
+已经派发给 command 或 staging worker 的工作也遵循同一规则：其资源 owner 会持续跟踪到 job 实际结算。
+
 已有 `qubit-operation::OperationScope` 时，可调用 `try_submit_detection_in` 创建子操作；它沿用
 父操作的 manager 视图并绑定 MIME 组。同步子操作入口为
 `try_submit_detection_sync_in`。Provider 能力如下：
@@ -480,6 +491,9 @@ settlement 且 handle 已释放，后续子操作也会继续使用父操作原�
 | `file` | 支持，须显式选择 | 要求完整内容，不支持随机访问。附加要求同一对象精化的 classifier 会以 `UnsupportedCapability` 拒绝。 |
 | 仅同步的自定义 Provider | 不支持 | 异步选择返回 `AsyncUnsupported`，不会回退为同步执行。 |
 
+路径输入会先提取 basename，再交给专用文件名匹配入口；完整路径不会被重新当作文件名解析。
+`OwnedMimeInput::Bytes` 仍使用输入中由调用方提供的 filename。
+
 选择命令 Provider 不保证外部命令可用或运行成功；任务接纳后的运行问题由 operation 报告。
 Classifier 也需要单独显式选择异步实现并满足同一对象能力要求；不能假定每种 detector 选择都能
 使用 `ffprobe`。
@@ -487,6 +501,9 @@ Classifier 也需要单独显式选择异步实现并满足同一对象能力要
 调用 `MimeExecutionServices::shutdown()` 会关闭新的根提交并返回可重复观察的 observer。先用
 `wait_services_settled()` 等待已跟踪操作完成 settlement。若需要恢复，通过
 `recovery_handles_snapshot()` 获取 operation group 中仍未解决的 handle，并在停止服务前完成恢复或转交。
+新的外部操作应在组准入关闭前完成接纳；也可以从已接纳到 MIME 组中的父 operation scope
+派发必要后代。
+组准入关闭后，新的外部 scope 不能首次加入，但已接纳的组内父 scope 仍可继续派发其后代。
 随后在外部同步上下文调用 `stop_services()`，再用 `wait_group_shutdown()` 等待组 Drain。
 Pending 表示工作仍未解决，不是资源已释放的确认；调用方仍持有 typed handle 时，组关闭也可能继续等待。
 操作或 recovery 未解决时，`stop_services()` 会返回 `OperationShutdownPending`，且不会自动重试恢复。

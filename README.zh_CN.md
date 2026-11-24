@@ -77,7 +77,8 @@ Provider 路径 hook。若自定义 backend 希望在读取前拒绝，还可覆
 - 通过 `MimeDetectorRegistry` 与 `MimeConfig` 配置内置 Provider、应用自定义 Provider、
   Provider 选择、fallback 和资源限制。
 - `MimeRuntime` 提供受管检测操作：输入所有权明确，提交拒绝带回原输入，业务结果与资源
-  settlement 分开观察。0.22.0 目标接口仍在验收中，当前证据与未完成项见[验收记录](doc/acceptance-0.22.0-operation-0.2.zh_CN.md)。
+  settlement 分开观察。0.22.0 目标接口仍在验收中，当前证据与未完成项见
+  [验收记录](doc/acceptance-0.22.0-operation-0.2.zh_CN.md)。
 - 可选的 `FileCommandMimeDetector` 使用系统命令 `file --mime-type --brief` 检查内容。
 - 可选的 `FfprobeCommandMediaStreamClassifier` 可进一步区分 WebM、Ogg 等媒体流中的
   仅音频和仅视频结果。
@@ -93,6 +94,16 @@ settlement。创建 runtime 或注册 Provider 不会启动 worker；应用需�
 不能证明已接纳工作停止；释放资源前应观察 settlement。前缀读取期间可能同时保留 Provider
 缓冲区和 worker 的 owned 副本；`max_buffer_size` 限制单个缓冲区，不限制两者合计内存。无文件名时，若同一 MIME 对应的多个映射具有不同
 MIME 对，细化会保留原 MIME；可传入匹配的文件名或消除映射冲突来指定细化对。
+
+组准入关闭后，已接纳到组内的父 operation 仍可派发必要后代；新的外部 scope 必须在关闭前接纳。
+路径输入会先提取 basename 再进行文件名匹配，完整路径不会重新作为文件名解析；
+`OwnedMimeInput::Bytes` 仍使用调用方提供的 filename。
+临时文件部分创建失败时，清理 owner 会由同一 operation scope 持有；应同时检查 settlement 和 recovery，
+不能只依据失败结果判断清理完成。
+受管异步操作会在 backend future 等待期间观察 scope deadline 和 stop 请求；repository matcher
+在协作检查点响应。
+同步子操作不会被强制打断，只能在自身的协作检查点观察 stop。已经派发给 command 或 staging worker 的工作，
+会一直保留资源 owner，直到 worker job 实际结算。
 
 检测器只负责判断 MIME 类型，不能证明文件可以安全打开或执行。Native command
 Provider 依赖对应的可执行文件，也可能因命令不可用、超时或输出无效而失败。

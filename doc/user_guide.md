@@ -583,6 +583,24 @@ prefix or complete input. `InspectedExtent::Prefix(n)` describes the bounded
 contiguous window made available to matching; it is not a byte-by-byte access
 counter. A complete input can therefore have a prefix inspected extent.
 
+Set `MimeOperationOptions.operation.context.deadline` when managed work needs
+a scope deadline. Async detection polls the deadline and stop signal alongside
+the backend future, so a deadline can wake a provider read that would not wake
+on its own. The operation reports `Stopped(Timeout)`; an accepted user-cancel
+request keeps its `UserCancelled` reason when it races the deadline. Repository
+matching checks for stop at cooperative batch boundaries, so CPU work is not
+preempted in the middle of a batch. Synchronous child detection is likewise
+not forcibly interrupted and can observe stop only at its own cooperative
+checks.
+
+If temporary-file creation fails after creating a partial file, the filesystem
+error may carry an owner that still needs cleanup. The runtime registers that
+owner as a cleanup resource in the same operation scope before reporting the
+creation error. Observe settlement and recovery responsibility after the error;
+the failed outcome alone does not confirm that the partial file was removed.
+The same settlement rule applies to command or staging work already dispatched
+to a worker: its resource owner remains tracked until that job actually settles.
+
 Use `try_submit_detection_in` to submit beneath an existing
 `qubit-operation::OperationScope`; the child uses the parent's manager view and
 MIME group binding. The synchronous child entry point is
@@ -605,6 +623,10 @@ budgets.
 | `file` | Yes, after explicit selection | Requires complete content and does not support random-access input. Attaching a classifier that needs same-object refinement is rejected with `UnsupportedCapability`. |
 | Sync-only custom provider | No | Async selection returns `AsyncUnsupported`; it is not run synchronously as a fallback. |
 
+For path-backed inputs, filename rules receive the extracted basename through
+the basename matching entry point; the full path is not reinterpreted as a
+filename. `OwnedMimeInput::Bytes` continues to use its caller-supplied filename.
+
 Selecting a command provider does not guarantee the external command is
 available or will run successfully. Those are runtime conditions reported by
 the accepted operation. A classifier also needs explicit async selection and a
@@ -615,9 +637,13 @@ through every detector selection.
 repeatable observer. Call `wait_services_settled()` to observe tracked
 operations. If recovery is required, use `recovery_handles_snapshot()` to
 retrieve the unresolved group handles, then resolve or transfer them before
-stopping services. Call `stop_services()` from an external synchronous context,
-then observe group shutdown with `wait_group_shutdown()`. A pending settlement
-is unresolved work, not a release confirmation; group Drain can remain pending
+stopping services. Complete new external admission before group admission
+closes, or dispatch required descendants from an operation scope already
+accepted into the MIME group. After group admission closes, a new external
+scope cannot join for the first time, while accepted in-group parent scopes may
+continue dispatching their descendants. Call `stop_services()` from an external
+synchronous context, then observe group shutdown with `wait_group_shutdown()`. A
+pending settlement is unresolved work, not a release confirmation; group Drain can remain pending
 while callers retain typed handles. `stop_services()` returns
 `OperationShutdownPending` while operations or recovery remain unresolved and
 does not retry recovery automatically. The 0.22.0 target remains under acceptance; see the

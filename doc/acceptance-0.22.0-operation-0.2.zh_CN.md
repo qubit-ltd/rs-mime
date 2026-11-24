@@ -236,4 +236,25 @@ MIME-021–038 的逐项结论未在本记录中展开，不能以未附地址�
 | debug | 2.859–3.018 s（同步 4.933 s） | 1.206–1.247 ms | 0.396–0.665 ms | 20.37 ms |
 | release | 114.1–118.2 ms（同步 143.2 ms） | 52–56 μs | 29–62 μs | 20.06 ms |
 
-该 workload 的 debug 最大 poll 从基线约 150–230 ms 降到约 1.2 ms，约两个数量级；release 最大 poll 为 52–56 μs。这是特定合成规则和输入上的调度／吞吐探测，不代表所有 MIME 数据的性能预测。stop signal 由 operation body 显式驱动；仅在 options 中设置 deadline 不会自动轮询该 signal。T8 的本地整合门禁与 clean sibling 布局验证已记录于上文；GitHub Rust CI 需在提交 profile/快照修复后复验。
+该 workload 的 debug 最大 poll 从基线约 150–230 ms 降到约 1.2 ms，约两个数量级；release 最大 poll 为
+52–56 μs。这是特定合成规则和输入上的调度／吞吐探测，不代表所有 MIME 数据的性能预测。T4 将 managed
+async detection 的 deadline 和 stop signal 与 backend future 一起驱动；matcher 仍只在协作批次边界检查停止。
+下面列出 T4 假钟回归覆盖。Repository 构建与查询的独立测量见[基准记录](../benches/repository_matching.md)，
+不应与上方 synthetic matcher poll 数据混为一谈。T8 的本地整合门禁与 clean sibling 布局验证已记录于上文；
+GitHub Rust CI 需在提交 profile/快照修复后复验。
+
+## 2026-11-24 T4：受管操作 deadline 与停止协作
+
+T4 提交 `b761851` 为 managed async detection 同时轮询 operation stop 与 deadline signal。deadline 到期可以唤醒
+仍挂起且不会自行唤醒的 provider read，operation 以 `Stopped(Timeout)` 结束；回归还确认 reader 在 settlement
+后释放。repository matcher 在协作批次间检查停止状态，因此 deadline 能在批次边界停止大量规则匹配。用户取消与
+deadline 竞争时，已接受的 `UserCancelled` 原因保留。
+
+对应的受控回归为 `test_managed_deadline_wakes_never_waking_provider_read_and_releases_reader`、
+`test_managed_deadline_stops_cooperative_repository_matching` 和
+`test_user_cancel_wins_when_racing_a_managed_deadline`。它们使用假钟及受控 provider，不证明真实系统命令已运行
+或被 deadline 终止。
+
+deadline 或 stop 使 async detection future 返回，不代表已经派发的 command 或 staging worker job 也已退出。它们
+继续持有 operation 资源，直到 worker 实际结算；应用仍须等待 settlement，并解决或转交恢复责任，之后才能停止服务。
+同步子操作没有可供 runtime 抢占的 async future，只在具体同步实现的协作检查点观察停止请求。
