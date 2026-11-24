@@ -498,16 +498,34 @@ this variant, the runtime opens the provider object once and lends the backend a
 `session.read_at()` for samples from that same opened object. Do not reopen the
 path or use a raw filesystem handle for a managed input.
 
-`uses_managed_provider_reads()` opts a backend into this session. It defaults to
-`true` when `random_access_capability()` returns
-`RandomAccessCapability::SamplesSameObject`. A backend that needs complete
-sequential provider input can override it to return `true` while declaring
-`RandomAccessCapability::Unsupported`. A `Prefix(n)` backend on the regular
-bounded-prefix route receives `Bytes` containing at most `n` bytes, further
+Complete backends and backends declaring
+`RandomAccessCapability::SamplesSameObject` always receive this metered
+session. The legacy `uses_managed_provider_reads()` hook remains available for
+`Prefix(n)` backends that explicitly need sequential session access; returning
+`false` cannot disable metering for complete or random-access reads. A regular
+`Prefix(n)` backend receives `Bytes` containing at most `n` bytes, further
 limited by request and service buffer/read budgets; the provider may return
-fewer bytes at EOF. No read goes past the prefix bound. A backend that opts into
-managed reads controls its own reads and should keep them within its declared
-extent.
+fewer bytes at EOF. No read goes past the prefix bound.
+
+Read sequentially until `read()` returns zero to observe EOF; a short read alone
+does not prove EOF. Use `read_at(offset, buffer)` to sample the same opened
+object. Each call is charged independently, including repeated or overlapping
+samples. If a call exceeds the remaining request or ancestor allowance, it
+returns a read-budget error; handle that error as a failed inspection rather
+than reopening the path or retrying through an unmetered handle.
+
+```rust,ignore
+let mut buffer = [0; 4096];
+loop {
+    let count = session.read(&mut buffer).await?;
+    if count == 0 { break; } // EOF
+    inspect(&buffer[..count]);
+}
+
+let mut sample = [0; 512];
+let count = session.read_at(1024, &mut sample).await?;
+inspect_sample(&sample[..count]);
+```
 
 Each session read is clipped to the caller's buffer, the payload limit, the
 remaining request and ancestor read allowances, and an 8 KiB chunk. The runtime

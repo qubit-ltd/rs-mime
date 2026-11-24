@@ -513,7 +513,9 @@ impl MimeRuntime {
             .unwrap_or(services.max_read_bytes())
             .min(services.max_read_bytes());
         let (pending_tree, standalone_tree) = match parent {
-            Some(parent) if matches!(&input, OwnedMimeInput::Provider { .. }) => {
+            Some(parent)
+                if matches!(&input, OwnedMimeInput::Provider { .. }) && !filename_short_circuit =>
+            {
                 match services.prepare_read_tree_for_parent(parent, tree_limit, tree_limit) {
                     Ok(binding) => (Some(binding), None),
                     Err(kind) => {
@@ -527,9 +529,7 @@ impl MimeRuntime {
             Some(parent) => (
                 None,
                 Some(
-                    services
-                        .existing_read_tree_for_parent(parent, tree_limit)
-                        .unwrap_or_else(|| services.new_read_tree(tree_limit)),
+                    services.associate_read_tree_for_parent(parent, tree_limit, tree_limit),
                 ),
             ),
             None => (None, Some(services.new_read_tree(tree_limit))),

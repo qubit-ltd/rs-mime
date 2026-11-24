@@ -368,6 +368,19 @@ impl MimeExecutionServices {
         self.read_trees.existing_child_for_parent(parent, scope_limit)
     }
 
+    /// Associates a child with its parent's tree without reserving a parent
+    /// resource slot. A later provider read promotes the association.
+    #[inline]
+    pub(crate) fn associate_read_tree_for_parent(
+        &self,
+        parent: &OperationScope,
+        tree_limit: u64,
+        scope_limit: u64,
+    ) -> Arc<ReadTreeContext> {
+        self.read_trees
+            .associate_child_for_parent(parent, tree_limit, scope_limit)
+    }
+
     /// Prepares a parent read-tree binding that an admitted body commits.
     ///
     /// # Parameters

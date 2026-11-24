@@ -45,6 +45,8 @@ pub(crate) use pending_read_tree_binding::PendingReadTreeBinding;
 pub(in crate::detector) struct ReadTreeRegistry {
     /// Root contexts retained only while an operation or descendant owns them.
     roots: Arc<Roots>,
+    /// Ancestor associations retained weakly without consuming parent slots.
+    ancestors: Arc<Roots>,
     /// Serializes first registration with the external parent resource scope.
     registrations: Arc<Mutex<()>>,
     /// Pending first bindings shared by sibling submissions before one body
@@ -136,10 +138,69 @@ impl ReadTreeRegistry {
                 pending_roots.remove(&operation);
             }
             pending_root
-        }?;
-        let pending_state = pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
-        matches!(&*pending_state, PendingReadTreeRootState::Reserved(_))
-            .then(|| pending_root.root.child(scope_limit))
+        };
+        if let Some(pending_root) = pending_root {
+            let pending_state = pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
+            if matches!(&*pending_state, PendingReadTreeRootState::Reserved(_)) {
+                return Some(pending_root.root.child(scope_limit));
+            }
+        }
+        let mut ancestors = self.ancestors.lock().unwrap_or_else(|e| e.into_inner());
+        let root = ancestors.get(&operation).and_then(Weak::upgrade);
+        if root.is_none() {
+            ancestors.remove(&operation);
+        }
+        root.map(|root| root.child(scope_limit))
+    }
+
+    /// Associates a child with the parent's tree without reserving a parent
+    /// resource slot. A later provider read promotes this association.
+    pub(in crate::detector) fn associate_child_for_parent(
+        &self,
+        parent: &OperationScope,
+        tree_limit: u64,
+        scope_limit: u64,
+    ) -> Arc<ReadTreeContext> {
+        let _registration = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
+        let operation = parent.id();
+        if let Some(root) = self
+            .roots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&operation)
+            .and_then(Weak::upgrade)
+        {
+            return root.child(scope_limit);
+        }
+        if let Some(root) = self
+            .pending_roots
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&operation)
+            .and_then(Weak::upgrade)
+        {
+            let state = root.state.lock().unwrap_or_else(|e| e.into_inner());
+            if matches!(&*state, PendingReadTreeRootState::Reserved(_)) {
+                let mut ancestors = self.ancestors.lock().unwrap_or_else(|e| e.into_inner());
+                ancestors.insert(operation, Arc::downgrade(&root.root));
+                root.root.register(Registration {
+                    roots: Arc::downgrade(&self.ancestors),
+                    operation,
+                });
+                return root.root.child(scope_limit);
+            }
+        }
+        let mut ancestors = self.ancestors.lock().unwrap_or_else(|e| e.into_inner());
+        let root = ancestors.get(&operation).and_then(Weak::upgrade).unwrap_or_else(|| {
+            ancestors.remove(&operation);
+            ReadTreeContext::new(tree_limit)
+        });
+        ancestors.insert(operation, Arc::downgrade(&root));
+        root.register(Registration {
+            roots: Arc::downgrade(&self.ancestors),
+            operation,
+        });
+        root.child(scope_limit)
     }
 
     /// Reserves a parent binding whose anchor will be committed by an
@@ -191,13 +252,22 @@ impl ReadTreeRegistry {
             pending_roots.remove(&operation);
         }
 
+        let associated_root = {
+            let mut ancestors = self.ancestors.lock().unwrap_or_else(|e| e.into_inner());
+            let root = ancestors.get(&operation).and_then(Weak::upgrade);
+            if root.is_none() {
+                ancestors.remove(&operation);
+            }
+            root
+        };
+
         let reservation = parent.reserve_resource().map_err(|error| match error {
             ResourceCapacityError::ScopeEnded => ResourceManageErrorKind::ScopeEnded,
             ResourceCapacityError::Stopped => ResourceManageErrorKind::Stopped,
             ResourceCapacityError::CapacityExceeded => ResourceManageErrorKind::CapacityExceeded,
         })?;
         let pending_root = Arc::new(PendingReadTreeRoot {
-            root: ReadTreeContext::new(tree_limit),
+            root: associated_root.unwrap_or_else(|| ReadTreeContext::new(tree_limit)),
             state: Mutex::new(PendingReadTreeRootState::Reserved(Some(reservation))),
         });
         self.pending_roots
@@ -473,6 +543,36 @@ mod tests {
             .and_then(Weak::upgrade)
             .expect("replacement pending root remains indexed");
         assert!(Arc::ptr_eq(&registered, &replacement));
+    }
+
+    #[test]
+    fn test_provider_binding_promotes_unanchored_ancestor_association() {
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let registry_body = Arc::clone(&registry);
+        with_parent_scope(move |scope| {
+            let mut occupied = Vec::new();
+            while let Ok(reservation) = scope.reserve_resource() {
+                occupied.push(reservation);
+            }
+            assert!(!occupied.is_empty(), "the parent should expose resource capacity");
+
+            let intermediate = registry_body.associate_child_for_parent(scope, 8, 8);
+            assert!(matches!(
+                registry_body.reserve_child_for_parent(scope, 16, 16),
+                Err(ResourceManageErrorKind::CapacityExceeded)
+            ));
+            drop(occupied);
+            let direct_provider = registry_body
+                .reserve_child_for_parent(scope, 16, 16)
+                .expect("provider read can reserve the ancestor resource slot")
+                .commit()
+                .expect("provider read promotes the ancestor association");
+            assert!(Arc::ptr_eq(&intermediate.tree, &direct_provider.tree));
+
+            assert_eq!(6, intermediate.reserve(6).unwrap().commit(6));
+            assert_eq!(2, direct_provider.reserve(2).unwrap().commit(2));
+            assert!(direct_provider.reserve(1).is_none());
+        });
     }
 
     #[test]
