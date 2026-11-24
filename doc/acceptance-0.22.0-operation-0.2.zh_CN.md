@@ -700,17 +700,20 @@ round-9 repair tree 的 `.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb822
 | --- | --- | --- |
 | `align-ci` | exit 0；style 与 CI check 成功 | `align-ci-package-test-dedup.log` |
 | 完整 `ci-check` | exit 0；完整 feature matrix、package 与 audit 成功 | `ci-check-package-test-dedup.log` |
-| Coverage | functions 95.02% (1165/1226)、lines 94.51% (17292/18297)、regions 95.05% (30642/32237)，均满足既定阈值 | `target/infra/coverage/raw.json` |
+| 完整 CI coverage gate | functions 95.02% (1165/1226)、lines 94.51% (17292/18297)、regions 95.05% (30642/32237)，均满足既定阈值 | `ci-check-package-test-dedup.log` |
+| 独立 postcommit coverage gate | functions 95.02% (1165/1226)、lines 94.54% (17298/18297)、regions 95.08% (30651/32237)，均满足既定阈值 | `coverage-final-postcommit.log`、`coverage-raw-final-postcommit.json` |
 | Audit | 扫描 89 个 Cargo.lock 依赖，门禁成功 | `ci-check-package-test-dedup.log` |
 
 完整 CI 日志还记录默认测试 340 passed、0 failed、1 ignored，mod integration tests 444 passed、0 failed、1 ignored，包内文档链接 6 passed，以及 Rustdoc 64 passed 和 1 个 compile-fail 用例通过。matrix 和 package 阶段成功；未提高 coverage 阈值或扩大覆盖范围。
+
+独立 postcommit JSON 是 LLVM raw totals：functions 1987/2131 (93.24%)、lines 17298/18297 (94.54%)、regions 30651/32237 (95.08%)。其中 functions 的 raw denominator 与 infrastructure coverage gate 汇总口径不同；95.02% 是 `coverage-final-postcommit.log` 中的 gate 摘要，不标作 JSON 的 raw functions 百分比。
 
 锁定 metadata/tree 身份核对覆盖根 crate、operation consumer、documentation consumer 与 Magika fixture 四份 manifest；每份都只解析到注册 sibling 上唯一的 `qubit-operation v0.3.2`。相对证据为 `candidate-metadata.result`、`operation-fixture-identity.log`、`candidate-magika-metadata.result`、`candidate-magika-tree.result`。其中 Magika consumer 子任务固定 `rs-mime@c5b7e089fe2eb87a9ef21a0161fb53dc37e591dc` 与登记的 `rs-magika@d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b`，其余 sibling SHA 与上节 hosted Magika 图相同。default 和 inventory 两次 consumer 均 exit 0，且都实际加载 ONNX Runtime 1.24.2；记录见 `T5-magika-candidate.md`、`candidate-magika-default.result`、`candidate-magika-inventory.result` 及对应 `.log`。
 
 | 定向验收 | 结果 | 相对证据名 |
 | --- | --- | --- |
 | operation consumer | locked `cargo run` exit 0 | `consumer-smoke-exit-records.log` |
-| documentation consumer 与 managed lifecycle | locked `cargo run` exit 0；共享 `managed_lifecycle` 示例测试 6 passed | `consumer-smoke-exit-records.log`、`documentation-consumer-postcommit.log` |
+| documentation consumer 与 managed lifecycle | locked consumer 实际执行共享 `managed_lifecycle`，exit 0；另有文档一致性测试 6 passed，其中一项核对该示例与 runnable consumer | `consumer-smoke-exit-records.log`、`documentation-consumer-postcommit.log` |
 | 真实文件工具 | 系统 `file` 对 PNG 返回 `image/png`；公共文件入口测试 1 passed，真实文件集成 3 passed | `consumer-smoke-exit-records.log`、`smoke-postcommit.log` |
 | 真实 FFprobe | integration smoke 1 passed | `smoke-postcommit.log` |
 
