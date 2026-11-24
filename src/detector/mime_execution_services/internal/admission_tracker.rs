@@ -35,9 +35,7 @@ impl AdmissionTracker {
     ///
     /// # Returns
     /// A permit whose drop removes this admission from the active count.
-    pub(in crate::detector::mime_execution_services) fn register(
-        self: &Arc<Self>,
-    ) -> AdmissionPermit {
+    pub(in crate::detector::mime_execution_services) fn register(self: &Arc<Self>) -> AdmissionPermit {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.active += 1;
         drop(state);
@@ -51,9 +49,7 @@ impl AdmissionTracker {
     ///
     /// # Returns
     /// A future that completes when all active admission permits are dropped.
-    pub(in crate::detector::mime_execution_services) fn settled(
-        self: &Arc<Self>,
-    ) -> AdmissionsSettled {
+    pub(in crate::detector::mime_execution_services) fn settled(self: &Arc<Self>) -> AdmissionsSettled {
         AdmissionsSettled::new(Arc::downgrade(self))
     }
 
@@ -65,11 +61,7 @@ impl AdmissionTracker {
     /// # Returns
     /// `true` when the active count is nonzero.
     pub(in crate::detector::mime_execution_services) fn has_active(&self) -> bool {
-        self.state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .active
-            != 0
+        self.state.lock().unwrap_or_else(|error| error.into_inner()).active != 0
     }
 
     /// Checks the active count without waiting for the tracker mutex in tests.
@@ -115,20 +107,13 @@ impl AdmissionTracker {
     ///
     /// # Returns
     /// `Ready(())` when there are no active admissions; otherwise `Pending`.
-    pub(in crate::detector::mime_execution_services) fn poll_settled(
-        &self,
-        context: &Context<'_>,
-    ) -> Poll<()> {
+    pub(in crate::detector::mime_execution_services) fn poll_settled(&self, context: &Context<'_>) -> Poll<()> {
         let candidate = context.waker().clone();
         let (ready, unused) = {
             let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
             if state.active == 0 {
                 (true, Some(candidate))
-            } else if state
-                .waiters
-                .iter()
-                .any(|waiter: &Waker| waiter.will_wake(&candidate))
-            {
+            } else if state.waiters.iter().any(|waiter: &Waker| waiter.will_wake(&candidate)) {
                 (false, Some(candidate))
             } else {
                 state.waiters.push(candidate);
@@ -136,11 +121,7 @@ impl AdmissionTracker {
             }
         };
         drop(unused);
-        if ready {
-            Poll::Ready(())
-        } else {
-            Poll::Pending
-        }
+        if ready { Poll::Ready(()) } else { Poll::Pending }
     }
 }
 
@@ -170,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn poisoned_tracker_recovers_and_deduplicates_waiters() {
+    fn test_tracker_recovers_from_poison_and_deduplicates_waiters() {
         let tracker = Arc::new(AdmissionTracker::default());
         let poisoned = Arc::clone(&tracker);
         assert!(
