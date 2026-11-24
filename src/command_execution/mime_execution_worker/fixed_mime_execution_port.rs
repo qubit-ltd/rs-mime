@@ -28,6 +28,10 @@ pub struct FixedMimeExecutionPort {
     queue_capacity: usize,
     /// Prepared worker pool, if one has been started.
     running: Mutex<Option<RunningWorkers>>,
+    /// Serializes preparation attempts without blocking dispatch.
+    prepare_lock: Mutex<()>,
+    /// Whether worker threads are currently being created.
+    preparing: AtomicBool,
     /// Shared result of shutdown, held locked until all workers have exited.
     shutdown_failed: Mutex<Option<bool>>,
     /// Whether shutdown has been requested.
@@ -51,9 +55,14 @@ impl std::fmt::Debug for FixedMimeExecutionPort {
             .field("queue_capacity", &self.queue_capacity)
             .field(
                 "prepared",
-                &self.running.lock().unwrap_or_else(|e| e.into_inner()).is_some(),
+                &self
+                    .running
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .is_some(),
             )
             .field("stopped", &self.stopped.load(Ordering::Acquire))
+            .field("preparing", &self.preparing.load(Ordering::Acquire))
             .finish()
     }
 }
@@ -75,9 +84,78 @@ impl FixedMimeExecutionPort {
             worker_count: worker_count.max(1),
             queue_capacity: queue_capacity.max(1),
             running: Mutex::new(None),
+            prepare_lock: Mutex::new(()),
+            preparing: AtomicBool::new(false),
             shutdown_failed: Mutex::new(None),
             stopped: AtomicBool::new(false),
         }
+    }
+
+    /// Creates workers through an injectable launcher so preparation lifecycle
+    /// behavior can be tested without timing dependent thread startup.
+    fn prepare_with(
+        &self,
+        mut spawn_worker: impl FnMut(
+            usize,
+            Arc<FixedQueue>,
+        ) -> std::io::Result<std::thread::JoinHandle<()>>,
+    ) -> Result<(), MimeError> {
+        let _prepare_guard = self.prepare_lock.lock().unwrap_or_else(|e| e.into_inner());
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(MimeError::ExecutionServicesRequired);
+        }
+        if self
+            .running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+        {
+            return Ok(());
+        }
+        self.preparing.store(true, Ordering::Release);
+        let queue = Arc::new(FixedQueue {
+            state: Mutex::new(QueueState {
+                jobs: std::collections::VecDeque::with_capacity(self.queue_capacity),
+                closed: false,
+            }),
+            ready: std::sync::Condvar::new(),
+            capacity: self.queue_capacity,
+        });
+        let mut threads = Vec::with_capacity(self.worker_count);
+        for index in 0..self.worker_count {
+            let worker_queue = Arc::clone(&queue);
+            match spawn_worker(index, worker_queue) {
+                Ok(thread) => threads.push(thread),
+                Err(_) => {
+                    {
+                        let mut state = queue.state.lock().unwrap_or_else(|e| e.into_inner());
+                        state.closed = true;
+                    }
+                    queue.ready.notify_all();
+                    for thread in threads {
+                        let _ = thread.join();
+                    }
+                    self.preparing.store(false, Ordering::Release);
+                    return Err(MimeError::ExecutionServicesRequired);
+                }
+            }
+        }
+        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        if self.stopped.load(Ordering::Acquire) {
+            {
+                let mut state = queue.state.lock().unwrap_or_else(|e| e.into_inner());
+                state.closed = true;
+            }
+            queue.ready.notify_all();
+            for thread in threads {
+                let _ = thread.join();
+            }
+            self.preparing.store(false, Ordering::Release);
+            return Err(MimeError::ExecutionServicesRequired);
+        }
+        *running = Some(RunningWorkers { queue, threads });
+        self.preparing.store(false, Ordering::Release);
+        Ok(())
     }
 
     /// Runs shutdown and invokes `on_contended` if the result lock is busy.
@@ -102,7 +180,9 @@ impl FixedMimeExecutionPort {
                 if let Some(on_contended) = on_contended {
                     on_contended();
                 }
-                self.shutdown_failed.lock().unwrap_or_else(|e| e.into_inner())
+                self.shutdown_failed
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
             }
         };
         if let Some(panicked) = *shutdown_failed {
@@ -113,6 +193,9 @@ impl FixedMimeExecutionPort {
             };
         }
 
+        // Preparation creates workers outside the running-state lock so
+        // dispatch remains nonblocking; shutdown still waits for that work.
+        let _prepare_guard = self.prepare_lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut slot = self.running.lock().unwrap_or_else(|e| e.into_inner());
         self.stopped.store(true, Ordering::Release);
         let Some(running) = slot.take() else {
@@ -121,7 +204,11 @@ impl FixedMimeExecutionPort {
         };
         drop(slot);
         {
-            let mut state = running.queue.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = running
+                .queue
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             state.closed = true;
         }
         running.queue.ready.notify_all();
@@ -139,9 +226,9 @@ impl FixedMimeExecutionPort {
 }
 
 impl Drop for FixedMimeExecutionPort {
-    /// Closes the queue when the final port owner disappears. A worker may
-    /// release that owner itself, so its own join handle is detached while
-    /// every other worker is still joined.
+    /// Closes the queue when the final port owner disappears. If a worker
+    /// releases that owner, all handles are detached so no worker waits for
+    /// another worker during pool teardown.
     fn drop(&mut self) {
         let slot = self.running.get_mut().unwrap_or_else(|e| e.into_inner());
         let Some(running) = slot.take() else {
@@ -149,18 +236,29 @@ impl Drop for FixedMimeExecutionPort {
         };
         self.stopped.store(true, Ordering::Release);
         {
-            let mut state = running.queue.state.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = running
+                .queue
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             state.closed = true;
         }
         running.queue.ready.notify_all();
         let current = std::thread::current().id();
+        let dropping_from_worker = running
+            .threads
+            .iter()
+            .any(|worker| worker.thread().id() == current);
         let mut panicked = false;
-        for worker in running.threads {
-            if worker.thread().id() != current {
+        if !dropping_from_worker {
+            for worker in running.threads {
                 panicked |= worker.join().is_err();
             }
         }
-        let result = self.shutdown_failed.get_mut().unwrap_or_else(|e| e.into_inner());
+        let result = self
+            .shutdown_failed
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner());
         if result.is_none() {
             *result = Some(panicked);
         }
@@ -177,44 +275,11 @@ impl MimeExecutionPort for FixedMimeExecutionPort {
     /// Returns `ExecutionServicesRequired` if shutdown has begun or a worker
     /// thread cannot be started.
     fn prepare(&self) -> Result<(), MimeError> {
-        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
-        if self.stopped.load(Ordering::Acquire) {
-            return Err(MimeError::ExecutionServicesRequired);
-        }
-        if running.is_some() {
-            return Ok(());
-        }
-        let queue = Arc::new(FixedQueue {
-            state: Mutex::new(QueueState {
-                jobs: std::collections::VecDeque::with_capacity(self.queue_capacity),
-                closed: false,
-            }),
-            ready: std::sync::Condvar::new(),
-            capacity: self.queue_capacity,
-        });
-        let mut threads = Vec::with_capacity(self.worker_count);
-        for index in 0..self.worker_count {
-            let worker_queue = Arc::clone(&queue);
-            match std::thread::Builder::new()
+        self.prepare_with(|index, worker_queue| {
+            std::thread::Builder::new()
                 .name(format!("mime-worker-{index}"))
                 .spawn(move || worker_loop(worker_queue))
-            {
-                Ok(thread) => threads.push(thread),
-                Err(_) => {
-                    {
-                        let mut state = queue.state.lock().unwrap_or_else(|e| e.into_inner());
-                        state.closed = true;
-                    }
-                    queue.ready.notify_all();
-                    for thread in threads {
-                        let _ = thread.join();
-                    }
-                    return Err(MimeError::ExecutionServicesRequired);
-                }
-            }
-        }
-        *running = Some(RunningWorkers { queue, threads });
-        Ok(())
+        })
     }
 
     /// Adds a job if the prepared queue has available capacity.
@@ -224,7 +289,10 @@ impl MimeExecutionPort for FixedMimeExecutionPort {
     ///
     /// # Returns
     /// `Ok(())` when queued, or the unmodified job when rejected.
-    fn try_dispatch(&self, job: Box<dyn FnOnce() + Send + 'static>) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+    fn try_dispatch(
+        &self,
+        job: Box<dyn FnOnce() + Send + 'static>,
+    ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
         self.try_dispatch_with_status(job)
             .map_err(MimeExecutionDispatchFailure::into_job)
     }
@@ -241,6 +309,12 @@ impl MimeExecutionPort for FixedMimeExecutionPort {
         &self,
         job: Box<dyn FnOnce() + Send + 'static>,
     ) -> Result<(), MimeExecutionDispatchFailure> {
+        if self.stopped.load(Ordering::Acquire) || self.preparing.load(Ordering::Acquire) {
+            return Err(MimeExecutionDispatchFailure::new(
+                MimeExecutionDispatchFailureKind::Unavailable,
+                job,
+            ));
+        }
         let running = self.running.lock().unwrap_or_else(|e| e.into_inner());
         if self.stopped.load(Ordering::Acquire) {
             return Err(MimeExecutionDispatchFailure::new(
@@ -254,7 +328,11 @@ impl MimeExecutionPort for FixedMimeExecutionPort {
                 job,
             ));
         };
-        let mut state = running.queue.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = running
+            .queue
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if state.closed {
             return Err(MimeExecutionDispatchFailure::new(
                 MimeExecutionDispatchFailureKind::Unavailable,
@@ -322,6 +400,7 @@ mod tests {
     use super::FixedQueue;
     use super::QueueState;
     use super::RunningWorkers;
+    use crate::detector::MimeExecutionDispatchFailureKind;
     use crate::detector::MimeExecutionPort;
 
     #[test]
@@ -336,6 +415,124 @@ mod tests {
         assert!(!ran.load(Ordering::SeqCst));
         returned();
         assert!(ran.load(Ordering::SeqCst));
+        port.shutdown().unwrap();
+    }
+
+    #[test]
+    fn test_dispatch_during_blocked_prepare_returns_unavailable_immediately() {
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let prepare_port = Arc::clone(&port);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let prepare = std::thread::spawn(move || {
+            prepare_port.prepare_with(|index, queue| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                std::thread::Builder::new()
+                    .name(format!("mime-worker-{index}"))
+                    .spawn(move || super::worker_loop(queue))
+            })
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("prepare should reach worker creation");
+
+        let dispatch_port = Arc::clone(&port);
+        let job_ran = Arc::new(AtomicBool::new(false));
+        let job_ran_in_dispatch = Arc::clone(&job_ran);
+        let (dispatch_tx, dispatch_rx) = mpsc::channel();
+        let dispatch = std::thread::spawn(move || {
+            let result = dispatch_port.try_dispatch_with_status(Box::new(move || {
+                job_ran_in_dispatch.store(true, Ordering::SeqCst);
+            }));
+            let outcome = result.map_err(|failure| {
+                let kind = failure.kind();
+                failure.into_job()();
+                kind
+            });
+            dispatch_tx.send(outcome).unwrap();
+        });
+        let returned_while_preparing = dispatch_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .ok();
+        release_tx.send(()).unwrap();
+        prepare.join().unwrap().unwrap();
+        let outcome = returned_while_preparing.unwrap_or_else(|| {
+            dispatch_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .expect("dispatch should complete after preparation")
+        });
+        dispatch.join().unwrap();
+        assert_eq!(Err(MimeExecutionDispatchFailureKind::Unavailable), outcome);
+        assert!(job_ran.load(Ordering::SeqCst), "rejected work is returned");
+        port.shutdown().unwrap();
+    }
+
+    #[test]
+    fn test_shutdown_waits_for_in_progress_prepare_and_worker_cleanup() {
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let prepare_port = Arc::clone(&port);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let prepare = std::thread::spawn(move || {
+            prepare_port.prepare_with(|index, queue| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                std::thread::Builder::new()
+                    .name(format!("mime-worker-{index}"))
+                    .spawn(move || super::worker_loop(queue))
+            })
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("prepare should reach worker creation");
+
+        let shutdown_port = Arc::clone(&port);
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+        let shutdown = std::thread::spawn(move || {
+            shutdown_tx.send(shutdown_port.shutdown()).unwrap();
+        });
+        let returned_while_preparing = shutdown_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_ok();
+        release_tx.send(()).unwrap();
+        let prepare_result = prepare.join().unwrap();
+        if !returned_while_preparing {
+            shutdown_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .expect("shutdown should finish after prepare cleanup")
+                .unwrap();
+        }
+        shutdown.join().unwrap();
+        assert!(
+            !returned_while_preparing,
+            "explicit shutdown must wait for preparation to settle"
+        );
+        prepare_result.unwrap();
+    }
+
+    #[test]
+    fn test_prepare_failure_closes_and_joins_workers_already_started() {
+        let port = FixedMimeExecutionPort::new(2, 1);
+        let exited = Arc::new(AtomicBool::new(false));
+        let worker_exited = Arc::clone(&exited);
+        let result = port.prepare_with(|index, queue| {
+            if index == 1 {
+                return Err(std::io::Error::other("injected worker spawn failure"));
+            }
+            let worker_exited = Arc::clone(&worker_exited);
+            std::thread::Builder::new().spawn(move || {
+                super::worker_loop(queue);
+                worker_exited.store(true, Ordering::SeqCst);
+            })
+        });
+
+        assert!(result.is_err());
+        assert!(
+            exited.load(Ordering::SeqCst),
+            "started worker must be joined"
+        );
+        assert!(port.prepare().is_ok(), "failed preparation can be retried");
         port.shutdown().unwrap();
     }
 
@@ -366,11 +563,16 @@ mod tests {
         let shutdown = std::thread::spawn(move || shutdown_port.shutdown());
         release_tx.send(()).unwrap();
         shutdown.join().unwrap().unwrap();
-        assert!(drained.load(Ordering::SeqCst), "shutdown must drain accepted jobs");
+        assert!(
+            drained.load(Ordering::SeqCst),
+            "shutdown must drain accepted jobs"
+        );
         let rejected_ran = Arc::new(AtomicBool::new(false));
         let rejected_job_ran = Arc::clone(&rejected_ran);
         let rejected = port
-            .try_dispatch(Box::new(move || rejected_job_ran.store(true, Ordering::SeqCst)))
+            .try_dispatch(Box::new(move || {
+                rejected_job_ran.store(true, Ordering::SeqCst)
+            }))
             .expect_err("shutdown is terminal");
         assert!(!rejected_ran.load(Ordering::SeqCst));
         rejected();
@@ -403,7 +605,60 @@ mod tests {
         while weak.upgrade().is_some() && std::time::Instant::now() < deadline {
             std::thread::yield_now();
         }
-        assert!(weak.upgrade().is_none(), "last worker owner should be released");
+        assert!(
+            weak.upgrade().is_none(),
+            "last worker owner should be released"
+        );
+    }
+
+    #[test]
+    fn test_worker_side_final_drop_does_not_join_other_workers() {
+        let port = Arc::new(FixedMimeExecutionPort::new(2, 2));
+        port.prepare().unwrap();
+        let weak = Arc::downgrade(&port);
+        let worker_owner = Arc::clone(&port);
+        let (blocked_tx, blocked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let blocked = port.try_dispatch(Box::new(move || {
+            blocked_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        }));
+        assert!(blocked.is_ok());
+        blocked_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("one worker should start the blocked job");
+
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        assert!(
+            port.try_dispatch(Box::new(move || {
+                drop(worker_owner);
+                dropped_tx.send(()).unwrap();
+            }))
+            .is_ok()
+        );
+        let (drained_tx, drained_rx) = mpsc::channel();
+        assert!(
+            port.try_dispatch(Box::new(move || drained_tx.send(()).unwrap()))
+                .is_ok()
+        );
+        drop(port);
+
+        let dropped_without_join = dropped_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_ok();
+        release_tx.send(()).unwrap();
+        assert!(
+            dropped_without_join,
+            "worker-side final drop must not wait for another worker"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        drained_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("queue should drain accepted work after worker-side close");
+        while weak.upgrade().is_some() && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(weak.upgrade().is_none(), "pool owner should be released");
     }
 
     #[test]
@@ -442,7 +697,11 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         let mut reached_worker_join = false;
         loop {
-            let running_is_empty = port.running.lock().unwrap_or_else(|e| e.into_inner()).is_none();
+            let running_is_empty = port
+                .running
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none();
             let queue_is_closed = queue.state.lock().unwrap_or_else(|e| e.into_inner()).closed;
             if running_is_empty && queue_is_closed {
                 reached_worker_join = true;
@@ -482,7 +741,9 @@ mod tests {
         let second_result = if second_returned_early {
             second_done_rx.try_recv().ok()
         } else {
-            second_done_rx.recv_timeout(std::time::Duration::from_secs(2)).ok()
+            second_done_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .ok()
         };
         first.join().unwrap();
         second.join().unwrap();
@@ -499,7 +760,10 @@ mod tests {
             !second_returned_early,
             "concurrent shutdown returned before workers exited"
         );
-        assert!(dispatch_was_rejected, "dispatch remains available during shutdown");
+        assert!(
+            dispatch_was_rejected,
+            "dispatch remains available during shutdown"
+        );
         first_result.unwrap().unwrap();
         second_result.unwrap().unwrap();
     }
@@ -520,7 +784,10 @@ mod tests {
         port.prepare().unwrap();
         port.prepare().unwrap();
         let (done_tx, done_rx) = mpsc::channel();
-        assert!(port.try_dispatch(Box::new(move || done_tx.send(41).unwrap())).is_ok());
+        assert!(
+            port.try_dispatch(Box::new(move || done_tx.send(41).unwrap()))
+                .is_ok()
+        );
         assert_eq!(41, done_rx.recv().unwrap());
         port.shutdown().unwrap();
     }
@@ -537,7 +804,10 @@ mod tests {
         port.prepare().unwrap();
 
         let (done_tx, done_rx) = mpsc::channel();
-        assert!(port.try_dispatch(Box::new(move || done_tx.send(7).unwrap())).is_ok());
+        assert!(
+            port.try_dispatch(Box::new(move || done_tx.send(7).unwrap()))
+                .is_ok()
+        );
         assert_eq!(7, done_rx.recv().unwrap());
         port.shutdown().unwrap();
         assert!(format!("{port:?}").contains("stopped: true"));
@@ -679,7 +949,10 @@ mod tests {
         port.shutdown().unwrap();
         port.shutdown().unwrap();
 
-        assert!(port.prepare().is_err(), "shutdown permanently closes preparation");
+        assert!(
+            port.prepare().is_err(),
+            "shutdown permanently closes preparation"
+        );
         let ran = Arc::new(AtomicBool::new(false));
         let job_ran = Arc::clone(&ran);
         let returned = port
@@ -769,14 +1042,18 @@ mod tests {
         let accepted_ran = Arc::new(AtomicBool::new(false));
         let accepted_job_ran = Arc::clone(&accepted_ran);
         assert!(
-            port.try_dispatch(Box::new(move || accepted_job_ran.store(true, Ordering::SeqCst)))
-                .is_ok()
+            port.try_dispatch(Box::new(
+                move || accepted_job_ran.store(true, Ordering::SeqCst)
+            ))
+            .is_ok()
         );
 
         let rejected_ran = Arc::new(AtomicBool::new(false));
         let rejected_job_ran = Arc::clone(&rejected_ran);
         let rejected = port
-            .try_dispatch_with_status(Box::new(move || rejected_job_ran.store(true, Ordering::SeqCst)))
+            .try_dispatch_with_status(Box::new(move || {
+                rejected_job_ran.store(true, Ordering::SeqCst)
+            }))
             .expect_err("capacity is occupied by the accepted queued job");
         assert_eq!(
             crate::detector::MimeExecutionDispatchFailureKind::QueueFull,
@@ -784,7 +1061,10 @@ mod tests {
         );
         assert!(!rejected_ran.load(Ordering::SeqCst));
         rejected.into_job()();
-        assert!(rejected_ran.load(Ordering::SeqCst), "rejection preserves job ownership");
+        assert!(
+            rejected_ran.load(Ordering::SeqCst),
+            "rejection preserves job ownership"
+        );
         assert!(!accepted_ran.load(Ordering::SeqCst));
 
         release_tx.send(()).unwrap();
