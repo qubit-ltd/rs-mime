@@ -461,9 +461,7 @@ where
     /// # Errors
     /// Returns an error when opening, reading, or detection fails.
     fn detect_file(&self, file: &Path, policy: MimeDetectionPolicy) -> MimeResult<Option<String>> {
-        let Some(basename) = file.file_name().and_then(std::ffi::OsStr::to_str) else {
-            // Keep the existing lossy-path behavior when the native basename
-            // cannot be represented as UTF-8.
+        let Some(native_basename) = file.file_name() else {
             let filename = file.to_string_lossy();
             let from_filename = self.guess_from_filename(&filename);
             let (from_content, _content) = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename
@@ -480,7 +478,10 @@ where
                 DetectionSource::Path(file),
             );
         };
-        let from_filename = self.guess_from_filename_basename(basename);
+        // Keep lossy conversion scoped to the basename so native separators
+        // inside a Unix filename remain ordinary filename characters.
+        let basename = native_basename.to_string_lossy();
+        let from_filename = self.guess_from_filename_basename(&basename);
         let (from_content, _content) = if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
             (Vec::new(), Vec::new())
         } else {
@@ -489,7 +490,7 @@ where
         self.core().select_result_for_basename(
             &from_filename,
             &from_content,
-            Some(basename),
+            Some(&basename),
             policy,
             DetectionSource::Path(file),
         )

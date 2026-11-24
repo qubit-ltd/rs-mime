@@ -140,6 +140,31 @@ fn test_typed_path_preserves_backslash_in_posix_basename() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn test_non_utf8_local_path_matches_lossy_native_basename() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-lossy-native-basename">
+    <glob pattern="left\bad�.mimecase" weight="80"/>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("custom filename repository should parse");
+    let detector = RepositoryMimeDetector::with_repository(&repository);
+    let file = Path::new(OsStr::from_bytes(b"left\\bad\xff.mimecase"));
+
+    assert_eq!(
+        Some("application/x-lossy-native-basename".to_owned()),
+        detector
+            .detect_file(file, MimeDetectionPolicy::PreferFilename)
+            .expect("lossy native basename should match"),
+    );
+}
+
 #[test]
 fn test_detect_by_content_uses_default_repository_magic() {
     let detector = RepositoryMimeDetector::new().expect("default repository should load");
