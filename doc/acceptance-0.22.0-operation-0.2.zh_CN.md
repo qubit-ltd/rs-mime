@@ -417,3 +417,22 @@ T6 前置核对逐一比对了六个依赖 worktree 的 HEAD 与 `.infra/ci/loca
 `cargo test --locked --test mod real_file_integration_tests -- --test-threads=1` 通过 3 项；`cargo test --locked --test mod file_command_mime_detector_tests -- --test-threads=1` 通过 26 项，宿主 `file` 为 `/usr/bin/file`。四组 shutdown、stop-claim、read-tree parent-binding、provider selector-lock 并发回归各重复 10 轮，全部通过；selector-lock filter 每轮匹配两个相近测试。真实 `ffprobe` 未运行：`command -v ffprobe` 不可用；相关受控命令回归仍由完整 CI 覆盖。
 
 门禁在创建提交 `a4973b9026b2bd4f185652dd255bf2af7cdf18b7` 前，对将提交的相同源码与测试内容执行；因此本地验证绑定到该 SHA，不把结果归给其父提交或历史原树。原工作区合并后的 CI 尚未执行；该后续门禁与本表 round-4 候选门禁分开记录。提交时尚未推送，故 hosted CI 没有结果。coverage JSON 被 CI 清理步骤移除，保留的 coverage 百分比与计数来自最终验证摘要。
+
+## 2026-11-24 T6：T4 命令派发拒绝与交付状态索引
+
+### 历史本地门禁与交付快照
+
+- round-4 历史本地完整门禁仍绑定源码与测试候选 `a4973b9026b2bd4f185652dd255bf2af7cdf18b7`；工具链、依赖图、测试数、coverage 和门禁结果见上方“round-4 本地整合门禁与定向验收”。交付快照 `e24e5ddf253283ecc63af954b4c0c65601dba1e1` 没有改动这些源码或测试：`git diff --name-only a4973b9026b2bd4f185652dd255bf2af7cdf18b7 e24e5ddf253283ecc63af954b4c0c65601dba1e1` 仅列出本验收页。
+- 2026-11-24 11:45 UTC 查询 GitHub Actions：[`Documentation consumer` run 45383442299](https://github.com/qubit-ltd/rs-mime/actions/runs/45383442299) head SHA 精确为 `e24e5ddf253283ecc63af954b4c0c65601dba1e1`，completed / success（updated `11:23:41Z`）；[`Rust CI` run 45383443450](https://github.com/qubit-ltd/rs-mime/actions/runs/45383443450) head SHA 同样精确匹配，仍为 pending（updated `11:21:35Z`）。因此交付快照目前只有文档 consumer hosted 结果通过，Rust CI 尚无结论；round-4 本地完整门禁不替代该 hosted 状态。
+
+### T4：暂存拒绝与命令派发拒绝分别验收
+
+T4 代码提交 [`b5947e8`](https://github.com/qubit-ltd/rs-mime/commit/b5947e8e0d9955e3f5c0af99e1b9348c28ae05bb) 分别覆盖 `file` 和 FFprobe 两个阶段。原测试现命名为 `test_full_command_queue_rejects_staging_before_command_dispatch` 和 `test_full_command_queue_rejects_ffprobe_staging_before_command_dispatch`，验证满队列时 staging 在派发前被拒绝。新增的 `test_command_dispatch_queue_full_after_staging_cleans_up_without_running_command` 与 `test_ffprobe_command_dispatch_queue_full_after_staging_cleans_up_without_runner` 则先完成 staging，再拒绝 command submit；分别断言 typed `CommandQueueBusy`、命令未运行、结算责任释放及 staging 资源清理。
+
+在本 worktree、Rust/Cargo 1.94.0 上运行 `cargo +1.94.0 test --locked --lib file_operation_tests`，退出码 0，13 passed；运行 `cargo +1.94.0 test --locked --lib async_operation_tests`，退出码 0，11 passed。FFprobe 的 11 项是该模块过滤器实际匹配数。两条命令均使用仓库 locked 依赖和默认独立 target；这是 T4 定向回归，不是 T7 完整门禁。
+
+### Magika 组合边界与 T7 待补证据
+
+- `rs-magika` 源码提交 `8bd548687ce79cf840ef4ff47b267fe0525bb2d4` 是本轮需核对的 Magika 版本；其当前 hosted MIME pin `33424a6`（完整 SHA `33424a6f63feb8dab3a1214fd68f9ce1151c7762`）仍指向较早版本。
+- 历史本地 sibling `4ec2afb08803d7295b92dbb65b076cf8b46eda6f` 的兼容性证据不等于 Magika hosted pin 已更新，也不等于 `8bd5486` 与 MIME 交付快照 `e24e5dd` 组合已验证。后者留待 T7 对实际 checkout、依赖图、消费者命令与结果分别取证。
+- T7 应将完整门禁与定向消费者结果绑定实际候选源码 SHA 和实际依赖组合；不得把 `a4973b9` 的历史门禁、`4ec2afb` sibling 结果或 `e24e5dd` 的 hosted 结果外推成另一组合的通过证据。真实 `ffprobe` 与 registry 解析仍按上文记录的环境／发布边界单独处理。
