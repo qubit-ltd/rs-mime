@@ -493,3 +493,43 @@ T4 代码提交 [`b5947e8`](https://github.com/qubit-ltd/rs-mime/commit/b5947e8e
 - 最终 `./.infra/bin/align-ci.sh` 在复用 `/tmp/rs-mime-round6-env/infra.sh` 后退出 0；随后单独 source 同一环境的完整 `./.infra/bin/ci-check.sh` 退出 0，覆盖 style、Clippy、build、default/all-features、no-features、inventory-only、strict Rustdoc、README、package、coverage 与 audit。integration 为 442 passed、1 ignored；lib 为 307 passed、1 ignored。CI coverage functions `1115/1173`（95.06%）、lines `15679/16582`（94.55%）、regions `27685/29137`（95.02%），均满足门槛。日志：`/tmp/rs-mime-round6-hosted-fix-align-final.log`、`/tmp/rs-mime-round6-hosted-fix-ci-final.log`。
 - 独立采集 `./.infra/bin/coverage.sh --output <raw-json-path>` 在修复前首次得到 94.97% functions（1114/1173）、94.50% lines（15660/16572）、94.98% regions（27656/29117），未过函数门槛。与归档 CI raw JSON 按源文件比较并 demangle 函数后，少命中的位置是 `PreparedCommand::activate` 对实际 runner 取消错误的无 cleanup failure 映射；原测试只等 `started`/Running 状态，该标志早于 worker 的 stop 检查，因此有时走预启动停止而未调用 runner。增加真实 runner invocation 同步与断言后，两次独立 raw JSON 均为 functions `1115/1173`（95.06%）、lines `15682/16582`（94.57%）、regions 分别 `27688/29137`（95.03%）与 `27691/29137`（95.04%）。逐文件差异只有 `src/command_execution/async_mime_command_executor.rs` 与 `src/command_execution/internal/prepared_command.rs` 之间约 3 行／3 区域命中随调度变化；函数命中计数两次一致，未见 profile mismatch 导致的门槛变化。两个独立 HTML 导出各提示 5 个 mismatched-data functions；提示发生在 HTML 派生报告阶段，raw 函数命中统计稳定，CI 与两次 standalone coverage 均达门槛，因此保留警告记录，不扩大源码或门槛改动。
 - 独立 coverage 原始 JSON、JSON/LCOV/文本/Cobertura 报告及两轮运行日志、完整 CI/align 日志保存在 `/tmp/rs-mime-round6-hosted-fix-coverage-artifacts-final/`；修复前 raw 与失败日志分别为 `/tmp/rs-mime-round6-hosted-fix-independent-coverage`、`/tmp/rs-mime-round6-hosted-fix-coverage.log`。最终 `git diff --check` 退出 0。新的 hosted 候选 SHA 与 hosted 结果由主控后续验收。
+
+### T7 round 7 固定候选验收（2026-11-24）
+
+本节记录 round-7 候选的完整本地验证。代码和 workflow 所对应的精确 MIME 源码 SHA 为 `eba06f4d62c3d70fc1b17db79c7921720c089860`；本节文档在源码验证后追加并另行提交。第一次 `align-ci.sh` 找到 `metered_read_session.rs` 的字段/helper Rustdoc 缺失，第二次指出 helper 缺 `# Parameters`；补齐说明并保留 align 对四个 Rust 文件施加的正式格式差异后，最终 align 退出 0。完整 `ci-check.sh` 对相同源码工作树内容退出 0。
+
+#### 固定图与历史边界
+
+| 仓库 | 固定 SHA | 用途 |
+| --- | --- | --- |
+| rs-mime | `eba06f4d62c3d70fc1b17db79c7921720c089860` | 本节验证的源码 |
+| rs-operation | `175ddef5624abfb8d56f77fd5028da0b808cb0cc` | recovery 发布顺序修复；由 TSV 和 Magika workflow 固定 |
+| rs-fs | `c7ea1d035498aa633f4f3c04d90fdb5d4b73de97` | 固定 sibling |
+| rs-fs-local | `3bf4275ed601e39fdbf8532f9d80d563d9cc7182` | 固定 sibling |
+| rs-fs-registry | `df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c` | 固定 sibling |
+| rs-fs-testkit | `28bf195b8eef9c03d9cb1c5428186758b76aaacd` | 固定 sibling |
+| rs-local-files | `5b52230e0af2997fadc45b5ff48be65b0ca5a70d` | 固定 sibling |
+| rs-magika | `d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b` | 固定 Magika consumer source |
+
+根 crate 及 operation、documentation、Magika 三个 fixture 的 locked metadata 均只解析一个 `qubit-operation`，且 manifest 均来自本候选布局的 `rs-operation/Cargo.toml`。相应四份 `cargo tree -i qubit-operation` 以及 Magika inventory feature tree 均显示唯一 `qubit-operation 0.3.2`。2026-11-24 18:05 UTC 的 `git ls-remote` 查询显示 `rs-operation@175ddef` 已在 origin `dev`、`main`、`dev-starfish`。
+
+round-6 基线 `rs-mime@6b7855b7c6083ede357c3eb01f3b798f9bcaf4e3` 的原始本地 CI／依赖状态保存在 `/tmp/rs-mime-round6-original-hosted-fix-evidence/`；其本地 Magika 为 `41f96a1`、本地 rs-local-files 为 `32c7cff`，不等同于其固定 hosted 图。round-6 的本地通过结果和历史 Magika `d78dd23` 检查不替代 round-7 候选验证。
+
+纯 registry 检查使用不含 path/patch、只声明 `qubit-mime = "=0.22.0"` 的独立 manifest。`cargo generate-lockfile` 于 2026-11-24 17:45:31 UTC 退出 101；registry 给出的最高候选为 `0.21.1`，所以当前尚不能从 crates.io 解析 `0.22.0`。该结果只描述未发布 registry 边界。
+
+#### 本地门禁与定向验证
+
+- 环境为 Linux x86_64、Rust/Cargo 1.94.0。最终 `./.infra/bin/align-ci.sh` exit 0，日志 `/tmp/rs-mime-round7-align-ci-final.log`；完整 `./.infra/bin/ci-check.sh` exit 0，日志 `/tmp/rs-mime-round7-ci-check.log`。门禁包括 style、依赖／锁、Clippy、build、默认/all-features、no-features、inventory-only、strict Rustdoc、README、package、coverage 和 audit。主集成及 feature matrix 各 442 passed、1 ignored；coverage profile lib 316 passed、1 ignored；Rustdoc 64 passed、1 ignored，compile-fail 1 passed，package links 4 passed。Coverage functions `1118/1176`（95.07%）、lines `16038/16972`（94.50%）、regions `28403/29877`（95.07%），均过门槛；audit 扫描 89 个依赖并成功。
+- T1/T3：`managed_temp_cleanup` 5 passed、`managed_staging` 28 passed、prefix runtime 7 passed、metered session 6 passed、Provider 过滤器 70 passed、MIME operation runtime 41 passed；`cargo run --locked --example managed_lifecycle` exit 0。
+- T2 固定上游 `rs-operation@175ddef`：`scope_completion` 10 passed、`v02_cleanup` 1 passed、`v02_group` 8 passed、`v02_resources` 11 passed。
+- T4 文档版本／可运行示例测试 6 passed，且完整 CI 的 strict Rustdoc 与 README 检查通过。
+- T5 FFprobe classifier 单测 13 passed；忽略的真实 Ogg/FFprobe smoke 明确启用并实际通过 1 项。FFprobe 为 `6.1.1-3ubuntu5`；真实文件 repository integration 3 passed，`file_command_mime_detector_tests` 26 passed，系统 `file` 为 5.45。ONNX Runtime 为 1.24.2，wheel SHA-256 为 `93fe190ee555ae8e9c1214bcfcf13af85cd06dd835e8d835ce5a8d01056844fe`。
+- T6 workflow 保留手动触发，对 pull request 和 main push 使用相同窄路径：生产 `src/**`、Cargo manifest/lock、工具链、固定依赖 TSV、Magika fixture 与 workflow 自身。逐项核对该集合覆盖生产、fixture、锁和固定图改动，不匹配纯文档改动。Magika 默认显式注册与 `inventory` 自动发现两模式的 locked tree/run 均 exit 0；程序断言 repository 默认选择、Python 内容分类 `text/x-python`、文件名 PDF 分类 `application/pdf`。operation 与 documentation consumer locked run 均 exit 0。
+
+定向测试、consumer 运行、metadata/tree 输出和其他命令日志均在 `/tmp/rs-mime-round7-evidence/`。本节文档新增差异另存为 `acceptance-round7-document.diff`，提交 diff 可直接核对。
+
+#### Hosted 状态
+
+GitHub Actions 于 `2026-11-24 18:05 UTC` 查询。历史 [Documentation consumer run 45440761372](https://github.com/qubit-ltd/rs-mime/actions/runs/45440761372) 与 [Rust CI run 45440762568](https://github.com/qubit-ltd/rs-mime/actions/runs/45440762568) 均对应 exact head `6b7855b7c6083ede357c3eb01f3b798f9bcaf4e3`：Docs completed/success；Rust CI completed/failure，其中 verify、coverage、no-features、inventory-only 及多数 infrastructure job 成功，macOS 26 arm64 的 Miri 与 address-sanitizer job 被取消。它们不是 round-7 hosted 结果。
+
+round-7 MIME 候选未推送、未手动触发 workflow，因此没有本候选 hosted 结论。推送、手动触发与发布未获本轮授权。尚未完成的边界为 crates.io 还没有 `0.22.0`，以及本地候选没有 hosted 运行；本地固定图与门禁结论已分别记录。
