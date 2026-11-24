@@ -381,10 +381,7 @@ impl<'a> FileCommandMimeDetector<'a> {
     }
 
     #[cfg(test)]
-    fn with_test_runner_invocations(
-        mut self,
-        runner_invocations: Arc<std::sync::atomic::AtomicUsize>,
-    ) -> Self {
+    fn with_test_runner_invocations(mut self, runner_invocations: Arc<std::sync::atomic::AtomicUsize>) -> Self {
         self.test_runner_invocations = Some(runner_invocations);
         self
     }
@@ -647,9 +644,7 @@ impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
                 } else {
                     ManagedCommandExecutor::new(worker)
                 };
-                executor
-                    .run_in(scope, command, staged)
-                    .await?
+                executor.run_in(scope, command, staged).await?
             };
             #[cfg(not(test))]
             let output = ManagedCommandExecutor::new(worker)
@@ -1572,8 +1567,12 @@ mod file_operation_tests {
             events: std::sync::Mutex<Vec<&'static str>>,
         }
         impl MimeExecutionPort for StageThenRejectPort {
-            fn prepare(&self) -> Result<(), MimeError> { Ok(()) }
-            fn shutdown(&self) -> Result<(), MimeError> { Ok(()) }
+            fn prepare(&self) -> Result<(), MimeError> {
+                Ok(())
+            }
+            fn shutdown(&self) -> Result<(), MimeError> {
+                Ok(())
+            }
             fn try_dispatch(
                 &self,
                 job: Box<dyn FnOnce() + Send + 'static>,
@@ -1588,7 +1587,10 @@ mod file_operation_tests {
             ) -> Result<(), crate::MimeExecutionDispatchFailure> {
                 let call = self.calls.fetch_add(1, Ordering::SeqCst);
                 if call < 2 {
-                    self.events.lock().unwrap().push(if call == 0 { "staging_create" } else { "staging_write" });
+                    self.events
+                        .lock()
+                        .unwrap()
+                        .push(if call == 0 { "staging_create" } else { "staging_write" });
                     job();
                     Ok(())
                 } else {
@@ -1611,22 +1613,45 @@ mod file_operation_tests {
             .with_execution_services(services.clone())
             .with_test_runner_invocations(Arc::clone(&runner_invocations));
         let input: Arc<[u8]> = Arc::from(b"staged file input".as_slice());
-        let mut operation = group.as_async().try_submit(Default::default(), move |scope| async move {
-            detector.guess_content_in(
-                &scope,
-                BorrowedMimeInput::Bytes { content: &input, extent: InputExtent::Complete, filename: None },
-                &MimeOperationOptions::default(),
-            ).await
-        }).unwrap();
+        let mut operation = group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                detector
+                    .guess_content_in(
+                        &scope,
+                        BorrowedMimeInput::Bytes {
+                            content: &input,
+                            extent: InputExtent::Complete,
+                            filename: None,
+                        },
+                        &MimeOperationOptions::default(),
+                    )
+                    .await
+            })
+            .unwrap();
         let outcome = block_on(operation.wait_outcome()).unwrap();
-        assert!(matches!(outcome, OperationOutcome::Failed(MimeError::CommandQueueBusy)), "{outcome:?}");
+        assert!(
+            matches!(outcome, OperationOutcome::Failed(MimeError::CommandQueueBusy)),
+            "{outcome:?}"
+        );
         assert_eq!("staging_create", port.events.lock().unwrap()[0]);
         assert_eq!("staging_write", port.events.lock().unwrap()[1]);
         assert_eq!("command_submit_rejected", port.events.lock().unwrap()[2]);
-        assert_eq!(0, runner_invocations.load(Ordering::SeqCst), "managed runner must not be invoked");
+        assert_eq!(
+            0,
+            runner_invocations.load(Ordering::SeqCst),
+            "managed runner must not be invoked"
+        );
         let settlement = block_on(operation.wait_settlement());
-        assert!(settlement.all_released(), "staged file cleanup must settle: {settlement:?}");
-        assert_eq!(3, port.calls.load(Ordering::SeqCst), "staging and rejected command dispatches");
+        assert!(
+            settlement.all_released(),
+            "staged file cleanup must settle: {settlement:?}"
+        );
+        assert_eq!(
+            3,
+            port.calls.load(Ordering::SeqCst),
+            "staging and rejected command dispatches"
+        );
         assert!(port.events.lock().unwrap()[3..].contains(&"cleanup"));
         assert_eq!(0, services.staging_budget().used_bytes());
         let shutdown = services.shutdown();

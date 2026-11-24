@@ -57,6 +57,10 @@ impl ManagedCommandExecutor {
     }
 
     /// Creates an executor that records whether the command runner was invoked.
+    ///
+    /// # Parameters
+    /// - `worker`: Fixed-capacity worker that accepts command jobs.
+    /// - `runner_invocations`: Counter incremented when the runner is invoked.
     #[cfg(test)]
     pub(crate) fn with_runner_invocations(worker: MimeExecutionWorker, runner_invocations: Arc<AtomicUsize>) -> Self {
         Self {

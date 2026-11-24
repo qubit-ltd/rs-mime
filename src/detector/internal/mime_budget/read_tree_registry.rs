@@ -1081,10 +1081,7 @@ mod tests {
                                     .commit()
                                     .expect("first provider should commit its read tree");
                                 assert_eq!(2, context.reserve(2).unwrap().commit(2));
-                                assert!(
-                                    context.reserve(1).is_none(),
-                                    "Bytes branch stays capped at 2"
-                                );
+                                assert!(context.reserve(1).is_none(), "Bytes branch stays capped at 2");
                                 Ok::<_, ()>(())
                             })
                             .unwrap();
@@ -1147,10 +1144,7 @@ mod tests {
                 ));
                 let _settlement = second_branch.wait_settlement().await;
                 assert_eq!(8, root_context.tree.consumed());
-                assert!(
-                    direct.reserve(1).is_none(),
-                    "all siblings share the root limit of 8"
-                );
+                assert!(direct.reserve(1).is_none(), "all siblings share the root limit of 8");
                 Ok::<_, ()>(())
             })
             .unwrap();

@@ -124,10 +124,7 @@ impl AsyncMimeDetectorBackend for PrefixBackend {
                 let mut bytes = vec![0; self.requirement];
                 session.read(&mut bytes).await?
             } else {
-                let BorrowedMimeInput::Bytes {
-                    content, extent, ..
-                } = input
-                else {
+                let BorrowedMimeInput::Bytes { content, extent, .. } = input else {
                     panic!("automatic prefix backend must receive bounded bytes")
                 };
                 assert_eq!(extent, InputExtent::Prefix);
@@ -191,9 +188,7 @@ impl std::fmt::Debug for ParentChildAccountingProvider {
 
 impl ProviderMetadata for ParentChildAccountingProvider {
     fn descriptor(&self) -> ProviderDescriptor {
-        ProviderDescriptor::new(
-            ProviderId::new("parent-child-accounting-test").expect("provider ID"),
-        )
+        ProviderDescriptor::new(ProviderId::new("parent-child-accounting-test").expect("provider ID"))
     }
 }
 
@@ -294,19 +289,16 @@ impl AsyncMimeDetectorBackend for ParentChildAccountingBackend {
                                 ..Default::default()
                             },
                         )
-                        .unwrap_or_else(|failure| {
-                            panic!("{name} child rejected: {:?}", failure.reason)
-                        });
-                    let report = match child.wait_outcome().await.unwrap_or_else(|error| {
-                        panic!("{name} child outcome unavailable: {error:?}")
-                    }) {
+                        .unwrap_or_else(|failure| panic!("{name} child rejected: {:?}", failure.reason));
+                    let report = match child
+                        .wait_outcome()
+                        .await
+                        .unwrap_or_else(|error| panic!("{name} child outcome unavailable: {error:?}"))
+                    {
                         qubit_operation::OperationOutcome::Succeeded(report) => report,
                         other => panic!("{name} child should succeed: {other:?}"),
                     };
-                    self.child_report_bytes
-                        .lock()
-                        .unwrap()
-                        .push(report.budget.bytes_read);
+                    self.child_report_bytes.lock().unwrap().push(report.budget.bytes_read);
                 }
             }
 
@@ -346,9 +338,7 @@ impl AsyncMimeDetectorBackend for CompleteBackend {
         _input: BorrowedMimeInput<'a>,
         _options: &'a MimeOperationOptions,
     ) -> MimeFuture<'a, MimeCandidates> {
-        Box::pin(async {
-            panic!("complete Provider backend should receive the same-object read session")
-        })
+        Box::pin(async { panic!("complete Provider backend should receive the same-object read session") })
     }
 
     fn guess_provider_content_in<'a>(
@@ -366,8 +356,7 @@ impl AsyncMimeDetectorBackend for CompleteBackend {
             let mut second = [0; 4];
             let first_count = session.read_at(0, &mut first).await?;
             let second_count = session.read_at(0, &mut second).await?;
-            self.observed
-                .store(first_count + second_count, Ordering::SeqCst);
+            self.observed.store(first_count + second_count, Ordering::SeqCst);
             Ok(MimeCandidates {
                 candidates: Vec::new(),
                 inspected_extent: InspectedExtent::RandomAccessSamples,
@@ -385,16 +374,9 @@ fn test_managed_prefix_backend_observes_static_cap_and_natural_eof() {
         ("natural-eof", b"abc".as_slice(), 8usize, 3usize),
     ] {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 2 })
-            .unwrap();
-        let services = MimeExecutionServices::new(
-            manager,
-            group,
-            Arc::new(FixedMimeExecutionPort::new(1, 2)),
-            1024,
-        )
-        .unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+        let services =
+            MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
         services.prepare().unwrap();
         let observed = Arc::new(AtomicUsize::new(usize::MAX));
         let registry = MimeDetectorRegistry::default();
@@ -413,8 +395,7 @@ fn test_managed_prefix_backend_observes_static_cap_and_natural_eof() {
                 &qubit_spi::ProviderSelection::named("prefix-runtime-test").unwrap(),
             )
             .unwrap();
-        let filesystem =
-            qubit_fs::AsyncFileSystem::from_spi(PrefixFileSystem::new(content.to_vec())).unwrap();
+        let filesystem = qubit_fs::AsyncFileSystem::from_spi(PrefixFileSystem::new(content.to_vec())).unwrap();
         let mut operation = runtime
             .try_submit_detection(
                 OwnedMimeInput::Provider {
@@ -427,9 +408,7 @@ fn test_managed_prefix_backend_observes_static_cap_and_natural_eof() {
                     ..Default::default()
                 },
             )
-            .unwrap_or_else(|failure| {
-                panic!("{name} prefix operation rejected: {:?}", failure.reason)
-            });
+            .unwrap_or_else(|failure| panic!("{name} prefix operation rejected: {:?}", failure.reason));
 
         match block_on(operation.wait_outcome()).unwrap() {
             qubit_operation::OperationOutcome::Succeeded(report) => {
@@ -443,11 +422,7 @@ fn test_managed_prefix_backend_observes_static_cap_and_natural_eof() {
             "backend input length for {name}"
         );
         let shutdown = services.shutdown();
-        assert!(
-            block_on(shutdown.wait_services_settled())
-                .unwrap()
-                .operations_settled
-        );
+        assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
         assert!(shutdown.stop_services().unwrap().services_stopped);
     }
 }
@@ -459,16 +434,9 @@ fn test_automatic_prefix_backend_observes_static_cap_and_natural_eof() {
         ("natural-eof", b"abc".as_slice(), 8usize, 3usize),
     ] {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 2 })
-            .unwrap();
-        let services = MimeExecutionServices::new(
-            manager,
-            group,
-            Arc::new(FixedMimeExecutionPort::new(1, 2)),
-            1024,
-        )
-        .unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+        let services =
+            MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
         services.prepare().unwrap();
         let observed = Arc::new(AtomicUsize::new(usize::MAX));
         let registry = MimeDetectorRegistry::default();
@@ -487,8 +455,7 @@ fn test_automatic_prefix_backend_observes_static_cap_and_natural_eof() {
                 &qubit_spi::ProviderSelection::named("prefix-runtime-test").unwrap(),
             )
             .unwrap();
-        let filesystem =
-            qubit_fs::AsyncFileSystem::from_spi(PrefixFileSystem::new(content.to_vec())).unwrap();
+        let filesystem = qubit_fs::AsyncFileSystem::from_spi(PrefixFileSystem::new(content.to_vec())).unwrap();
         let mut operation = runtime
             .try_submit_detection(
                 OwnedMimeInput::Provider {
@@ -501,12 +468,7 @@ fn test_automatic_prefix_backend_observes_static_cap_and_natural_eof() {
                     ..Default::default()
                 },
             )
-            .unwrap_or_else(|failure| {
-                panic!(
-                    "{name} automatic prefix operation rejected: {:?}",
-                    failure.reason
-                )
-            });
+            .unwrap_or_else(|failure| panic!("{name} automatic prefix operation rejected: {:?}", failure.reason));
 
         match block_on(operation.wait_outcome()).unwrap() {
             qubit_operation::OperationOutcome::Succeeded(report) => {
@@ -521,11 +483,7 @@ fn test_automatic_prefix_backend_observes_static_cap_and_natural_eof() {
             "backend input length for {name}"
         );
         let shutdown = services.shutdown();
-        assert!(
-            block_on(shutdown.wait_services_settled())
-                .unwrap()
-                .operations_settled
-        );
+        assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
         assert!(shutdown.stop_services().unwrap().services_stopped);
     }
 }
@@ -533,16 +491,9 @@ fn test_automatic_prefix_backend_observes_static_cap_and_natural_eof() {
 #[test]
 fn test_complete_managed_provider_reports_repeated_same_object_reads() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 2 })
-        .unwrap();
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 2)),
-        1024,
-    )
-    .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
     services.prepare().unwrap();
     let observed = Arc::new(AtomicUsize::new(usize::MAX));
     let registry = MimeDetectorRegistry::default();
@@ -559,8 +510,7 @@ fn test_complete_managed_provider_reports_repeated_same_object_reads() {
             &qubit_spi::ProviderSelection::named("complete-runtime-test").unwrap(),
         )
         .unwrap();
-    let filesystem =
-        qubit_fs::AsyncFileSystem::from_spi(PrefixFileSystem::new(b"abcdefgh".to_vec())).unwrap();
+    let filesystem = qubit_fs::AsyncFileSystem::from_spi(PrefixFileSystem::new(b"abcdefgh".to_vec())).unwrap();
     let mut operation = runtime
         .try_submit_detection(
             OwnedMimeInput::Provider {
@@ -573,16 +523,11 @@ fn test_complete_managed_provider_reports_repeated_same_object_reads() {
                 ..Default::default()
             },
         )
-        .unwrap_or_else(|failure| {
-            panic!("complete Provider operation rejected: {:?}", failure.reason)
-        });
+        .unwrap_or_else(|failure| panic!("complete Provider operation rejected: {:?}", failure.reason));
 
     match block_on(operation.wait_outcome()).unwrap() {
         qubit_operation::OperationOutcome::Succeeded(report) => {
-            assert_eq!(
-                report.inspected_extent,
-                InspectedExtent::RandomAccessSamples
-            );
+            assert_eq!(report.inspected_extent, InspectedExtent::RandomAccessSamples);
             assert_eq!(report.budget.bytes_read, 8);
         }
         other => panic!("complete Provider operation failed: {other:?}"),
@@ -593,11 +538,7 @@ fn test_complete_managed_provider_reports_repeated_same_object_reads() {
         "overlapping successful reads count twice"
     );
     let shutdown = services.shutdown();
-    assert!(
-        block_on(shutdown.wait_services_settled())
-            .unwrap()
-            .operations_settled
-    );
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
     assert!(shutdown.stop_services().unwrap().services_stopped);
 }
 
@@ -609,21 +550,12 @@ fn test_parent_and_child_reports_count_local_bytes_across_input_routes() {
         (ParentInputRoute::ManagedProvider, 8, 20, true),
     ] {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 4 })
-            .unwrap();
-        let services = MimeExecutionServices::new(
-            manager,
-            group,
-            Arc::new(FixedMimeExecutionPort::new(1, 2)),
-            32,
-        )
-        .unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let services =
+            MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 32).unwrap();
         services.prepare().unwrap();
-        let file_system = Arc::new(
-            qubit_fs::AsyncFileSystem::from_spi(PrefixFileSystem::new(b"abcdefgh".to_vec()))
-                .unwrap(),
-        );
+        let file_system =
+            Arc::new(qubit_fs::AsyncFileSystem::from_spi(PrefixFileSystem::new(b"abcdefgh".to_vec())).unwrap());
         let child_runtime = Arc::new(Mutex::new(None));
         let child_report_bytes = Arc::new(Mutex::new(Vec::new()));
         let child_registry = MimeDetectorRegistry::default();
@@ -666,15 +598,12 @@ fn test_parent_and_child_reports_count_local_bytes_across_input_routes() {
 
         let input = match route {
             ParentInputRoute::Bytes => {
-                OwnedMimeInput::bytes(Arc::from(&b"abcd"[..]), InputExtent::Complete)
-                    .with_filename("parent")
+                OwnedMimeInput::bytes(Arc::from(&b"abcd"[..]), InputExtent::Complete).with_filename("parent")
             }
-            ParentInputRoute::AutomaticPrefix | ParentInputRoute::ManagedProvider => {
-                OwnedMimeInput::Provider {
-                    file_system: Arc::clone(&file_system),
-                    path: qubit_fs::Path::parse("/parent").unwrap(),
-                }
-            }
+            ParentInputRoute::AutomaticPrefix | ParentInputRoute::ManagedProvider => OwnedMimeInput::Provider {
+                file_system: Arc::clone(&file_system),
+                path: qubit_fs::Path::parse("/parent").unwrap(),
+            },
         };
         let mut parent = runtime
             .try_submit_detection(
@@ -691,10 +620,7 @@ fn test_parent_and_child_reports_count_local_bytes_across_input_routes() {
             other => panic!("parent route should succeed: {other:?}"),
         };
 
-        assert_eq!(
-            parent_bytes, report.budget.bytes_read,
-            "parent own bytes for {route:?}"
-        );
+        assert_eq!(parent_bytes, report.budget.bytes_read, "parent own bytes for {route:?}");
         assert_eq!(
             vec![8, 4],
             *child_report_bytes.lock().unwrap(),
@@ -702,11 +628,7 @@ fn test_parent_and_child_reports_count_local_bytes_across_input_routes() {
         );
         *child_runtime.lock().unwrap() = None;
         let shutdown = services.shutdown();
-        assert!(
-            block_on(shutdown.wait_services_settled())
-                .unwrap()
-                .operations_settled
-        );
+        assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
         assert!(shutdown.stop_services().unwrap().services_stopped);
     }
 }
@@ -714,16 +636,9 @@ fn test_parent_and_child_reports_count_local_bytes_across_input_routes() {
 #[test]
 fn test_automatic_prefix_stops_before_second_read_after_first_read_requests_stop() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 2 })
-        .unwrap();
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 2)),
-        1024,
-    )
-    .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
     services.prepare().unwrap();
     let registry = MimeDetectorRegistry::default();
     registry
@@ -763,12 +678,7 @@ fn test_automatic_prefix_stops_before_second_read_after_first_read_requests_stop
                 ..Default::default()
             },
         )
-        .unwrap_or_else(|failure| {
-            panic!(
-                "automatic prefix stop operation rejected: {:?}",
-                failure.reason
-            )
-        });
+        .unwrap_or_else(|failure| panic!("automatic prefix stop operation rejected: {:?}", failure.reason));
 
     read_rx.recv().unwrap();
     assert_eq!(
@@ -788,27 +698,16 @@ fn test_automatic_prefix_stops_before_second_read_after_first_read_requests_stop
         "no second provider read starts after stop"
     );
     let shutdown = services.shutdown();
-    assert!(
-        block_on(shutdown.wait_services_settled())
-            .unwrap()
-            .operations_settled
-    );
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
     assert!(shutdown.stop_services().unwrap().services_stopped);
 }
 
 #[test]
 fn test_automatic_prefix_deadline_after_first_read_blocks_second_read() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 2 })
-        .unwrap();
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 2)),
-        1024,
-    )
-    .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
     services.prepare().unwrap();
     let registry = MimeDetectorRegistry::default();
     registry
@@ -850,9 +749,9 @@ fn test_automatic_prefix_deadline_after_first_read_blocks_second_read() {
                 operation: qubit_operation::OperationOptions {
                     context: qubit_operation::ContextOptions {
                         clock: Some(clock),
-                        deadline: Some(qubit_operation::Deadline::at(
-                            qubit_operation::MonotonicTime::new(domain, 5),
-                        )),
+                        deadline: Some(qubit_operation::Deadline::at(qubit_operation::MonotonicTime::new(
+                            domain, 5,
+                        ))),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -860,12 +759,7 @@ fn test_automatic_prefix_deadline_after_first_read_blocks_second_read() {
                 ..Default::default()
             },
         )
-        .unwrap_or_else(|failure| {
-            panic!(
-                "automatic prefix deadline operation rejected: {:?}",
-                failure.reason
-            )
-        });
+        .unwrap_or_else(|failure| panic!("automatic prefix deadline operation rejected: {:?}", failure.reason));
 
     match block_on(operation.wait_outcome()).unwrap() {
         qubit_operation::OperationOutcome::Stopped(report) => {
@@ -879,27 +773,16 @@ fn test_automatic_prefix_deadline_after_first_read_blocks_second_read() {
         "no second provider read starts after deadline"
     );
     let shutdown = services.shutdown();
-    assert!(
-        block_on(shutdown.wait_services_settled())
-            .unwrap()
-            .operations_settled
-    );
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
     assert!(shutdown.stop_services().unwrap().services_stopped);
 }
 
 #[test]
 fn test_managed_prefix_owned_budget_rejection_returns_prefix_input() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 2 })
-        .unwrap();
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 2)),
-        1024,
-    )
-    .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
     services.prepare().unwrap();
     let observed = Arc::new(AtomicUsize::new(usize::MAX));
     let registry = MimeDetectorRegistry::default();
@@ -932,20 +815,14 @@ fn test_managed_prefix_owned_budget_rejection_returns_prefix_input() {
         qubit_mime::MimeSubmitRejection::BudgetExceeded
     ));
     match failure.input {
-        OwnedMimeInput::Bytes {
-            content, extent, ..
-        } => {
+        OwnedMimeInput::Bytes { content, extent, .. } => {
             assert!(Arc::ptr_eq(&bytes, &content));
             assert_eq!(extent, InputExtent::Prefix);
         }
         OwnedMimeInput::Provider { .. } => panic!("rejected owned input changed kind"),
     }
     let shutdown = services.shutdown();
-    assert!(
-        block_on(shutdown.wait_services_settled())
-            .unwrap()
-            .operations_settled
-    );
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
     assert!(shutdown.stop_services().unwrap().services_stopped);
 }
 
@@ -1033,10 +910,7 @@ impl qubit_fs::spi::AsyncFileSystemSpi for PrefixFileSystem {
     fn open_random_access_reader<'a>(
         &'a self,
         request: qubit_fs::spi::OpenReaderRequest<'a>,
-    ) -> qubit_fs::spi::SpiFuture<
-        'a,
-        qubit_fs::FsResult<qubit_fs::spi::OpenedAsyncRandomAccessReader>,
-    > {
+    ) -> qubit_fs::spi::SpiFuture<'a, qubit_fs::FsResult<qubit_fs::spi::OpenedAsyncRandomAccessReader>> {
         let info = qubit_fs::metadata::OpenedFileInfo::new(
             qubit_fs::metadata::FileSystemId::new("prefix-runtime-filesystem").unwrap(),
             request.path().clone(),

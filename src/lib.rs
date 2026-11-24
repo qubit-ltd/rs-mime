@@ -83,15 +83,16 @@
 //! return its own typed error. Extension backends may opt into
 //! `MeteredReadSession`; the built-in managed `file` provider meters staging
 //! reads internally. These entry points have distinct input contracts:
-//! `MimeContentBackend::detect_reader` reads from the reader's current position;
-//! an ordinary `MimeDetectorBackend` reader hook requests the declared prefix
-//! and automatic provider reads pass their bounded bytes with conservative
-//! `InputExtent::Prefix`, even if EOF arrives early. `OwnedMimeInput::Bytes`
-//! preserves the caller-supplied bytes and `InputExtent` without implicit
-//! truncation and does not count as provider I/O. Managed provider reads use
-//! `MeteredReadSession` and the operation's shared read budget. The legacy
-//! `max_bytes` path arguments remain explicit prefix limits for callers of
-//! those APIs; they do not redefine the ordinary backend window.
+//! `MimeContentBackend::detect_reader` reads from the reader's current
+//! position; an ordinary `MimeDetectorBackend` reader hook requests the
+//! declared prefix and automatic provider reads pass their bounded bytes with
+//! conservative `InputExtent::Prefix`, even if EOF arrives early.
+//! `OwnedMimeInput::Bytes` preserves the caller-supplied bytes and
+//! `InputExtent` without implicit truncation and does not count as provider
+//! I/O. Managed provider reads use `MeteredReadSession` and the operation's
+//! shared read budget. The legacy `max_bytes` path arguments remain explicit
+//! prefix limits for callers of those APIs; they do not redefine the ordinary
+//! backend window.
 //!
 //! Configure a preferred detector and an explicit fallback. This is useful when
 //! `file` should be used on systems where it is available, while still allowing

@@ -341,10 +341,7 @@ impl ReentrantClock {
     }
 }
 
-fn reentrant_root_clock(
-    runtime: MimeRuntime,
-    callback_calls: Arc<AtomicUsize>,
-) -> Arc<ReentrantClock> {
+fn reentrant_root_clock(runtime: MimeRuntime, callback_calls: Arc<AtomicUsize>) -> Arc<ReentrantClock> {
     Arc::new(ReentrantClock::new(move || {
         callback_calls.fetch_add(1, Ordering::SeqCst);
         let mut nested = runtime

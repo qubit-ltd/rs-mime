@@ -10,9 +10,9 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::task::Context;
 use std::task::Poll;
 
@@ -327,6 +327,13 @@ impl PreparedCommand {
     }
 
     /// Creates a command whose actual managed runner invocation is observable.
+    ///
+    /// # Parameters
+    /// - `worker`: Fixed-capacity worker that owns blocking execution.
+    /// - `runner`: Command runner policy.
+    /// - `command`: Structured command to execute.
+    /// - `input`: Staged input retained through real worker completion.
+    /// - `runner_invocations`: Counter incremented when the runner is invoked.
     #[cfg(test)]
     pub(crate) fn new_with_runner_invocations(
         worker: MimeExecutionWorker,
@@ -338,6 +345,17 @@ impl PreparedCommand {
         Self::new_internal(worker, runner, command, input, Some(runner_invocations))
     }
 
+    /// Builds prepared command state with optional test-only runner tracking.
+    ///
+    /// # Parameters
+    /// - `worker`: Fixed-capacity worker that owns blocking execution.
+    /// - `runner`: Command runner policy.
+    /// - `command`: Structured command to execute.
+    /// - `input`: Staged input retained through real worker completion.
+    /// - `runner_invocations`: Test-only counter for actual runner calls.
+    ///
+    /// # Returns
+    /// State ready to bind to one operation identity.
     fn new_internal(
         worker: MimeExecutionWorker,
         runner: CommandRunner,

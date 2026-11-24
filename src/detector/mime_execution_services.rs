@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicU8;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 use std::task::Context;
 use std::task::Poll;
@@ -95,11 +95,7 @@ impl std::future::Future for AdmissionsSettled {
             let mut state = tracker.state.lock().unwrap_or_else(|e| e.into_inner());
             if state.active == 0 {
                 (true, Some(candidate))
-            } else if state
-                .waiters
-                .iter()
-                .any(|waiter| waiter.will_wake(&candidate))
-            {
+            } else if state.waiters.iter().any(|waiter| waiter.will_wake(&candidate)) {
                 (false, Some(candidate))
             } else {
                 state.waiters.push(candidate);
@@ -184,7 +180,8 @@ pub struct MimeExecutionServices {
     group_shutdown: Arc<Mutex<Option<AsyncShutdownHandle>>>,
     /// Whether all tracked operations have published settlement.
     operations_settled: Arc<AtomicBool>,
-    /// Invalidates settlement snapshots whenever admission or observer state changes.
+    /// Invalidates settlement snapshots whenever admission or observer state
+    /// changes.
     settlement_generation: Arc<AtomicU64>,
     /// Admissions still executing outside MIME locks.
     admissions: Arc<AdmissionTracker>,
@@ -297,7 +294,8 @@ impl MimeExecutionServices {
             let _guard = self.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
             let submissions = self.submission_guard();
             let close = if self.lifecycle() == MimeServiceLifecycle::NotStarted {
-                self.lifecycle.store(MimeServiceLifecycle::Running as u8, Ordering::Release);
+                self.lifecycle
+                    .store(MimeServiceLifecycle::Running as u8, Ordering::Release);
                 false
             } else if self.lifecycle() == MimeServiceLifecycle::Draining {
                 self.admission_frozen.store(true, Ordering::Release);
@@ -321,14 +319,19 @@ impl MimeExecutionServices {
     pub fn shutdown(&self) -> MimeShutdownObserver {
         let close_admission = {
             let _guard = self.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
-            if !matches!(self.lifecycle(), MimeServiceLifecycle::Stopped | MimeServiceLifecycle::ClosedWithoutStart) {
+            if !matches!(
+                self.lifecycle(),
+                MimeServiceLifecycle::Stopped | MimeServiceLifecycle::ClosedWithoutStart
+            ) {
                 let submissions = self.submission_guard();
                 self.top_closed.store(true, Ordering::Release);
                 let freeze = self.preparing.load(Ordering::Acquire);
                 if freeze {
                     self.admission_frozen.store(true, Ordering::Release);
                 }
-                let next = if self.lifecycle() == MimeServiceLifecycle::NotStarted && !self.preparing.load(Ordering::Acquire) {
+                let next = if self.lifecycle() == MimeServiceLifecycle::NotStarted
+                    && !self.preparing.load(Ordering::Acquire)
+                {
                     MimeServiceLifecycle::ClosedWithoutStart
                 } else {
                     MimeServiceLifecycle::Draining
@@ -729,8 +732,12 @@ mod tests {
         fn observe(&self, on_wake: bool) {
             if on_wake {
                 match self.action {
-                    WakerAction::ReenterShutdown => { let _ = self.services.shutdown(); }
-                    WakerAction::ReenterStop => { let _ = self.services.shutdown().stop_services(); }
+                    WakerAction::ReenterShutdown => {
+                        let _ = self.services.shutdown();
+                    }
+                    WakerAction::ReenterStop => {
+                        let _ = self.services.shutdown().stop_services();
+                    }
                     WakerAction::AdmissionState => {
                         if self.services.admissions.state.try_lock().is_err() {
                             self.tracker_reentry_succeeded.store(false, Ordering::SeqCst);
@@ -764,14 +771,18 @@ mod tests {
         let probe = unsafe { Arc::<WakerProbe>::from_raw(data.cast()) };
         probe.wakes.fetch_add(1, Ordering::SeqCst);
         probe.observe(true);
-        if let Some(thread) = probe.thread.lock().unwrap().as_ref() { thread.unpark(); }
+        if let Some(thread) = probe.thread.lock().unwrap().as_ref() {
+            thread.unpark();
+        }
     }
 
     unsafe fn wake_raw_waker_by_ref(data: *const ()) {
         let probe = unsafe { Arc::<WakerProbe>::from_raw(data.cast()) };
         probe.wakes.fetch_add(1, Ordering::SeqCst);
         probe.observe(true);
-        if let Some(thread) = probe.thread.lock().unwrap().as_ref() { thread.unpark(); }
+        if let Some(thread) = probe.thread.lock().unwrap().as_ref() {
+            thread.unpark();
+        }
         let _ = Arc::into_raw(probe);
     }
 
@@ -781,12 +792,8 @@ mod tests {
         probe.observe(false);
     }
 
-    static RAW_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
-        clone_raw_waker,
-        wake_raw_waker,
-        wake_raw_waker_by_ref,
-        drop_raw_waker,
-    );
+    static RAW_WAKER_VTABLE: RawWakerVTable =
+        RawWakerVTable::new(clone_raw_waker, wake_raw_waker, wake_raw_waker_by_ref, drop_raw_waker);
 
     fn block_on_with_waker<F: Future>(future: F, waker: Waker) -> F::Output {
         let mut context = Context::from_waker(&waker);
@@ -800,10 +807,13 @@ mod tests {
     }
 
     fn fill_group_until_stopped(services: &MimeExecutionServices) -> qubit_operation::AsyncOperationHandle<(), ()> {
-        services.async_root_group.try_submit(Default::default(), |scope| async move {
-            scope.context().stop_requested().await;
-            Ok::<(), ()>(())
-        }).unwrap()
+        services
+            .async_root_group
+            .try_submit(Default::default(), |scope| async move {
+                scope.context().stop_requested().await;
+                Ok::<(), ()>(())
+            })
+            .unwrap()
     }
 
     fn start_group_waiter(
@@ -832,7 +842,10 @@ mod tests {
         while probe.clones.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
             std::thread::yield_now();
         }
-        assert!(probe.clones.load(Ordering::SeqCst) > 0, "waiter should register its custom waker");
+        assert!(
+            probe.clones.load(Ordering::SeqCst) > 0,
+            "waiter should register its custom waker"
+        );
         (waiter, rx, probe)
     }
 
@@ -843,7 +856,9 @@ mod tests {
         let services = MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 32).unwrap();
         services.prepare().unwrap();
         let outer = services.begin_admission(false).expect("root admission should be open");
-        let nested = services.begin_admission(true).expect("nested callback must not deadlock");
+        let nested = services
+            .begin_admission(true)
+            .expect("nested callback must not deadlock");
         drop(nested);
         let shutdown = services.shutdown();
         let (tx, rx) = mpsc::sync_channel(1);
@@ -852,15 +867,25 @@ mod tests {
         });
         assert!(rx.recv_timeout(std::time::Duration::from_millis(20)).is_err());
         drop(outer);
-        assert!(rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap().operations_settled);
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap()
+                .operations_settled
+        );
         waiter.join().unwrap();
 
         let generation = services.settlement_generation.load(Ordering::Acquire);
-        let provisional = services.begin_admission(true).expect("Draining accepts children until freeze");
+        let provisional = services
+            .begin_admission(true)
+            .expect("Draining accepts children until freeze");
         drop(provisional);
         assert!(services.settlement_generation.load(Ordering::Acquire) > generation);
         assert!(!services.operations_settled.load(Ordering::Acquire));
-        assert!(block_on(services.shutdown().wait_services_settled()).unwrap().operations_settled);
+        assert!(
+            block_on(services.shutdown().wait_services_settled())
+                .unwrap()
+                .operations_settled
+        );
     }
 
     #[test]
@@ -869,13 +894,21 @@ mod tests {
         let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
         let services = MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 32).unwrap();
         services.prepare().unwrap();
-        let shutdown = super::MimeShutdownObserver { services: services.clone() };
-        assert!(matches!(shutdown.stop_services(), Err(MimeError::OperationShutdownPending)));
+        let shutdown = super::MimeShutdownObserver {
+            services: services.clone(),
+        };
+        assert!(matches!(
+            shutdown.stop_services(),
+            Err(MimeError::OperationShutdownPending)
+        ));
         assert_eq!(MimeServiceLifecycle::Running, services.lifecycle());
         let root_rejected = services.begin_admission(false).is_none();
         let child_rejected = services.begin_admission(true).is_none();
         assert!(root_rejected, "freeze must reject new roots while stop is in progress");
-        assert!(child_rejected, "freeze must reject new children while stop is in progress");
+        assert!(
+            child_rejected,
+            "freeze must reject new children while stop is in progress"
+        );
     }
 
     #[test]
@@ -908,17 +941,28 @@ mod tests {
         while probe.clones.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
             std::thread::yield_now();
         }
-        assert!(probe.clones.load(Ordering::SeqCst) > 0, "waker clone must re-enter the admission tracker");
+        assert!(
+            probe.clones.load(Ordering::SeqCst) > 0,
+            "waker clone must re-enter the admission tracker"
+        );
         while services.admissions.state.lock().unwrap().waiters.is_empty() && std::time::Instant::now() < deadline {
             std::thread::yield_now();
         }
-        assert_eq!(1, services.admissions.state.lock().unwrap().waiters.len(), "waker must be registered before release");
+        assert_eq!(
+            1,
+            services.admissions.state.lock().unwrap().waiters.len(),
+            "waker must be registered before release"
+        );
         drop(admission);
-        rx.recv_timeout(std::time::Duration::from_secs(2)).expect("admission waiter should wake");
+        rx.recv_timeout(std::time::Duration::from_secs(2))
+            .expect("admission waiter should wake");
         waiter.join().unwrap();
         assert!(probe.wakes.load(Ordering::SeqCst) > 0);
         assert!(probe.drops.load(Ordering::SeqCst) > 0);
-        assert!(probe.tracker_reentry_succeeded.load(Ordering::SeqCst), "RawWaker callbacks must run outside the tracker mutex");
+        assert!(
+            probe.tracker_reentry_succeeded.load(Ordering::SeqCst),
+            "RawWaker callbacks must run outside the tracker mutex"
+        );
     }
 
     #[test]
@@ -979,12 +1023,15 @@ mod tests {
         let services = MimeExecutionServices::new(manager, group, port, 32).unwrap();
         let (parent_manager_tx, parent_manager_rx) = mpsc::sync_channel(1);
         let parent_group = services.root_group.clone();
-        let mut parent = services.async_root_group.try_submit(Default::default(), move |scope| async move {
-            let child_manager = scope.manager().with_group(&parent_group).unwrap().as_async();
-            parent_manager_tx.send(child_manager).unwrap();
-            scope.context().stop_requested().await;
-            Ok::<(), ()>(())
-        }).unwrap();
+        let mut parent = services
+            .async_root_group
+            .try_submit(Default::default(), move |scope| async move {
+                let child_manager = scope.manager().with_group(&parent_group).unwrap().as_async();
+                parent_manager_tx.send(child_manager).unwrap();
+                scope.context().stop_requested().await;
+                Ok::<(), ()>(())
+            })
+            .unwrap();
         let mut filler = fill_group_until_stopped(&services);
 
         let preparing = services.clone();
@@ -1037,13 +1084,18 @@ mod tests {
 
         release.wait();
         let prepared = prepare_rx.recv_timeout(std::time::Duration::from_secs(2));
-        prepared.expect("prepare completion waker reentry must not deadlock").unwrap();
+        prepared
+            .expect("prepare completion waker reentry must not deadlock")
+            .unwrap();
         prepare_thread.join().unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while probe.wakes.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
             std::thread::yield_now();
         }
-        assert!(probe.wakes.load(Ordering::SeqCst) > 0, "prepare completion must wake the descendant waiter");
+        assert!(
+            probe.wakes.load(Ordering::SeqCst) > 0,
+            "prepare completion must wake the descendant waiter"
+        );
         let _ = parent.request_stop(qubit_operation::StopReason::UserCancelled);
         let _ = filler.request_stop(qubit_operation::StopReason::UserCancelled);
         let _ = block_on(parent.wait_outcome()).unwrap();
@@ -1074,7 +1126,10 @@ mod tests {
         let (stop_tx, stop_rx) = mpsc::sync_channel(1);
         let stop_thread = std::thread::spawn(move || stop_tx.send(stopping.stop_services()).unwrap());
         let first_stop = stop_rx.recv_timeout(std::time::Duration::from_secs(2));
-        assert!(matches!(first_stop.expect("stop waker reentry must not deadlock"), Err(MimeError::OperationShutdownPending)));
+        assert!(matches!(
+            first_stop.expect("stop waker reentry must not deadlock"),
+            Err(MimeError::OperationShutdownPending)
+        ));
         stop_thread.join().unwrap();
         assert!(waiter_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap());
         waiter.join().unwrap();

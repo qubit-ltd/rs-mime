@@ -109,18 +109,11 @@ pub(in crate::detector) fn preflight(
     services: &MimeExecutionServices,
     managed_provider_reads: bool,
 ) -> Result<crate::detector::internal::mime_budget::BudgetPermit, MimeSubmitRejection> {
-    if options.max_buffer_bytes == Some(0)
-        || options.max_staging_bytes == Some(0)
-        || options.max_read_bytes == Some(0)
+    if options.max_buffer_bytes == Some(0) || options.max_staging_bytes == Some(0) || options.max_read_bytes == Some(0)
     {
-        return Err(MimeSubmitRejection::InvalidOptions(
-            "a request budget is zero".into(),
-        ));
+        return Err(MimeSubmitRejection::InvalidOptions("a request budget is zero".into()));
     }
-    let limit = options
-        .max_buffer_bytes
-        .unwrap_or(max_buffer_size)
-        .min(max_buffer_size);
+    let limit = options.max_buffer_bytes.unwrap_or(max_buffer_size).min(max_buffer_size);
     match input {
         OwnedMimeInput::Bytes { content, .. } => {
             if content.len() > limit {
@@ -231,9 +224,7 @@ pub(in crate::detector) struct MimeSubmission {
 ///
 /// # Errors
 /// Propagates backend, input-provider, and configured-limit errors.
-pub(in crate::detector) async fn detect(
-    request: MimeSubmission,
-) -> MimeResult<MimeDetectionReport> {
+pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<MimeDetectionReport> {
     let context = request.scope.context();
     let mut stop = Box::pin(context.stop_requested());
     let mut deadline = context.deadline_signal().map(Box::pin);
@@ -242,10 +233,7 @@ pub(in crate::detector) async fn detect(
         if let Some(deadline) = deadline.as_mut()
             && deadline.as_mut().poll(cx).is_ready()
         {
-            return Poll::Ready(Err(MimeError::detector_backend(
-                "mime",
-                "operation deadline expired",
-            )));
+            return Poll::Ready(Err(MimeError::detector_backend("mime", "operation deadline expired")));
         }
         if let Poll::Ready(reason) = stop.as_mut().poll(cx) {
             return Poll::Ready(Err(MimeError::detector_backend(
@@ -264,10 +252,7 @@ pub(in crate::detector) async fn detect(
             if let Some(deadline) = deadline.as_mut()
                 && deadline.as_mut().poll(cx).is_ready()
             {
-                return Poll::Ready(Err(MimeError::detector_backend(
-                    "mime",
-                    "operation deadline expired",
-                )));
+                return Poll::Ready(Err(MimeError::detector_backend("mime", "operation deadline expired")));
             }
         }
         result
@@ -352,9 +337,7 @@ async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport
                 candidates.inspected_extent,
                 read_tree.bytes_read(),
                 content.len(),
-                candidates
-                    .staging_bytes
-                    .max(read_tree.staging_usage().peak()),
+                candidates.staging_bytes.max(read_tree.staging_usage().peak()),
             )
         }
         OwnedMimeInput::Provider { file_system, path } => {
@@ -377,13 +360,8 @@ async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport
                     .max_read_bytes
                     .unwrap_or(services.max_read_bytes)
                     .min(services.max_read_bytes);
-                let payload_limit = options
-                    .max_buffer_bytes
-                    .unwrap_or(max_buffer_size)
-                    .min(max_buffer_size);
-                let mut session = if read_plan.random_access
-                    == crate::RandomAccessCapability::SamplesSameObject
-                {
+                let payload_limit = options.max_buffer_bytes.unwrap_or(max_buffer_size).min(max_buffer_size);
+                let mut session = if read_plan.random_access == crate::RandomAccessCapability::SamplesSameObject {
                     MeteredReadSession::open_random_access(
                         &file_system,
                         &path,
@@ -423,9 +401,7 @@ async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport
                     candidates.inspected_extent,
                     read_tree.bytes_read(),
                     0,
-                    candidates
-                        .staging_bytes
-                        .max(read_tree.staging_usage().peak()),
+                    candidates.staging_bytes.max(read_tree.staging_usage().peak()),
                 )
             } else {
                 let candidates = if matches!(read_plan.requirement, ContentRequirement::Complete)
@@ -454,32 +430,22 @@ async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport
                         max_buffer_size,
                         services.max_read_bytes(),
                     );
-                    let read_permit =
-                        read_tree
-                            .reserve(max_bytes as u64)
-                            .ok_or(MimeError::BudgetExceeded {
-                                kind: "read",
-                                requested: max_bytes as u64,
-                                limit: read_tree.remaining(),
-                            })?;
-                    let mut read_accounting =
-                        PrefixReadAccounting::new(read_permit, _scope.context());
+                    let read_permit = read_tree.reserve(max_bytes as u64).ok_or(MimeError::BudgetExceeded {
+                        kind: "read",
+                        requested: max_bytes as u64,
+                        limit: read_tree.remaining(),
+                    })?;
+                    let mut read_accounting = PrefixReadAccounting::new(read_permit, _scope.context());
                     let outcome = file_system
-                        .read_prefix_observed(
-                            &path,
-                            ReadOptions::default(),
-                            max_bytes,
-                            &mut read_accounting,
-                        )
+                        .read_prefix_observed(&path, ReadOptions::default(), max_bytes, &mut read_accounting)
                         .await;
                     let _read = read_accounting.commit();
                     let bytes_read = read_tree.bytes_read();
                     let content = outcome
                         .map_err(|error| match error {
-                            ObservedReadError::Stopped => MimeError::detector_backend(
-                                "mime",
-                                "operation stopped before provider I/O",
-                            ),
+                            ObservedReadError::Stopped => {
+                                MimeError::detector_backend("mime", "operation stopped before provider I/O")
+                            }
                             ObservedReadError::Provider(error) => MimeError::from(error),
                         })?
                         .into_bytes();
@@ -505,9 +471,7 @@ async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport
                         budget: MimeBudgetSummary {
                             owned_bytes: content.len(),
                             bytes_read,
-                            staging_bytes: candidates
-                                .staging_bytes
-                                .max(read_tree.staging_usage().peak()),
+                            staging_bytes: candidates.staging_bytes.max(read_tree.staging_usage().peak()),
                         },
                     });
                 };
@@ -519,9 +483,7 @@ async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport
                     candidates.inspected_extent,
                     read_tree.bytes_read(),
                     0,
-                    candidates
-                        .staging_bytes
-                        .max(read_tree.staging_usage().peak()),
+                    candidates.staging_bytes.max(read_tree.staging_usage().peak()),
                 )
             }
         }
@@ -624,12 +586,8 @@ mod tests {
 
     fn services() -> Arc<MimeExecutionServices> {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 1 })
-            .unwrap();
-        Arc::new(
-            MimeExecutionServices::new(manager, group, Arc::new(NoopPort::default()), 32).unwrap(),
-        )
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        Arc::new(MimeExecutionServices::new(manager, group, Arc::new(NoopPort::default()), 32).unwrap())
     }
 
     #[test]
@@ -653,8 +611,7 @@ mod tests {
     }
 
     fn bytes_input() -> OwnedMimeInput {
-        OwnedMimeInput::bytes(Arc::from(b"payload".as_slice()), InputExtent::Complete)
-            .with_filename("report.bin")
+        OwnedMimeInput::bytes(Arc::from(b"payload".as_slice()), InputExtent::Complete).with_filename("report.bin")
     }
 
     fn assert_original_input(input: OwnedMimeInput) {
@@ -733,14 +690,8 @@ mod tests {
     #[test]
     fn test_prefix_buffer_bytes_uses_required_request_and_service_limits() {
         let options = MimeOperationOptions::default();
-        assert_eq!(
-            4,
-            prefix_buffer_bytes(&options, 4, 16 * 1024 * 1024, 16 * 1024 * 1024)
-        );
-        assert_eq!(
-            0,
-            prefix_buffer_bytes(&options, 0, 16 * 1024 * 1024, 16 * 1024 * 1024)
-        );
+        assert_eq!(4, prefix_buffer_bytes(&options, 4, 16 * 1024 * 1024, 16 * 1024 * 1024));
+        assert_eq!(0, prefix_buffer_bytes(&options, 0, 16 * 1024 * 1024, 16 * 1024 * 1024));
 
         let tight_buffer = MimeOperationOptions {
             max_buffer_bytes: Some(2),

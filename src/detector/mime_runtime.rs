@@ -490,7 +490,10 @@ impl MimeRuntime {
             });
         };
         let Some(_admission) = services.begin_admission(parent.is_some()) else {
-            return Err(MimeSubmitFailure { reason: MimeSubmitRejection::ExecutionServicesRequired, input });
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::ExecutionServicesRequired,
+                input,
+            });
         };
         // Extension hooks may be reentrant; an in-flight ticket keeps this
         // admission visible to shutdown without holding the submission lock.

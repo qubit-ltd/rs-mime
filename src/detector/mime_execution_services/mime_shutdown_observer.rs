@@ -107,7 +107,9 @@ impl MimeShutdownObserver {
             }
             let observers = self.services.observers.lock().unwrap_or_else(|e| e.into_inner());
             let changed = generation != self.services.settlement_generation.load(Ordering::Acquire);
-            let unsettled = observers.iter().any(|observer| observer.snapshot().settlement.is_none());
+            let unsettled = observers
+                .iter()
+                .any(|observer| observer.snapshot().settlement.is_none());
             if changed || unsettled {
                 drop(observers);
                 drop(submissions);

@@ -55,7 +55,11 @@ impl PrefixReadAccounting {
 }
 
 impl ReadIoObserver for PrefixReadAccounting {
-    /// Stops before another provider call when the operation was stopped or expired.
+    /// Stops before another provider call when the operation was stopped or
+    /// expired.
+    ///
+    /// # Parameters
+    /// - `_phase`: Provider I/O phase about to begin.
     fn before_io(&mut self, _phase: ReadIoPhase) -> ControlFlow<()> {
         if self.operation_context.stop_reason().is_some() || self.operation_context.is_expired() {
             ControlFlow::Break(())
@@ -117,11 +121,7 @@ mod tests {
             MonotonicTime::new(self.domain, self.ticks.load(Ordering::Acquire))
         }
 
-        fn register_deadline(
-            &self,
-            _at: MonotonicTime,
-            _wake: Waker,
-        ) -> Box<dyn TimerRegistration> {
+        fn register_deadline(&self, _at: MonotonicTime, _wake: Waker) -> Box<dyn TimerRegistration> {
             Box::new(NoopRegistration)
         }
     }

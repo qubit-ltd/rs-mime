@@ -37,10 +37,7 @@ impl ReadPermit {
     /// # Panics
     /// Panics if the provider returned more bytes than were reserved.
     pub(crate) fn commit(mut self, actual: u64) -> u64 {
-        assert!(
-            actual <= self.reserved,
-            "provider returned more bytes than reserved"
-        );
+        assert!(actual <= self.reserved, "provider returned more bytes than reserved");
         let mut counters = self.tree.counters.lock().unwrap_or_else(|e| e.into_inner());
         counters.reserved -= self.reserved;
         counters.consumed += actual;
@@ -49,9 +46,7 @@ impl ReadPermit {
             counters.reserved -= self.reserved;
             counters.consumed += actual;
         }
-        self.scopes[0]
-            .local_consumed
-            .fetch_add(actual, Ordering::AcqRel);
+        self.scopes[0].local_consumed.fetch_add(actual, Ordering::AcqRel);
         self.committed = true;
         actual
     }
@@ -61,17 +56,9 @@ impl Drop for ReadPermit {
     /// Releases provisional bytes when the read did not commit.
     fn drop(&mut self) {
         if !self.committed {
-            self.tree
-                .counters
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .reserved -= self.reserved;
+            self.tree.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= self.reserved;
             for scope in &self.scopes {
-                scope
-                    .counters
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .reserved -= self.reserved;
+                scope.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= self.reserved;
             }
         }
     }
@@ -113,26 +100,14 @@ mod tests {
         child.reserve(3).unwrap().commit(2);
         child.reserve(2).unwrap().commit(2);
 
-        assert_eq!(
-            4,
-            child.bytes_read(),
-            "repeated reads count every delivered byte"
-        );
+        assert_eq!(4, child.bytes_read(), "repeated reads count every delivered byte");
         assert_eq!(
             0,
             parent.bytes_read(),
             "descendant reads do not enter the parent's report"
         );
-        assert_eq!(
-            0,
-            root.bytes_read(),
-            "descendant reads do not enter the root's report"
-        );
-        assert_eq!(
-            4,
-            parent.remaining(),
-            "descendant reads still consume parent allowance"
-        );
+        assert_eq!(0, root.bytes_read(), "descendant reads do not enter the root's report");
+        assert_eq!(4, parent.remaining(), "descendant reads still consume parent allowance");
         assert_eq!(
             6,
             root.remaining(),
@@ -149,10 +124,7 @@ mod tests {
         assert_eq!(child.remaining(), 2);
 
         let result = catch_unwind(AssertUnwindSafe(|| permit.commit(5)));
-        assert!(
-            result.is_err(),
-            "a read cannot commit more than it reserved"
-        );
+        assert!(result.is_err(), "a read cannot commit more than it reserved");
         assert_eq!(root.consumed(), 0);
         assert_eq!(child.consumed(), 0);
         assert_eq!(root.remaining(), 8);
