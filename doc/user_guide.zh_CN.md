@@ -533,6 +533,8 @@ fn managed_lifecycle(
 settlement，再释放 typed handle，最后等待组 Drain。若存在未解决的 recovery handle，示例会在 worker
 停止前按 recovery phase 尝试处理或转交给应用长期持有的 recovery store。共享入口还运行受控读取失败，
 检查错误可见且 settlement 仍确认资源释放；独立恢复用例确认 transfer 被 store 接收，再由 store 重试成功。
+暂存清理回归还验证了另一种时序：转交后先完全停止原 MIME 服务，再通过仍由应用持有的 recovery store 重试并完成清理。
+因此需要服务关闭后继续恢复时，应让 recovery store 独立于 MIME 服务存活。
 完整样例可通过 `cargo run --example managed_lifecycle` 运行，CI 的 consumer fixture 也运行同一入口。
 
 `MimeRuntime::builtin()` 默认使用内置 repository。调用 `with_execution_services` 附加执行服务时，
@@ -656,6 +658,8 @@ Classifier 也需要单独显式选择异步实现并满足同一对象能力要
 组准入关闭前应先让所需的外部 scope 进入；关闭后，已接纳的父 scope 仍可派发后代。
 Pending 表示工作尚未解决，不能据此确认资源已释放。操作或 recovery 未解决时，
 `stop_services()` 会返回 `OperationShutdownPending`，且不会自动重试 recovery。
+此时应先完成 recovery，或转交给应用独立保留的 `RecoveryStore`；转交完成后，该 store 可在
+MIME 服务停止后继续重试。
 `FixedMimeExecutionPort::shutdown()` 必须从 worker pool 之外的同步上下文调用。并发关闭调用会等待同一批
 worker 实际退出，并观察相同的最终结果。
 0.22.0 目标仍处于验收阶段；已验证行为和未完成的生命周期检查见[验收记录](acceptance-0.22.0-operation-0.2.zh_CN.md)。

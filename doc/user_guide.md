@@ -628,7 +628,11 @@ separately, then drops the typed handle before waiting for group Drain. It
 processes pending recovery and transfers unresolved work to the application's
 long-lived store before workers stop. The shared entry also checks a controlled
 reader failure with a released settlement, then exercises a recovery transfer
-that the store accepts and successfully retries. Run it with
+that the store accepts and successfully retries. The staging recovery regression
+also retries a transferred cleanup after the original MIME services have fully
+stopped; the retained store keeps its recovery worker and ownership permits
+alive until resolution. Keep the store alive independently of the MIME services
+if recovery must continue after service shutdown. Run the example with
 `cargo run --example managed_lifecycle`; the CI consumer fixture invokes the
 same entry point.
 
@@ -817,7 +821,9 @@ admission closes; an already accepted parent may still dispatch descendants
 afterward. Pending settlement is unresolved work, not release confirmation.
 `stop_services()` returns `OperationShutdownPending` while operations or
 recovery remain unresolved, and it does not retry recovery automatically. The
-0.22.0 target remains under acceptance; see the
+pending recovery must be resolved or transferred to a separately retained
+`RecoveryStore`; once transferred, that store can retry it after MIME services
+stop. The 0.22.0 target remains under acceptance; see the
 [acceptance record](acceptance-0.22.0-operation-0.2.zh_CN.md) for tested behavior
 and outstanding lifecycle checks.
 

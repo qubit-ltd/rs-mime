@@ -145,7 +145,9 @@ resources. Once group admission closes, already accepted in-group parents can
 still dispatch required descendants; new external scopes must have entered
 before closure. A partial temporary-file creation error can retain a cleanup
 owner in the same operation scope, so its error outcome alone does not confirm
-cleanup. Async operations observe scope deadlines and stop requests while
+cleanup. Recovery transferred to a `RecoveryStore` remains retryable after the
+original MIME services stop; applications must retain and operate that store
+independently. Async operations observe scope deadlines and stop requests while
 backend futures are pending; repository matching responds at cooperative
 checkpoints. The deadline is checked again if the backend becomes ready, before
 its result is committed, so a timeout can still stop a ready success or error;
