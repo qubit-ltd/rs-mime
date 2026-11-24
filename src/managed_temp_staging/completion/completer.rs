@@ -31,9 +31,12 @@ impl<T> Completer<T> {
     /// # Returns
     /// Nothing; the waiting receiver is woken when needed.
     pub(in crate::managed_temp_staging) fn complete(self, value: T) {
-        let mut state = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
-        state.value = Some(value);
-        if let Some(waker) = state.waker.take() {
+        let waker = {
+            let mut state = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
+            state.value = Some(value);
+            state.waker.take()
+        };
+        if let Some(waker) = waker {
             waker.wake();
         }
     }
