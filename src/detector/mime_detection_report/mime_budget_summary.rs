@@ -28,7 +28,11 @@ pub struct MimeBudgetSummary {
     /// are not included here; they are accounted against the service-wide
     /// owned-memory budget while in use.
     pub owned_bytes: usize,
-    /// Bytes actually read from providers, including repeated reads.
+    /// Bytes successfully delivered by MIME-metered provider reads initiated
+    /// by this request, including repeated or overlapping reads. Descendant
+    /// request reads are reported on their own reports and do not contribute
+    /// here. Provider I/O performed by an extension without the MIME metered
+    /// read session is outside this count.
     pub bytes_read: u64,
     /// Peak staging bytes simultaneously charged to this request.
     ///

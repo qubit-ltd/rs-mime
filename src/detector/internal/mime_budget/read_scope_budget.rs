@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicU64;
 
 use super::ScopeCounters;
 
@@ -18,6 +19,8 @@ pub(super) struct ReadScopeBudget {
     pub(super) limit: u64,
     /// Committed and in-flight byte totals for this scope.
     pub(super) counters: Mutex<ScopeCounters>,
+    /// Bytes committed by reads initiated in this exact operation scope.
+    pub(super) local_consumed: Arc<AtomicU64>,
     /// Parent scope charged for reads performed by this scope.
     pub(super) parent: Option<Arc<ReadScopeBudget>>,
 }
