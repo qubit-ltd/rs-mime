@@ -1734,6 +1734,128 @@ fn test_operation_runtime_group_shutdown_keeps_other_group() {
 }
 
 #[test]
+fn test_operation_runtime_group_resource_cleanup_precedes_port_shutdown() {
+    use qubit_mime::MimeExecutionPort;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[derive(Debug)]
+    struct CleanupPort {
+        stopped: std::sync::atomic::AtomicBool,
+        shutdowns: AtomicUsize,
+    }
+
+    impl qubit_mime::MimeExecutionPort for CleanupPort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+
+        fn try_dispatch(
+            &self,
+            job: Box<dyn FnOnce() + Send + 'static>,
+        ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+            if self.stopped.load(Ordering::SeqCst) {
+                return Err(job);
+            }
+            job();
+            Ok(())
+        }
+
+        fn shutdown(&self) -> Result<(), MimeError> {
+            self.shutdowns.fetch_add(1, Ordering::SeqCst);
+            self.stopped.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    struct CleanupResource {
+        port: Arc<CleanupPort>,
+        entered: mpsc::Sender<()>,
+        release: std::sync::Mutex<Option<mpsc::Receiver<()>>>,
+    }
+
+    impl Drop for CleanupResource {
+        fn drop(&mut self) {
+            let entered = self.entered.clone();
+            let release_rx = self.release.lock().unwrap().take().unwrap();
+            let port = Arc::clone(&self.port);
+            let dispatched = port.try_dispatch(Box::new(move || {
+                entered.send(()).unwrap();
+                release_rx.recv().unwrap();
+            }));
+            assert!(dispatched.is_ok(), "cleanup dispatch must be accepted before port shutdown");
+        }
+    }
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let port = Arc::new(CleanupPort {
+        stopped: std::sync::atomic::AtomicBool::new(false),
+        shutdowns: AtomicUsize::new(0),
+    });
+    let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap();
+    services.prepare().unwrap();
+    let scope = group
+        .resource_scope(qubit_operation::ServiceResourceOptions { capacity: 1 })
+        .unwrap();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let resource = scope
+        .manage(CleanupResource {
+            port: Arc::clone(&port),
+            entered: entered_tx,
+            release: std::sync::Mutex::new(Some(release_rx)),
+        })
+        .unwrap();
+    drop(resource);
+
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+    let shutdown_for_thread = shutdown.clone();
+    let stop = std::thread::spawn(move || shutdown_for_thread.stop_services());
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("group Drain should dispatch managed-resource cleanup");
+    assert_eq!(0, port.shutdowns.load(Ordering::SeqCst));
+    assert_eq!(1, group.snapshot().service_resource_scopes);
+    release_tx.send(()).unwrap();
+    assert!(matches!(
+        stop.join().unwrap(),
+        Err(MimeError::OperationShutdownPending)
+    ));
+    assert!(shutdown.snapshot().group.is_some());
+    assert_eq!(0, port.shutdowns.load(Ordering::SeqCst));
+    drop(scope);
+    let settle_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while group.snapshot().service_resource_scopes != 0 && std::time::Instant::now() < settle_deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(0, group.snapshot().service_resource_scopes);
+    assert!(shutdown.stop_services().unwrap().services_stopped);
+    assert_eq!(1, port.shutdowns.load(Ordering::SeqCst));
+    assert!(block_on(shutdown.wait_group_shutdown()).is_ok());
+}
+
+#[test]
+fn test_operation_runtime_constructor_validates_group_manager_binding() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let foreign_manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let foreign_group = foreign_manager
+        .group(qubit_operation::GroupOptions { capacity: 2 })
+        .unwrap();
+    let port: Arc<dyn qubit_mime::MimeExecutionPort> = Arc::new(TestExecution::default());
+    assert!(matches!(
+        MimeExecutionServices::new(manager.clone(), foreign_group, Arc::clone(&port), 1024),
+        Err(MimeError::GroupBinding(_))
+    ));
+
+    let sibling_group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    assert!(MimeExecutionServices::new(manager.clone(), group, Arc::clone(&port), 1024).is_ok());
+    assert!(MimeExecutionServices::new(manager, sibling_group, port, 1024).is_ok());
+}
+
+#[test]
 fn test_operation_runtime_prepare_retries_after_failure_and_rejects_after_shutdown() {
     #[derive(Debug, Default)]
     struct RetryPreparePort {
