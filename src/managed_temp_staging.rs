@@ -113,6 +113,16 @@ fn ensure_not_stopped(scope: &OperationScope) -> MimeResult<()> {
 ///
 /// An accepted stop reason takes precedence over deadline expiry so that the
 /// operation's established stop semantics remain unchanged.
+///
+/// # Parameters
+/// - `context`: Operation context whose stop and deadline state is checked.
+///
+/// # Returns
+/// `Ok(())` when the context remains active.
+///
+/// # Errors
+/// Returns the operation stop reason or a deadline error when the context is
+/// inactive.
 fn ensure_context_active(context: &OperationContext) -> MimeResult<()> {
     if let Some(reason) = context.stop_reason() {
         return Err(stopped_error(reason));
@@ -579,8 +589,7 @@ async fn write_chunk_in(
     let (sender, receiver) = completion_pair();
     let job = Box::new(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let result =
-                ensure_context_active(&context).and_then(|()| staged.write_chunk(&bytes, permit));
+            let result = ensure_context_active(&context).and_then(|()| staged.write_chunk(&bytes, permit));
             drop(bytes);
             drop(owned_permit);
             result
@@ -736,6 +745,7 @@ mod lifecycle_tests {
     use std::task::Wake;
     use std::task::Waker;
 
+    use qubit_local_files::LocalFileSystem;
     use qubit_operation::ClockDomainId;
     use qubit_operation::ClockSource;
     use qubit_operation::ContextOptions;
@@ -759,7 +769,6 @@ mod lifecycle_tests {
     use crate::command_execution::MimeExecutionWorker;
     use crate::detector::MimeExecutionPort;
     use crate::detector::MimeExecutionServices;
-    use qubit_local_files::LocalFileSystem;
 
     struct ThreadWake(std::thread::Thread);
 
@@ -782,12 +791,7 @@ mod lifecycle_tests {
 
     impl QueuedPort {
         fn run_next(&self) {
-            let job = self
-                .jobs
-                .lock()
-                .unwrap()
-                .pop_front()
-                .expect("a job was accepted");
+            let job = self.jobs.lock().unwrap().pop_front().expect("a job was accepted");
             job();
         }
     }
@@ -818,17 +822,10 @@ mod lifecycle_tests {
 
     impl ClockSource for TestClock {
         fn now(&self) -> MonotonicTime {
-            MonotonicTime::new(
-                self.domain,
-                self.ticks.load(std::sync::atomic::Ordering::SeqCst),
-            )
+            MonotonicTime::new(self.domain, self.ticks.load(std::sync::atomic::Ordering::SeqCst))
         }
 
-        fn register_deadline(
-            &self,
-            _at: MonotonicTime,
-            _wake: Waker,
-        ) -> Box<dyn TimerRegistration> {
+        fn register_deadline(&self, _at: MonotonicTime, _wake: Waker) -> Box<dyn TimerRegistration> {
             Box::new(NoopTimer)
         }
     }
@@ -853,8 +850,7 @@ mod lifecycle_tests {
         });
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
-        let services =
-            Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
         services.prepare().unwrap();
         let clock = Arc::new(TestClock {
             domain: ClockDomainId::new_unique(),
@@ -923,26 +919,20 @@ mod lifecycle_tests {
         };
         let created = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let created_in_job = Arc::clone(&created);
-        let mut operation = block_on(group.try_submit_async(
-            deadline_options(&clock),
-            move |scope| async move {
+        let mut operation = block_on(
+            group.try_submit_async(deadline_options(&clock), move |scope| async move {
                 let reservation = scope.reserve_resource().unwrap();
                 let result = create_empty_staged_with(&scope, reservation, &limits, move || {
                     created_in_job.store(true, std::sync::atomic::Ordering::SeqCst);
-                    LocalFileSystem::host()
-                        .unwrap()
-                        .create_temp_file()
-                        .map_err(Box::new)
+                    LocalFileSystem::host().unwrap().create_temp_file().map_err(Box::new)
                 })
                 .await;
                 Ok::<_, ()>(result)
-            },
-        ))
+            }),
+        )
         .unwrap();
 
-        queued
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .unwrap();
+        queued.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
         clock.ticks.store(5, std::sync::atomic::Ordering::SeqCst);
         port.run_next();
         let result = match block_on(operation.wait_outcome()).unwrap() {
@@ -972,15 +962,11 @@ mod lifecycle_tests {
             budget: services.staging_budget(),
             worker: MimeExecutionWorker::new(port.clone()),
         };
-        let mut operation = block_on(group.try_submit_async(
-            deadline_options(&clock),
-            move |scope| async move {
+        let mut operation = block_on(
+            group.try_submit_async(deadline_options(&clock), move |scope| async move {
                 let reservation = scope.reserve_resource().unwrap();
                 let staged = create_empty_staged_with(&scope, reservation, &limits, || {
-                    let mut temp = LocalFileSystem::host()
-                        .unwrap()
-                        .create_temp_file()
-                        .map_err(Box::new)?;
+                    let mut temp = LocalFileSystem::host().unwrap().create_temp_file().map_err(Box::new)?;
                     temp.as_file_mut().unwrap().write_all(b"seed").unwrap();
                     Ok(temp)
                 })
@@ -989,27 +975,15 @@ mod lifecycle_tests {
                 let observed = staged.clone();
                 let permit = limits.budget.try_reserve(3).unwrap();
                 let owned = limits.budget.try_reserve_owned(3).unwrap();
-                let write_result = write_chunk_in(
-                    &scope,
-                    &limits.worker,
-                    staged,
-                    b"end".to_vec(),
-                    permit,
-                    owned,
-                )
-                .await;
+                let write_result = write_chunk_in(&scope, &limits.worker, staged, b"end".to_vec(), permit, owned).await;
                 Ok::<_, crate::MimeError>((write_result, observed, path))
-            },
-        ))
+            }),
+        )
         .unwrap();
 
-        queued
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .unwrap();
+        queued.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
         port.run_next();
-        queued
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .unwrap();
+        queued.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
         clock.ticks.store(5, std::sync::atomic::Ordering::SeqCst);
         port.run_next();
         let (write_result, observed, path) = match block_on(operation.wait_outcome()).unwrap() {
@@ -1028,15 +1002,10 @@ mod lifecycle_tests {
             "unwritten permits must be returned"
         );
         drop(observed);
-        queued
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .unwrap();
+        queued.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
         port.run_next();
         assert!(block_on(operation.wait_settlement()).all_released());
-        assert!(
-            !path.exists(),
-            "owner cleanup removes the staged file after settlement"
-        );
+        assert!(!path.exists(), "owner cleanup removes the staged file after settlement");
         let shutdown = services.shutdown();
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
         let _ = shutdown.stop_services().unwrap();

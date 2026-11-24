@@ -60,6 +60,7 @@ impl<T> Future for CompletionFuture<T> {
 }
 
 impl<T> Drop for CompletionFuture<T> {
+    /// Removes the registered task waker when the receiver is discarded.
     fn drop(&mut self) {
         let waker = {
             let mut state = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -71,10 +72,10 @@ impl<T> Drop for CompletionFuture<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::atomic::Ordering;
     use std::sync::Arc;
     use std::sync::Mutex;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
     use std::task::Context;
     use std::task::Poll;
     use std::task::RawWaker;
@@ -132,12 +133,9 @@ mod tests {
         probe.inspect();
     }
 
-    static PROBE_VTABLE: RawWakerVTable =
-        RawWakerVTable::new(probe_clone, probe_wake, probe_wake_by_ref, probe_drop);
+    static PROBE_VTABLE: RawWakerVTable = RawWakerVTable::new(probe_clone, probe_wake, probe_wake_by_ref, probe_drop);
 
-    fn lock_probe_waker(
-        state: &Arc<Mutex<super::super::Completion<usize>>>,
-    ) -> (Waker, Arc<LockProbe>) {
+    fn lock_probe_waker(state: &Arc<Mutex<super::super::Completion<usize>>>) -> (Waker, Arc<LockProbe>) {
         let probe = Arc::new(LockProbe {
             state: Arc::clone(state),
             blocked: AtomicUsize::new(0),
@@ -197,7 +195,10 @@ mod tests {
         sender.complete("latest waiter");
         assert_eq!(0, first_counter.0.load(Ordering::SeqCst));
         assert_eq!(1, latest_counter.0.load(Ordering::SeqCst));
-        assert!(matches!(receiver.as_mut().poll(&mut latest_context), Poll::Ready("latest waiter")));
+        assert!(matches!(
+            receiver.as_mut().poll(&mut latest_context),
+            Poll::Ready("latest waiter")
+        ));
     }
 
     #[test]
@@ -209,20 +210,11 @@ mod tests {
         let mut receiver = Box::pin(receiver);
 
         let mut first_context = Context::from_waker(&first_waker);
-        assert!(matches!(
-            receiver.as_mut().poll(&mut first_context),
-            Poll::Pending
-        ));
+        assert!(matches!(receiver.as_mut().poll(&mut first_context), Poll::Pending));
         let mut latest_context = Context::from_waker(&latest_waker);
-        assert!(matches!(
-            receiver.as_mut().poll(&mut latest_context),
-            Poll::Pending
-        ));
+        assert!(matches!(receiver.as_mut().poll(&mut latest_context), Poll::Pending));
         sender.complete(41);
-        assert!(matches!(
-            receiver.as_mut().poll(&mut latest_context),
-            Poll::Ready(41)
-        ));
+        assert!(matches!(receiver.as_mut().poll(&mut latest_context), Poll::Ready(41)));
         drop(receiver);
         drop(first_waker);
         drop(latest_waker);
@@ -239,10 +231,7 @@ mod tests {
         let mut context = Context::from_waker(&waker);
         let mut receiver = Box::pin(receiver);
 
-        assert!(matches!(
-            receiver.as_mut().poll(&mut context),
-            Poll::Pending
-        ));
+        assert!(matches!(receiver.as_mut().poll(&mut context), Poll::Pending));
         drop(receiver);
         assert!(state.lock().unwrap().waker.is_none());
         drop(waker);

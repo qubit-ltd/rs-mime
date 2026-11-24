@@ -43,7 +43,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: qubit-ltd/rs-operation
-          ref: 81048bfdee881d45d510e14eec5c1c3016a545d1
+          ref: 893bcf6c7efb397cc8fac2f7fe18fb5e87017e63
           path: rs-operation
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
