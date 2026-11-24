@@ -472,19 +472,6 @@ impl MimeRuntime {
         // Extension hooks may be reentrant. Capture capabilities once before
         // taking the shared submission lock.
         let read_plan = mime_submission::ProviderReadPlan::capture(backend.as_ref(), self_metered_provider_reads);
-        let _submission = services.submission_guard();
-        let can_submit = if parent.is_some() {
-            services.accepts_children()
-        } else {
-            services.is_prepared()
-        };
-        if !can_submit {
-            return Err(MimeSubmitFailure {
-                reason: MimeSubmitRejection::ExecutionServicesRequired,
-                input,
-            });
-        }
-        let max_buffer_size = self.context.config().max_buffer_size();
         let repository = self.async_repository.clone();
         let filename_winner = repository.as_ref().and_then(|repository| match &input {
             OwnedMimeInput::Bytes { filename, .. } => super::internal::async_repository_matcher::preferred_filename(
@@ -498,6 +485,19 @@ impl MimeRuntime {
                 options.policy,
             ),
         });
+        let _submission = services.submission_guard();
+        let can_submit = if parent.is_some() {
+            services.accepts_children()
+        } else {
+            services.is_prepared()
+        };
+        if !can_submit {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::ExecutionServicesRequired,
+                input,
+            });
+        }
+        let max_buffer_size = self.context.config().max_buffer_size();
         let filename_short_circuit = filename_winner.is_some();
         let requirement =
             read_plan.requirement_for(filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }));

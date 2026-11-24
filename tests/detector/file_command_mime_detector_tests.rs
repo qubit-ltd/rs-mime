@@ -90,6 +90,24 @@ fn test_detect_by_filename_uses_repository_candidates() {
 }
 
 #[test]
+fn test_file_based_detector_native_basename_preserves_backslash() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-native-basename">
+    <glob pattern="left\right.mimecase" weight="80"/>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("custom filename repository should parse");
+    let detector = FileCommandMimeDetector::with_repository(&repository);
+
+    assert_eq!(
+        vec!["application/x-native-basename"],
+        FileBasedMimeDetector::guess_from_filename_basename(&detector, r"left\right.mimecase"),
+    );
+}
+
+#[test]
 fn test_is_available_can_be_called_without_panicking() {
     #[cfg(unix)]
     let _path_guard = PathEnvGuard::preserve();

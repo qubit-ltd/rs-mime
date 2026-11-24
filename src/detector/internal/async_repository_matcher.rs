@@ -29,17 +29,17 @@ use crate::repository::mime_magic_matcher::yield_after_work;
 ///
 /// # Returns
 /// The sole matching MIME type for `PreferFilename`, or `None` otherwise.
-pub(in crate::detector) fn preferred_filename(
-    repository: &MimeRepository,
+pub(in crate::detector) fn preferred_filename<'a>(
+    repository: &'a MimeRepository,
     filename: Option<&str>,
     policy: MimeDetectionPolicy,
-) -> Option<MimeType> {
+) -> Option<&'a MimeType> {
     if policy != MimeDetectionPolicy::PreferFilename {
         return None;
     }
     let filename = filename?;
     let matches = repository.detect_by_filename(filename);
-    (matches.len() == 1).then(|| matches[0].clone())
+    (matches.len() == 1).then(|| matches[0])
 }
 
 /// Returns the unique filename result for an already extracted native
@@ -52,16 +52,16 @@ pub(in crate::detector) fn preferred_filename(
 ///
 /// # Returns
 /// The sole matching MIME type for `PreferFilename`, or `None` otherwise.
-pub(in crate::detector) fn preferred_basename(
-    repository: &MimeRepository,
+pub(in crate::detector) fn preferred_basename<'a>(
+    repository: &'a MimeRepository,
     basename: Option<&str>,
     policy: MimeDetectionPolicy,
-) -> Option<MimeType> {
+) -> Option<&'a MimeType> {
     if policy != MimeDetectionPolicy::PreferFilename {
         return None;
     }
     let matches = repository.detect_by_filename_basename(basename?);
-    (matches.len() == 1).then(|| matches[0].clone())
+    (matches.len() == 1).then(|| matches[0])
 }
 
 /// Match content rules in bounded batches while preserving the synchronous
@@ -228,10 +228,12 @@ mod cooperative_matcher_tests {
 
     use super::match_content;
     use super::match_content_with_budget;
+    use super::preferred_basename;
     use super::select_candidates;
     use crate::MimeCandidate;
     use crate::MimeDetectionPolicy;
     use crate::MimeRepository;
+    use crate::MimeType;
     use crate::repository::mime_magic_matcher::MATCH_WORK_PER_BATCH;
     use crate::repository::mime_magic_matcher::MatcherWorkBudget;
 
@@ -511,13 +513,37 @@ mod cooperative_matcher_tests {
     }
 
     #[test]
+    fn test_preferred_basename_borrows_unique_match() {
+        let repository = MimeRepository::from_xml(
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+              <mime-type type="application/x-non-ascii"><glob pattern="报告🚀.mimecase"/></mime-type>
+            </mime-info>"#,
+        )
+        .unwrap();
+        let expected = repository.detect_by_filename_basename("报告🚀.mimecase")[0];
+        let actual: Option<&MimeType> = preferred_basename(
+            &repository,
+            Some("报告🚀.mimecase"),
+            MimeDetectionPolicy::PreferFilename,
+        );
+
+        assert!(actual.is_some_and(|actual| std::ptr::eq(actual, expected)));
+        assert!(preferred_basename(
+            &repository,
+            Some("unknown.mimecase"),
+            MimeDetectionPolicy::PreferFilename,
+        )
+        .is_none());
+    }
+
+    #[test]
     fn test_async_magic_ranking_matches_sync_order_and_deduplication() {
         let repository = Arc::new(
             MimeRepository::from_xml(
                 r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
                   <mime-type type="application/x-low"><magic priority="50"><match type="string" value="HIT" offset="0"/></magic></mime-type>
-                  <mime-type type="application/x-high-a"><magic priority="80"><match type="string" value="HIT" offset="0"/></magic></mime-type>
-                  <mime-type type="application/x-high-b"><magic priority="80"><match type="string" value="HIT" offset="0"/><match type="string" value="HIT" offset="0"/></magic></mime-type>
+                  <mime-type type="application/x-high-a"><magic priority="80"><match type="string" value="HIT" offset="0"/></magic><magic priority="80"><match type="string" value="HIT" offset="0"/></magic></mime-type>
+                  <mime-type type="application/x-high-b"><magic priority="80"><match type="string" value="HIT" offset="0"/></magic></mime-type>
                 </mime-info>"#,
             )
             .unwrap(),
