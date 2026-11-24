@@ -515,7 +515,7 @@ T4 代码提交 [`b5947e8`](https://github.com/qubit-ltd/rs-mime/commit/b5947e8e
 
 round-6 基线 `rs-mime@6b7855b7c6083ede357c3eb01f3b798f9bcaf4e3` 的原始本地 CI／依赖状态保存在 `/tmp/rs-mime-round6-original-hosted-fix-evidence/`；其本地 Magika 为 `41f96a1`、本地 rs-local-files 为 `32c7cff`，不等同于其固定 hosted 图。round-6 的本地通过结果和历史 Magika `d78dd23` 检查不替代 round-7 候选验证。
 
-历史 `rs-magika@d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b` 在 `rs-mime@a5e48d2fa35204183c2bd37a96782ba78327067` 基线上有两组需分开理解的证据；本节保留已知命令、依赖 SHA 与结果。原始日志位于临时目录，未纳入仓库；缺失项按下文证据边界如实注明：
+历史 `rs-magika@d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b` 在 `rs-mime@a5e48d2fa35204183c2bd37a96782ba78327067f` 基线上有两组需分开理解的证据；本节保留已知命令、依赖 SHA 与结果。原始日志位于临时目录，未纳入仓库；缺失项按下文证据边界如实注明：
 
 1. **MIME T4 consumer 验证：** 固定 `rs-operation@2821f739c996250fa9cfe33a86efc54c2fab6373` 下，MIME 的 Magika inventory consumer 在 default 与 `inventory` 两种模式分别运行 locked operation tree 和 consumer run，四条命令均 exit 0。两棵树各只有固定路径上的 `qubit-operation 0.3.2`；程序验证默认仍选 repository，并验证 Python 内容与 PDF 文件名检测。日志为 `/tmp/rs-mime-round6-t4-tree.log`、`/tmp/rs-mime-round6-t4-tree-inventory.log`、`/tmp/rs-mime-round6-t4-run-final.log`、`/tmp/rs-mime-round6-t4-run-inventory-final.log`。
 2. **Magika 自身 fixture 的独立负对照：** 同一固定 Magika SHA 的 `tests/fixtures/readme_consumer` 在 default 与 `inventory` 模式分别执行两棵 tree 和两次 run，均 exit 0；它验证的是 Magika README consumer 路径，不是上面的 MIME inventory fixture。日志为 `/tmp/rs-mime-round6-magika-negative-tree.log`、`/tmp/rs-mime-round6-magika-negative-tree-inventory.log`、`/tmp/rs-mime-round6-magika-negative-run-rerun.log`、`/tmp/rs-mime-round6-magika-negative-run-inventory.log`。首个 cold run 被 tool session 中断，采用成功的 rerun 记录。
@@ -578,3 +578,59 @@ round-6 基线 `rs-mime@6b7855b7c6083ede357c3eb01f3b798f9bcaf4e3` 的原始本�
 旧候选 `eba06f4d62c3d70fc1b17db79c7921720c089860` 的 `ci-check.sh` 原始日志路径为 `/tmp/rs-mime-round7-ci-check.log`，后来被原工作区 runner 复用同一路径覆盖；不得将该路径当前内容归属于旧候选。会话观察摘要位于 `/tmp/rs-mime-round7-evidence/candidate-ci-summary.md`，其中记录结果来自当时可见终端输出，不是完整日志替代品；完整命令交错顺序和精确完成时间无法恢复。此前 round-7 记录中的 hosted 历史查询文件也只存在于临时 evidence 目录，未纳入仓库，故本页只引用可直接复核的 GitHub run 页面，不把临时文件路径当稳定制品。
 
 本轮未推送，也未为最终候选创建 hosted run，因此不声称 hosted 验收通过。精确 registry 查询也仍无 `0.22.0` 发布版本。完整交付 SHA 由本节文档提交后的 `git rev-parse HEAD` 确认；该提交只记录证据，不改变已测试的源码与测试内容。
+
+## 2026-11-24 T6 round-9 最终候选验收
+
+本节新增记录固定 operation pin、补齐 T6 验收与本轮实际门禁。原 design 与 implementation plan 仍仅作为输入，未修改。源码／配置提交为 `1257c9fd31ac319745989ce38d1077ccdf293123`（`chore(mime): align operation pin and rustdoc`），其 tree 为 `dedf8e4c8b24b26a741a9f0aaa23fa7d47130a1f`；测试均在该 tree 对应的完整工作内容上执行。源码提交包含更新的两个 `rs-operation` 固定 pin，以及 align 发现后补全的 Rustdoc；没有改 Cargo.lock。
+
+### 依赖图与唯一包身份
+
+本轮 T6 主图实际固定为：
+
+| 仓库 | SHA | 角色 |
+| --- | --- | --- |
+| `rs-mime` | `1257c9fd31ac319745989ce38d1077ccdf293123`（tree `dedf8e4c8b24b26a741a9f0aaa23fa7d47130a1f`） | 受测候选 |
+| `rs-fs` | `c7ea1d035498aa633f4f3c04d90fdb5d4b73de97` | 固定 sibling |
+| `rs-fs-local` | `3bf4275ed601e39fdbf8532f9d80d563d9cc7182` | 固定 sibling |
+| `rs-fs-registry` | `df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c` | 可选 sibling |
+| `rs-fs-testkit` | `28bf195b8eef9c03d9cb1c5428186758b76aaacd` | dev sibling |
+| `rs-local-files` | `5b52230e0af2997fadc45b5ff48be65b0ca5a70d` | 固定 sibling |
+| `rs-operation` | `893bcf6c7efb397cc8fac2f7fe18fb5e87017e63` | 固定 operation sibling；已同步 `.infra/ci/local-path-dependencies.tsv` 与 `.github/workflows/magika-consumer.yml` |
+| `rs-magika` | `d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b` | 固定 Magika consumer sibling；不属于 MIME 主图 |
+
+根 crate、`tests/fixtures/documentation_consumer`、`tests/fixtures/operation_consumer`、`tests/fixtures/magika_inventory_consumer` 的 `cargo metadata --locked --format-version 1` 与 `cargo tree --locked -i qubit-operation` 均 exit 0。四份 metadata 各只解析一个 `qubit-operation 0.3.2`，其 manifest 均为本布局的 `../rs-operation/Cargo.toml`；四棵 tree 也各只显示一个该包。Magika inventory feature tree 在独立动态验收中另行核对，同样只有该固定 sibling。原始 metadata/tree 保存于仓库外证据目录 `.../.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb8227-round-9/`。
+
+独立动态基线必须与上述新固定图分开：实测组合是 `rs-mime@d47152393640a1c632e12c0204dea5f114a9ea27 × rs-magika@2ad8d078c20202eef3388cd2f38492ebc8f9f0ab × rs-local-files@a3c27068c824106187b2a8927fcf98a5053b2a1f`；其中 `rs-operation` 仍固定为 `81048bfdee881d45d510e14eec5c1c3016a545d1`，其他 fixed pins 与本表所列一致。动态 fixture default 与 `inventory` 的 locked metadata/tree 及实际运行均 exit 0。两次运行都断言 repository 是默认选择、Python 内容识别为 `text/x-python`、PDF 文件名识别为 `application/pdf`。独立报告和原始日志保存在上述仓库外 `.validation` 目录中的 `T6-magika-fixture.md` 及对应日志；不构成新固定图的测试结果。
+
+### 本地门禁与真实集成
+
+环境为 Linux x86_64、Rust/Cargo `1.94.0`。最终 `./.infra/bin/align-ci.sh` exit 0；完整 `./.infra/bin/ci-check.sh` exit 0。CI 执行 style、Clippy、build、默认 tests、strict Rustdoc、README、release build、feature matrix、package、coverage 与 audit。默认测试结果为 324 unit tests、450 `mod` integration tests、1 operation API consumer test、6 package-document-link tests；Rustdoc 64 passed、1 compile-fail passed。feature matrix 的 `no-features` 和 `inventory-only` 两组均通过；另运行 `cargo test --locked --all-features`，同为 324 unit、450 integration、6 package-link tests，Rustdoc 64 + 1 compile-fail，exit 0。当前 crate 只有 `inventory` 一个可选 feature。
+
+Coverage 为 functions `1143/1200`（95.25%）、lines `16473/17430`（94.51%）、regions `29230/30752`（95.05%），各自超过原阈值；未调整阈值或覆盖范围。Security audit 扫描 89 个 Cargo.lock crate dependencies，未报告 vulnerability。`cargo package` 验证通过，打包 283 个文件。首次 align 曾因 `ensure_context_active` 缺 Rustdoc 章节和 `CompletionFuture::drop` 无 Rustdoc 而 exit 1；修复说明后 align 通过，未放宽 style 规则。
+
+定向及真实工具验收均在固定主图运行：
+
+| 验收 | 结果 |
+| --- | --- |
+| T1 completion 锁外通知、重入、替换与取消回归：`cargo test --locked --lib completion` | 8 passed |
+| 基线 admission waiter 回归 `test_admission_waiter_clones_wakes_and_drops_waker_outside_tracker_lock` | 1 passed；属于 admission tracker，不作为 T1 completion 证据 |
+| T2 排队暂存创建与写入 deadline 回归 | 两项分别 1 passed |
+| staging report 与并发隔离回归 | 两项分别 1 passed |
+| `cargo run --locked --example managed_lifecycle` | exit 0 |
+| operation 与 documentation consumers 的 `cargo run --locked` | 各 exit 0 |
+| 固定 Magika `d78dd23` consumer，default 与 `--features inventory` | 两次真实 `cargo run --locked` 均 exit 0 |
+| `real_file_integration_tests` | 3 passed |
+| 系统 `file` smoke | `file-5.45`；`test_public_sync_file_reader_and_file_based_entry_points` 1 passed |
+| 显式 ignored FFprobe smoke：`cargo test --locked --test mod real_ffprobe_integration_tests -- --ignored` | 1 passed、0 ignored，确实运行测试；FFprobe 版本见完整日志 |
+
+Magika 固定 fixture 使用 workflow 校验过的 ONNX Runtime 1.24.2，default/inventory 两次实际运行的动态加载断言均通过；固定候选的 default 与 `--features inventory` 两棵 `cargo tree --locked -i qubit-operation` 分别记录，inventory tree exit 0 且只含同一个 `rs-operation` sibling。外部动态 baseline 的 inventory tree 和额外 Magika self inventory test 也分别通过、1/1 通过；之前缺库、漏 feature 与零命中 filter 的尝试已在其独立报告中保留，不计作通过结果。
+
+精确 registry 边界使用不含 path/patch、只声明 `qubit-mime = "=0.22.0"` 的独立 manifest 执行 `cargo generate-lockfile`；exit 101，当前 registry 候选为 `0.21.1`、`0.19.0`、`0.18.1` 等，无精确 `0.22.0`。完整命令输出保存在仓库外的 `registry-exact-0.22.0-retry.log`。
+
+### Hosted 状态与证据索引
+
+2026-11-24 21:01:29 UTC 查询到三条历史 hosted run 均 completed/success，head 均为 `d47152393640a1c632e12c0204dea5f114a9ea27`，创建于 `20:20:23Z`： [Documentation consumer run 45479753937](https://github.com/qubit-ltd/rs-mime/actions/runs/45479753937) 于 `20:23:09Z` 更新；[Magika inventory consumer run 45479753911](https://github.com/qubit-ltd/rs-mime/actions/runs/45479753911) 于 `20:21:37Z` 更新；[Rust CI run 45479754777](https://github.com/qubit-ltd/rs-mime/actions/runs/45479754777) 于 `20:31:57Z` 更新。它们准确证明历史 `d471523` hosted 交付状态，不代表后来 `1257c9f` 的本地候选 hosted 结果。
+
+2026-11-24 21:05:19 UTC 查询受测源码提交 `1257c9fd31ac319745989ce38d1077ccdf293123` 的 hosted runs 返回空列表；该候选尚未推送，故无新 hosted 状态。历史 MIME 基线完整 SHA 统一为 `a5e48d2fa35204183c2bd37a96782ba78327067f`，原先漏掉末尾 `f` 的位置已修正；历史 hosted snapshot 及早期 observation 保留原时点和各自 SHA，不回写成新候选结果。
+
+完整原始命令日志（包括 align/CI、退出码、测试、coverage、audit、FFprobe、file、Magika、registry 与 hosted 查询）均在仓库外 `.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb8227-round-9/`。本验收页不含机器本地文件链接。验收页补录后再次运行 `cargo test --locked --test package_document_links_tests -- --nocapture`，6 passed；`.infra/bin/ci-check.sh --only strict-doc`、`--only readme`、`--only package` 分别 exit 0。三个文档门禁和包内链接检查均针对包含本节的候选文档。此后的 evidence-only 提交只包含本验收 Markdown，不改变受测 Rust 源码、配置或测试。
