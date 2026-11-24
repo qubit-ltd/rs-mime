@@ -194,13 +194,19 @@ classifier 错误也可能向调用方传播；若名称含有扩展名但该扩
 并额外探测一个字节以检查超限。内容 backend 的两种模式
 都会恢复各自的起始位置；读取和恢复都失败时，恢复错误优先。
 
-这几种输入路径的约定不同。普通 `MimeDetectorBackend` reader hook 按
-`content_requirement()` 请求内容；`Prefix(n)` 是最大窗口，EOF 可以提前结束，交给 hook 的
-extent 仍为保守的 `InputExtent::Prefix`；自动读取普通 Provider 时也使用该 extent。
+这几种输入路径的约定不同。默认的 `MimeContentBackend::detect_reader` 会缓存所选窗口，
+再把字节切片传给 `detect_bytes`；这个同步 hook 不接收 `InputExtent`。默认的
+`MimeDetectorBackend::guess_from_reader` 也会按声明的 `content_requirement()` 读取窗口，
+再把字节切片传给 `guess_from_content`；它返回候选和前缀字节，不返回 extent。只有自动受管读取普通
+Provider 的分支，才会把实际交付的前缀保守标记为 `InputExtent::Prefix`。
 `OwnedMimeInput::Bytes` 会保留调用方给出的字节和 `InputExtent`，不会暗中截短，也不计作 Provider I/O。
-扩展 backend 的完整读取和同对象随机采样通过 `MeteredReadSession` 完成；普通前缀 backend
-可以选择使用该 session。这些 session 读取共享 operation 读取额度。内置受管 `file` Provider
-则在自己的 staging 读取中计量。旧版 `detect_path`、`detect_async_path` 的 `max_bytes` 参数仍是这些路径调用显式
+在自动受管 Provider 读取分支中，`content_requirement()` 会把 `Prefix(n)` 限制在请求窗口内，并继续受服务上限和
+EOF 约束。扩展 backend 的完整读取
+和同对象随机采样总是通过 `MeteredReadSession` 完成。扩展 backend 也可以选择让普通顺序前缀读取使用该
+session；此时 backend 自行设置读取窗口，而 session 的每次请求受请求额度和祖先额度约束。这些 session
+读取共享 operation 读取额度。内置受管 `file` Provider 则在自己的 staging 读取中计量。在
+`PreferFilename` 策略下，唯一文件名匹配可以在受管检测中短路，因此无需读取 Provider。旧版 `detect_path`、
+`detect_async_path` 的 `max_bytes` 参数仍是这些路径调用显式
 指定的前缀上限，不会替代普通 reader hook 的 `content_requirement()`。
 
 
@@ -546,9 +552,11 @@ settlement，再释放 typed handle，最后等待组 Drain。若存在未解决
 runtime 配置阶段以 `AsyncUnsupported` 失败，早于任务提交。内置 `repository` 和 `file` Provider 都提供受管异步
 backend。`file` 要求完整内容；
 它不支持随机访问，只表示不能处理要求随机访问的输入。注册 Provider 不会启动检测任务。
-未配置执行服务时，提交会以 `ExecutionServicesRequired` 拒绝；所选 backend
-没有异步能力时会以 `AsyncUnsupported` 拒绝。这些提交前拒绝都通过
-`MimeSubmitFailure` 原样返还 `OwnedMimeInput`，调用方可以重试或改走其他入口。任务接纳后
+未配置执行服务时，提交会以 `ExecutionServicesRequired` 拒绝。上文仅支持同步的 Provider 所致
+`AsyncUnsupported` 是 runtime 配置错误，并非提交失败。另一个独立入口 `try_submit_detection_sync_in`
+会以 reason 为 `MimeSubmitRejection::AsyncUnsupported` 的 `MimeSubmitFailure`
+拒绝 Provider 输入，并返还原输入；该同步子操作入口可接收字节输入。
+其他提交前拒绝也会通过 `MimeSubmitFailure` 原样返还 `OwnedMimeInput`，调用方可以重试或改走其他入口。任务接纳后
 发生的检测错误则由 operation handle 以 `OperationOutcome::Failed` 报告，不再通过
 `MimeSubmitFailure` 返还输入。资源释放状态需要另行等待 settlement。
 现有 `FileCommandMimeDetector` 同步 API 仍可使用；受管 backend 通过 `MimeRuntime` 执行
@@ -602,16 +610,21 @@ backend。Provider 错误不会暴露暂存区中的部分数据。EOF 返回零
 `read_at` 采样会重复计费。每次读取的 scratch 上限与 backend 保留的输入内存或命令暂存内存是不同预算。
 
 handle 提供两种彼此独立的观察方式。`wait_outcome()` 等待 MIME 业务结果；成功时结果包含
-`MimeDetectionReport`。`wait_settlement()` 观察资源是否已释放或恢复责任是否仍待处理。提前得到
-Stopped 或 Failed 并不能证明暂存文件和后台 helper 已退出；丢弃 handle 或 future 也不代表任务
+`MimeDetectionReport`。业务成功可能先于清理完成，因此成功结果不能证明资源已经释放。
+`wait_settlement()` 返回资源处置报告；`SettlementReport.status` 为
+`SettlementStatus::Released`、`SettlementStatus::Transferred` 或
+`SettlementStatus::RecoveryRequired`，分别表示资源已释放、已转交或需要恢复。报告中的 recovery handle
+代表应用或其 store 后续仍需处理的清理责任；转交 handle 只会转移重试责任，不表示清理已经完成。
+提前得到 Stopped 或 Failed 也不能证明暂存文件和后台 helper 已退出；丢弃 handle 或 future 也不代表任务
 已取消。报告包含 MIME 结果、backend 标识、检查范围和预算摘要，不能替代 operation 的
 settlement 诊断。`InputExtent` 说明调用方提供的是前缀还是完整输入；`InspectedExtent::Prefix(n)`
 说明交给内容匹配的有界连续窗口，不是逐字节访问计数。因此完整输入也可能对应前缀检查范围。
 
 需要为受管操作设置时限时，在 `MimeOperationOptions.operation.context.deadline` 中配置 scope
 deadline。异步检测会同时等待 deadline、stop signal 和 backend future；即使 provider read 不会自行唤醒，
-deadline 也能使该等待结束，operation 会报告 `Stopped(Timeout)`。若用户取消请求已被接受并与 deadline
-竞争，结果保留 `UserCancelled` 原因。repository matcher 只在协作批次边界检查停止状态，不会在批次中途
+deadline 也能使该等待结束。scope deadline 通过 `OperationOutcome::Stopped` 通道报告
+`StopReason::Timeout`，不是 `OperationOutcome::Failed`，也不是 settlement 结果。若已接受的用户取消请求与 deadline
+同时发生，结果保留 `UserCancelled` 原因。repository matcher 只在协作批次边界检查停止状态，不会在批次中途
 被强制打断。deadline 和 stop 还会在 backend 已就绪、结果提交之前再次裁决，因此已过期的 deadline
 可以使成功或错误结果转为 `Stopped(Timeout)`。同步子操作也不会被强制中断，只能在自身的协作检查点观察 stop。
 
@@ -677,13 +690,18 @@ typed operation handle 或
 `recovery_handles_snapshot()`，再处理或转交当前所有未解决项。Pending 表示工作尚未解决，不能据此确认资源已释放；
 `stop_services()` 不会自动重试 recovery。
 
-受管操作的错误按发生阶段处理：累计读取上限为零时，构造 execution services 会返回
+受管操作各阶段的结果应分别处理：累计读取上限为零时，构造 execution services 会返回
 `InvalidOperationBudget`；选择仅支持同步的
 backend 时，在提交前返回 `AsyncUnsupported`。提交遇到服务未准备、能力不匹配或准入关闭等问题，会以
-`MimeSubmitFailure` 拒绝并返还原 `OwnedMimeInput`。任务接纳之后的 Provider、backend、deadline 和清理错误
-由 operation outcome 报告；MIME 检测失败表现为 `OperationOutcome::Failed`。资源释放与错误结果分开观察：
-通过 settlement 检查释放状态和 recovery，再根据 snapshot 解决或转交 recovery、释放 typed handle 和组资源，
-从 worker pool 外重试停止。关闭返回 `OperationShutdownPending` 时，应检查 `snapshot().group`：尚无值表示
+`MimeSubmitFailure` 拒绝并返还原 `OwnedMimeInput`。任务接纳之后，Provider 或 backend 检测失败经
+operation outcome 报告为 `OperationOutcome::Failed`，不是提交拒绝。scope deadline 则经
+`OperationOutcome::Stopped` 报告 `StopReason::Timeout`，不是 Failed outcome。
+清理处置由 settlement 报告。业务成功也可能先于清理完成，因此不能据此确认资源已释放。
+通过 settlement 报告检查资源处置：`SettlementStatus::Released`、
+`SettlementStatus::Transferred` 或 `SettlementStatus::RecoveryRequired`。
+其中 recovery handle 表示后续清理责任；转交 handle 只转移重试责任，不表示资源已清理。再根据 snapshot
+解决或转交 recovery、释放 typed handle 和组资源，从 worker pool 外重试停止。关闭返回
+`OperationShutdownPending` 时，应检查 `snapshot().group`：尚无值表示
 Drain 未发布；有值则表示 Drain 已发布，但组资源或 recovery 仍可能未解决。每次重试前刷新 shutdown 和
 recovery 快照，处理当前所有 recovery。只有 `stop_services()` 成功返回才确认 execution port 已停止；完整组
 Drain 之后仍可能等待调用方释放 typed handle。
