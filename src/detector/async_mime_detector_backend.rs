@@ -131,4 +131,36 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
         input: BorrowedMimeInput<'a>,
         options: &'a MimeOperationOptions,
     ) -> MimeFuture<'a, MimeCandidates>;
+
+    /// Inspects provider content with its native basename retained as a
+    /// distinct filename source.
+    ///
+    /// The default preserves existing backend behavior by forwarding the
+    /// original input unchanged. Repository backends can override this hook
+    /// to avoid treating separator characters in a provider basename as path
+    /// separators. For ordinary byte inputs, callers continue to use
+    /// guess_content_in directly.
+    ///
+    /// # Parameters
+    /// - scope: Operation context controlling cancellation and accounting.
+    /// - input: Borrowed provider content, usually bounded bytes or a managed
+    ///   provider session.
+    /// - basename: Optional basename taken from the typed provider path.
+    /// - options: Per-operation limits and selection preferences.
+    ///
+    /// # Returns
+    /// A future resolving to the backend's MIME candidates.
+    ///
+    /// # Errors
+    /// Resolves to an error if the backend cannot inspect the provider input.
+    #[doc(hidden)]
+    fn guess_provider_content_in<'a>(
+        &'a self,
+        scope: &'a OperationScope,
+        input: BorrowedMimeInput<'a>,
+        _basename: Option<&'a str>,
+        options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        self.guess_content_in(scope, input, options)
+    }
 }

@@ -233,4 +233,82 @@ impl AsyncMimeDetectorBackend for OwnedRepositoryMimeDetector {
             })
         })
     }
+
+    /// Matches provider-derived content while keeping its basename typed.
+    fn guess_provider_content_in<'a>(
+        &'a self,
+        scope: &'a OperationScope,
+        input: BorrowedMimeInput<'a>,
+        basename: Option<&'a str>,
+        options: &'a MimeOperationOptions,
+    ) -> crate::MimeFuture<'a, MimeCandidates> {
+        Box::pin(async move {
+            let (content, extent) = match input {
+                BorrowedMimeInput::Bytes { content, extent, .. } => (content, extent),
+                BorrowedMimeInput::Provider { .. } => {
+                    return Err(MimeError::detector_backend(
+                        "repository",
+                        "provider-backed input must be resolved by the managed execution service",
+                    ));
+                }
+                BorrowedMimeInput::ManagedProvider { .. } => {
+                    return Err(MimeError::detector_backend(
+                        "repository",
+                        "managed provider input must be resolved by the selected third-party backend",
+                    ));
+                }
+            };
+            if let Some(mime) = super::internal::async_repository_matcher::preferred_basename(
+                &self.repository,
+                basename,
+                options.policy,
+            ) {
+                if let Some(reason) = scope.context().stop_reason() {
+                    return Err(MimeError::DetectorBackend {
+                        backend: "repository".to_owned(),
+                        reason: format!("operation stopped: {reason:?}"),
+                    });
+                }
+                return Ok(MimeCandidates {
+                    candidates: vec![crate::MimeCandidate {
+                        mime_type: mime.name().to_owned(),
+                        rank: 0,
+                    }],
+                    inspected_extent: InspectedExtent::Prefix(0),
+                    retained_prefix: Vec::new(),
+                    staging_bytes: 0,
+                });
+            }
+            let matched =
+                super::internal::async_repository_matcher::match_content(scope, &self.repository, content).await?;
+            let from_filename = basename.map_or_else(Vec::new, |basename| {
+                self.repository
+                    .detect_by_filename_basename(basename)
+                    .into_iter()
+                    .map(|mime| mime.name().to_owned())
+                    .collect()
+            });
+            let from_content = matched
+                .into_iter()
+                .map(|candidate| candidate.mime_type)
+                .collect::<Vec<_>>();
+            let selected = self
+                .core
+                .select_result_in(scope, &from_filename, &from_content, input, options)
+                .await?;
+            let candidates = selected
+                .into_iter()
+                .map(|mime_type| crate::MimeCandidate { mime_type, rank: 0 })
+                .collect();
+            let inspected = content.len().min(self.repository.max_test_bytes());
+            Ok(MimeCandidates {
+                candidates,
+                inspected_extent: match extent {
+                    InputExtent::Prefix | InputExtent::Complete => InspectedExtent::Prefix(inspected),
+                },
+                retained_prefix: Vec::new(),
+                staging_bytes: 0,
+            })
+        })
+    }
 }
