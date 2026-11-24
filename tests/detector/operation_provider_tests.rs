@@ -120,6 +120,129 @@ fn test_operation_provider_same_object_and_path_replacement_uses_open_snapshot()
 }
 
 #[test]
+fn test_no_read_low_limit_association_does_not_cap_later_direct_provider() {
+    use qubit_operation::ChildFailurePolicy;
+    use qubit_operation::OperationOutcome;
+
+    let mut manager_options = qubit_operation::ManagerOptions::default();
+    manager_options.async_executor.worker_count = 3;
+    let manager = qubit_operation::OperationManager::new(manager_options).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager.clone(), group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 4).unwrap();
+    services.prepare().unwrap();
+    let registry = MimeDetectorRegistry::default();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    registry
+        .register_async_provider(NoReadGateProvider {
+            entered: entered_tx,
+            release: Arc::new(Mutex::new(release_rx)),
+            first_call: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        })
+        .unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(&registry, &qubit_spi::ProviderSelection::named("no-read-gate").unwrap())
+        .unwrap();
+    let opens = Arc::new(AtomicUsize::new(0));
+    let opens_body = Arc::clone(&opens);
+    let parent_options = qubit_operation::OperationOptions {
+        child_failure_policy: ChildFailurePolicy::ContinueSiblings,
+        limits: qubit_operation::ScopeLimits {
+            child_operations: 2,
+            resources: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut parent = manager
+        .as_async()
+        .try_submit(parent_options, move |scope| {
+            let body_runtime = runtime.clone();
+            async move {
+                let mut no_read = body_runtime
+                    .try_submit_detection_in(
+                        &scope,
+                        OwnedMimeInput::Bytes {
+                            content: b"%PDF".to_vec().into(),
+                            extent: InputExtent::Complete,
+                            filename: None,
+                        },
+                        MimeOperationOptions {
+                            max_read_bytes: Some(1),
+                            operation: qubit_operation::OperationOptions {
+                                requirement: qubit_operation::ChildRequirement::Optional,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap_or_else(|failure| panic!("no-read child should be admitted: {:?}", failure.reason));
+                entered_rx.recv().expect("the no-read backend should hold its scope open");
+
+                let file_system = Arc::new(
+                    qubit_fs::AsyncFileSystem::from_spi(SnapshotGateFileSystem::new(
+                        Arc::new(Mutex::new(b"%PDF".to_vec())),
+                        Arc::clone(&opens_body),
+                        mpsc::channel().0,
+                        Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                        Arc::new(Mutex::new(None)),
+                        None,
+                    ))
+                    .unwrap(),
+                );
+                let mut provider = body_runtime
+                    .try_submit_detection_in(
+                        &scope,
+                        OwnedMimeInput::Provider {
+                            file_system,
+                            path: qubit_fs::Path::parse("/input").unwrap(),
+                        },
+                        MimeOperationOptions {
+                            max_buffer_bytes: Some(4),
+                            max_read_bytes: Some(4),
+                            operation: qubit_operation::OperationOptions {
+                                requirement: qubit_operation::ChildRequirement::Optional,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap_or_else(|failure| panic!("provider child should be admitted: {:?}", failure.reason));
+                release_tx.send(()).unwrap();
+                assert!(matches!(no_read.wait_outcome().await.unwrap(), OperationOutcome::Succeeded(_)));
+                let _ = no_read.wait_settlement().await;
+                drop(no_read);
+                let bytes_read = match provider.wait_outcome().await.unwrap() {
+                    OperationOutcome::Succeeded(report) => report.budget.bytes_read,
+                    other => panic!("provider should read the full requested prefix: {other:?}"),
+                };
+                let _ = provider.wait_settlement().await;
+                drop(provider);
+                assert!(matches!(
+                    scope.reserve_resource(),
+                    Err(qubit_operation::ResourceCapacityError::CapacityExceeded)
+                ));
+                Ok::<_, ()>(bytes_read)
+            }
+        })
+        .unwrap();
+    let bytes_read = match block_on(parent.wait_outcome()).unwrap() {
+        OperationOutcome::Succeeded(bytes_read) => bytes_read,
+        other => panic!("parent should finish successfully: {other:?}"),
+    };
+    let _ = block_on(parent.wait_settlement());
+    assert_eq!(4, bytes_read, "the no-read one-byte scope must not cap its provider sibling");
+    assert_eq!(1, opens.load(Ordering::SeqCst));
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+}
+
+#[test]
 fn test_operation_provider_driver_loss_is_pending() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
@@ -905,6 +1028,82 @@ impl AsyncMimeDetectorBackend for SnapshotBackend {
             Ok(MimeCandidates {
                 candidates: vec![MimeCandidate {
                     mime_type: "application/x-snapshot".into(),
+                    rank: 0,
+                }],
+                inspected_extent: InspectedExtent::Prefix(content.len()),
+                retained_prefix: content.to_vec(),
+                staging_bytes: 0,
+            })
+        })
+    }
+}
+
+#[derive(Debug)]
+struct NoReadGateProvider {
+    entered: mpsc::Sender<()>,
+    release: Arc<Mutex<mpsc::Receiver<()>>>,
+    first_call: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl ProviderMetadata for NoReadGateProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("no-read-gate").unwrap())
+    }
+}
+
+impl AsyncMimeDetectorProvider for NoReadGateProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(NoReadGateBackend {
+            entered: self.entered.clone(),
+            release: Arc::clone(&self.release),
+            first_call: Arc::clone(&self.first_call),
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct NoReadGateBackend {
+    entered: mpsc::Sender<()>,
+    release: Arc<Mutex<mpsc::Receiver<()>>>,
+    first_call: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl AsyncMimeDetectorBackend for NoReadGateBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(4)
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        _scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        _options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        let wait = !self.first_call.swap(true, Ordering::SeqCst);
+        let entered = self.entered.clone();
+        let release = Arc::clone(&self.release);
+        Box::pin(async move {
+            if wait {
+                entered.send(()).unwrap();
+                release.lock().unwrap().recv().unwrap();
+            }
+            let content = match input {
+                BorrowedMimeInput::Bytes { content, .. } => content,
+                BorrowedMimeInput::Provider { .. } | BorrowedMimeInput::ManagedProvider { .. } => {
+                    panic!("prefix provider should receive bounded bytes")
+                }
+            };
+            Ok(MimeCandidates {
+                candidates: vec![MimeCandidate {
+                    mime_type: "application/x-no-read-gate".into(),
                     rank: 0,
                 }],
                 inspected_extent: InspectedExtent::Prefix(content.len()),

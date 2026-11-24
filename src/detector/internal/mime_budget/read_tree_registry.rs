@@ -387,7 +387,6 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Arc;
-    use std::sync::Barrier;
     use std::sync::Mutex;
     use std::sync::Weak;
     use std::task::Context;
@@ -730,15 +729,17 @@ mod tests {
                 let unread_tree = registry_body.associate_child_for_parent(&scope, 4, 4);
                 registry_body.bind(scope.id(), &unread_tree);
                 assert!(!unread_tree.is_anchored());
-                let barrier = Arc::new(Barrier::new(2));
-                let child_barrier = Arc::clone(&barrier);
+                let nested_context = unread_tree.child(3);
                 let child_registry = Arc::clone(&registry_body);
+                let (child_ready_tx, child_ready_rx) = std::sync::mpsc::channel();
+                let (allow_nested_tx, allow_nested_rx) = std::sync::mpsc::channel();
                 let (pending_tx, pending_rx) = std::sync::mpsc::channel();
                 let mut child = child_group
                     .as_async()
                     .try_submit(Default::default(), move |child_scope| async move {
-                        child_registry.bind(child_scope.id(), &unread_tree);
-                        child_barrier.wait();
+                        child_registry.bind(child_scope.id(), &nested_context);
+                        child_ready_tx.send(()).unwrap();
+                        allow_nested_rx.recv().unwrap();
                         let pending = child_registry
                             .reserve_child_for_parent(&child_scope, 32, 6)
                             .expect("nested provider should share the ancestor reservation");
@@ -747,10 +748,13 @@ mod tests {
                     })
                     .expect("the parent can submit the no-read intermediate operation");
 
-                barrier.wait();
+                child_ready_rx
+                    .recv()
+                    .expect("intermediate child should bind before the direct request");
                 let direct_pending = registry_body
                     .reserve_child_for_parent(&scope, 32, 4)
                     .expect("direct provider should share the same pending reservation");
+                allow_nested_tx.send(()).unwrap();
                 let nested_pending = pending_rx
                     .recv_timeout(std::time::Duration::from_secs(2))
                     .expect("nested provider reservation should finish within the test bound");
@@ -764,6 +768,11 @@ mod tests {
                 assert!(Arc::ptr_eq(&direct.tree, &nested.tree));
                 assert!(direct.is_anchored());
                 assert_eq!(32, direct.tree.limit());
+                assert_eq!(3, nested.reserve(3).unwrap().commit(3));
+                assert!(nested.reserve(1).is_none(), "nested scope must retain its intermediate parent cap");
+                assert!(direct.reserve(2).is_none(), "nested reads must charge the common parent scope");
+                assert_eq!(1, direct.reserve(1).unwrap().commit(1));
+                assert_eq!(4, direct.tree.consumed());
                 assert!(matches!(
                     scope.reserve_resource(),
                     Err(ResourceCapacityError::CapacityExceeded)
@@ -775,6 +784,146 @@ mod tests {
             block_on(parent.wait_outcome()).unwrap(),
             OperationOutcome::Succeeded(())
         ));
+        let _settlement = block_on(parent.wait_settlement());
+    }
+
+    #[test]
+    fn test_nested_pending_first_keeps_parent_scope_and_shared_resource_slot() {
+        let mut manager_options = ManagerOptions::default();
+        manager_options.limits.active_operations = 4;
+        manager_options.async_executor.worker_count = 3;
+        let manager = OperationManager::new(manager_options).unwrap();
+        let parent_group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let child_group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let registry_body = Arc::clone(&registry);
+        let parent_options = qubit_operation::OperationOptions {
+            limits: qubit_operation::ScopeLimits {
+                resources: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut parent = parent_group
+            .as_async()
+            .try_submit(parent_options, move |scope| async move {
+                let parent_context = registry_body.associate_child_for_parent(&scope, 1, 8);
+                registry_body.bind(scope.id(), &parent_context);
+                let nested_context = parent_context.child(3);
+                let nested_registry = Arc::clone(&registry_body);
+                let (pending_tx, pending_rx) = std::sync::mpsc::channel();
+                let mut intermediate = child_group
+                    .as_async()
+                    .try_submit(Default::default(), move |nested_scope| async move {
+                        nested_registry.bind(nested_scope.id(), &nested_context);
+                        let pending = nested_registry
+                            .reserve_child_for_parent(&nested_scope, 8, 8)
+                            .expect("nested request should reserve the shared anchor first");
+                        pending_tx.send(pending).unwrap();
+                        Ok::<_, ()>(())
+                    })
+                    .unwrap();
+                let nested_pending = pending_rx.recv().unwrap();
+                let direct_pending = registry_body
+                    .reserve_child_for_parent(&scope, 8, 8)
+                    .expect("direct sibling should join the nested request's pending anchor");
+                assert!(matches!(
+                    scope.reserve_resource(),
+                    Err(ResourceCapacityError::CapacityExceeded)
+                ));
+
+                let nested = nested_pending.commit().expect("nested first binding should commit");
+                let direct = direct_pending.commit().expect("direct sibling should reuse the anchor");
+                assert!(Arc::ptr_eq(&nested.tree, &direct.tree));
+                assert_eq!(8, nested.tree.limit());
+                assert_eq!(3, nested.reserve(3).unwrap().commit(3));
+                assert!(nested.reserve(1).is_none(), "grandchild reads must charge its direct parent");
+                assert!(direct.reserve(6).is_none(), "direct sibling must see the shared tree consumption");
+                assert_eq!(5, direct.reserve(5).unwrap().commit(5));
+                assert_eq!(8, nested.tree.consumed());
+
+                assert!(matches!(
+                    intermediate.wait_outcome().await.unwrap(),
+                    OperationOutcome::Succeeded(())
+                ));
+                let _settlement = intermediate.wait_settlement().await;
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+        assert!(matches!(
+            block_on(parent.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+        let _settlement = block_on(parent.wait_settlement());
+    }
+
+    #[test]
+    fn test_detached_nested_ticket_keeps_its_parent_chain_and_direct_sibling_scope() {
+        let mut manager_options = ManagerOptions::default();
+        manager_options.limits.active_operations = 4;
+        manager_options.async_executor.worker_count = 3;
+        let manager = OperationManager::new(manager_options).unwrap();
+        let parent_group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let child_group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let registry_body = Arc::clone(&registry);
+        let (tickets_tx, tickets_rx) = std::sync::mpsc::channel();
+        let parent_options = qubit_operation::OperationOptions {
+            limits: qubit_operation::ScopeLimits {
+                resources: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut parent = parent_group
+            .as_async()
+            .try_submit(parent_options, move |scope| async move {
+                let parent_context = registry_body.associate_child_for_parent(&scope, 1, 8);
+                registry_body.bind(scope.id(), &parent_context);
+                let nested_context = parent_context.child(3);
+                let nested_registry = Arc::clone(&registry_body);
+                let (nested_tx, nested_rx) = std::sync::mpsc::channel();
+                let _intermediate = child_group
+                    .as_async()
+                    .try_submit(Default::default(), move |nested_scope| async move {
+                        nested_registry.bind(nested_scope.id(), &nested_context);
+                        let nested = nested_registry
+                            .reserve_child_for_parent(&nested_scope, 8, 8)
+                            .expect("nested request should reserve before parent ends");
+                        nested_tx.send(nested).unwrap();
+                        Ok::<_, ()>(())
+                    })
+                    .unwrap();
+                let nested = nested_rx.recv().unwrap();
+                let direct = registry_body
+                    .reserve_child_for_parent(&scope, 8, 8)
+                    .expect("direct sibling should share the nested reservation");
+                assert!(matches!(
+                    scope.reserve_resource(),
+                    Err(ResourceCapacityError::CapacityExceeded)
+                ));
+                tickets_tx.send((nested, direct)).unwrap();
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+
+        let (nested_pending, direct_pending) = tickets_rx.recv().unwrap();
+        assert!(matches!(
+            block_on(parent.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+
+        // The first accepted ticket commits after the parent body has ended,
+        // so its single reserved slot is released and the tree becomes detached.
+        let nested = nested_pending.commit().expect("accepted nested ticket detaches");
+        let direct = direct_pending.commit().expect("accepted sibling reuses detached tree");
+        assert!(Arc::ptr_eq(&nested.tree, &direct.tree));
+        assert_eq!(8, nested.tree.limit());
+        assert_eq!(3, nested.reserve(3).unwrap().commit(3));
+        assert!(nested.reserve(1).is_none(), "detachment preserves the nested scope cap");
+        assert!(direct.reserve(6).is_none(), "detached sibling sees cumulative use");
+        assert_eq!(5, direct.reserve(5).unwrap().commit(5));
+        assert_eq!(8, nested.tree.consumed());
         let _settlement = block_on(parent.wait_settlement());
     }
 
