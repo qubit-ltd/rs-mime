@@ -102,6 +102,7 @@ impl ResourceIdentity {
 #[cfg(test)]
 mod tests {
     use std::future::Future;
+    use std::sync::Arc;
     use std::task::Context;
     use std::task::Waker;
 
@@ -117,5 +118,32 @@ mod tests {
         assert!(identity.state.lock().unwrap().waiter.is_some());
         drop(future);
         assert!(identity.state.lock().unwrap().waiter.is_none());
+    }
+
+    #[test]
+    fn test_poisoned_identity_lock_recovers_for_waiter_registration_and_drop() {
+        let identity = Arc::new(ResourceIdentity::default());
+        let poisoned_identity = Arc::clone(&identity);
+        let poison_result = std::thread::spawn(move || {
+            let _state = poisoned_identity.state.lock().unwrap();
+            panic!("poison the identity state for recovery coverage");
+        })
+        .join();
+        assert!(poison_result.is_err(), "the test thread should poison the state lock");
+
+        identity.set_hook(Arc::new(|_| {}));
+        let mut future = Box::pin(identity.wait());
+        let waker = Waker::noop();
+        let mut context = Context::from_waker(waker);
+        assert!(future.as_mut().poll(&mut context).is_pending());
+        drop(future);
+        assert!(
+            identity
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .waiter
+                .is_none()
+        );
     }
 }

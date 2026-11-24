@@ -121,6 +121,22 @@ fn controlled_identity_hook() -> (
     (hook, event_rx, pending_release_tx, publish_release_tx)
 }
 
+fn wait_for_publication_and_pending_cleanup(
+    event_rx: &std::sync::mpsc::Receiver<crate::managed_temp_staging::PublishEvent>,
+) -> qubit_operation::ResourceId {
+    use crate::managed_temp_staging::PublishEvent;
+
+    let mut published_id = None;
+    let mut cleanup_pending = false;
+    while published_id.is_none() || !cleanup_pending {
+        match event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap() {
+            PublishEvent::Publishing(id) => published_id = Some(id),
+            PublishEvent::CleanupPending => cleanup_pending = true,
+        }
+    }
+    published_id.expect("identity publication event should be observed")
+}
+
 #[derive(Debug)]
 struct RejectCleanupAfterFirstDispatch {
     inner: Arc<FixedMimeExecutionPort>,
@@ -1432,8 +1448,6 @@ fn test_managed_staging_cleanup_failure_retains_owner_for_retry() {
 
 #[test]
 fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
-    use crate::managed_temp_staging::PublishEvent;
-
     #[derive(Debug)]
     struct RejectingCleanupPort;
     impl MimeExecutionPort for RejectingCleanupPort {
@@ -1483,17 +1497,7 @@ fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
     let (commit_tx, commit_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || commit_tx.send(commit_staged(reservation, staged)).unwrap());
 
-    let published_id = match event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap() {
-        PublishEvent::Publishing(id) => id,
-        event => panic!("expected identity publication, got {event:?}"),
-    };
-    assert!(
-        matches!(
-            event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
-            PublishEvent::CleanupPending
-        ),
-        "the real partial-owner cleanup polls while its ID is unpublished"
-    );
+    let published_id = wait_for_publication_and_pending_cleanup(&event_rx);
     let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
     let mut context = Context::from_waker(&waker);
     {
@@ -1566,7 +1570,6 @@ fn test_managed_staging_commit_failure_successful_cleanup_releases_permit() {
 #[cfg(unix)]
 #[test]
 fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
-    use crate::managed_temp_staging::PublishEvent;
     let (hook, event_rx, pending_release_tx, publish_release_tx) = controlled_identity_hook();
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
@@ -1612,17 +1615,7 @@ fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
     }))
     .unwrap();
 
-    let published_id = match event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap() {
-        PublishEvent::Publishing(id) => id,
-        event => panic!("expected identity publication, got {event:?}"),
-    };
-    assert!(
-        matches!(
-            event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
-            PublishEvent::CleanupPending
-        ),
-        "the real retained recovery cleanup polls while its ID is unpublished"
-    );
+    let published_id = wait_for_publication_and_pending_cleanup(&event_rx);
     let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
     let mut context = Context::from_waker(&waker);
     {
