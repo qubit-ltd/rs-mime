@@ -180,13 +180,14 @@ impl ReadTreeRegistry {
         {
             return root.child(scope_limit);
         }
-        if let Some(root) = self
-            .pending_roots
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&operation)
-            .and_then(Weak::upgrade)
-        {
+        let pending_root = {
+            self.pending_roots
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&operation)
+                .and_then(Weak::upgrade)
+        };
+        if let Some(root) = pending_root {
             let state = root.state.lock().unwrap_or_else(|e| e.into_inner());
             if matches!(&*state, PendingReadTreeRootState::Reserved(_)) {
                 let mut ancestors = self.ancestors.lock().unwrap_or_else(|e| e.into_inner());
@@ -763,6 +764,51 @@ mod tests {
             .and_then(Weak::upgrade)
             .expect("replacement pending root remains indexed");
         assert!(Arc::ptr_eq(&registered, &replacement));
+    }
+
+    #[test]
+    fn test_association_drops_last_pending_owner_after_releasing_index_lock() {
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let body_registry = Arc::clone(&registry);
+        with_parent_scope(move |scope| {
+            let operation = scope.id();
+            let pending_root = Arc::new(PendingReadTreeRoot {
+                root: ReadTreeContext::new(8),
+                state: Mutex::new(PendingReadTreeRootState::Detached),
+                pending_roots: Arc::downgrade(&body_registry.pending_roots),
+                operation,
+            });
+            body_registry.pending_roots.lock().unwrap().insert(
+                operation,
+                Arc::downgrade(&pending_root),
+            );
+            thread::scope(|threads| {
+                let locked_owner = Arc::clone(&pending_root);
+                let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+                let (release_tx, release_rx) = std::sync::mpsc::channel();
+                let lock_holder = threads.spawn(move || {
+                    let _state_guard = locked_owner.state.lock().unwrap();
+                    locked_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                });
+                locked_rx.recv().unwrap();
+                let pending_root_weak = Arc::downgrade(&pending_root);
+                let associate = threads.spawn(|| body_registry.associate_child_for_parent(scope, 8, 8));
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                while pending_root_weak.strong_count() < 3 && std::time::Instant::now() < deadline {
+                    thread::yield_now();
+                }
+                if pending_root_weak.strong_count() < 3 {
+                    release_tx.send(()).unwrap();
+                    lock_holder.join().unwrap();
+                    panic!("association should upgrade the indexed pending root");
+                }
+                drop(pending_root);
+                release_tx.send(()).unwrap();
+                lock_holder.join().unwrap();
+                drop(associate.join().expect("association should return"));
+            });
+        });
     }
 
     #[test]
