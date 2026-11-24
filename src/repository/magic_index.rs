@@ -15,7 +15,7 @@ use super::internal::magic_match_state::MagicMatchState;
 /// Indexes content magic rules and tracks their maximum required input size.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MagicIndex {
-    /// Magic entries ordered by their source priority.
+    /// Magic entries in repository MIME-type order, then each type's rule order.
     pub(crate) entries: Vec<MagicEntry>,
     /// Largest byte offset needed by any indexed matcher.
     pub(crate) max_test_bytes: usize,
@@ -24,13 +24,16 @@ pub(crate) struct MagicIndex {
 impl MagicIndex {
     /// Adds one MIME magic rule and updates the required input size.
     ///
-    /// Entries are retained in insertion order so equal-priority MIME results
-    /// follow repository order.
+    /// Entries are retained in insertion order. Equal-priority results follow
+    /// the first matching rule's insertion order, and repeated matches for a
+    /// MIME type produce only one result.
     ///
     /// # Parameters
     /// - `mime_index`: Position of the MIME type owning `magic` in the
     ///   repository's MIME type list.
-    /// - `magic`: Rule to clone into the index.
+    /// - `magic_index`: Position of `magic` in its owning MIME type's rule
+    ///   list.
+    /// - `magic`: Rule whose priority and required input size are indexed.
     pub(crate) fn add(&mut self, mime_index: usize, magic_index: usize, magic: &MimeMagic) {
         self.max_test_bytes = self.max_test_bytes.max(magic.max_test_bytes());
         self.entries.push(MagicEntry {
@@ -47,6 +50,8 @@ impl MagicIndex {
     /// distinct results retain the order of their first matching entry.
     ///
     /// # Parameters
+    /// - `mime_types`: Repository MIME types, indexed by each entry's
+    ///   `mime_index`.
     /// - `bytes`: Content prefix available for evaluating the indexed rules.
     ///
     /// # Returns

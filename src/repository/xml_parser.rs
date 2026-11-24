@@ -460,18 +460,6 @@ fn markup_declaration_end(xml: &str, bytes: &[u8], mut position: usize) -> Optio
         _ => {}
     }
 
-    let mut quote = None;
-    while let Some(&byte) = bytes.get(position) {
-        match (quote, byte) {
-            (Some(current), value) if value == current => quote = None,
-            (Some(_), _) => {}
-            (None, b'\'' | b'"') => quote = Some(byte),
-            (None, b'<') => return None,
-            (None, b'>') => return Some(position + 1),
-            _ => {}
-        }
-        position += 1;
-    }
     None
 }
 

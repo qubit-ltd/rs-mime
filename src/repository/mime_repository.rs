@@ -99,7 +99,10 @@ impl MimeRepository {
     /// parsing so XML parser error positions still refer to the original text;
     /// an XML declaration after a `DOCTYPE` is rejected. Elements in the
     /// shared MIME-info namespace are parsed; child elements from other
-    /// namespaces are ignored as extensions.
+    /// namespaces are ignored as extensions. The supported standard elements
+    /// are `mime-type`, `comment`, `alias`, `sub-class-of`, `glob`, `magic`,
+    /// and nested `match`; other standard elements are ignored. See the
+    /// `repository-supported-subset.xml` fixture for an example.
     pub fn from_xml(xml: &str) -> MimeResult<Self> {
         let xml = strip_doctype(xml);
         let document = Document::parse(&xml)?;
@@ -681,7 +684,7 @@ fn parse_usize(value: &str, attribute: &str) -> MimeResult<usize> {
 fn parse_value(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
     match value_type {
         MagicValueType::String => parse_c_string_bytes(value),
-        _ => parse_numeric_bytes(value_type, value),
+        _ => parse_numeric_bytes(value_type, value, "value"),
     }
 }
 
@@ -699,7 +702,7 @@ fn parse_value(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
 fn parse_mask(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
     match value_type {
         MagicValueType::String => parse_hex_bytes(value),
-        _ => parse_numeric_bytes(value_type, value),
+        _ => parse_numeric_bytes(value_type, value, "mask"),
     }
 }
 
@@ -730,9 +733,9 @@ fn parse_c_string_bytes(value: &str) -> MimeResult<Vec<u8>> {
 ///
 /// # Errors
 /// Returns [`MimeError`](crate::MimeError) when the value is invalid.
-fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> MimeResult<Vec<u8>> {
+fn parse_numeric_bytes(value_type: MagicValueType, value: &str, attribute: &str) -> MimeResult<Vec<u8>> {
     let number = CIntegerLiteralCodec::new().decode(value).map_err(|error| {
-        MimeError::invalid_attr("match", "value", value, format!("invalid C integer literal: {error}"))
+        MimeError::invalid_attr("match", attribute, value, format!("invalid C integer literal: {error}"))
     })?;
     match value_type
         .numeric_width()
@@ -740,13 +743,13 @@ fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> MimeResult<Ve
     {
         1 => u8::try_from(number)
             .map(|number| vec![number])
-            .map_err(|_| numeric_value_out_of_range(value_type, value)),
+            .map_err(|_| numeric_value_out_of_range(value_type, value, attribute)),
         2 => u16::try_from(number)
             .map(|number| number.to_be_bytes().to_vec())
-            .map_err(|_| numeric_value_out_of_range(value_type, value)),
+            .map_err(|_| numeric_value_out_of_range(value_type, value, attribute)),
         4 => u32::try_from(number)
             .map(|number| number.to_be_bytes().to_vec())
-            .map_err(|_| numeric_value_out_of_range(value_type, value)),
+            .map_err(|_| numeric_value_out_of_range(value_type, value, attribute)),
         _ => unreachable!("unsupported numeric magic width"),
     }
 }
@@ -759,13 +762,13 @@ fn parse_numeric_bytes(value_type: MagicValueType, value: &str) -> MimeResult<Ve
 ///
 /// # Returns
 /// Invalid XML attribute error for an oversized numeric value.
-fn numeric_value_out_of_range(value_type: MagicValueType, value: &str) -> MimeError {
+fn numeric_value_out_of_range(value_type: MagicValueType, value: &str, attribute: &str) -> MimeError {
     let width = value_type
         .numeric_width()
         .expect("numeric parser should only receive numeric magic types");
     MimeError::invalid_attr(
         "match",
-        "value",
+        attribute,
         value,
         format!("{} value must fit in {width} byte(s)", value_type.name()),
     )

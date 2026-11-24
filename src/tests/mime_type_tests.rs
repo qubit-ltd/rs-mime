@@ -6,8 +6,36 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+use crate::MimeError;
 use crate::MimeRepository;
 use crate::MimeType;
+
+#[test]
+fn test_repository_fixture_loads_supported_rules_and_ignores_other_standard_elements() {
+    let repository = MimeRepository::from_xml(include_str!("../../tests/fixtures/repository-supported-subset.xml"))
+        .expect("supported subset fixture should parse");
+    let mime_type = repository.get("application/x-fixture").expect("fixture MIME type should load");
+
+    assert_eq!(Some("Fixture format"), mime_type.description());
+    assert_eq!("application/x-fixture-alias", mime_type.aliases()[0]);
+    assert_eq!("application/x-parent", mime_type.super_types()[0]);
+    assert_eq!("*.fixture", mime_type.globs()[0].pattern());
+    assert_eq!(1, mime_type.magics().len());
+    assert!(mime_type.matches_content(&repository, b"FIXTURE"));
+}
+
+#[test]
+fn test_numeric_magic_attribute_errors_preserve_the_xml_attribute_name() {
+    for (attribute, value) in [("value", "invalid"), ("mask", "invalid"), ("value", "65536"), ("mask", "65536")] {
+        let xml = format!(
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="application/x-invalid"><magic><match type="host16" offset="0" value="{}"{}/></magic></mime-type></mime-info>"#,
+            if attribute == "value" { value } else { "1" },
+            if attribute == "mask" { format!(" mask=\"{value}\"") } else { String::new() },
+        );
+        let error = MimeRepository::from_xml(&xml).expect_err("invalid numeric XML attribute should fail");
+        assert!(matches!(error, MimeError::InvalidXmlAttribute { attribute: actual, .. } if actual == attribute));
+    }
+}
 
 #[test]
 fn test_inheritance_long_chain_uses_heap_traversal() {
