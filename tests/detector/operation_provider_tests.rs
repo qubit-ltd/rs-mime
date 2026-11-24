@@ -263,15 +263,21 @@ fn test_operation_provider_driver_loss_is_pending() {
     let (read_started_tx, read_started_rx) = mpsc::channel();
     let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let owner_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (drop_started_tx, drop_started_rx) = mpsc::channel();
+    let (drop_release_tx, drop_release_rx) = mpsc::channel();
+    let reader_drop_gate = Arc::new(SnapshotReaderDropGate::new(drop_started_tx, drop_release_rx));
     let read_waker = Arc::new(Mutex::new(None));
-    let file_system = qubit_fs::AsyncFileSystem::from_spi(SnapshotGateFileSystem::new(
-        content,
-        opens,
-        read_started_tx,
-        Arc::clone(&released),
-        Arc::clone(&read_waker),
-        Some(Arc::clone(&owner_dropped)),
-    ))
+    let file_system = qubit_fs::AsyncFileSystem::from_spi(
+        SnapshotGateFileSystem::new(
+            content,
+            opens,
+            read_started_tx,
+            Arc::clone(&released),
+            Arc::clone(&read_waker),
+            Some(Arc::clone(&owner_dropped)),
+        )
+        .with_reader_drop_gate(Arc::clone(&reader_drop_gate)),
+    )
     .unwrap();
 
     let registry = MimeDetectorRegistry::default();
@@ -293,9 +299,12 @@ fn test_operation_provider_driver_loss_is_pending() {
     let observer = operation.observer().as_sync();
 
     read_started_rx
-        .recv()
+        .recv_timeout(std::time::Duration::from_secs(5))
         .expect("provider read should reach its deterministic gate");
     drop(operation);
+    drop_started_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("cancellation should enter the controlled reader cleanup gate");
 
     let snapshot = observer.snapshot();
     assert!(snapshot.settlement.is_none(), "settlement must remain pending");
@@ -304,6 +313,7 @@ fn test_operation_provider_driver_loss_is_pending() {
         "the provider reader owner must survive loss of the caller handle"
     );
 
+    let _ = drop_release_tx.send(());
     released.store(true, Ordering::SeqCst);
     read_waker
         .lock()
@@ -1255,6 +1265,7 @@ struct SnapshotGateFileSystem {
     released: Arc<std::sync::atomic::AtomicBool>,
     read_waker: Arc<Mutex<Option<Waker>>>,
     owner_dropped: Option<Arc<std::sync::atomic::AtomicBool>>,
+    reader_drop_gate: Option<Arc<SnapshotReaderDropGate>>,
     random_error_first_read: bool,
     pending_after_first_read: bool,
     open_error: bool,
@@ -1305,6 +1316,7 @@ impl SnapshotGateFileSystem {
             released,
             read_waker,
             owner_dropped,
+            reader_drop_gate: None,
             random_error_first_read: false,
             pending_after_first_read: false,
             open_error: false,
@@ -1329,6 +1341,11 @@ impl SnapshotGateFileSystem {
 
     fn with_error_after_first_read(mut self) -> Self {
         self.error_after_first_read = true;
+        self
+    }
+
+    fn with_reader_drop_gate(mut self, gate: Arc<SnapshotReaderDropGate>) -> Self {
+        self.reader_drop_gate = Some(gate);
         self
     }
 }
@@ -1371,6 +1388,7 @@ impl qubit_fs::spi::AsyncFileSystemSpi for SnapshotGateFileSystem {
             released: Arc::clone(&self.released),
             read_waker: Arc::clone(&self.read_waker),
             owner_dropped: self.owner_dropped.as_ref().map(Arc::clone),
+            reader_drop_gate: self.reader_drop_gate.as_ref().map(Arc::clone),
             pending_after_first_read: self.pending_after_first_read,
             error_after_first_read: self.error_after_first_read,
         };
@@ -1443,15 +1461,42 @@ struct SnapshotGateInput {
     released: Arc<std::sync::atomic::AtomicBool>,
     read_waker: Arc<Mutex<Option<Waker>>>,
     owner_dropped: Option<Arc<std::sync::atomic::AtomicBool>>,
+    reader_drop_gate: Option<Arc<SnapshotReaderDropGate>>,
     pending_after_first_read: bool,
     error_after_first_read: bool,
 }
 
 impl Drop for SnapshotGateInput {
     fn drop(&mut self) {
+        if let Some(gate) = &self.reader_drop_gate {
+            gate.block_cleanup();
+        }
         if let Some(owner_dropped) = &self.owner_dropped {
             owner_dropped.store(true, Ordering::SeqCst);
         }
+    }
+}
+
+struct SnapshotReaderDropGate {
+    started: mpsc::Sender<()>,
+    released: Mutex<mpsc::Receiver<()>>,
+}
+
+impl SnapshotReaderDropGate {
+    fn new(started: mpsc::Sender<()>, released: mpsc::Receiver<()>) -> Self {
+        Self {
+            started,
+            released: Mutex::new(released),
+        }
+    }
+
+    fn block_cleanup(&self) {
+        let _ = self.started.send(());
+        let _ = self
+            .released
+            .lock()
+            .unwrap()
+            .recv_timeout(std::time::Duration::from_secs(5));
     }
 }
 

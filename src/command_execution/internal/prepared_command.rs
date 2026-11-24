@@ -450,6 +450,8 @@ impl PreparedCommand {
 mod tests {
     use std::future::Future;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
     use std::task::Context;
     use std::task::Poll;
     use std::task::Wake;
@@ -535,6 +537,7 @@ mod tests {
     ) -> (
         Result<OperationOutcome<MimeCommandOutput, CommandError>, ExecutionFailure>,
         ChildSnapshot,
+        usize,
     ) {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
         let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
@@ -548,8 +551,11 @@ mod tests {
         };
         let read_tree = services.new_read_tree(64);
         let body_services = Arc::clone(&services);
+        let runner_invocations = Arc::new(AtomicUsize::new(0));
+        let operation_runner_invocations = Arc::clone(&runner_invocations);
         let input = OwnedMimeInput::bytes(Arc::from(b"prepared-command-input".as_slice()), InputExtent::Complete);
         let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let runner_invocations = operation_runner_invocations;
             let staged = stage_owned_in(&scope, input, limits, read_tree).await?;
             let command_worker = Arc::new(FixedMimeExecutionPort::new(1, if reject_dispatch { 1 } else { 4 }));
             command_worker.prepare()?;
@@ -581,11 +587,12 @@ mod tests {
             } else {
                 runner
             };
-            let prepared = Arc::new(PreparedCommand::new(
+            let prepared = Arc::new(PreparedCommand::new_with_runner_invocations(
                 MimeExecutionWorker::new(command_worker.clone()),
                 runner,
                 command,
                 staged,
+                Arc::clone(&runner_invocations),
             ));
             if let Some(lock) = poison_lock {
                 poison_prepared_command_lock(Arc::clone(&prepared), lock);
@@ -610,6 +617,13 @@ mod tests {
                                     assert!(matches!(prepared.poll_settlement(&mut context), Poll::Pending));
                                 }
                                 if stop_when_running {
+                                    while runner_invocations.load(Ordering::Acquire) == 0 {
+                                        assert!(
+                                            std::time::Instant::now() < deadline,
+                                            "worker never invoked the managed command runner"
+                                        );
+                                        std::thread::yield_now();
+                                    }
                                     prepared.request_stop(StopReason::Timeout);
                                 }
                                 break;
@@ -654,7 +668,7 @@ mod tests {
                 queued_job_done.expect("queued callback").recv().unwrap();
             }
             command_worker.shutdown()?;
-            Ok::<_, MimeError>((result, snapshot))
+            Ok::<_, MimeError>((result, snapshot, runner_invocations.load(Ordering::SeqCst)))
         }))
         .unwrap();
         let result = match block_on(operation.wait_outcome()).unwrap() {
@@ -859,7 +873,7 @@ mod tests {
 
     #[test]
     fn test_activation_maps_success_and_confirms_input_release() {
-        let (result, snapshot) = execute_prepared_command(
+        let (result, snapshot, _) = execute_prepared_command(
             Command::new("rustc").arg("--version"),
             false,
             false,
@@ -885,7 +899,7 @@ mod tests {
 
     #[test]
     fn test_activation_recovers_poisoned_request_lock_and_releases_input() {
-        let (result, snapshot) = execute_prepared_command(
+        let (result, snapshot, _) = execute_prepared_command(
             Command::new("rustc").arg("--version"),
             false,
             false,
@@ -907,7 +921,7 @@ mod tests {
 
     #[test]
     fn test_activation_maps_spawn_failure_and_worker_rejection() {
-        let (result, failed_snapshot) = execute_prepared_command(
+        let (result, failed_snapshot, _) = execute_prepared_command(
             Command::new("__qubit_mime_prepared_command_missing_test_executable__"),
             false,
             false,
@@ -925,7 +939,7 @@ mod tests {
         assert!(failed_snapshot.input_released);
         assert!(failed_snapshot.settlement.is_some());
 
-        let (result, rejected_snapshot) = execute_prepared_command(
+        let (result, rejected_snapshot, _) = execute_prepared_command(
             Command::new("must-not-run"),
             true,
             false,
@@ -947,7 +961,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_running_snapshot_retains_input_until_command_exit() {
-        let (result, snapshot) = execute_prepared_command(
+        let (result, snapshot, _) = execute_prepared_command(
             Command::new("sleep").arg("0.2"),
             false,
             true,
@@ -968,7 +982,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_stop_during_running_command_cancels_child_and_releases_input() {
-        let (result, snapshot) = execute_prepared_command(
+        let (result, snapshot, runner_invocations) = execute_prepared_command(
             Command::new("sleep").arg("10"),
             false,
             true,
@@ -979,6 +993,10 @@ mod tests {
         );
 
         assert!(matches!(result, Ok(OperationOutcome::Stopped(report)) if report.reason == StopReason::Timeout));
+        assert_eq!(
+            1, runner_invocations,
+            "cancellation follows an actual runner invocation"
+        );
         assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
         assert!(snapshot.input_released);
         assert_eq!(
@@ -991,7 +1009,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn test_command_timeout_reports_failure_and_releases_staged_input() {
-        let (result, snapshot) = execute_prepared_command(
+        let (result, snapshot, _) = execute_prepared_command(
             Command::new("sleep").arg("10"),
             false,
             false,
@@ -1013,7 +1031,7 @@ mod tests {
 
     #[test]
     fn test_truncated_stdout_fails_command_and_releases_staged_input() {
-        let (result, snapshot) = execute_prepared_command(
+        let (result, snapshot, _) = execute_prepared_command(
             Command::new("rustc").arg("--version"),
             false,
             false,
@@ -1037,7 +1055,7 @@ mod tests {
 
     #[test]
     fn test_stdin_open_failure_publishes_failed_outcome_and_releases_input() {
-        let (result, snapshot) = execute_prepared_command(
+        let (result, snapshot, _) = execute_prepared_command(
             Command::new("rustc")
                 .arg("--version")
                 .stdin_file("/qubit-mime-missing-command-input-test"),
