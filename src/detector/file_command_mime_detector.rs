@@ -871,6 +871,7 @@ mod file_operation_tests {
         bytes: Vec<u8>,
         reads: Arc<AtomicUsize>,
         stop_context: Option<Arc<std::sync::Mutex<Option<OperationContext>>>>,
+        first_read_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     }
 
     type ProviderStopContext = Arc<std::sync::Mutex<Option<OperationContext>>>;
@@ -879,17 +880,22 @@ mod file_operation_tests {
 
     impl ProviderFs {
         fn filesystem(bytes: &[u8]) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>) {
-            let (filesystem, reads, _) = Self::with_optional_stop(bytes, None);
+            let (filesystem, reads, _) = Self::with_optional_stop(bytes, None, None);
             (filesystem, reads)
         }
 
         fn stopping(bytes: &[u8]) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>, ProviderStopContext) {
             let stop_context = Arc::new(std::sync::Mutex::new(None));
-            let (filesystem, reads, stop_context) = Self::with_optional_stop(bytes, Some(stop_context));
+            let (filesystem, reads, stop_context) = Self::with_optional_stop(bytes, Some(stop_context), None);
             (filesystem, reads, stop_context.unwrap())
         }
 
-        fn with_optional_stop(bytes: &[u8], stop_context: Option<ProviderStopContext>) -> ProviderBuild {
+        fn deadline_after_first_read(bytes: &[u8], hook: Arc<dyn Fn() + Send + Sync>) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>) {
+            let (filesystem, reads, _) = Self::with_optional_stop(bytes, None, Some(hook));
+            (filesystem, reads)
+        }
+
+        fn with_optional_stop(bytes: &[u8], stop_context: Option<ProviderStopContext>, first_read_hook: Option<Arc<dyn Fn() + Send + Sync>>) -> ProviderBuild {
             let properties = ProviderProperties::new(
                 FileSystemInfo::new(
                     FileSystemId::new("mime-file-operation-test").unwrap(),
@@ -909,6 +915,7 @@ mod file_operation_tests {
                 bytes: bytes.to_vec(),
                 reads: Arc::clone(&reads),
                 stop_context: stop_context.clone(),
+                first_read_hook,
             })
             .unwrap();
             (Arc::new(filesystem), reads, stop_context)
@@ -930,6 +937,7 @@ mod file_operation_tests {
             let bytes = self.bytes.clone();
             let reads = Arc::clone(&self.reads);
             let stop_context = self.stop_context.as_ref().map(Arc::clone);
+            let first_read_hook = self.first_read_hook.as_ref().map(Arc::clone);
             Box::pin(async move {
                 Ok(OpenedAsyncReader::new(
                     info,
@@ -938,6 +946,7 @@ mod file_operation_tests {
                         offset: 0,
                         reads,
                         stop_context,
+                        first_read_hook,
                     }),
                 ))
             })
@@ -949,6 +958,7 @@ mod file_operation_tests {
         offset: usize,
         reads: Arc<AtomicUsize>,
         stop_context: Option<Arc<std::sync::Mutex<Option<OperationContext>>>>,
+        first_read_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     }
 
     impl AsyncInput for ProviderInput {
@@ -960,12 +970,15 @@ mod file_operation_tests {
             index: usize,
             count: usize,
         ) -> Poll<std::io::Result<usize>> {
-            self.reads.fetch_add(1, Ordering::SeqCst);
+            let first_read = self.reads.fetch_add(1, Ordering::SeqCst) == 0;
             let count = count.min(self.bytes.len().saturating_sub(self.offset));
             output[index..index + count].copy_from_slice(&self.bytes[self.offset..self.offset + count]);
             self.offset += count;
             if let Some(context) = self.stop_context.as_ref().and_then(|slot| slot.lock().unwrap().take()) {
                 let _ = context.request_stop(StopReason::UserCancelled);
+            }
+            if first_read && let Some(hook) = self.first_read_hook.take() {
+                hook();
             }
             Poll::Ready(Ok(count))
         }
@@ -1101,6 +1114,7 @@ mod file_operation_tests {
         filesystem: Arc<AsyncFileSystem>,
         options: MimeOperationOptions,
         stop_context: Option<Arc<std::sync::Mutex<Option<OperationContext>>>>,
+        operation_options: qubit_operation::OperationOptions,
     ) -> (
         AsyncOperationHandle<MimeCandidates, MimeError>,
         OperationOutcome<MimeCandidates, MimeError>,
@@ -1113,7 +1127,7 @@ mod file_operation_tests {
         let mut handle = harness
             .group
             .as_async()
-            .try_submit(Default::default(), move |scope| async move {
+            .try_submit(operation_options, move |scope| async move {
                 services.bind_read_tree(scope.id(), &tree);
                 if let Some(stop_context) = stop_context {
                     *stop_context.lock().unwrap() = Some(scope.context().clone());
@@ -1194,6 +1208,125 @@ mod file_operation_tests {
         let shutdown = services.shutdown();
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
         let _ = shutdown.stop_services().unwrap();
+    }
+
+    #[test]
+    fn test_file_operation_staging_deadline_before_create_dispatches_no_work() {
+        struct FakeClock {
+            domain: qubit_operation::ClockDomainId,
+            ticks: Arc<std::sync::atomic::AtomicU64>,
+        }
+        impl qubit_operation::ClockSource for FakeClock {
+            fn now(&self) -> qubit_operation::MonotonicTime {
+                qubit_operation::MonotonicTime::new(self.domain, self.ticks.load(Ordering::Acquire))
+            }
+            fn register_deadline(
+                &self,
+                _at: qubit_operation::MonotonicTime,
+                _wake: Waker,
+            ) -> Box<dyn qubit_operation::TimerRegistration> {
+                Box::new(TestTimerRegistration)
+            }
+        }
+        struct TestTimerRegistration;
+        impl qubit_operation::TimerRegistration for TestTimerRegistration {
+            fn cancel(self: Box<Self>) {}
+        }
+
+        #[derive(Debug)]
+        struct CountingPort(Arc<AtomicUsize>);
+        impl MimeExecutionPort for CountingPort {
+            fn prepare(&self) -> Result<(), MimeError> { Ok(()) }
+            fn try_dispatch(&self, job: Box<dyn FnOnce() + Send + 'static>) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                job();
+                Ok(())
+            }
+            fn shutdown(&self) -> Result<(), MimeError> { Ok(()) }
+        }
+
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let dispatches = Arc::new(AtomicUsize::new(0));
+        let port = Arc::new(CountingPort(Arc::clone(&dispatches)));
+        let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
+        services.prepare().unwrap();
+        let limits = ManagedStagingLimits {
+            max_bytes: 16,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port),
+        };
+        let domain = qubit_operation::ClockDomainId::new_unique();
+        let ticks = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let clock = Arc::new(FakeClock { domain, ticks: Arc::clone(&ticks) });
+        let deadline_ticks = Arc::clone(&ticks);
+        let mut handle = group.as_async().try_submit(
+            qubit_operation::OperationOptions {
+                context: qubit_operation::ContextOptions {
+                    clock: Some(clock),
+                    deadline: Some(qubit_operation::Deadline::at(qubit_operation::MonotonicTime::new(domain, 5))),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            move |scope| async move {
+                deadline_ticks.store(5, Ordering::Release);
+                stage_borrowed_bytes_in(&scope, b"input", InputExtent::Complete, limits).await.map(|_| ())
+            },
+        ).unwrap();
+        let outcome = block_on(handle.wait_outcome()).unwrap();
+        assert!(matches!(outcome, OperationOutcome::Failed(MimeError::OperationStopped(ref report)) if report.reason == StopReason::Timeout), "expired staging outcome: {outcome:?}");
+        assert_eq!(0, dispatches.load(Ordering::SeqCst), "expired staging must not dispatch create or write work");
+        assert_eq!(0, services.staging_budget().used_bytes());
+        assert!(block_on(handle.wait_settlement()).all_released());
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+    }
+
+    #[test]
+    fn test_file_operation_staging_deadline_after_first_provider_read_blocks_next_read() {
+        struct ReadDeadlineClock {
+            domain: qubit_operation::ClockDomainId,
+            ticks: Arc<std::sync::atomic::AtomicU64>,
+        }
+        impl qubit_operation::ClockSource for ReadDeadlineClock {
+            fn now(&self) -> qubit_operation::MonotonicTime {
+                qubit_operation::MonotonicTime::new(self.domain, self.ticks.load(Ordering::Acquire))
+            }
+            fn register_deadline(&self, _at: qubit_operation::MonotonicTime, _wake: Waker) -> Box<dyn qubit_operation::TimerRegistration> {
+                Box::new(ReadDeadlineRegistration)
+            }
+        }
+        struct ReadDeadlineRegistration;
+        impl qubit_operation::TimerRegistration for ReadDeadlineRegistration {
+            fn cancel(self: Box<Self>) {}
+        }
+
+        let fake = executor(b"application/pdf", false, None);
+        let harness = harness(Arc::clone(&fake));
+        let domain = qubit_operation::ClockDomainId::new_unique();
+        let ticks = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let tick_after_read = Arc::clone(&ticks);
+        let hook: Arc<dyn Fn() + Send + Sync> = Arc::new(move || tick_after_read.store(5, Ordering::Release));
+        let (filesystem, reads) = ProviderFs::deadline_after_first_read(&[b'x'; 32], hook);
+        let operation_options = qubit_operation::OperationOptions {
+            context: qubit_operation::ContextOptions {
+                clock: Some(Arc::new(ReadDeadlineClock { domain, ticks })),
+                deadline: Some(qubit_operation::Deadline::at(qubit_operation::MonotonicTime::new(domain, 5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let options = MimeOperationOptions { max_staging_bytes: Some(8), ..Default::default() };
+        let (handle, outcome, read_tree) = submit_provider(&harness, filesystem, options, None, operation_options);
+        assert!(matches!(outcome, OperationOutcome::Failed(MimeError::OperationStopped(ref report)) if report.reason == StopReason::Timeout));
+        assert_eq!(1, reads.load(Ordering::SeqCst), "deadline after the successful first read blocks the next Provider read");
+        assert!(read_tree.consumed() > 0, "successful first read remains charged");
+        assert_eq!(0, fake.calls.load(Ordering::SeqCst), "command execution must not start after the staging deadline");
+        assert_eq!(0, harness.services.staging_budget().used_bytes());
+        assert!(block_on(handle.wait_settlement()).all_released());
+        cleanup(&harness);
     }
 
     #[test]
@@ -1331,7 +1464,7 @@ mod file_operation_tests {
             max_staging_bytes: Some(4),
             ..Default::default()
         };
-        let (handle, outcome, _read_tree) = submit_provider(&harness, filesystem, options, None);
+        let (handle, outcome, _read_tree) = submit_provider(&harness, filesystem, options, None, Default::default());
         assert!(matches!(
             outcome,
             OperationOutcome::Failed(MimeError::BudgetExceeded {
@@ -1355,7 +1488,7 @@ mod file_operation_tests {
             max_staging_bytes: Some(2),
             ..Default::default()
         };
-        let (handle, outcome, read_tree) = submit_provider(&harness, filesystem, options, Some(stop_context));
+        let (handle, outcome, read_tree) = submit_provider(&harness, filesystem, options, Some(stop_context), Default::default());
         assert!(matches!(outcome, OperationOutcome::Stopped(_)));
         assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
         assert_eq!(reads.load(Ordering::SeqCst), 1, "no read begins after stop");
