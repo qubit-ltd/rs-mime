@@ -683,24 +683,40 @@ fn test_metered_random_access_reads_share_budget_and_reject_sequential_offsets()
 fn test_metered_random_access_stop_after_first_read_blocks_next_provider_call() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
-    let services = Arc::new(MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 8).unwrap());
+    let services =
+        Arc::new(MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 8).unwrap());
     services.prepare().unwrap();
     let (filesystem, opens, reads) = BytesAsyncFs::filesystem(b"012345");
     let path = FsPath::parse("/input").unwrap();
     let tree = services.new_read_tree(8);
     let context = qubit_operation::OperationContext::new(Default::default()).unwrap();
     let mut session = block_on(MeteredReadSession::open_random_access(
-        &filesystem, &path, Arc::clone(&services), Arc::clone(&tree), context.clone(), 8, 4,
-    )).unwrap();
+        &filesystem,
+        &path,
+        Arc::clone(&services),
+        Arc::clone(&tree),
+        context.clone(),
+        8,
+        4,
+    ))
+    .unwrap();
     let mut output = [0; 4];
     let delivered = block_on(session.read_at(0, &mut output)).unwrap();
     let calls_after_first_read = reads.load(Ordering::SeqCst);
     assert!(calls_after_first_read > 0);
     assert!(context.request_stop(qubit_operation::StopReason::UserCancelled));
     assert!(block_on(session.read_at(1, &mut output)).is_err());
-    assert_eq!(calls_after_first_read, reads.load(Ordering::SeqCst), "stopped session must not call the provider again");
+    assert_eq!(
+        calls_after_first_read,
+        reads.load(Ordering::SeqCst),
+        "stopped session must not call the provider again"
+    );
     assert_eq!(1, opens.load(Ordering::SeqCst));
-    assert_eq!(delivered as u64, tree.consumed(), "successful first read remains charged");
+    assert_eq!(
+        delivered as u64,
+        tree.consumed(),
+        "successful first read remains charged"
+    );
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();
@@ -710,24 +726,40 @@ fn test_metered_random_access_stop_after_first_read_blocks_next_provider_call() 
 fn test_metered_sequential_stop_after_first_read_blocks_next_provider_call() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
-    let services = Arc::new(MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 8).unwrap());
+    let services =
+        Arc::new(MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 8).unwrap());
     services.prepare().unwrap();
     let (filesystem, opens, reads) = BytesAsyncFs::filesystem(b"012345");
     let path = FsPath::parse("/input").unwrap();
     let tree = services.new_read_tree(8);
     let context = qubit_operation::OperationContext::new(Default::default()).unwrap();
     let mut session = block_on(MeteredReadSession::open_sequential(
-        &filesystem, &path, Arc::clone(&services), Arc::clone(&tree), context.clone(), 8, 4,
-    )).unwrap();
+        &filesystem,
+        &path,
+        Arc::clone(&services),
+        Arc::clone(&tree),
+        context.clone(),
+        8,
+        4,
+    ))
+    .unwrap();
     let mut output = [0; 4];
     let delivered = block_on(session.read(&mut output)).unwrap();
     let calls_after_first_read = reads.load(Ordering::SeqCst);
     assert!(calls_after_first_read > 0);
     assert!(context.request_stop(qubit_operation::StopReason::UserCancelled));
     assert!(block_on(session.read(&mut output)).is_err());
-    assert_eq!(calls_after_first_read, reads.load(Ordering::SeqCst), "stopped session must not call the provider again");
+    assert_eq!(
+        calls_after_first_read,
+        reads.load(Ordering::SeqCst),
+        "stopped session must not call the provider again"
+    );
     assert_eq!(1, opens.load(Ordering::SeqCst));
-    assert_eq!(delivered as u64, tree.consumed(), "successful first read remains charged");
+    assert_eq!(
+        delivered as u64,
+        tree.consumed(),
+        "successful first read remains charged"
+    );
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();
@@ -769,7 +801,10 @@ impl qubit_operation::TimerRegistration for NoopReadTimer {
 fn deadline_context(clock: Arc<ControlledReadClock>) -> qubit_operation::OperationContext {
     qubit_operation::OperationContext::new(qubit_operation::ContextOptions {
         clock: Some(clock.clone()),
-        deadline: Some(qubit_operation::Deadline::at(qubit_operation::MonotonicTime::new(clock.domain, 5))),
+        deadline: Some(qubit_operation::Deadline::at(qubit_operation::MonotonicTime::new(
+            clock.domain,
+            5,
+        ))),
         ..Default::default()
     })
     .unwrap()
@@ -780,12 +815,9 @@ fn test_metered_final_stop_check_prevents_io_after_expiry_during_preparation() {
     for random_access in [false, true] {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
         let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
-        let services = Arc::new(MimeExecutionServices::new(
-            manager,
-            group,
-            Arc::new(FixedMimeExecutionPort::new(1, 1)),
-            8,
-        ).unwrap());
+        let services = Arc::new(
+            MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 8).unwrap(),
+        );
         services.prepare().unwrap();
         let (filesystem, opens, reads) = BytesAsyncFs::filesystem(b"012345");
         let path = FsPath::parse("/input").unwrap();
@@ -800,22 +832,42 @@ fn test_metered_final_stop_check_prevents_io_after_expiry_during_preparation() {
         let context = deadline_context(clock);
         let mut session = if random_access {
             block_on(MeteredReadSession::open_random_access(
-                &filesystem, &path, Arc::clone(&services), Arc::clone(&tree), context, 8, 4,
+                &filesystem,
+                &path,
+                Arc::clone(&services),
+                Arc::clone(&tree),
+                context,
+                8,
+                4,
             ))
         } else {
             block_on(MeteredReadSession::open_sequential(
-                &filesystem, &path, Arc::clone(&services), Arc::clone(&tree), context, 8, 4,
+                &filesystem,
+                &path,
+                Arc::clone(&services),
+                Arc::clone(&tree),
+                context,
+                8,
+                4,
             ))
-        }.unwrap();
+        }
+        .unwrap();
         let mut output = [0; 4];
         let result = if random_access {
             block_on(session.read_at(0, &mut output))
         } else {
             block_on(session.read(&mut output))
         };
-        assert!(result.is_err(), "expired operation must be rejected before Provider I/O");
+        assert!(
+            result.is_err(),
+            "expired operation must be rejected before Provider I/O"
+        );
         assert_eq!(1, opens.load(Ordering::SeqCst));
-        assert_eq!(0, reads.load(Ordering::SeqCst), "deadline reached during preparation must block the Provider call");
+        assert_eq!(
+            0,
+            reads.load(Ordering::SeqCst),
+            "deadline reached during preparation must block the Provider call"
+        );
         assert_eq!(8, tree.remaining(), "the unstarted read reservation is returned");
         let shutdown = services.shutdown();
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
@@ -829,12 +881,9 @@ fn test_metered_open_rejects_stopped_and_expired_context_before_provider_io() {
         for expired in [false, true] {
             let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
             let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
-            let services = Arc::new(MimeExecutionServices::new(
-                manager,
-                group,
-                Arc::new(FixedMimeExecutionPort::new(1, 1)),
-                8,
-            ).unwrap());
+            let services = Arc::new(
+                MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 8).unwrap(),
+            );
             services.prepare().unwrap();
             let (filesystem, opens, _) = BytesAsyncFs::filesystem(b"012345");
             let path = FsPath::parse("/input").unwrap();
@@ -854,15 +903,31 @@ fn test_metered_open_rejects_stopped_and_expired_context_before_provider_io() {
             };
             let result = if random_access {
                 block_on(MeteredReadSession::open_random_access(
-                    &filesystem, &path, Arc::clone(&services), Arc::clone(&tree), context, 8, 4,
+                    &filesystem,
+                    &path,
+                    Arc::clone(&services),
+                    Arc::clone(&tree),
+                    context,
+                    8,
+                    4,
                 ))
             } else {
                 block_on(MeteredReadSession::open_sequential(
-                    &filesystem, &path, Arc::clone(&services), Arc::clone(&tree), context, 8, 4,
+                    &filesystem,
+                    &path,
+                    Arc::clone(&services),
+                    Arc::clone(&tree),
+                    context,
+                    8,
+                    4,
                 ))
             };
             assert!(result.is_err());
-            assert_eq!(0, opens.load(Ordering::SeqCst), "stopped/expired open must not call Provider");
+            assert_eq!(
+                0,
+                opens.load(Ordering::SeqCst),
+                "stopped/expired open must not call Provider"
+            );
             let shutdown = services.shutdown();
             let _ = block_on(shutdown.wait_services_settled()).unwrap();
             let _ = shutdown.stop_services().unwrap();
