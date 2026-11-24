@@ -41,12 +41,15 @@ pub(in crate::detector) struct ProviderReadPlan {
 impl ProviderReadPlan {
     /// Captures extension capabilities once and enforces managed reads for
     /// complete and same-object sampling backends.
-    pub(in crate::detector) fn capture(backend: &dyn AsyncMimeDetectorBackend) -> Self {
+    pub(in crate::detector) fn capture(
+        backend: &dyn AsyncMimeDetectorBackend,
+        trusted_self_metered_file: bool,
+    ) -> Self {
         let requirement = backend.content_requirement();
         let random_access = backend.random_access_capability();
         let requested_managed_reads = backend.uses_managed_provider_reads();
         let managed_provider_reads = requested_managed_reads
-            || matches!(requirement, ContentRequirement::Complete)
+            || (matches!(requirement, ContentRequirement::Complete) && !trusted_self_metered_file)
             || random_access == crate::RandomAccessCapability::SamplesSameObject;
         Self {
             requirement,
@@ -567,13 +570,21 @@ mod tests {
     #[test]
     fn provider_read_plan_captures_hooks_once_and_enforces_complete_reads() {
         let backend = CapabilityHooks::default();
-        let plan = ProviderReadPlan::capture(&backend);
+        let plan = ProviderReadPlan::capture(&backend, false);
 
         assert_eq!(1, backend.requirement.load(Ordering::SeqCst));
         assert_eq!(1, backend.random_access.load(Ordering::SeqCst));
         assert_eq!(1, backend.managed.load(Ordering::SeqCst));
         assert!(plan.managed_provider_reads);
         assert_eq!(ContentRequirement::Complete, plan.requirement);
+    }
+
+    #[test]
+    fn provider_read_plan_allows_only_trusted_file_to_keep_self_metered_complete_reads() {
+        let backend = CapabilityHooks::default();
+        let plan = ProviderReadPlan::capture(&backend, true);
+
+        assert!(!plan.managed_provider_reads);
     }
 
     fn bytes_input() -> OwnedMimeInput {

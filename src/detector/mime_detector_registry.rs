@@ -161,7 +161,7 @@ impl MimeDetectorRegistry {
         classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
     ) -> Result<(String, Arc<dyn crate::AsyncMimeDetectorBackend>), crate::MimeError> {
         self.create_async_backend_internal(selection, config, services, classifier)
-            .map(|(id, backend, _)| (id, backend))
+            .map(|(id, backend, _, _)| (id, backend))
     }
 
     /// Creates an async backend and retains the trusted repository belonging
@@ -246,7 +246,7 @@ impl MimeDetectorRegistry {
                         let repository = entry
                             .uses_bundled_repository
                             .then(crate::MimeRepository::bundled_shared);
-                        (id, backend, repository)
+                        (id, backend, repository, entry.self_metered_provider_reads)
                     })
             } else {
                 Err(crate::MimeError::AsyncUnsupported)
@@ -345,6 +345,7 @@ impl MimeDetectorRegistry {
         let descriptor = provider.descriptor();
         let id = descriptor.id().as_str().to_owned();
         let uses_bundled_repository = TypeId::of::<P>() == TypeId::of::<RepositoryMimeDetectorProvider>();
+        let self_metered_provider_reads = TypeId::of::<P>() == TypeId::of::<FileCommandMimeDetectorProvider>();
         let is_builtin =
             uses_bundled_repository || TypeId::of::<P>() == TypeId::of::<FileCommandMimeDetectorProvider>();
         let provider: Arc<dyn AsyncMimeDetectorProvider> = Arc::new(provider);
@@ -374,6 +375,7 @@ impl MimeDetectorRegistry {
                     is_builtin,
                     provider: Arc::clone(&provider),
                     uses_bundled_repository,
+                    self_metered_provider_reads,
                 },
             );
         }

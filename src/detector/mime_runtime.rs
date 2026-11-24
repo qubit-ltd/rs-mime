@@ -50,7 +50,7 @@ pub struct MimeRuntime {
     /// Optional services for managed operations.
     execution_services: Option<Arc<MimeExecutionServices>>,
     /// Selected async provider identity and detector backend.
-    async_backend: Option<(String, Arc<dyn crate::AsyncMimeDetectorBackend>)>,
+    async_backend: Option<(String, Arc<dyn crate::AsyncMimeDetectorBackend>, bool)>,
     /// Repository selection is known to use the crate-owned async matcher.
     async_repository: Option<Arc<MimeRepository>>,
 }
@@ -158,7 +158,7 @@ impl MimeRuntime {
     /// This runtime configured for managed operations.
     pub fn with_execution_services(mut self, services: MimeExecutionServices) -> Self {
         let backend = OwnedRepositoryMimeDetector::new(self.context.config().clone(), self.context.repository_arc());
-        self.async_backend = Some(("repository".to_owned(), Arc::new(backend)));
+        self.async_backend = Some(("repository".to_owned(), Arc::new(backend), false));
         self.async_repository = Some(self.context.repository_arc());
         self.execution_services = Some(Arc::new(services));
         self
@@ -186,9 +186,9 @@ impl MimeRuntime {
             .execution_services
             .as_ref()
             .ok_or(crate::MimeError::ExecutionServicesRequired)?;
-        let (id, backend, repository) =
+        let (id, backend, repository, self_metered_provider_reads) =
             registry.create_async_backend_internal(selection, self.context.config(), services, None)?;
-        self.async_backend = Some((id, backend));
+        self.async_backend = Some((id, backend, self_metered_provider_reads));
         self.async_repository = repository;
         Ok(self)
     }
@@ -221,13 +221,13 @@ impl MimeRuntime {
             .ok_or(crate::MimeError::ExecutionServicesRequired)?;
         let (_, classifier) =
             classifier_registry.create_async_backend(classifier_selection, self.context.config(), services)?;
-        let (id, backend, repository) = detector_registry.create_async_backend_internal(
+        let (id, backend, repository, self_metered_provider_reads) = detector_registry.create_async_backend_internal(
             detector_selection,
             self.context.config(),
             services,
             Some(classifier),
         )?;
-        self.async_backend = Some((id, backend));
+        self.async_backend = Some((id, backend, self_metered_provider_reads));
         self.async_repository = repository;
         Ok(self)
     }
@@ -457,7 +457,7 @@ impl MimeRuntime {
                 input,
             });
         };
-        let Some((backend_id, backend)) = self.async_backend.as_ref().cloned() else {
+        let Some((backend_id, backend, self_metered_provider_reads)) = self.async_backend.as_ref().cloned() else {
             return Err(MimeSubmitFailure {
                 reason: MimeSubmitRejection::AsyncUnsupported,
                 input,
@@ -465,7 +465,7 @@ impl MimeRuntime {
         };
         // Extension hooks may be reentrant. Capture capabilities once before
         // taking the shared submission lock.
-        let read_plan = mime_submission::ProviderReadPlan::capture(backend.as_ref());
+        let read_plan = mime_submission::ProviderReadPlan::capture(backend.as_ref(), self_metered_provider_reads);
         let _submission = services.submission_guard();
         let can_submit = if parent.is_some() {
             services.accepts_children()
