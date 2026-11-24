@@ -342,6 +342,10 @@ impl MediaStreamClassifierRegistry {
         }
         let provider: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>> = Arc::new(provider);
         let descriptor = provider.descriptor();
+        // Keep one owner until after the selector guard is released. The
+        // underlying registry may reject a duplicate ID and drop its input
+        // before returning the error.
+        let _provider_owner = Arc::clone(&provider);
         let mut selector_ids = self.selector_ids.write().unwrap_or_else(|e| e.into_inner());
         selector_ids
             .validate(&descriptor)
@@ -382,6 +386,9 @@ impl MediaStreamClassifierRegistry {
             return Err(RegistryMutationError::Sealed);
         }
         let descriptor = provider.descriptor();
+        // Defer a rejected provider's last drop until after the selector
+        // guard is released, so its destructor can reenter this registry.
+        let _provider_owner = Arc::clone(&provider);
         let mut selector_ids = self.selector_ids.write().unwrap_or_else(|e| e.into_inner());
         selector_ids
             .validate(&descriptor)
@@ -563,5 +570,135 @@ mod async_catalog_recovery_tests {
                 .register_async_provider(FfprobeCommandMediaStreamClassifierProvider)
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod rejected_provider_drop_tests {
+    use std::sync::Arc;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use qubit_spi::ProviderDefinition;
+    use qubit_spi::ProviderDescriptor;
+    use qubit_spi::ProviderId;
+    use qubit_spi::ProviderMetadata;
+    use qubit_spi::ServiceProvider;
+    use qubit_spi::error::ProviderFailure;
+
+    use super::FfprobeCommandMediaStreamClassifierProvider;
+    use super::MediaStreamClassifierRegistry;
+    use super::MediaStreamClassifierSpec;
+    use crate::MediaStreamClassifier;
+    use crate::MimeConfig;
+    use crate::MimeError;
+
+    #[derive(Debug)]
+    struct ReentrantDropProvider {
+        registry: MediaStreamClassifierRegistry,
+        dropped: mpsc::Sender<()>,
+    }
+
+    impl ProviderMetadata for ReentrantDropProvider {
+        fn descriptor(&self) -> ProviderDescriptor {
+            ProviderDescriptor::new(ProviderId::new("ffprobe").expect("valid provider ID"))
+        }
+    }
+
+    impl ServiceProvider<MediaStreamClassifierSpec> for ReentrantDropProvider {
+        fn create_configured(
+            &self,
+            config: &MimeConfig,
+        ) -> Result<Arc<dyn MediaStreamClassifier>, ProviderFailure<MimeError>> {
+            <FfprobeCommandMediaStreamClassifierProvider as ServiceProvider<MediaStreamClassifierSpec>>::create_configured(
+                &FfprobeCommandMediaStreamClassifierProvider,
+                config,
+            )
+        }
+    }
+
+    impl Drop for ReentrantDropProvider {
+        fn drop(&mut self) {
+            let _ = self.registry.provider_ids();
+            let _ = self.dropped.send(());
+        }
+    }
+
+    impl super::AsyncMediaStreamClassifierProvider for ReentrantDropProvider {
+        fn create_async_backend(
+            &self,
+            _config: &MimeConfig,
+            _services: &crate::MimeExecutionServices,
+        ) -> Result<Arc<dyn crate::AsyncMediaStreamClassifierBackend>, MimeError> {
+            Err(MimeError::AsyncUnsupported)
+        }
+    }
+
+    fn rejected_provider(
+        registry: &MediaStreamClassifierRegistry,
+    ) -> (ReentrantDropProvider, mpsc::Receiver<()>) {
+        let (dropped, received) = mpsc::channel();
+        (
+            ReentrantDropProvider {
+                registry: registry.clone(),
+                dropped,
+            },
+            received,
+        )
+    }
+
+    fn assert_failed_registration_drops_after_unlock(
+        received: mpsc::Receiver<()>,
+        result: mpsc::Receiver<(bool, Vec<qubit_spi::ProviderId>)>,
+        existing: Vec<qubit_spi::ProviderId>,
+    ) {
+        received
+            .recv_timeout(Duration::from_secs(1))
+            .expect("rejected provider Drop should query the registry");
+        let (rejected, actual) = result
+            .recv_timeout(Duration::from_secs(1))
+            .expect("registration should return");
+        assert!(rejected, "duplicate provider should be rejected");
+        assert_eq!(existing, actual, "failed registration must preserve provider records");
+    }
+
+    #[test]
+    fn register_releases_selector_lock_before_dropping_rejected_provider() {
+        let registry = MediaStreamClassifierRegistry::builtin();
+        let existing = registry.provider_ids();
+        let (provider, received) = rejected_provider(&registry);
+        let (result_tx, result_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = registry.register(provider);
+            let _ = result_tx.send((result.is_err(), registry.provider_ids()));
+        });
+        assert_failed_registration_drops_after_unlock(received, result_rx, existing);
+    }
+
+    #[test]
+    fn register_shared_releases_selector_lock_before_dropping_rejected_provider() {
+        let registry = MediaStreamClassifierRegistry::builtin();
+        let existing = registry.provider_ids();
+        let (provider, received) = rejected_provider(&registry);
+        let provider: Arc<dyn ProviderDefinition<MediaStreamClassifierSpec>> = Arc::new(provider);
+        let (result_tx, result_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = registry.register_shared(provider);
+            let _ = result_tx.send((result.is_err(), registry.provider_ids()));
+        });
+        assert_failed_registration_drops_after_unlock(received, result_rx, existing);
+    }
+
+    #[test]
+    fn async_registration_releases_selector_lock_before_dropping_rejected_provider() {
+        let registry = MediaStreamClassifierRegistry::builtin();
+        let existing = registry.provider_ids();
+        let (provider, received) = rejected_provider(&registry);
+        let (result_tx, result_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = registry.register_async_provider(provider);
+            let _ = result_tx.send((result.is_err(), registry.provider_ids()));
+        });
+        assert_failed_registration_drops_after_unlock(received, result_rx, existing);
     }
 }
