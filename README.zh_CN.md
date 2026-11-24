@@ -106,6 +106,7 @@ MIME 对，细化会保留原 MIME；可传入匹配的文件名或消除映射�
 
 组准入关闭后，已接纳到组内的父 operation 仍可派发必要后代；新的外部 scope 必须在关闭前接纳。
 同步子操作不会被强制打断，只能在自身的协作检查点观察 stop。
+暂存清理 recovery 转交给 `RecoveryStore` 后，即使原 MIME 服务已经停止，仍可由该 store 重试；应用需要独立保留并运行 recovery store。
 路径输入会按 native path 语义提取 basename 再进行文件名匹配，完整路径不会重新作为文件名解析；
 POSIX basename 中的反斜杠属于文件名数据，非 UTF-8 本地 basename 会以 lossy 字符串匹配。
 `OwnedMimeInput::Bytes` 仍使用调用方提供的 filename。

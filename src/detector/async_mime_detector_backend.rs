@@ -101,8 +101,9 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     /// The backend's declared random-access capability for one opened input.
     fn random_access_capability(&self) -> RandomAccessCapability;
 
-    /// Returns whether provider inputs must be delivered through a metered
-    /// same-object read session instead of an unbounded filesystem handle.
+    /// Returns whether ordinary sequential prefix reads from provider inputs
+    /// must be delivered through a metered same-object read session instead
+    /// of an unbounded filesystem handle.
     ///
     /// Complete reads and same-object sampling always use metered sessions,
     /// regardless of this compatibility hook's return value. Ordinary
@@ -113,8 +114,9 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     /// method to return `true`. Built-in providers may meter their own reads.
     ///
     /// # Returns
-    /// `true` when provider input should be opened once and exposed only
-    /// through [`crate::MeteredReadSession`].
+    /// `true` when ordinary sequential prefix input should be opened once and
+    /// exposed only through [`crate::MeteredReadSession`]. Complete reads and
+    /// same-object sampling use that session regardless of this hook.
     fn uses_managed_provider_reads(&self) -> bool {
         false
     }
@@ -151,8 +153,10 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     ///
     /// # Parameters
     /// - scope: Operation context controlling cancellation and accounting.
-    /// - input: Borrowed provider content, usually bounded bytes or a managed
-    ///   provider session.
+    /// - input: Borrowed provider content. An ordinary automatic `Prefix(n)`
+    ///   read is supplied as bounded bytes; complete reads, same-object
+    ///   sampling, and opted-in sequential reads use a managed provider
+    ///   session.
     /// - basename: Optional basename taken from the typed provider path.
     /// - options: Per-operation limits and selection preferences.
     ///
