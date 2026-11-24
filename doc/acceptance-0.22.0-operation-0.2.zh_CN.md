@@ -656,3 +656,67 @@ Magika 固定 fixture 使用 workflow 校验过的 ONNX Runtime 1.24.2，default
 为获取实际失败原因，测试断言补充了 retry failure 的 Debug 上下文。两项都得到 `CleanupFailure.summary = "MIME worker and recovery cleanup port rejected cleanup job"`：失败测试的 worker 拒绝后，retry 转向进程全局 16 槽 recovery cleanup port，而另一个测试正阻塞其 worker 并占满队列。由此确认根因是共享进程级测试 fixture 未串行化，不是 `rs-local-files@aa261c6e` 清理语义的兼容回归。
 
 修复在 `managed_temp_cleanup` 中提供仅 `cfg(test)` 的 crate-private recovery-port guard。所有实际走进程 fallback 的测试共同使用它：两个失败用例、已覆盖的 rejected-dispatch 和 transferred-recovery 用例，以及服务关闭后重试的 full-worker-queue command 用例。生产全局队列与运行行为保持不变。修复后用相同三个 filters 和 `--test-threads=3` 连续运行五轮，每轮均 3 passed、0 failed、exit 0。align 和完整 CI 的原始日志及退出码单独保存在仓库外 `.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb8227-round-9/mime-repair-align.log`、`mime-repair-ci-check.log`；红测与五轮绿测日志为 `mime-repair-red-round-{1,2,3}.log`、`mime-repair-green-round-{1,2,3,4,5}.log`。这些日志不作为本页链接或包内文件。
+
+## 2026-11-24 T5 历史 hosted 与固定 consumer 证据（head 5ebd73f）
+
+本节补录已完成候选 `5ebd73f40b4553503f56def4c98dd82b0bffeee4` 的 hosted 观察与 round-9 外部日志核对。GitHub Actions API 于 2026-11-24 22:57:52 UTC 查询，三个 run 均为 `completed/success`，完整 head 均为该 SHA：
+
+| Run | 创建 UTC | 更新 UTC | Job | 结果 |
+| --- | --- | --- | --- | --- |
+| [Documentation consumer 45493339274](https://github.com/qubit-ltd/rs-mime/actions/runs/45493339274) | 21:39:44Z | 21:42:19Z | `compile-documentation-consumer` | completed/success；FFprobe smoke、managed lifecycle、文档 fixture、operation consumer 步骤通过 |
+| [Magika inventory consumer 45493339178](https://github.com/qubit-ltd/rs-mime/actions/runs/45493339178) | 21:39:44Z | 21:40:53Z | `magika-inventory-consumer` | completed/success；显式注册与 inventory 动态发现 consumer 均通过 |
+| [Rust CI 45493340315](https://github.com/qubit-ltd/rs-mime/actions/runs/45493340315) | 21:39:45Z | 21:48:53Z | `verify (ubuntu-latest)`、dependency baseline、inventory-only/no-features matrix、coverage、已配置 infra suites、Pages | 全部完成成功；integration matrix、feature-tests matrix、fuzz compile、cross-target compile、derive coverage 按条件 skipped |
+
+三个 run 的整体状态和 conclusion 均为 `completed` / `success`。Rust CI 的 hosted artifact 名为 `coverage-reports`、`github-pages`、`rustdoc`、`feature-matrix-runner`。原始 job 与 artifact API 记录按 run ID 保存在仓库外 `.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb8227-round-10/hosted-<run-id>.json` 与 `hosted-<run-id>-artifacts.json`。
+
+Hosted Magika job 原始日志中的 checkout SHA 与本地固定 consumer 图如下；两组结果分别记录，不互相替代：
+
+| 仓库 | round-9 本地 consumer | hosted Magika consumer |
+| --- | --- | --- |
+| `rs-mime` | `5ebd73f40b4553503f56def4c98dd82b0bffeee4` | `5ebd73f40b4553503f56def4c98dd82b0bffeee4` |
+| `rs-magika` | `cf7959bb0e02c1f7758c068af1b4b64bd6b27626` | `d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b` |
+| `rs-operation` | `893bcf6c7efb397cc8fac2f7fe18fb5e87017e63` | `893bcf6c7efb397cc8fac2f7fe18fb5e87017e63` |
+| `rs-fs` | `c7ea1d035498aa633f4f3c04d90fdb5d4b73de97` | `c7ea1d035498aa633f4f3c04d90fdb5d4b73de97` |
+| `rs-fs-registry` | `df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c` | `df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c` |
+| `rs-local-files` | `aa261c6e2049938a3a632acddab09a35489eb5bd` | `5b52230e0af2997fadc45b5ff48be65b0ca5a70d` |
+| `rs-fs-local` | `3bf4275ed601e39fdbf8532f9d80d563d9cc7182` | `3bf4275ed601e39fdbf8532f9d80d563d9cc7182` |
+| `rs-fs-testkit` | `28bf195b8eef9c03d9cb1c5428186758b76aaacd` | `28bf195b8eef9c03d9cb1c5428186758b76aaacd` |
+
+round-9 本地 Magika consumer 证据精确覆盖 `rs-mime=5ebd73f40b4553503f56def4c98dd82b0bffeee4` × `rs-magika=cf7959bb0e02c1f7758c068af1b4b64bd6b27626`，并使用 `rs-local-files=aa261c6e2049938a3a632acddab09a35489eb5bd`。默认和 inventory 的 locked `qubit-operation` tree 均指向唯一 sibling `qubit-operation v0.3.2`；两个 consumer 运行均 exit 0。原始证据位于 `.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb8227-round-9/`，文件为 `mime-latest-magika-tree-default.log`、`mime-latest-magika-tree-inventory.log`、`mime-latest-magika-run-default.log`、`mime-latest-magika-run-inventory.log` 及同名前缀 `.record`。
+
+round-9 repair tree 的 `.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb8227-round-9/mime-repair-align.log`、`mime-repair-ci-check.log`、`mime-repair-package-links.log` 分别记录 align、完整 CI 与 `package_document_links_tests`，均 exit 0，包链接测试 6 passed、0 failed。该组完整 CI coverage 为 functions 95.17% (1144/1202)、lines 94.52% (16478/17434)、regions 95.06% (29231/30751)。这些日志按 worktree 路径记录，但没有保存每条命令同次的 HEAD/依赖快照；worktree 登记只给出创建基线 `c7723e0b47185adade04b9fca1b2efdf4dc7e830` 和清理时分支 tip `5ebd73f40b4553503f56def4c98dd82b0bffeee4`，故此处不把该组结果单独归属到某个精确中间 SHA。
+
+原工作区的修复复验有独立的命令前后依赖记录：`.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb8227-round-9/mime-original-repaired-dependencies-begin.txt` 与 `mime-original-repaired-ci-dependencies-end.txt` 记载 `rs-mime=aaa2715d0b78968507751e6b8690cfac99a6a285`、`rs-local-files=aa261c6e2049938a3a632acddab09a35489eb5bd`、`rs-magika=cf7959bb0e02c1f7758c068af1b4b64bd6b27626`，其余固定 sibling SHA 见该记录。对应 `mime-original-repaired-align-ci.exit`、`mime-original-repaired-ci-check.exit`、`mime-original-repaired-package-links.exit` 均为 0，包链接测试 6/6 通过；coverage 为 functions 95.17% (1144/1202)、lines 94.53% (16481/17434)、regions 95.08% (29237/30751)。日志中的相对产物名为包验证目录 `target/package/qubit-mime-0.22.0/` 与 coverage JSON `target/infra/coverage/raw.json`。稍早 `c7723e0 × aa261c6e` 原工作区 align/完整 CI rerun 也各自 exit 0，属于独立历史观察。
+
+另以不含 patch/path 的独立 manifest 对 `qubit-mime = "=0.22.0"` 执行 crates.io registry 解析；Cargo `1.94.0` 于 2026-11-24 22:55:40 UTC 查询时 exit 101，索引未提供匹配版本（候选从 `0.21.1` 起）。该记录只描述查询时点，不能作为已发布或解析成功的证明。完整输出见仓库外 `.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb8227-round-10/registry-independent.log`。
+
+以上均为固定历史 head 与对应 hosted/本地依赖图的观察，不表示后续最终候选结果。候选 head、后续门禁和发布状态须在相应验证完成后另行记录；本节不改变已有发布边界。
+
+## 2026-11-24 T5 最终候选阶段证据（源码 head c5b7e08）
+
+本节记录已核对的本地候选证据；它不代表 T5 的所有消费者和原工作区整合复验均已完成。`rs-mime` 候选源码 HEAD 为 `c5b7e089fe2eb87a9ef21a0161fb53dc37e591dc`，验证工作树在检查前后干净，锁文件未变。
+
+| 验收 | 结果 | 相对证据名 |
+| --- | --- | --- |
+| `align-ci` | exit 0；style 与 CI check 成功 | `align-ci-package-test-dedup.log` |
+| 完整 `ci-check` | exit 0；完整 feature matrix、package 与 audit 成功 | `ci-check-package-test-dedup.log` |
+| 完整 CI coverage gate | functions 95.02% (1165/1226)、lines 94.51% (17292/18297)、regions 95.05% (30642/32237)，均满足既定阈值 | `ci-check-package-test-dedup.log` |
+| 独立 postcommit coverage gate | functions 95.02% (1165/1226)、lines 94.54% (17298/18297)、regions 95.08% (30651/32237)，均满足既定阈值 | `coverage-final-postcommit.log`、`coverage-raw-final-postcommit.json` |
+| Audit | 扫描 89 个 Cargo.lock 依赖，门禁成功 | `ci-check-package-test-dedup.log` |
+
+完整 CI 日志还记录默认测试 340 passed、0 failed、1 ignored，mod integration tests 444 passed、0 failed、1 ignored，包内文档链接 6 passed，以及 Rustdoc 64 passed 和 1 个 compile-fail 用例通过。matrix 和 package 阶段成功；未提高 coverage 阈值或扩大覆盖范围。
+
+独立 postcommit JSON 是 LLVM raw totals：functions 1987/2131 (93.24%)、lines 17298/18297 (94.54%)、regions 30651/32237 (95.08%)。其中 functions 的 raw denominator 与 infrastructure coverage gate 汇总口径不同；95.02% 是 `coverage-final-postcommit.log` 中的 gate 摘要，不标作 JSON 的 raw functions 百分比。
+
+锁定 metadata/tree 身份核对覆盖根 crate、operation consumer、documentation consumer 与 Magika fixture 四份 manifest；每份都只解析到注册 sibling 上唯一的 `qubit-operation v0.3.2`。相对证据为 `candidate-metadata.result`、`operation-fixture-identity.log`、`candidate-magika-metadata.result`、`candidate-magika-tree.result`。其中 Magika consumer 子任务固定 `rs-mime@c5b7e089fe2eb87a9ef21a0161fb53dc37e591dc` 与登记的 `rs-magika@d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b`，其余 sibling SHA 与上节 hosted Magika 图相同。default 和 inventory 两次 consumer 均 exit 0，且都实际加载 ONNX Runtime 1.24.2；记录见 `T5-magika-candidate.md`、`candidate-magika-default.result`、`candidate-magika-inventory.result` 及对应 `.log`。
+
+| 定向验收 | 结果 | 相对证据名 |
+| --- | --- | --- |
+| operation consumer | locked `cargo run` exit 0 | `consumer-smoke-exit-records.log` |
+| documentation consumer 与 managed lifecycle | locked consumer 实际执行共享 `managed_lifecycle`，exit 0；另有文档一致性测试 6 passed，其中一项核对该示例与 runnable consumer | `consumer-smoke-exit-records.log`、`documentation-consumer-postcommit.log` |
+| 真实文件工具 | 系统 `file` 对 PNG 返回 `image/png`；公共文件入口测试 1 passed，真实文件集成 3 passed | `consumer-smoke-exit-records.log`、`smoke-postcommit.log` |
+| 真实 FFprobe | integration smoke 1 passed | `smoke-postcommit.log` |
+
+这些记录补齐了当前候选的 manifest、consumer 与真实工具检查。原工作区整合复验仍待完成；在该复验完成前，不把它标记为通过。后续若出现新验证结果，应继续引用每条命令自己的相对日志与退出记录。
+
+本节是 evidence-only 文档变更，会产生新的提交 SHA，但只改本验收 Markdown；它不会改变或替代受测源码候选 `c5b7e089fe2eb87a9ef21a0161fb53dc37e591dc`。此后其它文件如有变化，须另行验证并记录，已有发布边界保持不变。
