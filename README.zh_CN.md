@@ -80,8 +80,10 @@ Provider 路径 hook。若自定义 backend 希望在读取前拒绝，还可覆
 - `MimeRuntime` 提供受管检测操作：输入所有权明确，提交拒绝带回原输入，业务结果与资源
   settlement 分开观察。附加执行服务后默认使用内置 `repository`；使用 `file` 时需显式选择。
   提交被拒绝时，`MimeSubmitFailure` 会带回原输入；任务接纳后的检测错误由 operation outcome
-  报告，资源释放情况则通过 settlement 观察。0.22.0 目标接口仍在验收中，当前证据与未完成项见
-  [验收记录](doc/acceptance-0.22.0-operation-0.2.zh_CN.md)。
+  报告，资源释放情况则通过 settlement 观察。关闭时，若组资源或 recovery 尚未处理，
+  `stop_services()` 会先发布组 Drain，再返回 `OperationShutdownPending`；应用处理或转交 recovery、
+  释放持有的资源后再重试。完整操作顺序见[中文用户手册](doc/user_guide.zh_CN.md#受管检测操作0220)
+  和可运行的生命周期示例。
 - 可选的 `FileCommandMimeDetector` 使用系统命令 `file --mime-type --brief` 检查内容。
 - 可选的 `FfprobeCommandMediaStreamClassifier` 可进一步区分 WebM、Ogg 等媒体流中的
   仅音频和仅视频结果。
@@ -101,7 +103,8 @@ MIME 对，细化会保留原 MIME；可传入匹配的文件名或消除映射�
 几种输入方式的边界不同：普通 backend 的 `ContentRequirement::Prefix(n)` 是 reader
 读取窗口的上限；自动读取普通 Provider 时也会标记为 `InputExtent::Prefix`，即使 EOF 提前到达。
 `OwnedMimeInput::Bytes` 保留调用方提供的字节和 `InputExtent`，不会隐式截短，也不计作 Provider I/O。
-受管 Provider 输入通过 `MeteredReadSession` 读取，并计入 operation 共享额度。旧入口
+扩展 backend 的完整读取和同对象随机采样通过 `MeteredReadSession` 完成；普通前缀 backend
+可以选择使用该 session。session 读取共享 operation 额度。内置受管 `file` Provider 则自行计量 staging 读取。旧入口
 `detect_path` 和 `detect_async_path` 的 `max_bytes` 参数仍是各自调用明确指定的前缀上限。
 
 组准入关闭后，已接纳到组内的父 operation 仍可派发必要后代；新的外部 scope 必须在关闭前接纳。

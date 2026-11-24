@@ -189,7 +189,7 @@ classifier 错误也可能向调用方传播；若名称含有扩展名但该扩
 
 顶层 `MimeDetector::detect_reader` 将 reader 视为整份资源：即使调用者当前游标不在开头，检测也从
 逻辑字节零开始，结束后恢复原始位置。默认的 `MimeContentBackend::detect_reader` 契约不同，只从
-当前位置读取，再把读到的字节传给 `detect_bytes`，不会调用 reader 专用 hook。`Prefix(n)` 最多读取 n 字节，
+当前位置读取，缓存所选窗口后把 `&[u8]` 传给 `detect_bytes`，不会调用 reader 专用 hook。`Prefix(n)` 最多读取 n 字节，
 遇到 EOF 时提前停止。`Complete` 会在默认 16 MiB 缓冲预算（或覆盖后的预算）内读到 EOF，
 并额外探测一个字节以检查超限。内容 backend 的两种模式
 都会恢复各自的起始位置；读取和恢复都失败时，恢复错误优先。
@@ -198,8 +198,9 @@ classifier 错误也可能向调用方传播；若名称含有扩展名但该扩
 `content_requirement()` 请求内容；`Prefix(n)` 是最大窗口，EOF 可以提前结束，交给 hook 的
 extent 仍为保守的 `InputExtent::Prefix`；自动读取普通 Provider 时也使用该 extent。
 `OwnedMimeInput::Bytes` 会保留调用方给出的字节和 `InputExtent`，不会暗中截短，也不计作 Provider I/O。
-受管 Provider 输入通过 `MeteredReadSession` 读取，并计入 operation
-共享的读取额度。旧版 `detect_path`、`detect_async_path` 的 `max_bytes` 参数仍是这些路径调用显式
+扩展 backend 的完整读取和同对象随机采样通过 `MeteredReadSession` 完成；普通前缀 backend
+可以选择使用该 session。这些 session 读取共享 operation 读取额度。内置受管 `file` Provider
+则在自己的 staging 读取中计量。旧版 `detect_path`、`detect_async_path` 的 `max_bytes` 参数仍是这些路径调用显式
 指定的前缀上限，不会替代普通 reader hook 的 `content_requirement()`。
 
 
@@ -421,7 +422,7 @@ MIME 父类型继承关系使用迭代方式遍历，因此长继承链不会为
 完整原始映射项，reason 会指出错误一侧及语法原因。合法自定义 MIME 名称无需存在于内置仓库，
 也不要求以 `video/` 或 `audio/` 开头。
 
-## 受管检测操作（0.22.0 目标）
+## 受管检测操作（0.22.0）
 
 `MimeRuntime` 提供一条可选的受管提交路径，供已使用 `qubit-operation` 的应用接入。
 输入采用 `OwnedMimeInput`，字节输入必须明确标记为 `Prefix` 或 `Complete`。应用创建
@@ -535,7 +536,7 @@ settlement，再释放 typed handle，最后等待组 Drain。若存在未解决
 检查错误可见且 settlement 仍确认资源释放；独立恢复用例确认 transfer 被 store 接收，再由 store 重试成功。
 暂存清理回归还验证了另一种时序：转交后先完全停止原 MIME 服务，再通过仍由应用持有的 recovery store 重试并完成清理。
 因此需要服务关闭后继续恢复时，应让 recovery store 独立于 MIME 服务存活。
-完整样例可通过 `cargo run --example managed_lifecycle` 运行，CI 的 consumer fixture 也运行同一入口。
+完整样例可通过 `cargo run --locked --example managed_lifecycle` 运行，CI 的 consumer fixture 也运行同一入口。
 
 `MimeRuntime::builtin()` 默认使用内置 repository。调用 `with_execution_services` 附加执行服务时，
 也会默认安装 repository 受管异步 backend；如需其他异步实现，可再用
@@ -653,16 +654,28 @@ Classifier 也需要单独显式选择异步实现并满足同一对象能力要
 使用 `ffprobe`。
 
 关闭与重试顺序请参照可运行的
-[`managed_lifecycle` 示例](../examples/managed_lifecycle.rs)：关闭新的根提交，观察 outcome 和 settlement，
-释放 operation handle，处理或转交 recovery，再从 worker pool 外停止服务，最后等待组 Drain。
-组准入关闭前应先让所需的外部 scope 进入；关闭后，已接纳的父 scope 仍可派发后代。
-Pending 表示工作尚未解决，不能据此确认资源已释放。操作或 recovery 未解决时，
-`stop_services()` 会返回 `OperationShutdownPending`，且不会自动重试 recovery。
-此时应先完成 recovery，或转交给应用独立保留的 `RecoveryStore`；转交完成后，该 store 可在
-MIME 服务停止后继续重试。
+[`managed_lifecycle` 示例](../examples/managed_lifecycle.rs)。普通路径会先观察 outcome 和 settlement，
+释放 operation handle，再等待组 Drain。示例的 Pending 路径同时保留组级 service resource 和一次清理失败
+产生的 recovery：第一次 `stop_services()` 会先发布 Drain，再返回 `OperationShutdownPending`；此时
+MIME worker 仍可接收任务。应用检查 shutdown snapshot，把 recovery 转交给自己长期持有的
+`RecoveryStore`，关闭 service resource scope 并释放资源引用；观察 shutdown snapshot，直到 service resource
+清理结束，再重试 `stop_services()`，最后等待组 Drain。
+MIME worker 停止后，应用仍可通过 store 重试已转交的 recovery。转交成功后，重试责任由应用 recovery store
+承担；若之后还要恢复，store 及其重试机制必须继续运行。组 Drain 尚未完成时，MIME execution port 仍可
+供 MIME 自己的 command 和 staging 清理使用。自定义清理器应保证原 execution port 停止后仍有依赖可用，
+或先完成 recovery。不要在仍持有 typed operation handle 或
+未解决 recovery 时等待完整 Drain。组准入关闭前应先让所需的外部 scope 进入；关闭后，已接纳的父 scope
+仍可派发后代。Pending 表示工作尚未解决，不能据此确认资源已释放；`stop_services()` 不会自动重试 recovery。
+
+受管操作的错误按发生阶段处理：累计读取上限为零时，构造 execution services 会返回
+`InvalidOperationBudget`；选择仅支持同步的
+backend 时，在提交前返回 `AsyncUnsupported`。提交遇到服务未准备、能力不匹配或准入关闭等问题，会以
+`MimeSubmitFailure` 拒绝并返还原 `OwnedMimeInput`。任务接纳之后的 Provider、backend、deadline 和清理错误
+由 operation outcome 报告；MIME 检测失败表现为 `OperationOutcome::Failed`。资源释放与错误结果分开观察：
+通过 settlement 检查释放状态和 recovery，再根据 snapshot 解决或转交 recovery、释放 typed handle 和组资源，
+从 worker pool 外重试停止。
 `FixedMimeExecutionPort::shutdown()` 必须从 worker pool 之外的同步上下文调用。并发关闭调用会等待同一批
 worker 实际退出，并观察相同的最终结果。
-0.22.0 目标仍处于验收阶段；已验证行为和未完成的生命周期检查见[验收记录](acceptance-0.22.0-operation-0.2.zh_CN.md)。
 
 ## 错误与诊断
 

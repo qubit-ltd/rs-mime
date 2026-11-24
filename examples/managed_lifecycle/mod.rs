@@ -9,6 +9,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -18,6 +19,7 @@ use std::task::Wake;
 use std::task::Waker;
 use std::thread;
 use std::time::Duration;
+use std::time::Instant;
 
 use qubit_fs::AsyncFileSystem;
 use qubit_fs::FsError;
@@ -45,6 +47,7 @@ use qubit_fs::spi::StatRequest;
 use qubit_fs::spi::StatResponse;
 use qubit_io::AsyncInput;
 use qubit_mime::FixedMimeExecutionPort;
+use qubit_mime::MimeExecutionPort;
 use qubit_mime::MimeExecutionServices;
 use qubit_mime::MimeOperationOptions;
 use qubit_mime::OwnedMimeInput;
@@ -67,6 +70,7 @@ use qubit_operation::RecoveryStore;
 use qubit_operation::RecoveryStoreOptions;
 use qubit_operation::ResourceId;
 use qubit_operation::ResourceScopeOptions;
+use qubit_operation::ServiceResourceOptions;
 use qubit_operation::ShutdownMode;
 use qubit_operation::ShutdownWait;
 
@@ -318,6 +322,7 @@ pub fn run_example() {
     let mut retry_queue = Vec::new();
     managed_lifecycle(file_system, &recovery_store, &mut retry_queue);
     assert!(retry_queue.is_empty(), "the sample submission should be accepted");
+    pending_group_resource_shutdown(&recovery_store);
     controlled_recovery_transfer(&recovery_store);
     if recovery_store.snapshot().groups == 0 {
         recovery_store
@@ -328,6 +333,133 @@ pub fn run_example() {
         eprintln!("the application must keep its recovery store alive for unresolved cleanup");
     }
 }
+
+/// Demonstrates that the first stop attempt publishes group Drain while a
+/// service resource and recovery remain live. MIME workers stay usable until
+/// the resource is released and recovery ownership moves to the application.
+fn pending_group_resource_shutdown(recovery_store: &RecoveryStore) {
+    let manager = OperationManager::new(ManagerOptions::default()).expect("operation manager");
+    let group = manager
+        .group(GroupOptions { capacity: 2 })
+        .expect("MIME operation group");
+    let execution = Arc::new(FixedMimeExecutionPort::new(1, 2));
+    let services = MimeExecutionServices::new(
+        manager,
+        group.clone(),
+        Arc::clone(&execution) as Arc<dyn MimeExecutionPort>,
+        1024,
+    )
+    .expect("execution services");
+    services.prepare().expect("prepare MIME services");
+
+    let app_resources = group
+        .resource_scope(ServiceResourceOptions { capacity: 1 })
+        .expect("application group resources");
+    let app_resource = app_resources
+        .manage(String::from("application config"))
+        .expect("retain app resource");
+
+    let cleanup_id = Arc::new(Mutex::new(None));
+    let cleanup_resource_id = Arc::clone(&cleanup_id);
+    let completion = group
+        .run_and_settle(OperationOptions::default(), move |scope| {
+            let resources = scope
+                .resource_scope(ResourceScopeOptions { capacity: 1 })
+                .expect("operation resources");
+            let resource = resources
+                .manage_with(
+                    17usize,
+                    FailOnceCleanup {
+                        calls: AtomicUsize::new(0),
+                        resource_id: Arc::clone(&cleanup_resource_id),
+                    },
+                )
+                .expect("managed cleanup fixture");
+            *cleanup_resource_id.lock().expect("cleanup ID lock") = Some(resource.id());
+            drop(resource);
+            Ok::<_, String>(())
+        })
+        .expect("run cleanup fixture");
+    assert!(matches!(
+        completion.outcome,
+        OperationOutcome::Succeeded(())
+    ));
+    assert_eq!(completion.settlement.recovery_count, 1);
+    let recovery = completion.settlement.recoveries[0].clone();
+    assert_eq!(recovery.snapshot().phase, RecoveryPhase::Pending);
+    assert_eq!(
+        recovery.snapshot().resources.as_ref(),
+        [cleanup_id.lock().expect("cleanup ID lock").unwrap()]
+    );
+
+    let shutdown = services.shutdown();
+    assert!(
+        block_on(shutdown.wait_services_settled())
+            .expect("settle MIME services")
+            .operations_settled
+    );
+    assert!(matches!(
+        shutdown.stop_services(),
+        Err(qubit_mime::MimeError::OperationShutdownPending)
+    ));
+    let pending = shutdown.snapshot();
+    let group_progress = pending
+        .group
+        .as_ref()
+        .expect("Drain should be published before Pending");
+    assert_eq!(group_progress.service_resources, 1);
+    assert_eq!(pending.unresolved_recoveries, 1);
+    assert_eq!(shutdown.recovery_handles_snapshot()[0].id(), recovery.id());
+
+    let (finished_tx, finished_rx) = mpsc::channel();
+    execution
+        .try_dispatch(Box::new(move || {
+            finished_tx.send(()).expect("report worker dispatch")
+        }))
+        .unwrap_or_else(|_| panic!("workers remain available while group Drain is pending"));
+    finished_rx
+        .recv()
+        .expect("observe worker job after pending stop");
+
+    transfer_recovery(recovery.clone(), recovery_store);
+    drop(completion);
+    app_resources.close();
+    drop(app_resource);
+    drop(app_resources);
+    let cleanup_deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshot = shutdown.snapshot();
+        let group = snapshot
+            .group
+            .expect("Drain remains observable while cleanup runs");
+        if group.service_resources == 0
+            && group.cleaning_resources == 0
+            && group.recovery_groups == 0
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < cleanup_deadline,
+            "group resource cleanup must settle"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    let stopped = shutdown.stop_services().unwrap_or_else(|error| {
+        eprintln!("shutdown retry snapshot: {:?}", shutdown.snapshot());
+        panic!("stop services after resource release and transfer: {error:?}");
+    });
+    assert!(stopped.services_stopped && stopped.unresolved_recoveries == 0);
+    let report = block_on(shutdown.wait_group_shutdown()).expect("wait for group Drain");
+    assert_eq!(report.snapshot.active_operations, 0);
+    let retry = recovery_store
+        .try_retry(recovery.id())
+        .expect("retry transferred cleanup from the application store")
+        .wait()
+        .expect("observe application recovery retry");
+    assert!(retry.failures.is_empty());
+    assert_eq!(recovery.snapshot().phase, RecoveryPhase::Resolved);
+}
+
 
 fn process_recoveries(recoveries: Vec<RecoveryHandle>, recovery_store: &RecoveryStore) {
     let mut seen = Vec::new();

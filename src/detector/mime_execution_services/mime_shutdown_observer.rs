@@ -22,7 +22,10 @@ mod stop_permit;
 
 /// Repeatable MIME shutdown observer. Service settlement is independent of
 /// caller outcome disposal; group shutdown can remain pending afterward. The
-/// observer is returned by [`MimeExecutionServices::shutdown`].
+/// after tracked operations settle, a stop attempt publishes group Drain
+/// before returning Pending for live service resources or recovery. The MIME
+/// execution port remains available during that interval so MIME-owned cleanup
+/// can finish. The observer is returned by [`MimeExecutionServices::shutdown`].
 ///
 /// # Examples
 ///
@@ -62,7 +65,9 @@ impl MimeShutdownObserver {
 
     /// Returns a repeatable snapshot of every unresolved recovery owned by
     /// the operation group. Callers can retry or transfer these handles even
-    /// after their original typed operation handles have been dropped.
+    /// after their original typed operation handles have been dropped. After
+    /// transfer, the destination `RecoveryStore` owns retry responsibility and
+    /// must remain available while recovery is still needed.
     #[must_use]
     pub fn recovery_handles_snapshot(&self) -> Vec<RecoveryHandle> {
         self.services.unresolved_recovery_handles()
@@ -137,8 +142,13 @@ impl MimeShutdownObserver {
     /// operations have not settled, a service resource scope remains
     /// registered, or any recovery is unresolved. The group Drain handle is
     /// published before resource and recovery checks, so callers can
-    /// observe progress and retry this method. Propagates an execution
-    /// shutdown error.
+    /// observe progress and retry this method. The execution port remains
+    /// running while this method returns Pending, allowing MIME-owned command
+    /// and staging cleanup to complete. Once it succeeds, that port is stopped;
+    /// custom cleanup strategies must keep their dependencies available beyond
+    /// that point or finish recovery first. A transferred recovery is no longer
+    /// MIME-owned; its destination `RecoveryStore` must remain available for
+    /// any later retry. Propagates an execution shutdown error.
     pub fn stop_services(&self) -> Result<MimeShutdownSnapshot, crate::MimeError> {
         let _stop;
         {
