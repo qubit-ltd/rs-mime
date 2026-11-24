@@ -25,15 +25,19 @@ use qubit_fs::AsyncFileSystem;
 use qubit_fs::FsResult;
 use qubit_fs::Path as FsPath;
 use qubit_fs::metadata::FileSystemCapabilities;
+use qubit_fs::metadata::FileKind;
 use qubit_fs::metadata::FileSystemId;
 use qubit_fs::metadata::FileSystemInfo;
 use qubit_fs::metadata::FileSystemLimits;
+use qubit_fs::metadata::FileMetadata;
 use qubit_fs::metadata::OpenedFileInfo;
 use qubit_fs::metadata::SymlinkPolicy;
 use qubit_fs::path::PathConstraints;
 use qubit_fs::path::PathSemantics;
 use qubit_fs::spi::AsyncFileSystemSpi;
+use qubit_fs::spi::AsyncRandomAccessReadSession;
 use qubit_fs::spi::OpenReaderRequest;
+use qubit_fs::spi::OpenedAsyncRandomAccessReader;
 use qubit_fs::spi::OpenedAsyncReader;
 use qubit_fs::spi::ProviderOperation;
 use qubit_fs::spi::ProviderOperations;
@@ -44,6 +48,7 @@ use qubit_fs::spi::StatResponse;
 use qubit_io::AsyncInput;
 
 use crate::InputExtent;
+use crate::MimeError;
 use crate::OwnedMimeInput;
 use crate::command_execution::AsyncMimeCommandExecutor;
 use crate::command_execution::FixedMimeExecutionPort;
@@ -52,6 +57,7 @@ use crate::command_execution::MimeCommandOutput;
 use crate::command_execution::MimeExecutionWorker;
 use crate::detector::MimeExecutionPort;
 use crate::detector::MimeExecutionServices;
+use crate::detector::metered_read_session::MeteredReadSession;
 use crate::managed_temp_staging::ManagedStagingLimits;
 use crate::managed_temp_staging::StagedMimeInput;
 use crate::managed_temp_staging::commit_staged;
@@ -110,12 +116,19 @@ struct BytesAsyncFs {
     opens: Arc<AtomicUsize>,
     reads: Arc<AtomicUsize>,
     pending_read: Option<Arc<AtomicBool>>,
+    first_read_fault: Option<ReadFault>,
+}
+
+#[derive(Clone, Copy)]
+enum ReadFault {
+    Error,
+    OverreportedCount,
 }
 
 impl BytesAsyncFs {
     /// Builds a provider that returns the supplied bytes in short chunks.
     fn filesystem(content: &[u8]) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
-        Self::filesystem_with_pending(content, None)
+        Self::filesystem_with_options(content, None, None)
     }
 
     /// Builds a provider that either returns short chunks or remains pending on
@@ -124,13 +137,31 @@ impl BytesAsyncFs {
         content: &[u8],
         pending_read: Option<Arc<AtomicBool>>,
     ) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        Self::filesystem_with_options(content, pending_read, None)
+    }
+
+    /// Builds a provider that reports either a read error or an invalid count.
+    fn filesystem_with_fault(
+        content: &[u8],
+        fault: ReadFault,
+    ) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        Self::filesystem_with_options(content, None, Some(fault))
+    }
+
+    fn filesystem_with_options(
+        content: &[u8],
+        pending_read: Option<Arc<AtomicBool>>,
+        first_read_fault: Option<ReadFault>,
+    ) -> (Arc<AsyncFileSystem>, Arc<AtomicUsize>, Arc<AtomicUsize>) {
         let properties = ProviderProperties::new(
             FileSystemInfo::new(
                 FileSystemId::new("managed-staging-test").unwrap(),
                 "managed-staging-test",
                 PathSemantics::Hierarchical,
             ),
-            ProviderOperations::new().with(ProviderOperation::OpenReader),
+            ProviderOperations::new()
+                .with(ProviderOperation::OpenReader)
+                .with(ProviderOperation::OpenRandomAccessReader),
             FileSystemCapabilities::new().with_guaranteed(qubit_fs::metadata::FileSystemCapability::Read),
             FileSystemLimits::unknown(),
             PathConstraints::absolute(),
@@ -145,6 +176,7 @@ impl BytesAsyncFs {
             opens: Arc::clone(&opens),
             reads: Arc::clone(&reads),
             pending_read,
+            first_read_fault,
         })
         .unwrap();
         (Arc::new(fs), opens, reads)
@@ -169,13 +201,44 @@ impl AsyncFileSystemSpi for BytesAsyncFs {
         } else {
             let bytes = self.content.clone();
             let reads = Arc::clone(&self.reads);
+            let first_read_fault = self.first_read_fault;
             Box::pin(async move {
                 Ok(OpenedAsyncReader::new(
                     info,
-                    Box::new(ShortAsyncInput { bytes, at: 0, reads }),
+                    Box::new(ShortAsyncInput {
+                        bytes,
+                        at: 0,
+                        reads,
+                        first_read_fault,
+                    }),
                 ))
             })
         }
+    }
+
+    fn open_random_access_reader<'a>(
+        &'a self,
+        request: OpenReaderRequest<'a>,
+    ) -> SpiFuture<'a, FsResult<OpenedAsyncRandomAccessReader>> {
+        self.opens.fetch_add(1, Ordering::SeqCst);
+        let bytes = self.content.clone();
+        let reads = Arc::clone(&self.reads);
+        let first_read_fault = self.first_read_fault;
+        let info = OpenedFileInfo::new(
+            FileSystemId::new("managed-staging-test").unwrap(),
+            request.path().clone(),
+        )
+        .with_metadata(FileMetadata::new(FileKind::File).with_len(Some(bytes.len() as u64)));
+        Box::pin(async move {
+            Ok(OpenedAsyncRandomAccessReader::new(
+                info,
+                Box::new(BytesRandomAccessSession {
+                    bytes,
+                    reads,
+                    first_read_fault,
+                }),
+            ))
+        })
     }
 }
 
@@ -202,6 +265,7 @@ struct ShortAsyncInput {
     bytes: Vec<u8>,
     at: usize,
     reads: Arc<AtomicUsize>,
+    first_read_fault: Option<ReadFault>,
 }
 impl AsyncInput for ShortAsyncInput {
     type Item = u8;
@@ -212,12 +276,53 @@ impl AsyncInput for ShortAsyncInput {
         index: usize,
         count: usize,
     ) -> Poll<std::io::Result<usize>> {
+        match self.first_read_fault.take() {
+            Some(ReadFault::Error) => {
+                return Poll::Ready(Err(std::io::Error::other("injected provider read error")));
+            }
+            Some(ReadFault::OverreportedCount) => return Poll::Ready(Ok(count + 1)),
+            None => {}
+        }
         let available = self.bytes.len().saturating_sub(self.at);
         let read = count.min(available).min(2);
         output[index..index + read].copy_from_slice(&self.bytes[self.at..self.at + read]);
         self.at += read;
         self.reads.fetch_add(read, Ordering::SeqCst);
         Poll::Ready(Ok(read))
+    }
+}
+
+struct BytesRandomAccessSession {
+    bytes: Vec<u8>,
+    reads: Arc<AtomicUsize>,
+    first_read_fault: Option<ReadFault>,
+}
+
+impl AsyncRandomAccessReadSession for BytesRandomAccessSession {
+    fn read_at_async<'a>(
+        self: Pin<&'a mut Self>,
+        offset: u64,
+        output: &'a mut [u8],
+    ) -> SpiFuture<'a, FsResult<usize>> {
+        Box::pin(async move {
+            let this = self.get_mut();
+            match this.first_read_fault.take() {
+                Some(ReadFault::Error) => {
+                    return Err(qubit_fs::FsError::new(
+                        qubit_fs::error::FsErrorKind::Io,
+                        qubit_fs::error::FsOperation::Read,
+                        "injected random-access read failure",
+                    ));
+                }
+                Some(ReadFault::OverreportedCount) => return Ok(output.len() + 1),
+                None => {}
+            }
+            let offset = usize::try_from(offset).unwrap_or(usize::MAX);
+            let count = output.len().min(this.bytes.len().saturating_sub(offset));
+            output[..count].copy_from_slice(&this.bytes[offset..offset + count]);
+            this.reads.fetch_add(count, Ordering::SeqCst);
+            Ok(count)
+        })
     }
 }
 
@@ -355,6 +460,210 @@ fn test_managed_staging_provider_budget_failure_cleans_partial_owner() {
     );
     drop(occupied);
     assert!(services.staging_budget().try_reserve(256 * 1024 * 1024).is_some());
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+}
+
+#[test]
+fn test_managed_staging_provider_read_faults_roll_back_and_clean_resources() {
+    for fault in [ReadFault::Error, ReadFault::OverreportedCount] {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+        let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 8).unwrap();
+        services.prepare().unwrap();
+        let (filesystem, opens, reads) = BytesAsyncFs::filesystem_with_fault(b"payload", fault);
+        let read_tree = services.new_read_tree(8);
+        let input = OwnedMimeInput::Provider {
+            file_system: filesystem,
+            path: FsPath::parse("/input").unwrap(),
+        };
+        let limits = ManagedStagingLimits {
+            max_bytes: 8,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port.clone()),
+        };
+        let body_read_tree = Arc::clone(&read_tree);
+        let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            stage_owned_in(&scope, input, limits, body_read_tree).await
+        }))
+        .unwrap();
+
+        match block_on(handle.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Failed(MimeError::Io(error)) => {
+                let expected_kind = match fault {
+                    ReadFault::Error => std::io::ErrorKind::Other,
+                    ReadFault::OverreportedCount => std::io::ErrorKind::InvalidData,
+                };
+                assert_eq!(expected_kind, error.kind());
+            }
+            _ => panic!("provider read fault must be reported as I/O failure"),
+        }
+        assert_eq!(1, opens.load(Ordering::SeqCst));
+        assert_eq!(0, reads.load(Ordering::SeqCst));
+        assert_eq!(0, read_tree.consumed(), "failed reads transfer no bytes");
+        assert_eq!(8, read_tree.remaining(), "failed reads release their reservation");
+        assert!(block_on(handle.wait_settlement()).all_released());
+        assert_eq!(0, services.staging_budget().used_bytes(), "failed staging is cleaned");
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+    }
+}
+
+#[test]
+fn test_managed_staging_provider_work_buffer_budget_failure_cleans_empty_owner() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+    let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 8).unwrap();
+    services.prepare().unwrap();
+    let budget = services.staging_budget();
+    let occupied = budget.try_reserve_owned(16 * 1024 * 1024).unwrap();
+    let (filesystem, opens, reads) = BytesAsyncFs::filesystem(b"payload");
+    let read_tree = services.new_read_tree(8);
+    let input = OwnedMimeInput::Provider {
+        file_system: filesystem,
+        path: FsPath::parse("/input").unwrap(),
+    };
+    let limits = ManagedStagingLimits {
+        max_bytes: 8,
+        budget: budget.clone(),
+        worker: MimeExecutionWorker::new(port.clone()),
+    };
+    let body_read_tree = Arc::clone(&read_tree);
+    let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+        stage_owned_in(&scope, input, limits, body_read_tree).await
+    }))
+    .unwrap();
+
+    assert!(matches!(
+        block_on(handle.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Failed(MimeError::BudgetExceeded {
+            kind: "owned",
+            requested: 8_192,
+            ..
+        })
+    ));
+    assert_eq!(1, opens.load(Ordering::SeqCst));
+    assert_eq!(0, reads.load(Ordering::SeqCst), "the provider is not read without its work buffer");
+    assert_eq!(8, read_tree.remaining());
+    assert!(block_on(handle.wait_settlement()).all_released());
+    assert_eq!(0, budget.used_bytes(), "the empty staged owner is cleaned");
+    drop(occupied);
+    assert!(budget.try_reserve_owned(16 * 1024 * 1024).is_some());
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+}
+
+#[test]
+fn test_managed_staging_rejects_oversized_owned_input_before_file_creation() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+    let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+    let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 8).unwrap();
+    services.prepare().unwrap();
+    let input = OwnedMimeInput::bytes(Arc::from(b"too large".as_slice()), InputExtent::Complete);
+    let limits = ManagedStagingLimits {
+        max_bytes: 4,
+        budget: services.staging_budget(),
+        worker: MimeExecutionWorker::new(port.clone()),
+    };
+    let read_tree = services.new_read_tree(8);
+    let body_read_tree = Arc::clone(&read_tree);
+    let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+        stage_owned_in(&scope, input, limits, body_read_tree).await
+    }))
+    .unwrap();
+
+    assert!(matches!(
+        block_on(handle.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Failed(MimeError::BudgetExceeded {
+            kind: "staging",
+            requested: 9,
+            limit: 4,
+        })
+    ));
+    assert_eq!(0, services.staging_budget().used_bytes());
+    assert_eq!(8, read_tree.remaining());
+    assert!(block_on(handle.wait_settlement()).all_released());
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+}
+
+#[test]
+fn test_metered_random_access_reads_share_budget_and_reject_sequential_offsets() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+    let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+    let services = Arc::new(MimeExecutionServices::new(manager, group, port.clone(), 8).unwrap());
+    services.prepare().unwrap();
+    let (filesystem, opens, reads) = BytesAsyncFs::filesystem(b"012345");
+    let path = FsPath::parse("/input").unwrap();
+    let read_tree = services.new_read_tree(5);
+    let mut session = block_on(MeteredReadSession::open_random_access(
+        &filesystem,
+        &path,
+        Arc::clone(&services),
+        Arc::clone(&read_tree),
+        8,
+        4,
+    ))
+    .unwrap();
+    let mut output = [0xCC; 4];
+    assert_eq!(4, block_on(session.read_at(1, &mut output)).unwrap());
+    assert_eq!(*b"1234", output);
+    output.fill(0xCC);
+    assert_eq!(1, block_on(session.read_at(2, &mut output)).unwrap());
+    assert_eq!([b'2', 0xCC, 0xCC, 0xCC], output);
+    assert_eq!(5, read_tree.consumed());
+    assert!(matches!(
+        block_on(session.read_at(0, &mut output)),
+        Err(MimeError::BudgetExceeded { kind: "read", .. })
+    ));
+    assert_eq!(5, reads.load(Ordering::SeqCst));
+    assert_eq!(1, opens.load(Ordering::SeqCst));
+
+    let (failing_filesystem, failing_opens, failing_reads) =
+        BytesAsyncFs::filesystem_with_fault(b"012345", ReadFault::Error);
+    let failing_tree = services.new_read_tree(4);
+    let mut failing_session = block_on(MeteredReadSession::open_random_access(
+        &failing_filesystem,
+        &path,
+        Arc::clone(&services),
+        Arc::clone(&failing_tree),
+        4,
+        4,
+    ))
+    .unwrap();
+    output.fill(0xCC);
+    assert!(matches!(
+        block_on(failing_session.read_at(0, &mut output)),
+        Err(MimeError::FileSystem(_))
+    ));
+    assert_eq!([0xCC; 4], output, "failed random reads keep private bytes out of output");
+    assert_eq!(4, failing_tree.remaining(), "failed random reads release the permit");
+    assert_eq!(1, failing_opens.load(Ordering::SeqCst));
+    assert_eq!(0, failing_reads.load(Ordering::SeqCst));
+
+    let sequential_tree = services.new_read_tree(4);
+    let mut sequential = block_on(MeteredReadSession::open_sequential(
+        &filesystem,
+        &path,
+        Arc::clone(&services),
+        Arc::clone(&sequential_tree),
+        4,
+        4,
+    ))
+    .unwrap();
+    assert!(matches!(
+        block_on(sequential.read_at(0, &mut output)),
+        Err(MimeError::InvalidClassifierInput { .. })
+    ));
+    assert_eq!(0, sequential_tree.consumed());
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();

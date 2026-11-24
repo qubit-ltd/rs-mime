@@ -258,6 +258,16 @@ mod tests {
             staged_bytes: AtomicU64::new(0),
             cleanup_id: Arc::new(Mutex::new(None)),
         };
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _owner = resource.owner.lock().unwrap();
+            panic!("poison the owner mutex before cleanup recovery");
+        }))
+        .is_err());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _permits = resource.permits.lock().unwrap();
+            panic!("poison the permit mutex before cleanup recovery");
+        }))
+        .is_err());
         let cleanup = Arc::new(ManagedTempCleanup {
             resource_id: Arc::clone(&resource.cleanup_id),
         });
@@ -322,6 +332,16 @@ mod tests {
             staged_bytes: AtomicU64::new(0),
             cleanup_id: Arc::new(Mutex::new(Some(registered.id()))),
         };
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _owner = resource.owner.lock().unwrap();
+            panic!("poison the owner mutex before failed cleanup recovery");
+        }))
+        .is_err());
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _resource_id = resource.cleanup_id.lock().unwrap();
+            panic!("poison the cleanup identity mutex before diagnostic recovery");
+        }))
+        .is_err());
         let cleanup = Arc::new(ManagedTempCleanup {
             resource_id: Arc::clone(&resource.cleanup_id),
         });
