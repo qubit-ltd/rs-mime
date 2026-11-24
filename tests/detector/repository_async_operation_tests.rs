@@ -200,11 +200,10 @@ fn test_repository_provider_basename_uses_native_separator_semantics() {
 
 #[test]
 fn test_repository_async_yields_and_stops() {
-    use std::sync::Mutex;
-    use std::task::Poll;
-
     let mut xml = String::from(r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">"#);
-    for index in 0..256 {
+    // Exceed the matcher's per-poll work budget so cancellation is requested
+    // at a real cooperative yield, independent of executor scheduling.
+    for index in 0..8192 {
         xml.push_str(&format!(
             r#"<mime-type type="application/x-batch-{index}"><magic><match type="byte" value="0x25" offset="0"/></magic></mime-type>"#
         ));
@@ -218,53 +217,44 @@ fn test_repository_async_yields_and_stops() {
     );
 
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
-    let target_context = Arc::new(Mutex::new(None));
-    let target_context_for_body = Arc::clone(&target_context);
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
     let input: Arc<[u8]> = Arc::from(b"%".as_slice());
     let mut target = group
         .as_async()
         .try_submit(Default::default(), move |scope| async move {
-            *target_context_for_body.lock().unwrap() = Some(scope.context());
-            detector
-                .guess_content_in(
-                    &scope,
-                    BorrowedMimeInput::Bytes {
-                        content: &input,
-                        extent: InputExtent::Prefix,
-                        filename: None,
-                    },
-                    &MimeOperationOptions::default(),
-                )
-                .await
-        })
-        .unwrap();
-    let context_for_heartbeat = Arc::clone(&target_context);
-    let mut heartbeat = group
-        .as_async()
-        .try_submit(Default::default(), move |_| async move {
-            let mut ticks = 0usize;
-            std::future::poll_fn(|cx| {
-                ticks += 1;
-                let context = context_for_heartbeat.lock().unwrap().clone();
-                if let Some(context) = context {
-                    context.request_stop(qubit_operation::StopReason::UserCancelled);
-                    Poll::Ready(())
-                } else {
-                    cx.waker().wake_by_ref();
-                    Poll::Pending
+            let options = MimeOperationOptions::default();
+            let mut matching = Box::pin(detector.guess_content_in(
+                &scope,
+                BorrowedMimeInput::Bytes {
+                    content: &input,
+                    extent: InputExtent::Prefix,
+                    filename: None,
+                },
+                &options,
+            ));
+            let mut requested_stop = false;
+            let result = std::future::poll_fn(|cx| {
+                let result = matching.as_mut().poll(cx);
+                if result.is_pending() && !requested_stop {
+                    requested_stop = true;
+                    assert!(
+                        scope.context().request_stop(qubit_operation::StopReason::UserCancelled),
+                        "the operation must accept cancellation at a matcher yield"
+                    );
                 }
+                result
             })
             .await;
-            Ok::<_, qubit_mime::MimeError>(ticks)
+            assert!(requested_stop, "the matcher must yield before it is cancelled");
+            assert!(result.is_err(), "the matcher must observe the accepted stop request");
+            Ok::<_, qubit_mime::MimeError>(())
         })
         .unwrap();
 
     let target_outcome = block_on(target.wait_outcome()).unwrap();
-    let heartbeat_outcome = block_on(heartbeat.wait_outcome()).unwrap();
-    assert!(!matches!(
+    assert!(matches!(
         target_outcome,
-        qubit_operation::OperationOutcome::Succeeded(_)
+        qubit_operation::OperationOutcome::Stopped(report)
+            if report.reason == qubit_operation::StopReason::UserCancelled
     ));
-    assert!(matches!(heartbeat_outcome, qubit_operation::OperationOutcome::Succeeded(ticks) if ticks > 0));
 }
