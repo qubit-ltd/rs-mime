@@ -51,7 +51,7 @@ pub(crate) fn resolve<T: Clone>(
     async_catalog: &HashMap<String, (String, i32, T)>,
     sync_provider_id: impl Fn(&str) -> Option<String>,
     auto_builtin_ids: Vec<String>,
-    mut auto_priority_ids: Vec<(String, i32)>,
+    auto_priority_ids: Vec<(String, i32)>,
     service: &str,
 ) -> Result<Vec<AsyncProviderCandidate<T>>, MimeError> {
     let mut candidates = Vec::new();
@@ -64,13 +64,15 @@ pub(crate) fn resolve<T: Clone>(
                 push_candidate(&mut candidates, &mut seen, &id, async_catalog);
             }
 
-            auto_priority_ids.extend(
-                async_catalog
-                    .values()
-                    .filter(|(id, _, _)| !seen.contains(id))
-                    .map(|(id, priority, _)| (id.clone(), *priority))
-                    .collect::<Vec<_>>(),
-            );
+            let mut priorities = auto_priority_ids.into_iter().collect::<HashMap<_, _>>();
+            for (id, priority, _) in async_catalog.values() {
+                if !seen.contains(id) {
+                    // The async descriptor controls Auto priority when both
+                    // capabilities share a canonical provider ID.
+                    priorities.insert(id.clone(), *priority);
+                }
+            }
+            let mut auto_priority_ids = priorities.into_iter().collect::<Vec<_>>();
             auto_priority_ids.sort_by(|(left_id, left_priority), (right_id, right_priority)| {
                 right_priority.cmp(left_priority).then_with(|| left_id.cmp(right_id))
             });

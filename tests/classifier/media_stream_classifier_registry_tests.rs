@@ -572,3 +572,25 @@ fn test_async_classifier_factory_runs_without_holding_catalog_lock() {
     );
     assert!(reentry_succeeded.load(std::sync::atomic::Ordering::SeqCst));
 }
+
+#[test]
+fn test_sync_and_async_classifier_selectors_share_canonical_identity() {
+    let registry = MediaStreamClassifierRegistry::default();
+    registry.register(TestMediaStreamClassifierProvider::new(
+        "classifier-shared-canonical", 0, TestProviderBehavior::Success("unused"),
+    )).unwrap();
+    assert!(registry.register_async_provider(CountedAsyncClassifierProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("classifier-async-owner").unwrap())
+            .with_aliases(["classifier-shared-canonical"]).unwrap(),
+        creations: Arc::new(AtomicUsize::new(0)),
+    }).is_err(), "async alias must not claim a sync canonical ID");
+
+    let registry = MediaStreamClassifierRegistry::default();
+    registry.register_async_provider(CountedAsyncClassifierProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("classifier-dual").unwrap()),
+        creations: Arc::new(AtomicUsize::new(0)),
+    }).unwrap();
+    registry.register(TestMediaStreamClassifierProvider::new(
+        "classifier-dual", 0, TestProviderBehavior::Success("unused"),
+    )).expect("one canonical ID may expose both capabilities");
+}

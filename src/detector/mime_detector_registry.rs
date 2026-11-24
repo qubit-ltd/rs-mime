@@ -29,6 +29,8 @@ use super::RepositoryMimeDetectorProvider;
 use super::internal::async_provider_entry::AsyncBackendSelection;
 use super::internal::async_provider_entry::AsyncProviderEntry;
 use crate::async_selection::AsyncProviderCandidate;
+use crate::provider_identity::CachedProvider;
+use crate::provider_identity::SelectorIdentityIndex;
 
 /// Process-wide MIME detector Registry initialized with built-in providers.
 static GLOBAL_MIME_DETECTOR_REGISTRY: LazyLock<MimeDetectorRegistry> = LazyLock::new(MimeDetectorRegistry::builtin);
@@ -71,6 +73,8 @@ pub struct MimeDetectorRegistry {
     providers: ProviderRegistry<MimeDetectorSpec>,
     /// Explicit operation-capable factories, indexed by canonical ID/alias.
     async_providers: Arc<RwLock<AsyncProviderMap>>,
+    /// Selector ownership shared across sync and async capabilities.
+    selector_ids: Arc<RwLock<SelectorIdentityIndex>>,
 }
 
 impl MimeDetectorRegistry {
@@ -85,10 +89,15 @@ impl MimeDetectorRegistry {
     /// A runtime-mutable Registry containing `repository` and `file`.
     pub fn builtin() -> Self {
         #[cfg(feature = "inventory")]
-        let registry = Self {
-            providers: super::mime_detector_inventory::build_registry()
-                .expect("submitted MIME detector providers should register"),
-            async_providers: Arc::new(RwLock::new(HashMap::new())),
+        let registry = {
+            let providers = super::mime_detector_inventory::build_registry()
+                .expect("submitted MIME detector providers should register");
+            let selector_ids = SelectorIdentityIndex::from_descriptors(providers.descriptors());
+            Self {
+                providers,
+                async_providers: Arc::new(RwLock::new(HashMap::new())),
+                selector_ids: Arc::new(RwLock::new(selector_ids)),
+            }
         };
         #[cfg(not(feature = "inventory"))]
         let registry = Self::default();
@@ -187,6 +196,7 @@ impl MimeDetectorRegistry {
         services: &crate::MimeExecutionServices,
         classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
     ) -> Result<AsyncBackendSelection, crate::MimeError> {
+        let selector_ids = self.selector_ids.read().unwrap_or_else(|e| e.into_inner());
         let async_catalog = {
             let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
             providers
@@ -207,6 +217,7 @@ impl MimeDetectorRegistry {
         });
         let auto_builtin_ids = builtin_ids.into_iter().map(|(id, _)| id).collect();
         let mut auto_priority_ids = self
+            .providers
             .resolve_selected(&ProviderSelection::auto())
             .map(|resolved| {
                 resolved
@@ -219,18 +230,12 @@ impl MimeDetectorRegistry {
         let candidates = crate::async_selection::resolve(
             selection,
             &async_catalog,
-            |selector| {
-                let selection = ProviderSelection::named(selector).ok()?;
-                self.resolve_selected(&selection)
-                    .ok()?
-                    .candidate_descriptors()
-                    .next()
-                    .map(|descriptor| descriptor.id().as_str().to_owned())
-            },
+            |selector| selector_ids.canonical_id(selector),
             auto_builtin_ids,
             auto_priority_ids,
             "MIME detector",
         )?;
+        drop(selector_ids);
 
         let mut last_error = None;
         for candidate in candidates {
@@ -295,6 +300,7 @@ impl MimeDetectorRegistry {
     #[inline]
     #[must_use]
     pub fn is_sealed(&self) -> bool {
+        let _snapshot = self.selector_ids.read().unwrap_or_else(|e| e.into_inner());
         self.providers.is_sealed()
     }
 
@@ -306,6 +312,7 @@ impl MimeDetectorRegistry {
     #[inline]
     #[must_use]
     pub fn provider_ids(&self) -> Vec<ProviderId> {
+        let _snapshot = self.selector_ids.read().unwrap_or_else(|e| e.into_inner());
         self.providers.provider_ids()
     }
 
@@ -315,6 +322,7 @@ impl MimeDetectorRegistry {
     /// Alias selectors are omitted and every ID is returned once.
     #[must_use]
     pub fn async_provider_ids(&self) -> Vec<ProviderId> {
+        let _snapshot = self.selector_ids.read().unwrap_or_else(|e| e.into_inner());
         let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
         let mut ids = providers.values().map(|entry| entry.id.clone()).collect::<Vec<_>>();
         ids.sort();
@@ -348,6 +356,7 @@ impl MimeDetectorRegistry {
         let is_builtin =
             uses_bundled_repository || TypeId::of::<P>() == TypeId::of::<FileCommandMimeDetectorProvider>();
         let provider: Arc<dyn AsyncMimeDetectorProvider> = Arc::new(provider);
+        let mut selector_ids = self.selector_ids.write().unwrap_or_else(|e| e.into_inner());
         let mut providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
         if self.providers.is_sealed() {
             return Err(format!(
@@ -357,6 +366,9 @@ impl MimeDetectorRegistry {
         let mut selectors = Vec::with_capacity(1 + descriptor.aliases().len());
         selectors.push(id.clone());
         selectors.extend(descriptor.aliases().iter().map(|alias| alias.as_str().to_owned()));
+        if let Err((selector, owner)) = selector_ids.validate(&descriptor) {
+            return Err(format!("provider selector `{selector}` is already owned by `{owner}` (attempted `{id}`)"));
+        }
         for selector in &selectors {
             if let Some(existing) = providers.get(selector) {
                 return Err(format!(
@@ -377,6 +389,7 @@ impl MimeDetectorRegistry {
                 },
             );
         }
+        selector_ids.insert(&descriptor);
         Ok(())
     }
 
@@ -404,7 +417,20 @@ impl MimeDetectorRegistry {
     where
         P: MimeDetectorProvider,
     {
-        self.providers.register(provider)
+        if self.providers.is_sealed() {
+            return Err(RegistryMutationError::Sealed);
+        }
+        let provider: Arc<dyn ProviderDefinition<MimeDetectorSpec>> = Arc::new(provider);
+        let descriptor = provider.descriptor();
+        let mut selector_ids = self.selector_ids.write().unwrap_or_else(|e| e.into_inner());
+        selector_ids.validate(&descriptor).map_err(|(selector, owner)| RegistryMutationError::DuplicateSelector {
+            selector: selector.into_boxed_str(),
+            existing_provider: owner.into_boxed_str(),
+            provider: descriptor.id().as_str().into(),
+        })?;
+        self.providers.register_shared(Arc::new(CachedProvider::new(provider, descriptor.clone())))?;
+        selector_ids.insert(&descriptor);
+        Ok(())
     }
 
     /// Registers an already shared self-described detector provider.
@@ -429,7 +455,19 @@ impl MimeDetectorRegistry {
         &self,
         provider: Arc<dyn ProviderDefinition<MimeDetectorSpec>>,
     ) -> Result<(), RegistryMutationError> {
-        self.providers.register_shared(provider)
+        if self.providers.is_sealed() {
+            return Err(RegistryMutationError::Sealed);
+        }
+        let descriptor = provider.descriptor();
+        let mut selector_ids = self.selector_ids.write().unwrap_or_else(|e| e.into_inner());
+        selector_ids.validate(&descriptor).map_err(|(selector, owner)| RegistryMutationError::DuplicateSelector {
+            selector: selector.into_boxed_str(),
+            existing_provider: owner.into_boxed_str(),
+            provider: descriptor.id().as_str().into(),
+        })?;
+        self.providers.register_shared(Arc::new(CachedProvider::new(provider, descriptor.clone())))?;
+        selector_ids.insert(&descriptor);
+        Ok(())
     }
 
     /// Replaces the selection used by future default resolutions.
@@ -453,6 +491,7 @@ impl MimeDetectorRegistry {
     /// Seals this registry against further mutation.
     #[inline]
     pub fn seal(&self) {
+        let _boundary = self.selector_ids.write().unwrap_or_else(|e| e.into_inner());
         let _async_providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
         self.providers.seal();
     }
@@ -479,6 +518,7 @@ impl MimeDetectorRegistry {
         &self,
         selection: &ProviderSelection,
     ) -> Result<ResolvingServiceProvider<MimeDetectorSpec>, ProviderResolutionError> {
+        let _snapshot = self.selector_ids.read().unwrap_or_else(|e| e.into_inner());
         self.providers.resolve_selected(selection)
     }
 
@@ -496,6 +536,7 @@ impl MimeDetectorRegistry {
     /// registered provider.
     #[inline]
     pub fn resolve(&self) -> Result<ResolvingServiceProvider<MimeDetectorSpec>, ProviderResolutionError> {
+        let _snapshot = self.selector_ids.read().unwrap_or_else(|e| e.into_inner());
         self.providers.resolve()
     }
 }
@@ -511,6 +552,7 @@ impl Default for MimeDetectorRegistry {
         Self {
             providers: ProviderRegistry::default(),
             async_providers: Arc::new(RwLock::new(HashMap::new())),
+            selector_ids: Arc::new(RwLock::new(SelectorIdentityIndex::default())),
         }
     }
 }

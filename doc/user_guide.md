@@ -311,6 +311,11 @@ rejects later registrations through either API while keeping existing
 providers available. Async creation snapshots the selected provider before
 calling its factory, so callbacks run without the async catalog lock; a
 provider registered during a callback is considered by later creations.
+Synchronous and asynchronous capabilities may share a canonical provider ID,
+but every selector (the ID or an alias) must resolve to that same ID across
+both catalogs. If a selector previously named different providers in the two
+catalogs, rename one selector or register both capabilities under one
+canonical ID before upgrading.
 
 Link-time provider discovery is opt-in. An application can enable it with:
 
