@@ -16,9 +16,9 @@ use std::sync::atomic::Ordering;
 #[cfg(test)]
 use qubit_local_files::LocalTempFile;
 use qubit_local_files::LocalTempRecovery;
-use qubit_operation::ResourceId;
 
 use super::staged_temp_owner::StagedTempOwner;
+use super::resource_identity::ResourceIdentity;
 use crate::MimeError;
 use crate::MimeResult;
 use crate::command_execution::MimeExecutionWorker;
@@ -37,7 +37,7 @@ pub(crate) struct StagedMimeInput {
     /// Total bytes successfully written into this resource.
     pub(super) staged_bytes: AtomicU64,
     /// Resource identity shared with its cleanup adapter.
-    pub(super) cleanup_id: Arc<Mutex<Option<ResourceId>>>,
+    pub(super) cleanup_id: Arc<ResourceIdentity>,
 }
 
 impl StagedMimeInput {
@@ -57,7 +57,7 @@ impl StagedMimeInput {
             permits: Mutex::new(vec![permit]),
             worker,
             staged_bytes: AtomicU64::new(0),
-            cleanup_id: Arc::new(Mutex::new(None)),
+            cleanup_id: Arc::new(ResourceIdentity::default()),
         }
     }
 
@@ -77,7 +77,7 @@ impl StagedMimeInput {
             permits: Mutex::new(Vec::new()),
             worker,
             staged_bytes: AtomicU64::new(0),
-            cleanup_id: Arc::new(Mutex::new(None)),
+            cleanup_id: Arc::new(ResourceIdentity::default()),
         }
     }
 
