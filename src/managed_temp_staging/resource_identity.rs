@@ -3,17 +3,31 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Mutex;
+#[cfg(test)]
+use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
 use std::task::Waker;
 
 use qubit_operation::ResourceId;
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum PublishEvent {
+    CleanupPending,
+    Publishing(ResourceId),
+}
+
+#[cfg(test)]
+pub(crate) type PublishHook = Arc<dyn Fn(PublishEvent) + Send + Sync>;
+
 #[derive(Default)]
 struct State {
     value: Option<ResourceId>,
     next_waiter: u64,
     waiter: Option<(u64, Waker)>,
+    #[cfg(test)]
+    hook: Option<PublishHook>,
 }
 
 /// A resource identity that can be awaited while the owner is being retained.
@@ -21,6 +35,10 @@ struct State {
 pub(super) struct ResourceIdentity(Mutex<State>);
 
 impl ResourceIdentity {
+    #[cfg(test)]
+    pub(crate) fn set_hook(&self, hook: PublishHook) {
+        self.0.lock().unwrap_or_else(|poison| poison.into_inner()).hook = Some(hook);
+    }
     #[cfg(test)]
     pub(super) fn published(id: ResourceId) -> Self {
         Self(Mutex::new(State {
@@ -30,6 +48,12 @@ impl ResourceIdentity {
     }
 
     pub(super) fn publish(&self, id: ResourceId) {
+        #[cfg(test)]
+        let hook = self.0.lock().unwrap_or_else(|poison| poison.into_inner()).hook.clone();
+        #[cfg(test)]
+        if let Some(hook) = hook {
+            hook(PublishEvent::Publishing(id));
+        }
         let waiter = {
             let mut state = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
             assert!(
@@ -67,23 +91,33 @@ impl Future for IdentityFuture<'_> {
 
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         let candidate = context.waker().clone();
-        let (result, old_waiter) = {
+        let (result, old_waiter, _hook) = {
             let mut state = self
                 .identity
                 .0
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
             if let Some(id) = state.value {
-                (Poll::Ready(id), None)
+                (Poll::Ready(id), None, None)
             } else {
                 let old = state
                     .waiter
                     .replace((self.token, candidate))
                     .map(|(_, waker)| waker);
-                (Poll::Pending, old)
+                #[cfg(test)]
+                let hook = state.hook.clone();
+                #[cfg(not(test))]
+                let hook: Option<()> = None;
+                (Poll::Pending, old, hook)
             }
         };
         drop(old_waiter);
+        #[cfg(test)]
+        if result.is_pending() {
+            if let Some(hook) = _hook {
+                hook(PublishEvent::CleanupPending);
+            }
+        }
         result
     }
 }

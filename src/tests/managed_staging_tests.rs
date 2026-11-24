@@ -65,6 +65,7 @@ use crate::managed_temp_staging::ManagedStagingLimits;
 use crate::managed_temp_staging::StagedMimeInput;
 use crate::managed_temp_staging::commit_staged;
 use crate::managed_temp_staging::create_empty_staged_with;
+use crate::managed_temp_staging::create_empty_staged_with_hook;
 use crate::managed_temp_staging::sentinel_read_limit;
 use crate::managed_temp_staging::stage_owned_in;
 use crate::managed_temp_staging::within_staging_limit;
@@ -89,6 +90,61 @@ fn block_on<F: Future>(future: F) -> F::Output {
             Poll::Ready(value) => return value,
             Poll::Pending => std::thread::park(),
         }
+    }
+}
+
+fn controlled_identity_hook() -> (
+    crate::managed_temp_staging::PublishHook,
+    std::sync::mpsc::Receiver<crate::managed_temp_staging::PublishEvent>,
+    std::sync::mpsc::Sender<()>,
+    std::sync::mpsc::Sender<()>,
+) {
+    use crate::managed_temp_staging::PublishEvent;
+
+    let (event_tx, event_rx) = std::sync::mpsc::channel();
+    let (pending_release_tx, pending_release_rx) = std::sync::mpsc::channel();
+    let (publish_release_tx, publish_release_rx) = std::sync::mpsc::channel();
+    let pending_release_rx = std::sync::Mutex::new(pending_release_rx);
+    let publish_release_rx = std::sync::Mutex::new(publish_release_rx);
+    let hook = Arc::new(move |event| {
+        let release = match event {
+            PublishEvent::CleanupPending => &pending_release_rx,
+            PublishEvent::Publishing(_) => &publish_release_rx,
+        };
+        if event_tx.send(event).is_ok() {
+            let _ = release
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .recv_timeout(std::time::Duration::from_secs(5));
+        }
+    });
+    (hook, event_rx, pending_release_tx, publish_release_tx)
+}
+
+#[derive(Debug)]
+struct RejectCleanupAfterFirstDispatch {
+    inner: Arc<FixedMimeExecutionPort>,
+    dispatches: AtomicUsize,
+}
+
+impl MimeExecutionPort for RejectCleanupAfterFirstDispatch {
+    fn prepare(&self) -> Result<(), MimeError> {
+        self.inner.prepare()
+    }
+
+    fn try_dispatch(
+        &self,
+        job: Box<dyn FnOnce() + Send + 'static>,
+    ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+        if self.dispatches.fetch_add(1, Ordering::AcqRel) == 0 {
+            self.inner.try_dispatch(job)
+        } else {
+            Err(job)
+        }
+    }
+
+    fn shutdown(&self) -> Result<(), MimeError> {
+        self.inner.shutdown()
     }
 }
 
@@ -1379,12 +1435,31 @@ fn test_managed_staging_cleanup_failure_retains_owner_for_retry() {
 
 #[test]
 fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
+    use crate::managed_temp_staging::PublishEvent;
+
+    #[derive(Debug)]
+    struct RejectingCleanupPort;
+    impl MimeExecutionPort for RejectingCleanupPort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+        fn try_dispatch(
+            &self,
+            job: Box<dyn FnOnce() + Send + 'static>,
+        ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+            Err(job)
+        }
+        fn shutdown(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+    }
+
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
     let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
     let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap();
     services.prepare().unwrap();
-    let worker = MimeExecutionWorker::new(port);
+    let worker = MimeExecutionWorker::new(Arc::new(RejectingCleanupPort));
     let reservation_slot = Arc::new(std::sync::Mutex::new(None));
     let slot = Arc::clone(&reservation_slot);
     let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
@@ -1406,19 +1481,77 @@ fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
     let permit = services.staging_budget().try_reserve(13).unwrap();
     let staged = StagedMimeInput::new(temp, permit, worker);
     let reservation = reservation_slot.lock().unwrap().take().unwrap();
+    let (hook, event_rx, pending_release_tx, publish_release_tx) = controlled_identity_hook();
+    staged.set_cleanup_test_hook(hook);
+    let (commit_tx, commit_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || commit_tx.send(commit_staged(reservation, staged)).unwrap());
+
+    let published_id = match event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap() {
+        PublishEvent::Publishing(id) => id,
+        event => panic!("expected identity publication, got {event:?}"),
+    };
     assert!(matches!(
-        commit_staged(reservation, staged),
-        Err(crate::MimeError::ExecutionServicesRequired)
+        event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+        PublishEvent::CleanupPending
+    ), "the real partial-owner cleanup polls while its ID is unpublished");
+    let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+    let mut context = Context::from_waker(&waker);
+    {
+        let mut settlement = std::pin::pin!(handle.wait_settlement());
+        assert!(settlement.as_mut().poll(&mut context).is_pending());
+    }
+    assert!(path.exists(), "early cleanup poll keeps the real partial owner alive");
+    assert_eq!(13, services.staging_budget().used_bytes());
+    pending_release_tx.send(()).unwrap();
+    publish_release_tx.send(()).unwrap();
+    assert!(matches!(commit_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(), Err(crate::MimeError::ExecutionServicesRequired)));
+    let report = block_on(handle.wait_settlement());
+    assert_eq!(qubit_operation::SettlementStatus::RecoveryRequired, report.status);
+    assert_eq!(1, report.cleanup_failures.len());
+    assert_eq!(published_id, report.cleanup_failures[0].resource_id);
+    assert_eq!([published_id], report.recoveries[0].snapshot().resources.as_ref());
+    assert!(
+        path.exists(),
+        "failed cleanup retains the partial temp until recovery retry"
+    );
+    assert_eq!(13, services.staging_budget().used_bytes());
+    let retry = report.recoveries[0].try_retry().unwrap();
+    assert!(block_on(retry.wait_async()).failures.is_empty());
+    assert_eq!(0, services.staging_budget().used_bytes());
+    assert!(!path.exists());
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+}
+
+#[test]
+fn test_managed_staging_commit_failure_successful_cleanup_releases_permit() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+    let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap();
+    services.prepare().unwrap();
+    let reservation_slot = Arc::new(std::sync::Mutex::new(None));
+    let slot = Arc::clone(&reservation_slot);
+    let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+        *slot.lock().unwrap() = Some(scope.reserve_resource().unwrap());
+        Ok::<(), MimeError>(())
+    }))
+    .unwrap();
+    assert!(matches!(
+        block_on(handle.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(())
     ));
-    block_on(handle.wait_settlement());
-    assert!(
-        !path.exists(),
-        "failed commit routes the partial temp to reserved cleanup"
-    );
-    assert!(
-        services.staging_budget().try_reserve(13).is_some(),
-        "cleanup releases the staged-byte permit"
-    );
+    let temp = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
+    let path = temp.path().to_path_buf();
+    let permit = services.staging_budget().try_reserve(13).unwrap();
+    let staged = StagedMimeInput::new(temp, permit, MimeExecutionWorker::new(port));
+    let reservation = reservation_slot.lock().unwrap().take().unwrap();
+    assert!(matches!(commit_staged(reservation, staged), Err(MimeError::ExecutionServicesRequired)));
+    let report = block_on(handle.wait_settlement());
+    assert!(report.cleanup_failures.is_empty());
+    assert!(!path.exists());
+    assert_eq!(0, services.staging_budget().used_bytes());
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();
@@ -1427,12 +1560,17 @@ fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
 #[cfg(unix)]
 #[test]
 fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
+    use crate::managed_temp_staging::PublishEvent;
+    let (hook, event_rx, pending_release_tx, publish_release_tx) = controlled_identity_hook();
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
     let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
     let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap();
     services.prepare().unwrap();
-    let worker = MimeExecutionWorker::new(port.clone());
+    let worker = MimeExecutionWorker::new(Arc::new(RejectCleanupAfterFirstDispatch {
+        inner: Arc::clone(&port),
+        dispatches: AtomicUsize::new(0),
+    }));
     let limits = ManagedStagingLimits {
         max_bytes: 128,
         budget: services.staging_budget(),
@@ -1440,9 +1578,11 @@ fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
     };
     let blocker_path = Arc::new(std::sync::Mutex::new(None));
     let blocker_path_for_create = Arc::clone(&blocker_path);
+    let recovery_owner_path = Arc::new(std::sync::Mutex::new(None));
+    let recovery_owner_path_for_create = Arc::clone(&recovery_owner_path);
     let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
         let reservation = scope.reserve_resource().unwrap();
-        create_empty_staged_with(&scope, reservation, &limits, move || {
+        create_empty_staged_with_hook(&scope, reservation, &limits, Some(hook), move || {
             let recovery_fault =
                 qubit_local_files::test_support::install_test_fault("host-temp-file-recovery-clone-cleanup")
                     .expect("creation and initial cleanup fault should install");
@@ -1454,6 +1594,7 @@ fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
             if let Err(error) = &result
                 && let Some(recovery) = error.temp_recovery()
             {
+                *recovery_owner_path_for_create.lock().unwrap() = Some(recovery.path().to_path_buf());
                 let blocker = recovery.path().parent().unwrap().join("recovery-blocker");
                 std::fs::write(&blocker, b"hold recovery owner").unwrap();
                 *blocker_path_for_create.lock().unwrap() = Some(blocker);
@@ -1464,6 +1605,27 @@ fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
         .await
     }))
     .unwrap();
+
+    let published_id = match event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap() {
+        PublishEvent::Publishing(id) => id,
+        event => panic!("expected identity publication, got {event:?}"),
+    };
+    assert!(matches!(
+        event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+        PublishEvent::CleanupPending
+    ), "the real retained recovery cleanup polls while its ID is unpublished");
+    let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+    let mut context = Context::from_waker(&waker);
+    {
+        let mut outcome = std::pin::pin!(handle.wait_outcome());
+        assert!(outcome.as_mut().poll(&mut context).is_pending());
+    }
+    let owner_path = recovery_owner_path.lock().unwrap().clone().expect("creation recovery owner path");
+    let blocker = blocker_path.lock().unwrap().clone().expect("creation recovery blocker path");
+    assert!(owner_path.exists(), "owner remains live during early cleanup polling");
+    assert!(blocker.exists(), "blocker remains live during early cleanup polling");
+    pending_release_tx.send(()).unwrap();
+    publish_release_tx.send(()).unwrap();
 
     match block_on(handle.wait_outcome()).unwrap() {
         qubit_operation::OperationOutcome::Failed(MimeError::Io(_)) => {}
@@ -1477,13 +1639,17 @@ fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
     );
     let report = block_on(handle.wait_settlement());
     assert_eq!(report.status, qubit_operation::SettlementStatus::RecoveryRequired);
+    assert_eq!(1, report.cleanup_failures.len());
+    assert_eq!(published_id, report.cleanup_failures[0].resource_id);
     assert_eq!(
         1,
         report.recoveries.len(),
         "settlement retains the creation recovery owner"
     );
+    assert_eq!([published_id], report.recoveries[0].snapshot().resources.as_ref());
+    assert!(owner_path.exists(), "rejected cleanup retains the owner after failure");
+    assert!(blocker.exists(), "the creation recovery blocker remains until retry");
 
-    let blocker = blocker_path.lock().unwrap().take().expect("recovery blocker path");
     std::fs::remove_file(blocker).unwrap();
     let recovery = report.recoveries[0].clone();
     let attempt = recovery.try_retry().unwrap();
