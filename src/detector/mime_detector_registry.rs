@@ -521,44 +521,35 @@ mod async_catalog_recovery_tests {
     use std::panic::catch_unwind;
     use std::sync::Arc;
 
+    use qubit_operation::GroupOptions;
+    use qubit_operation::OperationManager;
+    use qubit_spi::ProviderSelection;
+
     use super::MimeDetectorRegistry;
     use super::RepositoryMimeDetectorProvider;
     use crate::FixedMimeExecutionPort;
     use crate::MimeConfig;
     use crate::MimeExecutionServices;
-    use qubit_operation::GroupOptions;
-    use qubit_operation::OperationManager;
-    use qubit_spi::ProviderSelection;
 
     #[test]
     fn test_poisoned_async_catalog_recovers_for_selection_registration_and_sealing() {
         let registry = MimeDetectorRegistry::default();
         let poisoned = catch_unwind(AssertUnwindSafe(|| {
-            let _guard = registry
-                .async_providers
-                .write()
-                .expect("catalog should be unpoisoned");
+            let _guard = registry.async_providers.write().expect("catalog should be unpoisoned");
             panic!("poison detector async catalog");
         }));
         assert!(poisoned.is_err());
 
-        let manager =
-            OperationManager::new(Default::default()).expect("operation manager should be created");
+        let manager = OperationManager::new(Default::default()).expect("operation manager should be created");
         let group = manager
             .group(GroupOptions { capacity: 1 })
             .expect("operation group should be created");
-        let services = MimeExecutionServices::new(
-            manager,
-            group,
-            Arc::new(FixedMimeExecutionPort::new(1, 1)),
-            32,
-        )
-        .expect("execution services should be created");
+        let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 32)
+            .expect("execution services should be created");
         let selection = ProviderSelection::auto();
         let error = registry
             .create_async_backend(&selection, &MimeConfig::default(), &services)
-            .err()
-            .expect("empty automatic selection should fail");
+            .expect_err("empty automatic selection should fail");
         assert!(error.to_string().contains("no MIME detector candidates"));
 
         assert!(registry.async_provider_ids().is_empty());

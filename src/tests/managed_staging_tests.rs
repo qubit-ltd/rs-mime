@@ -24,12 +24,12 @@ use std::task::Waker;
 use qubit_fs::AsyncFileSystem;
 use qubit_fs::FsResult;
 use qubit_fs::Path as FsPath;
-use qubit_fs::metadata::FileSystemCapabilities;
 use qubit_fs::metadata::FileKind;
+use qubit_fs::metadata::FileMetadata;
+use qubit_fs::metadata::FileSystemCapabilities;
 use qubit_fs::metadata::FileSystemId;
 use qubit_fs::metadata::FileSystemInfo;
 use qubit_fs::metadata::FileSystemLimits;
-use qubit_fs::metadata::FileMetadata;
 use qubit_fs::metadata::OpenedFileInfo;
 use qubit_fs::metadata::SymlinkPolicy;
 use qubit_fs::path::PathConstraints;
@@ -299,11 +299,7 @@ struct BytesRandomAccessSession {
 }
 
 impl AsyncRandomAccessReadSession for BytesRandomAccessSession {
-    fn read_at_async<'a>(
-        self: Pin<&'a mut Self>,
-        offset: u64,
-        output: &'a mut [u8],
-    ) -> SpiFuture<'a, FsResult<usize>> {
+    fn read_at_async<'a>(self: Pin<&'a mut Self>, offset: u64, output: &'a mut [u8]) -> SpiFuture<'a, FsResult<usize>> {
         Box::pin(async move {
             let this = self.get_mut();
             match this.first_read_fault.take() {
@@ -547,7 +543,11 @@ fn test_managed_staging_provider_work_buffer_budget_failure_cleans_empty_owner()
         })
     ));
     assert_eq!(1, opens.load(Ordering::SeqCst));
-    assert_eq!(0, reads.load(Ordering::SeqCst), "the provider is not read without its work buffer");
+    assert_eq!(
+        0,
+        reads.load(Ordering::SeqCst),
+        "the provider is not read without its work buffer"
+    );
     assert_eq!(8, read_tree.remaining());
     assert!(block_on(handle.wait_settlement()).all_released());
     assert_eq!(0, budget.used_bytes(), "the empty staged owner is cleaned");
@@ -644,7 +644,10 @@ fn test_metered_random_access_reads_share_budget_and_reject_sequential_offsets()
         block_on(failing_session.read_at(0, &mut output)),
         Err(MimeError::FileSystem(_))
     ));
-    assert_eq!([0xCC; 4], output, "failed random reads keep private bytes out of output");
+    assert_eq!(
+        [0xCC; 4], output,
+        "failed random reads keep private bytes out of output"
+    );
     assert_eq!(4, failing_tree.remaining(), "failed random reads release the permit");
     assert_eq!(1, failing_opens.load(Ordering::SeqCst));
     assert_eq!(0, failing_reads.load(Ordering::SeqCst));

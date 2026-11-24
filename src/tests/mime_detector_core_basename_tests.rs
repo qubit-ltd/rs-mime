@@ -50,11 +50,8 @@ fn test_extensionless_basename_uses_unique_mime_mapping() {
         .expect("precise detection should be configurable");
     raw.set(CONFIG_MIME_PRECISE_DETECTION_PATTERNS, "ogg")
         .expect("precise detection patterns should be configurable");
-    raw.set(
-        CONFIG_MIME_AMBIGUOUS_MIME_MAPPING,
-        "ogg:video/ogg,audio/ogg",
-    )
-    .expect("ambiguous mappings should be configurable");
+    raw.set(CONFIG_MIME_AMBIGUOUS_MIME_MAPPING, "ogg:video/ogg,audio/ogg")
+        .expect("ambiguous mappings should be configurable");
     let config = MimeConfig::from_config(&raw).expect("MIME configuration should parse");
     let mut core = MimeDetectorCore::new(config);
     core.set_media_stream_classifier(Some(Arc::new(AudioOnlyClassifier)));
