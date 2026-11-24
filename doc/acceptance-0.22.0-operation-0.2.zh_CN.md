@@ -634,3 +634,25 @@ Magika 固定 fixture 使用 workflow 校验过的 ONNX Runtime 1.24.2，default
 2026-11-24 21:05:19 UTC 查询受测源码提交 `1257c9fd31ac319745989ce38d1077ccdf293123` 的 hosted runs 返回空列表；该候选尚未推送，故无新 hosted 状态。历史 MIME 基线完整 SHA 统一为 `a5e48d2fa35204183c2bd37a96782ba78327067f`，原先漏掉末尾 `f` 的位置已修正；历史 hosted snapshot 及早期 observation 保留原时点和各自 SHA，不回写成新候选结果。
 
 完整原始命令日志（包括 align/CI、退出码、测试、coverage、audit、FFprobe、file、Magika、registry 与 hosted 查询）均在仓库外 `.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb8227-round-9/`。本验收页不含机器本地文件链接。验收页补录后再次运行 `cargo test --locked --test package_document_links_tests -- --nocapture`，6 passed；`.infra/bin/ci-check.sh --only strict-doc`、`--only readme`、`--only package` 分别 exit 0。三个文档门禁和包内链接检查均针对包含本节的候选文档。此后的 evidence-only 提交只包含本验收 Markdown，不改变受测 Rust 源码、配置或测试。
+
+## 2026-11-24 T6 固定候选对 rs-local-files aa261c6e 的兼容复验
+
+本节保留上一节 `1257c9fd31ac319745989ce38d1077ccdf293123` 固定候选证据，并记录原集成树出现的跨测试污染及其 test-only 隔离修复。复验修复提交为 `aaa2715d0b78968507751e6b8690cfac99a6a285`（`test(mime): serialize recovery cleanup tests`），基于验收文档提交 `c7723e0b47185adade04b9fca1b2efdf4dc7e830`。变更仅限测试同步和失败诊断；生产实现、依赖 pin 与 Cargo.lock 均未改变。
+
+复验实际依赖图为：
+
+| 仓库 | 实际 SHA | 角色 |
+| --- | --- | --- |
+| `rs-mime` | `aaa2715d0b78968507751e6b8690cfac99a6a285`（基线 `c7723e0b47185adade04b9fca1b2efdf4dc7e830`） | repair tree |
+| `rs-local-files` | `aa261c6e2049938a3a632acddab09a35489eb5bd` | 原集成工作区兼容性依赖 |
+| `rs-operation` | `893bcf6c7efb397cc8fac2f7fe18fb5e87017e63` | 固定 sibling |
+| `rs-fs` | `c7ea1d035498aa633f4f3c04d90fdb5d4b73de97` | 固定 sibling |
+| `rs-fs-local` | `3bf4275ed601e39fdbf8532f9d80d563d9cc7182` | 固定 sibling |
+| `rs-fs-registry` | `df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c` | 可选 sibling |
+| `rs-fs-testkit` | `28bf195b8eef9c03d9cb1c5428186758b76aaacd` | dev sibling |
+
+初轮原工作区完整 CI 在该动态 `rs-local-files@aa261c6e` 组合下为 322 passed、2 failed、1 ignored。失败是 `test_managed_staging_creation_recovery_is_settled_and_retryable` 与 `test_managed_staging_commit_failure_retains_partial_owner_and_permit`。其单测单独执行均通过；将这两项与 `test_rejected_recovery_dispatch_retains_owner_identity_and_budget` 以 libtest `--test-threads=3` 同进程运行后，三轮红测均复现两项失败，饱和用例每轮通过。
+
+为获取实际失败原因，测试断言补充了 retry failure 的 Debug 上下文。两项都得到 `CleanupFailure.summary = "MIME worker and recovery cleanup port rejected cleanup job"`：失败测试的 worker 拒绝后，retry 转向进程全局 16 槽 recovery cleanup port，而另一个测试正阻塞其 worker 并占满队列。由此确认根因是共享进程级测试 fixture 未串行化，不是 `rs-local-files@aa261c6e` 清理语义的兼容回归。
+
+修复在 `managed_temp_cleanup` 中提供仅 `cfg(test)` 的 crate-private recovery-port guard。所有实际走进程 fallback 的测试共同使用它：两个失败用例、已覆盖的 rejected-dispatch 和 transferred-recovery 用例，以及服务关闭后重试的 full-worker-queue command 用例。生产全局队列与运行行为保持不变。修复后用相同三个 filters 和 `--test-threads=3` 连续运行五轮，每轮均 3 passed、0 failed、exit 0。align 和完整 CI 的原始日志及退出码单独保存在仓库外 `.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb8227-round-9/mime-repair-align.log`、`mime-repair-ci-check.log`；红测与五轮绿测日志为 `mime-repair-red-round-{1,2,3}.log`、`mime-repair-green-round-{1,2,3,4,5}.log`。这些日志不作为本页链接或包内文件。
