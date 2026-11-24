@@ -17,6 +17,63 @@ use crate::MimeResult;
 /// Maximum number of matcher work units evaluated before yielding.
 pub(crate) const MATCH_WORK_PER_BATCH: usize = 4096;
 
+/// Tracks matcher work across repository rules and matcher nodes.
+#[derive(Debug, Default)]
+pub(crate) struct MatcherWorkBudget {
+    work_in_poll: usize,
+    maximum_work_in_poll: usize,
+    total_work: usize,
+    yields: usize,
+}
+
+impl MatcherWorkBudget {
+    /// Counts one unit of matching work and reports whether the batch is full.
+    pub(crate) fn charge(&mut self) -> bool {
+        self.work_in_poll += 1;
+        self.total_work += 1;
+        if self.work_in_poll == MATCH_WORK_PER_BATCH {
+            self.maximum_work_in_poll = self.maximum_work_in_poll.max(self.work_in_poll);
+            self.work_in_poll = 0;
+            self.yields += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Records the final partial batch after matching completes.
+    pub(crate) fn finish(&mut self) {
+        self.maximum_work_in_poll = self.maximum_work_in_poll.max(self.work_in_poll);
+    }
+
+    /// Returns the largest work batch observed by this matcher operation.
+    #[cfg(test)]
+    pub(crate) fn maximum_work_in_poll(&self) -> usize {
+        self.maximum_work_in_poll
+    }
+
+    /// Returns total counted work units.
+    #[cfg(test)]
+    pub(crate) fn total_work(&self) -> usize {
+        self.total_work
+    }
+
+    /// Returns the number of cooperative yields caused by matcher work.
+    #[cfg(test)]
+    pub(crate) fn yields(&self) -> usize {
+        self.yields
+    }
+}
+
+/// Yields after a complete work batch and reports an accepted stop reason.
+pub(crate) async fn yield_after_work(scope: &OperationScope) -> Result<(), StopReason> {
+    yield_to_executor().await;
+    match scope.context().stop_reason() {
+        Some(reason) => Err(reason),
+        None => Ok(()),
+    }
+}
+
 /// Maximum number of nested magic matchers, counting each root as level one.
 pub(super) const MAX_MAGIC_DEPTH: usize = 128;
 
@@ -218,17 +275,35 @@ impl MimeMagicMatcher {
     ///
     /// # Errors
     /// Returns the accepted stop reason when the operation is cancelled.
-    pub(crate) async fn matches_cooperatively(&self, bytes: &[u8], scope: &OperationScope) -> Result<bool, StopReason> {
-        let mut pending = vec![self];
-        while let Some(matcher) = pending.pop() {
-            if let Some(reason) = scope.context().stop_reason() {
-                return Err(reason);
-            }
-            if matcher.matches_parent_cooperatively(bytes, scope).await? {
+    pub(crate) async fn matches_cooperatively(
+        &self,
+        bytes: &[u8],
+        scope: &OperationScope,
+        work: &mut MatcherWorkBudget,
+    ) -> Result<bool, StopReason> {
+        let mut pending = vec![(self, false, 0usize)];
+        while !pending.is_empty() {
+            let frame = pending.len() - 1;
+            let matcher = pending[frame].0;
+            if !pending[frame].1 {
+                pending[frame].1 = true;
+                if work.charge() {
+                    yield_after_work(scope).await?;
+                }
+                if !matcher.matches_parent_cooperatively(bytes, scope, work).await? {
+                    pending.pop();
+                    continue;
+                }
                 if matcher.sub_matchers.is_empty() {
                     return Ok(true);
                 }
-                pending.extend(matcher.sub_matchers.iter().rev());
+            }
+            let next_child = pending[frame].2;
+            if next_child < matcher.sub_matchers.len() {
+                pending[frame].2 += 1;
+                pending.push((&matcher.sub_matchers[next_child], false, 0));
+            } else {
+                pending.pop();
             }
         }
         Ok(false)
@@ -245,15 +320,22 @@ impl MimeMagicMatcher {
     ///
     /// # Errors
     /// Returns the accepted stop reason when the operation is cancelled.
-    async fn matches_parent_cooperatively(&self, bytes: &[u8], scope: &OperationScope) -> Result<bool, StopReason> {
+    async fn matches_parent_cooperatively(
+        &self,
+        bytes: &[u8],
+        scope: &OperationScope,
+        work: &mut MatcherWorkBudget,
+    ) -> Result<bool, StopReason> {
         match self.value_type {
-            MagicValueType::String | MagicValueType::Byte => self.matches_bytes_cooperatively(bytes, scope).await,
+            MagicValueType::String | MagicValueType::Byte => {
+                self.matches_bytes_cooperatively(bytes, scope, work).await
+            }
             MagicValueType::Host16
             | MagicValueType::Host32
             | MagicValueType::Big16
             | MagicValueType::Big32
             | MagicValueType::Little16
-            | MagicValueType::Little32 => self.matches_numeric_cooperatively(bytes, scope).await,
+            | MagicValueType::Little32 => self.matches_numeric_cooperatively(bytes, scope, work).await,
         }
     }
 
@@ -268,7 +350,12 @@ impl MimeMagicMatcher {
     ///
     /// # Errors
     /// Returns the accepted stop reason when the operation is cancelled.
-    async fn matches_bytes_cooperatively(&self, bytes: &[u8], scope: &OperationScope) -> Result<bool, StopReason> {
+    async fn matches_bytes_cooperatively(
+        &self,
+        bytes: &[u8],
+        scope: &OperationScope,
+        work: &mut MatcherWorkBudget,
+    ) -> Result<bool, StopReason> {
         if self.value.is_empty() || bytes.len() < self.value.len() || self.offset_begin >= bytes.len() {
             return Ok(false);
         }
@@ -276,15 +363,12 @@ impl MimeMagicMatcher {
         if self.offset_begin > end {
             return Ok(false);
         }
-        for (count, offset) in (self.offset_begin..=end).enumerate() {
-            if self.value_matches_cooperatively(bytes, offset, scope).await? {
-                return Ok(true);
+        for offset in self.offset_begin..=end {
+            if work.charge() {
+                yield_after_work(scope).await?;
             }
-            if count % MATCH_WORK_PER_BATCH == MATCH_WORK_PER_BATCH - 1 {
-                yield_to_executor().await;
-                if let Some(reason) = scope.context().stop_reason() {
-                    return Err(reason);
-                }
+            if self.value_matches_cooperatively(bytes, offset, scope, work).await? {
+                return Ok(true);
             }
         }
         Ok(false)
@@ -307,8 +391,12 @@ impl MimeMagicMatcher {
         bytes: &[u8],
         offset: usize,
         scope: &OperationScope,
+        work: &mut MatcherWorkBudget,
     ) -> Result<bool, StopReason> {
-        for (count, (value_byte, index)) in self.value.iter().zip(0..).enumerate() {
+        for (index, value_byte) in self.value.iter().enumerate() {
+            if work.charge() {
+                yield_after_work(scope).await?;
+            }
             let input = bytes[offset + index];
             let matches = match self.mask.as_deref() {
                 Some(mask) => (input & mask[index]) == (*value_byte & mask[index]),
@@ -316,12 +404,6 @@ impl MimeMagicMatcher {
             };
             if !matches {
                 return Ok(false);
-            }
-            if count % MATCH_WORK_PER_BATCH == MATCH_WORK_PER_BATCH - 1 {
-                yield_to_executor().await;
-                if let Some(reason) = scope.context().stop_reason() {
-                    return Err(reason);
-                }
             }
         }
         Ok(true)
@@ -338,7 +420,12 @@ impl MimeMagicMatcher {
     ///
     /// # Errors
     /// Returns the accepted stop reason when the operation is cancelled.
-    async fn matches_numeric_cooperatively(&self, bytes: &[u8], scope: &OperationScope) -> Result<bool, StopReason> {
+    async fn matches_numeric_cooperatively(
+        &self,
+        bytes: &[u8],
+        scope: &OperationScope,
+        work: &mut MatcherWorkBudget,
+    ) -> Result<bool, StopReason> {
         if bytes.len() < self.value.len() || self.offset_begin >= bytes.len() {
             return Ok(false);
         }
@@ -347,27 +434,32 @@ impl MimeMagicMatcher {
             return Ok(false);
         }
         let little_endian = self.value_type.uses_little_endian_order();
-        for (count, offset) in (self.offset_begin..=end).enumerate() {
-            let matches = self.value.iter().enumerate().all(|(index, value_byte)| {
+        for offset in self.offset_begin..=end {
+            if work.charge() {
+                yield_after_work(scope).await?;
+            }
+            let mut matches = true;
+            for (index, value_byte) in self.value.iter().enumerate() {
+                if work.charge() {
+                    yield_after_work(scope).await?;
+                }
                 let input_index = if little_endian {
                     self.value.len() - index - 1
                 } else {
                     index
                 };
                 let actual = bytes[offset + input_index];
-                match self.mask.as_deref() {
+                let byte_matches = match self.mask.as_deref() {
                     Some(mask) => (actual & mask[index]) == (*value_byte & mask[index]),
                     None => actual == *value_byte,
+                };
+                if !byte_matches {
+                    matches = false;
+                    break;
                 }
-            });
+            }
             if matches {
                 return Ok(true);
-            }
-            if count % MATCH_WORK_PER_BATCH == MATCH_WORK_PER_BATCH - 1 {
-                yield_to_executor().await;
-                if let Some(reason) = scope.context().stop_reason() {
-                    return Err(reason);
-                }
             }
         }
         Ok(false)
