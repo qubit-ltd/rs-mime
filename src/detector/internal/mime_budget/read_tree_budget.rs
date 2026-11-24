@@ -20,6 +20,8 @@ pub(in crate::detector) struct ReadTreeBudget {
     pub(super) limit: AtomicU64,
     /// Committed and reserved bytes charged to the shared tree.
     pub(super) counters: Mutex<ReadCounters>,
+    /// Serializes the first real binding with reads from borrowed contexts.
+    pub(super) binding: Mutex<()>,
 }
 
 impl ReadTreeBudget {
@@ -35,6 +37,7 @@ impl ReadTreeBudget {
         Arc::new(Self {
             limit: AtomicU64::new(limit),
             counters: Mutex::new(ReadCounters::default()),
+            binding: Mutex::new(()),
         })
     }
 
