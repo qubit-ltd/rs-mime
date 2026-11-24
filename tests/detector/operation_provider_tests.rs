@@ -256,6 +256,429 @@ fn test_operation_provider_random_access_backend_preserves_sample_extent() {
 }
 
 #[test]
+fn test_cancelled_prefix_child_charges_only_successful_bytes_to_sibling_budget() {
+    assert_pending_prefix_child_charges_only_successful_bytes_to_sibling_budget(false);
+}
+
+#[test]
+fn test_deadline_pending_prefix_child_charges_only_successful_bytes_to_sibling_budget() {
+    assert_pending_prefix_child_charges_only_successful_bytes_to_sibling_budget(true);
+}
+
+fn assert_pending_prefix_child_charges_only_successful_bytes_to_sibling_budget(with_deadline: bool) {
+    use qubit_operation::ChildFailurePolicy;
+    use qubit_operation::OperationOutcome;
+    use qubit_operation::StopReason;
+
+    let expected_stop_reason = if with_deadline {
+        StopReason::Timeout
+    } else {
+        StopReason::UserCancelled
+    };
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let services = MimeExecutionServices::new(
+        manager.clone(),
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 2)),
+        4,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin().unwrap().with_execution_services(services.clone());
+    let deadline_clock = with_deadline.then(|| Arc::new(super::operation_runtime_tests::DeadlineClock::new()));
+    let deadline_clock_body = deadline_clock.clone();
+    let opens = Arc::new(AtomicUsize::new(0));
+    let opens_body = Arc::clone(&opens);
+    let (pending_tx, pending_rx) = mpsc::channel();
+    let parent_options = qubit_operation::OperationOptions {
+        child_failure_policy: ChildFailurePolicy::ContinueSiblings,
+        limits: qubit_operation::ScopeLimits {
+            child_operations: 2,
+            resources: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut parent = manager
+        .as_async()
+        .try_submit(parent_options, move |scope| {
+            let body_runtime = runtime.clone();
+            async move {
+                let first_file_system = Arc::new(
+                    qubit_fs::AsyncFileSystem::from_spi(
+                        SnapshotGateFileSystem::new(
+                            Arc::new(Mutex::new(b"%PDF".to_vec())),
+                            Arc::clone(&opens_body),
+                            pending_tx,
+                            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                            Arc::new(Mutex::new(None)),
+                            None,
+                        )
+                        .with_pending_after_first_read(),
+                    )
+                    .unwrap(),
+                );
+                let operation_context = deadline_clock_body.as_ref().map_or_else(
+                    Default::default,
+                    |clock| qubit_operation::ContextOptions {
+                        clock: Some(Arc::clone(clock) as Arc<dyn qubit_operation::ClockSource>),
+                        deadline: Some(qubit_operation::Deadline::at(qubit_operation::MonotonicTime::new(
+                            clock.domain,
+                            10,
+                        ))),
+                        ..Default::default()
+                    },
+                );
+                let first_options = MimeOperationOptions {
+                    max_buffer_bytes: Some(4),
+                    max_read_bytes: Some(4),
+                    operation: qubit_operation::OperationOptions {
+                        requirement: qubit_operation::ChildRequirement::Optional,
+                        context: operation_context,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                let mut first = body_runtime
+                    .try_submit_detection_in(
+                        &scope,
+                        OwnedMimeInput::Provider {
+                            file_system: first_file_system,
+                            path: qubit_fs::Path::parse("/first").unwrap(),
+                        },
+                        first_options,
+                    )
+                    .unwrap_or_else(|failure| panic!("first child should be admitted: {:?}", failure.reason));
+                pending_rx
+                    .recv()
+                    .expect("first read should complete and the second read should pend");
+                if let Some(clock) = &deadline_clock_body {
+                    assert!(clock.active_registrations() > 0, "child should register its fake deadline");
+                    clock.advance_to(10);
+                } else {
+                    assert_eq!(
+                        qubit_operation::StopRequestStatus::Accepted,
+                        first.request_stop(StopReason::UserCancelled),
+                    );
+                }
+                let first_stopped = matches!(
+                    first.wait_outcome().await.unwrap(),
+                    OperationOutcome::Stopped(ref report) if report.reason == expected_stop_reason
+                );
+                let _ = first.wait_settlement().await;
+                drop(first);
+
+                let over_limit_file_system = Arc::new(
+                    qubit_fs::AsyncFileSystem::from_spi(SnapshotGateFileSystem::new(
+                        Arc::new(Mutex::new(b"ABCD".to_vec())),
+                        Arc::clone(&opens_body),
+                        mpsc::channel().0,
+                        Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                        Arc::new(Mutex::new(None)),
+                        None,
+                    ))
+                    .unwrap(),
+                );
+                let mut over_limit = body_runtime
+                    .try_submit_detection_in(
+                        &scope,
+                        OwnedMimeInput::Provider {
+                            file_system: over_limit_file_system,
+                            path: qubit_fs::Path::parse("/over-limit").unwrap(),
+                        },
+                        MimeOperationOptions {
+                            max_buffer_bytes: Some(4),
+                            max_read_bytes: Some(4),
+                            operation: qubit_operation::OperationOptions {
+                                requirement: qubit_operation::ChildRequirement::Optional,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap_or_else(|failure| panic!("over-limit child should be admitted: {:?}", failure.reason));
+                let over_limit_rejected = matches!(
+                    over_limit.wait_outcome().await.unwrap(),
+                    OperationOutcome::Failed(qubit_mime::MimeError::BudgetExceeded { kind: "read", .. })
+                );
+                let _ = over_limit.wait_settlement().await;
+                drop(over_limit);
+
+                let second_file_system = Arc::new(
+                    qubit_fs::AsyncFileSystem::from_spi(SnapshotGateFileSystem::new(
+                        Arc::new(Mutex::new(b"ABCD".to_vec())),
+                        Arc::clone(&opens_body),
+                        mpsc::channel().0,
+                        Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                        Arc::new(Mutex::new(None)),
+                        None,
+                    ))
+                    .unwrap(),
+                );
+                let mut second = body_runtime
+                    .try_submit_detection_in(
+                        &scope,
+                        OwnedMimeInput::Provider {
+                            file_system: second_file_system,
+                            path: qubit_fs::Path::parse("/second").unwrap(),
+                        },
+                        MimeOperationOptions {
+                            max_buffer_bytes: Some(3),
+                            max_read_bytes: Some(3),
+                            operation: qubit_operation::OperationOptions {
+                                requirement: qubit_operation::ChildRequirement::Optional,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap_or_else(|failure| panic!("second child should be admitted: {:?}", failure.reason));
+                let second_bytes = match second.wait_outcome().await.unwrap() {
+                    OperationOutcome::Succeeded(report) => report.budget.bytes_read,
+                    other => panic!("second child should read the remaining prefix allowance: {other:?}"),
+                };
+                let _ = second.wait_settlement().await;
+                drop(second);
+                Ok::<_, ()>((first_stopped, over_limit_rejected, second_bytes))
+            }
+        })
+        .unwrap();
+    let (first_stopped, over_limit_rejected, second_bytes) = match block_on(parent.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(result) => result,
+        other => panic!("external parent should complete after both children: {other:?}"),
+    };
+    let _ = block_on(parent.wait_settlement());
+
+    assert!(first_stopped);
+    assert!(over_limit_rejected, "the sibling's full four-byte request exceeds the remaining three bytes");
+    assert_eq!(3, second_bytes, "the first child's one delivered byte remains charged");
+    assert_eq!(2, opens.load(Ordering::SeqCst), "each sibling opens its provider once");
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+}
+
+#[test]
+fn test_prefix_error_open_failure_eof_and_zero_settle_observed_bytes() {
+    let options = |max_buffer_bytes| MimeOperationOptions {
+        max_buffer_bytes: Some(max_buffer_bytes),
+        max_read_bytes: Some(4),
+        operation: qubit_operation::OperationOptions {
+            requirement: qubit_operation::ChildRequirement::Optional,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert_prefix_child_then_sibling(
+        SnapshotGateFileSystem::new(
+            Arc::new(Mutex::new(b"ABCD".to_vec())),
+            Arc::new(AtomicUsize::new(0)),
+            mpsc::channel().0,
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            Arc::new(Mutex::new(None)),
+            None,
+        )
+        .with_open_error(),
+        options(4),
+        None,
+        4,
+    );
+    assert_prefix_child_then_sibling(
+        SnapshotGateFileSystem::new(
+            Arc::new(Mutex::new(b"ABCD".to_vec())),
+            Arc::new(AtomicUsize::new(0)),
+            mpsc::channel().0,
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            Arc::new(Mutex::new(None)),
+            None,
+        )
+        .with_error_after_first_read(),
+        options(4),
+        None,
+        3,
+    );
+    assert_prefix_child_then_sibling(
+        SnapshotGateFileSystem::new(
+            Arc::new(Mutex::new(b"A".to_vec())),
+            Arc::new(AtomicUsize::new(0)),
+            mpsc::channel().0,
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            Arc::new(Mutex::new(None)),
+            None,
+        ),
+        options(4),
+        Some(1),
+        3,
+    );
+    assert_prefix_child_then_sibling(
+        SnapshotGateFileSystem::new(
+            Arc::new(Mutex::new(Vec::new())),
+            Arc::new(AtomicUsize::new(0)),
+            mpsc::channel().0,
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            Arc::new(Mutex::new(None)),
+            None,
+        ),
+        options(4),
+        Some(0),
+        4,
+    );
+}
+
+fn assert_prefix_child_then_sibling(
+    first_file_system: SnapshotGateFileSystem,
+    first_options: MimeOperationOptions,
+    expected_first_bytes: Option<u64>,
+    expected_second_bytes: u64,
+) {
+    use qubit_operation::ChildFailurePolicy;
+    use qubit_operation::OperationOutcome;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let services = MimeExecutionServices::new(
+        manager.clone(),
+        group,
+        Arc::new(FixedMimeExecutionPort::new(1, 2)),
+        4,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin().unwrap().with_execution_services(services.clone());
+    let opens = Arc::clone(&first_file_system.opens);
+    let opens_body = Arc::clone(&opens);
+    let parent_options = qubit_operation::OperationOptions {
+        child_failure_policy: ChildFailurePolicy::ContinueSiblings,
+        limits: qubit_operation::ScopeLimits {
+            child_operations: 2,
+            resources: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut parent = manager
+        .as_async()
+        .try_submit(parent_options, move |scope| {
+            let body_runtime = runtime.clone();
+            async move {
+                let mut first = body_runtime
+                    .try_submit_detection_in(
+                        &scope,
+                        OwnedMimeInput::Provider {
+                            file_system: Arc::new(qubit_fs::AsyncFileSystem::from_spi(first_file_system).unwrap()),
+                            path: qubit_fs::Path::parse("/first").unwrap(),
+                        },
+                        first_options,
+                    )
+                    .unwrap_or_else(|failure| panic!("first child should be admitted: {:?}", failure.reason));
+                let first_bytes = match first.wait_outcome().await.unwrap() {
+                    OperationOutcome::Succeeded(report) => Some(report.budget.bytes_read),
+                    OperationOutcome::Failed(_) => None,
+                    other => panic!("first child should finish normally or with an I/O error: {other:?}"),
+                };
+                let _ = first.wait_settlement().await;
+                drop(first);
+
+                if expected_second_bytes < 4 {
+                    let over_limit_file_system = SnapshotGateFileSystem::new(
+                        Arc::new(Mutex::new(b"ABCD".to_vec())),
+                        Arc::clone(&opens_body),
+                        mpsc::channel().0,
+                        Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                        Arc::new(Mutex::new(None)),
+                        None,
+                    );
+                    let mut over_limit = body_runtime
+                        .try_submit_detection_in(
+                            &scope,
+                            OwnedMimeInput::Provider {
+                                file_system: Arc::new(
+                                    qubit_fs::AsyncFileSystem::from_spi(over_limit_file_system).unwrap(),
+                                ),
+                                path: qubit_fs::Path::parse("/over-limit").unwrap(),
+                            },
+                            MimeOperationOptions {
+                                max_buffer_bytes: Some(4),
+                                max_read_bytes: Some(4),
+                                operation: qubit_operation::OperationOptions {
+                                    requirement: qubit_operation::ChildRequirement::Optional,
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap_or_else(|failure| {
+                            panic!("over-limit sibling should be admitted: {:?}", failure.reason)
+                        });
+                    let over_limit_rejected = matches!(
+                        over_limit.wait_outcome().await.unwrap(),
+                        OperationOutcome::Failed(qubit_mime::MimeError::BudgetExceeded { kind: "read", .. })
+                    );
+                    let _ = over_limit.wait_settlement().await;
+                    drop(over_limit);
+                    assert!(
+                        over_limit_rejected,
+                        "a full prefix request must exceed the remaining sibling allowance"
+                    );
+                }
+
+                let second_file_system = SnapshotGateFileSystem::new(
+                    Arc::new(Mutex::new(b"ABCD".to_vec())),
+                    Arc::clone(&opens_body),
+                    mpsc::channel().0,
+                    Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                    Arc::new(Mutex::new(None)),
+                    None,
+                );
+                let second_options = MimeOperationOptions {
+                    max_buffer_bytes: Some(usize::try_from(expected_second_bytes).unwrap()),
+                    max_read_bytes: Some(expected_second_bytes),
+                    operation: qubit_operation::OperationOptions {
+                        requirement: qubit_operation::ChildRequirement::Optional,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                let mut second = body_runtime
+                    .try_submit_detection_in(
+                        &scope,
+                        OwnedMimeInput::Provider {
+                            file_system: Arc::new(qubit_fs::AsyncFileSystem::from_spi(second_file_system).unwrap()),
+                            path: qubit_fs::Path::parse("/second").unwrap(),
+                        },
+                        second_options,
+                    )
+                    .unwrap_or_else(|failure| panic!("second child should be admitted: {:?}", failure.reason));
+                let second_bytes = match second.wait_outcome().await.unwrap() {
+                    OperationOutcome::Succeeded(report) => report.budget.bytes_read,
+                    other => panic!("second child should read the remaining allowance: {other:?}"),
+                };
+                let _ = second.wait_settlement().await;
+                drop(second);
+                Ok::<_, ()>((first_bytes, second_bytes))
+            }
+        })
+        .unwrap();
+    let (first_bytes, second_bytes) = match block_on(parent.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(result) => result,
+        other => panic!("external parent should complete after both children: {other:?}"),
+    };
+    let _ = block_on(parent.wait_settlement());
+
+    assert_eq!(expected_first_bytes, first_bytes);
+    assert_eq!(expected_second_bytes, second_bytes);
+    assert_eq!(2, opens.load(Ordering::SeqCst));
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+}
+
+#[test]
 fn test_complete_extension_always_uses_metered_sequential_reads_and_eof_probe() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
@@ -627,6 +1050,9 @@ struct SnapshotGateFileSystem {
     read_waker: Arc<Mutex<Option<Waker>>>,
     owner_dropped: Option<Arc<std::sync::atomic::AtomicBool>>,
     random_error_first_read: bool,
+    pending_after_first_read: bool,
+    open_error: bool,
+    error_after_first_read: bool,
 }
 
 impl SnapshotGateFileSystem {
@@ -674,11 +1100,29 @@ impl SnapshotGateFileSystem {
             read_waker,
             owner_dropped,
             random_error_first_read: false,
+            pending_after_first_read: false,
+            open_error: false,
+            error_after_first_read: false,
         }
     }
 
     fn with_random_error_first_read(mut self) -> Self {
         self.random_error_first_read = true;
+        self
+    }
+
+    fn with_pending_after_first_read(mut self) -> Self {
+        self.pending_after_first_read = true;
+        self
+    }
+
+    fn with_open_error(mut self) -> Self {
+        self.open_error = true;
+        self
+    }
+
+    fn with_error_after_first_read(mut self) -> Self {
+        self.error_after_first_read = true;
         self
     }
 }
@@ -700,6 +1144,15 @@ impl qubit_fs::spi::AsyncFileSystemSpi for SnapshotGateFileSystem {
         request: qubit_fs::spi::OpenReaderRequest<'a>,
     ) -> qubit_fs::spi::SpiFuture<'a, qubit_fs::FsResult<qubit_fs::spi::OpenedAsyncReader>> {
         self.opens.fetch_add(1, Ordering::SeqCst);
+        if self.open_error {
+            return Box::pin(async {
+                Err(qubit_fs::FsError::new(
+                    qubit_fs::error::FsErrorKind::Io,
+                    qubit_fs::error::FsOperation::OpenReader,
+                    "injected reader open failure",
+                ))
+            });
+        }
         let snapshot = self.content.lock().unwrap().clone();
         let info = qubit_fs::metadata::OpenedFileInfo::new(
             qubit_fs::metadata::FileSystemId::new("mime-operation-snapshot").unwrap(),
@@ -712,6 +1165,8 @@ impl qubit_fs::spi::AsyncFileSystemSpi for SnapshotGateFileSystem {
             released: Arc::clone(&self.released),
             read_waker: Arc::clone(&self.read_waker),
             owner_dropped: self.owner_dropped.as_ref().map(Arc::clone),
+            pending_after_first_read: self.pending_after_first_read,
+            error_after_first_read: self.error_after_first_read,
         };
         Box::pin(async move { Ok(qubit_fs::spi::OpenedAsyncReader::new(info, Box::new(input))) })
     }
@@ -782,6 +1237,8 @@ struct SnapshotGateInput {
     released: Arc<std::sync::atomic::AtomicBool>,
     read_waker: Arc<Mutex<Option<Waker>>>,
     owner_dropped: Option<Arc<std::sync::atomic::AtomicBool>>,
+    pending_after_first_read: bool,
+    error_after_first_read: bool,
 }
 
 impl Drop for SnapshotGateInput {
@@ -803,14 +1260,32 @@ impl qubit_io::AsyncInput for SnapshotGateInput {
         count: usize,
     ) -> Poll<std::io::Result<usize>> {
         let this = self.get_mut();
-        if !this.released.load(Ordering::SeqCst) {
+        if this.pending_after_first_read && this.offset > 0 && !this.released.load(Ordering::SeqCst) {
+            *this.read_waker.lock().unwrap() = Some(context.waker().clone());
+            if let Some(sender) = this.read_started.take() {
+                sender.send(()).expect("test should observe the blocked second read");
+            }
+            return Poll::Pending;
+        }
+        if this.error_after_first_read && this.offset > 0 {
+            return Poll::Ready(Err(std::io::Error::other("injected read error after one byte")));
+        }
+        if !this.released.load(Ordering::SeqCst) && !this.pending_after_first_read {
             *this.read_waker.lock().unwrap() = Some(context.waker().clone());
             if let Some(sender) = this.read_started.take() {
                 sender.send(()).expect("test should observe the blocked read");
             }
             return Poll::Pending;
         }
-        let length = count.min(this.bytes.len().saturating_sub(this.offset));
+        let length = count
+            .min(this.bytes.len().saturating_sub(this.offset))
+            .min(if this.pending_after_first_read && this.offset == 0 {
+                1
+            } else if this.error_after_first_read && this.offset == 0 {
+                1
+            } else {
+                usize::MAX
+            });
         output[index..index + length].copy_from_slice(&this.bytes[this.offset..this.offset + length]);
         this.offset += length;
         Poll::Ready(Ok(length))

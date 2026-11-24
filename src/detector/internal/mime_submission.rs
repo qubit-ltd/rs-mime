@@ -12,10 +12,15 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::task::Poll;
 
+use qubit_fs::read::ObservedReadError;
 use qubit_fs::read::ReadOptions;
 use qubit_operation::OperationScope;
 
 pub(in crate::detector) use super::provider_read_plan::ProviderReadPlan;
+use prefix_read_accounting::PrefixReadAccounting;
+
+mod prefix_read_accounting;
+
 use crate::AsyncMimeDetectorBackend;
 use crate::BorrowedMimeInput;
 use crate::ContentRequirement;
@@ -426,16 +431,18 @@ async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport
                         requested: max_bytes as u64,
                         limit: read_tree.remaining(),
                     })?;
-                    let outcome = file_system.read_prefix(&path, ReadOptions::default(), max_bytes).await;
-                    let content = match outcome {
-                        Ok(outcome) => outcome.into_bytes(),
-                        Err(error) => {
-                            read_permit.commit(max_bytes as u64);
-                            return Err(error.into());
-                        }
-                    };
-                    let bytes_read = content.len() as u64;
-                    let _read = read_permit.commit(bytes_read);
+                    let mut read_accounting = PrefixReadAccounting::new(read_permit);
+                    let outcome = file_system
+                        .read_prefix_observed(&path, ReadOptions::default(), max_bytes, &mut read_accounting)
+                        .await;
+                    let bytes_read = read_accounting.bytes_read();
+                    let _read = read_accounting.commit();
+                    let content = outcome
+                        .map_err(|error| match error {
+                            ObservedReadError::Stopped => unreachable!("prefix accounting observer does not stop"),
+                            ObservedReadError::Provider(error) => MimeError::from(error),
+                        })?
+                        .into_bytes();
                     let candidates = backend
                         .guess_provider_content_in(
                             &_scope,

@@ -246,13 +246,13 @@ struct DeadlineClockState {
 }
 
 #[derive(Debug)]
-struct DeadlineClock {
-    domain: qubit_operation::ClockDomainId,
+pub(super) struct DeadlineClock {
+    pub(super) domain: qubit_operation::ClockDomainId,
     state: Arc<std::sync::Mutex<DeadlineClockState>>,
 }
 
 impl DeadlineClock {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             domain: qubit_operation::ClockDomainId::new_unique(),
             state: Arc::new(std::sync::Mutex::new(DeadlineClockState {
@@ -262,7 +262,7 @@ impl DeadlineClock {
         }
     }
 
-    fn advance_to(&self, ticks: u64) {
+    pub(super) fn advance_to(&self, ticks: u64) {
         let wakers = {
             let mut state = self.state.lock().unwrap();
             state.ticks = ticks;
@@ -278,7 +278,7 @@ impl DeadlineClock {
         }
     }
 
-    fn active_registrations(&self) -> usize {
+    pub(super) fn active_registrations(&self) -> usize {
         self.state
             .lock()
             .unwrap()
