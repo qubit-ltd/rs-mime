@@ -10,14 +10,10 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
-use std::task::Context;
-use std::task::Poll;
-use std::task::Waker;
 
 use qubit_operation::AsyncOperationGroup;
 use qubit_operation::AsyncOperationManager;
@@ -45,6 +41,7 @@ mod mime_execution_port;
 mod mime_service_lifecycle;
 mod mime_shutdown_observer;
 mod mime_shutdown_snapshot;
+mod internal;
 mod prepare_permit;
 
 pub use mime_execution_dispatch_failure::MimeExecutionDispatchFailure;
@@ -53,63 +50,8 @@ pub use mime_execution_port::MimeExecutionPort;
 pub use mime_service_lifecycle::MimeServiceLifecycle;
 pub use mime_shutdown_observer::MimeShutdownObserver;
 pub use mime_shutdown_snapshot::MimeShutdownSnapshot;
+use internal::AdmissionTracker;
 use prepare_permit::PreparePermit;
-
-#[derive(Default)]
-struct AdmissionTracker {
-    state: Mutex<AdmissionState>,
-}
-#[derive(Default)]
-struct AdmissionState {
-    active: usize,
-    waiters: Vec<Waker>,
-}
-struct AdmissionPermit(Arc<AdmissionTracker>);
-impl Drop for AdmissionPermit {
-    fn drop(&mut self) {
-        let waiters = {
-            let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
-            state.active -= 1;
-            if state.active == 0 {
-                std::mem::take(&mut state.waiters)
-            } else {
-                Vec::new()
-            }
-        };
-        for waiter in waiters {
-            waiter.wake();
-        }
-    }
-}
-struct AdmissionsSettled(Weak<AdmissionTracker>);
-impl std::future::Future for AdmissionsSettled {
-    type Output = ();
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        let Some(tracker) = self.0.upgrade() else {
-            return Poll::Ready(());
-        };
-        // RawWaker::clone is user code. Clone before locking and drop an
-        // unused clone after unlocking for the same reason.
-        let candidate = cx.waker().clone();
-        let (ready, unused) = {
-            let mut state = tracker.state.lock().unwrap_or_else(|e| e.into_inner());
-            if state.active == 0 {
-                (true, Some(candidate))
-            } else if state
-                .waiters
-                .iter()
-                .any(|waiter| waiter.will_wake(&candidate))
-            {
-                (false, Some(candidate))
-            } else {
-                state.waiters.push(candidate);
-                (false, None)
-            }
-        };
-        drop(unused);
-        if ready { Poll::Ready(()) } else { Poll::Pending }
-    }
-}
 
 /// Services shared by MIME requests. Runtime construction is explicit so a
 /// closed service cannot silently create replacement workers.
@@ -354,6 +296,19 @@ impl MimeExecutionServices {
         self.submission_lock.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Attempts to reserve an in-flight admission for a root or child request.
+    ///
+    /// The lifecycle check and reservation share the short submission lock so
+    /// shutdown cannot freeze admission between those steps. Keep the returned
+    /// permit alive until an observer is published or the original input is
+    /// returned.
+    ///
+    /// # Parameters
+    /// - `child`: Whether this request is submitted beneath an operation scope.
+    ///
+    /// # Returns
+    /// A drop guard when the current lifecycle accepts the request; otherwise
+    /// `None`.
     pub(in crate::detector) fn begin_admission(&self, child: bool) -> Option<impl Drop> {
         let _submission = self.submission_guard();
         if !(if child {
@@ -363,19 +318,27 @@ impl MimeExecutionServices {
         }) {
             return None;
         }
-        let mut state = self.admissions.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.active += 1;
+        let permit = self.admissions.register();
         self.settlement_generation.fetch_add(1, Ordering::AcqRel);
         self.operations_settled.store(false, Ordering::Release);
-        Some(AdmissionPermit(Arc::clone(&self.admissions)))
+        Some(permit)
     }
 
+    /// Creates a future that waits until all current admission guards are
+    /// released.
+    ///
+    /// # Returns
+    /// A future that becomes ready when the shared admission count reaches zero.
     pub(super) fn admissions_settled(&self) -> impl std::future::Future<Output = ()> {
-        AdmissionsSettled(Arc::downgrade(&self.admissions))
+        self.admissions.settled()
     }
 
+    /// Reports whether a MIME admission is still running outside service locks.
+    ///
+    /// # Returns
+    /// `true` while at least one admission guard remains alive.
     pub(super) fn has_admissions(&self) -> bool {
-        self.admissions.state.lock().unwrap_or_else(|e| e.into_inner()).active != 0
+        self.admissions.has_active()
     }
 
     /// Retains an observer and harvests recovery handles from older settled
@@ -732,13 +695,13 @@ mod tests {
                     WakerAction::ReenterShutdown => { let _ = self.services.shutdown(); }
                     WakerAction::ReenterStop => { let _ = self.services.shutdown().stop_services(); }
                     WakerAction::AdmissionState => {
-                        if self.services.admissions.state.try_lock().is_err() {
+                        if self.services.admissions.try_has_active().is_none() {
                             self.tracker_reentry_succeeded.store(false, Ordering::SeqCst);
                         }
                     }
                 }
             } else if matches!(self.action, WakerAction::AdmissionState) {
-                if self.services.admissions.state.try_lock().is_err() {
+                if self.services.admissions.try_has_active().is_none() {
                     self.tracker_reentry_succeeded.store(false, Ordering::SeqCst);
                 }
             }
@@ -909,10 +872,10 @@ mod tests {
             std::thread::yield_now();
         }
         assert!(probe.clones.load(Ordering::SeqCst) > 0, "waker clone must re-enter the admission tracker");
-        while services.admissions.state.lock().unwrap().waiters.is_empty() && std::time::Instant::now() < deadline {
+        while services.admissions.waiter_count() == 0 && std::time::Instant::now() < deadline {
             std::thread::yield_now();
         }
-        assert_eq!(1, services.admissions.state.lock().unwrap().waiters.len(), "waker must be registered before release");
+        assert_eq!(1, services.admissions.waiter_count(), "waker must be registered before release");
         drop(admission);
         rx.recv_timeout(std::time::Duration::from_secs(2)).expect("admission waiter should wake");
         waiter.join().unwrap();
