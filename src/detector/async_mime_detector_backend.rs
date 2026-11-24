@@ -80,8 +80,10 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     /// Returns the content window this backend requests. For `Prefix(n)`, `n`
     /// is an upper bound on bytes supplied, not a minimum input length. A short
     /// input, including one that reaches EOF before `n`, is still passed to the
-    /// backend. Implementations that require a minimum length must check the
-    /// actual input length and return an appropriate typed error themselves.
+    /// backend. Ordinary automatic provider reads also describe the delivered
+    /// bytes conservatively as `InputExtent::Prefix`. Implementations that
+    /// require a minimum length must check the actual input length and return
+    /// an appropriate typed error themselves.
     ///
     /// # Returns
     /// The maximum prefix window or `Complete` when the backend needs the full

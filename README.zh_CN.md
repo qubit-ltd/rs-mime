@@ -98,6 +98,12 @@ settlement。创建 runtime 或注册 Provider 不会启动 worker；应用需�
 缓冲区和 worker 的 owned 副本；`max_buffer_size` 限制单个缓冲区，不限制两者合计内存。无文件名时，若同一 MIME 对应的多个映射具有不同
 MIME 对，细化会保留原 MIME；可传入匹配的文件名或消除映射冲突来指定细化对。
 
+几种输入方式的边界不同：普通 backend 的 `ContentRequirement::Prefix(n)` 是 reader
+读取窗口的上限；自动读取普通 Provider 时也会标记为 `InputExtent::Prefix`，即使 EOF 提前到达。
+`OwnedMimeInput::Bytes` 保留调用方提供的字节和 `InputExtent`，不会隐式截短，也不计作 Provider I/O。
+受管 Provider 输入通过 `MeteredReadSession` 读取，并计入 operation 共享额度。旧入口
+`detect_path` 和 `detect_async_path` 的 `max_bytes` 参数仍是各自调用明确指定的前缀上限。
+
 组准入关闭后，已接纳到组内的父 operation 仍可派发必要后代；新的外部 scope 必须在关闭前接纳。
 同步子操作不会被强制打断，只能在自身的协作检查点观察 stop。
 路径输入会按 native path 语义提取 basename 再进行文件名匹配，完整路径不会重新作为文件名解析；
@@ -120,6 +126,8 @@ POSIX basename 中的反斜杠属于文件名数据，非 UTF-8 本地 basename 
 若提交时无法预留 owned 前缀缓冲区，会拒绝并返还原输入；若任务接纳后无法预留共享祖先读取额度，operation
 会报告 `MimeError::BudgetExceeded { kind: "read", .. }`。扩展 backend 可选择 `MeteredReadSession`，它按当前额度裁切
 每次读取并单独预留 scratch 内存。内置 `file` Provider 在自身 staging 读取中计量。
+`MimeBudgetSummary.bytes_read` 统计本请求发起读取所交付的字节，重复读取会再次计数；后代请求使用各自的报告，
+祖先额度仍会限制整棵读取树的合计用量。
 
 检测器只负责判断 MIME 类型，不能证明文件可以安全打开或执行。Native command
 Provider 依赖对应的可执行文件，也可能因命令不可用、超时或输出无效而失败。
@@ -133,6 +141,7 @@ Provider 依赖对应的可执行文件，也可能因命令不可用、超时�
 同步 `FileCommandMimeDetector` 的 reader/path API 与受管 `file` Provider 是两条独立入口；旧同步调用仍可继续使用。
 受管 `file` Provider 在自己的 staging 流程中计量读取，不要求扩展 backend 使用公开的 `MeteredReadSession`。
 受管 `file` factory 会拒绝任何附加的异步 classifier，错误为 `UnsupportedCapability`，发生在提交前；即使输入不会触发媒体细化也一样。
+旧版异步内容 hook 返回 `AsyncUnsupported`；需要跟踪 staging、worker 执行和清理时，请走受管 Provider。
 这项限制针对受管 factory，不会移除旧同步 API。
 
 内置 `file` Provider 检测 reader 时，最多暂存 `MimeConfig::max_buffer_size()` 字节，并在 EOF 时停止；
@@ -203,7 +212,7 @@ Registry。
 默认选择。重复 selector 会使 inventory 构建失败；未启用此 feature 时仍需显式注册。
 
 通过 registry 使用 Magika inventory，要求 `qubit-mime` 0.22 和 `qubit-magika` 0.18
-均已发布。在两者发布前，请按 [Magika 用户指南中的固定源码步骤](https://github.com/qubit-ltd/rs-magika/blob/main/doc/user_guide.zh_CN.md#概念模型)使用。
+均已发布。版本未齐时，可按[用户手册中的固定源码接入步骤](doc/user_guide.zh_CN.md#固定源码接入-magika)准备同级 checkout，并查看应用 manifest、动态 ONNX Runtime 前置条件，以及普通/inventory 两种检查方式。fixture 自带锁文件；新应用先生成自己的 `Cargo.lock` 再使用 `--locked`。手册列出了 fixture 两种运行命令和应用的 `cargo tree -i qubit-operation` 包身份检查。
 
 常用配置键包括 `mime.detector.default`、`mime.detector.fallbacks`、
 `mime.max.buffer.size`、`mime.command.timeout` 和 `mime.command.output.max.bytes`。

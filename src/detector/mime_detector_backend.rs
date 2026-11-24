@@ -71,7 +71,9 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// This supplies the default `Prefix(n)` returned by
     /// [`Self::content_requirement`]. When that method is overridden, the
     /// default reader hook uses its declared prefix instead. This method
-    /// remains available to callers that explicitly use its legacy limit.
+    /// remains available to callers that explicitly use its legacy limit,
+    /// including the `max_bytes` argument on provider-path convenience calls;
+    /// that argument does not override the declared reader window.
     ///
     /// # Returns
     /// Default content prefix length, in bytes.
@@ -205,6 +207,10 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// - `path`: Provider-neutral path to inspect.
     /// - `max_bytes`: Maximum prefix length to read.
     ///
+    /// This is the explicit bound for this legacy provider-path call. It is
+    /// independent of [`Self::content_requirement`], which controls the
+    /// default reader hook.
+    ///
     /// # Returns
     /// Candidate MIME type names and an optional inspected content prefix.
     ///
@@ -236,6 +242,10 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// - `file_system`: Asynchronous filesystem facade that owns `path`.
     /// - `path`: Provider-neutral path to inspect.
     /// - `max_bytes`: Maximum prefix length to read.
+    ///
+    /// This is the explicit bound for this legacy async provider-path call. It
+    /// is independent of [`Self::content_requirement`], which controls the
+    /// default reader hook.
     ///
     /// # Returns
     /// A future containing candidate MIME type names and an optional inspected

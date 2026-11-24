@@ -235,6 +235,18 @@ or an overridden budget, and probes one extra byte to detect overflow. Both
 content-backend modes restore their starting position; if reading and
 restoration both fail, the restoration error takes precedence.
 
+These routes have distinct input contracts. `MimeContentBackend::detect_reader`
+starts at the reader's current position. An ordinary `MimeDetectorBackend`
+reader hook requests `content_requirement()`; its `Prefix(n)` is a maximum
+window, EOF may shorten it, and the hook receives the conservative
+`InputExtent::Prefix`; ordinary automatic provider reads use the same extent.
+`OwnedMimeInput::Bytes` preserves the caller's bytes and declared `InputExtent`
+without implicit truncation and does not count as provider I/O. Managed
+provider input is read through `MeteredReadSession` and charged to the operation's shared read
+budget. The legacy `max_bytes` parameters on `detect_path` and
+`detect_async_path` remain explicit prefix limits for those path calls; they do
+not replace `content_requirement()` for ordinary backend reader hooks.
+
 
 ### Local path behavior varies by provider
 
@@ -338,8 +350,85 @@ register providers explicitly as shown above.
 
 Registry-based Magika inventory consumption requires published `qubit-mime`
 0.22 and `qubit-magika` 0.18 releases. Until both are available, follow the
-[fixed-source setup in the Magika user guide](https://github.com/qubit-ltd/rs-magika/blob/main/doc/user_guide.md#conceptual-model),
-which links to the preparation helper and fixed revision table.
+[fixed-source consumer setup below](#fixed-source-magika-consumer).
+
+### Fixed-source Magika consumer
+
+Use this path while the required `qubit-magika` 0.18 and `qubit-mime` 0.22
+registry releases are unavailable. Check out the repositories beside one
+another, using the revisions in Magika's
+[pinned dependency table](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/ci/local-path-dependencies.tsv):
+
+```text
+consumer-root/
+├── rs-magika/
+├── rs-mime/
+├── rs-operation/
+├── rs-fs/
+├── rs-fs-local/
+├── rs-fs-testkit/
+├── rs-fs-registry/
+└── rs-local-files/
+```
+
+Use Magika's
+[`prepare-local-path-dependencies.sh`](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/bin/prepare-local-path-dependencies.sh)
+from its source checkout to prepare and check the pinned sibling dependencies.
+For an application whose `Cargo.toml` is directly under `consumer-root/app/`,
+the relevant manifest entries are:
+
+```toml
+[dependencies]
+qubit-magika = { path = "../rs-magika", default-features = false }
+qubit-mime = { version = "^0.22", path = "../rs-mime", default-features = false }
+qubit-operation = { version = "^0.3.2", path = "../rs-operation" }
+qubit-spi = "^0.14"
+ort = { version = ">=2.0.0-rc.12,<2.1", default-features = false, features = ["std", "ndarray", "load-dynamic", "api-24"] }
+
+[patch.crates-io]
+qubit-operation = { path = "../rs-operation" }
+```
+
+The paths are resolved from the application's manifest directory. The patch
+ensures transitive crates.io references to `qubit-operation` use the same
+checkout as the direct dependency. The normal setup explicitly registers
+`MagikaMimeDetectorProvider`. For inventory discovery, enable `inventory` on
+`qubit-magika` and reference `qubit_magika` in the application so its inventory
+entry is linked; that feature enables MIME inventory transitively. Inventory
+still defaults to `repository`; select `magika` explicitly.
+
+For example, add this application feature and enable it for the inventory
+check:
+
+```toml
+[features]
+inventory = ["qubit-magika/inventory"]
+```
+
+This fixture uses dynamic ONNX Runtime loading. Install the ONNX Runtime 1.24.2
+shared library and set `ORT_LIBRARY_PATH` to the library file; on Linux also
+include its directory in `LD_LIBRARY_PATH`. Magika's CI uses the verified
+1.24.2 Python wheel and sets both variables. From the Magika checkout, the
+fixture commands use its checked-in lock file:
+
+```bash
+cargo +1.94.0 run --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml
+cargo +1.94.0 run --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml --features inventory
+```
+
+For a new application, first create its lock file, then check that the direct
+and transitive `qubit-operation` references resolve to one package identity in
+both feature configurations; both trees should identify the same `../rs-operation`
+checkout and version. Run these commands from `consumer-root/`:
+
+```bash
+cargo +1.94.0 generate-lockfile --manifest-path app/Cargo.toml
+cargo +1.94.0 tree --locked --manifest-path app/Cargo.toml -i qubit-operation
+cargo +1.94.0 tree --locked --manifest-path app/Cargo.toml --features inventory -i qubit-operation
+cargo +1.94.0 check --locked --manifest-path app/Cargo.toml
+cargo +1.94.0 run --locked --manifest-path app/Cargo.toml
+cargo +1.94.0 run --locked --manifest-path app/Cargo.toml --features inventory
+```
 
 Inventory changes discovery only: Magika remains a synchronous registry
 provider, and its `detect_async_path` convenience method does not attach work
@@ -548,6 +637,11 @@ returns the original input. After admission, a shared ancestor may consume its
 remaining read allowance first; failure to reserve that dynamic allowance is
 reported by the accepted operation as
 `MimeError::BudgetExceeded { kind: "read", .. }`.
+`MimeBudgetSummary.bytes_read` reports successful MIME-metered provider bytes
+initiated by this request itself; repeated and overlapping reads count again,
+while descendant reads belong to their own reports. Provider I/O that an
+extension performs outside `MeteredReadSession` is not included. Ancestor
+limits still constrain the combined tree usage.
 `MeteredReadSession` is opt-in for extension backends: each read is clipped to
 current allowances and temporary scratch memory has a separate reservation.
 The built-in managed `file` provider meters its own staging reads internally.
@@ -561,6 +655,8 @@ applies to the managed factory; the legacy synchronous `FileCommandMimeDetector`
 API remains available. The managed `file` backend meters provider bytes
 internally while staging complete input;
 extension backends use the exposed `ManagedProvider` session described below.
+The legacy async content hook returns `AsyncUnsupported`; use the managed path
+when staging, worker execution, and cleanup must be tracked by the operation.
 
 For the managed `repository` provider, an input marked `Prefix` is used only for
 base MIME matching. It is not passed to an async media classifier, even when a
@@ -655,8 +751,12 @@ to a worker: its resource owner remains tracked until that job actually settles.
 Use `try_submit_detection_in` to submit beneath an existing
 `qubit-operation::OperationScope`; the child uses the parent's manager view and
 MIME group binding. The synchronous child entry point is
-`try_submit_detection_sync_in`. The nested budget and accounting behavior is
-described above. Provider capabilities are:
+`try_submit_detection_sync_in`. If a provider-backed input cannot be accepted,
+including when a synchronous child rejects that input type, `MimeSubmitFailure`
+returns the original input for retry. Once accepted, execution errors belong to
+the operation outcome; wait for settlement separately to observe resource
+release. The nested budget and accounting behavior is described above. Provider
+capabilities are:
 
 | Provider | Managed async backend | Input and refinement limits |
 | --- | --- | --- |

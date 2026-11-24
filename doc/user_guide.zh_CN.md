@@ -193,6 +193,14 @@ classifier 错误也可能向调用方传播；若名称含有扩展名但该扩
 缓冲预算（或覆盖后的预算）内读到 EOF，并额外探测一个字节以检查超限。内容 backend 的两种模式
 都会恢复各自的起始位置；读取和恢复都失败时，恢复错误优先。
 
+这几种输入路径的约定不同。普通 `MimeDetectorBackend` reader hook 按
+`content_requirement()` 请求内容；`Prefix(n)` 是最大窗口，EOF 可以提前结束，交给 hook 的
+extent 仍为保守的 `InputExtent::Prefix`；自动读取普通 Provider 时也使用该 extent。
+`OwnedMimeInput::Bytes` 会保留调用方给出的字节和 `InputExtent`，不会暗中截短，也不计作 Provider I/O。
+受管 Provider 输入通过 `MeteredReadSession` 读取，并计入 operation
+共享的读取额度。旧版 `detect_path`、`detect_async_path` 的 `max_bytes` 参数仍是这些路径调用显式
+指定的前缀上限，不会替代普通 reader hook 的 `content_requirement()`。
+
 
 ### 本地路径行为因 Provider 而异
 
@@ -263,7 +271,76 @@ crate 通过 `qubit_spi::submit_sync_provider!` 向
 重复的 selector 会导致 inventory 构建失败。未启用该 feature 时，仍按上文显式注册。
 
 通过 registry 使用 Magika inventory，要求 `qubit-mime` 0.22 和 `qubit-magika` 0.18
-均已发布。在两者发布前，请按 [Magika 用户指南中的固定源码步骤](https://github.com/qubit-ltd/rs-magika/blob/main/doc/user_guide.zh_CN.md#概念模型)使用；该指南链接到依赖准备 helper 和固定版本表。
+均已发布。版本未齐前，请按下方[固定源码接入 Magika](#固定源码接入-magika)操作。
+
+### 固定源码接入 Magika
+
+在 `qubit-magika` 0.18 和 `qubit-mime` 0.22 尚未发布到 crates.io 时，可使用源码 checkout。
+将以下仓库放在同一个父目录下，并按 Magika 的[固定依赖清单](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/ci/local-path-dependencies.tsv)
+检出对应版本：
+
+```text
+consumer-root/
+├── rs-magika/
+├── rs-mime/
+├── rs-operation/
+├── rs-fs/
+├── rs-fs-local/
+├── rs-fs-testkit/
+├── rs-fs-registry/
+└── rs-local-files/
+```
+
+在 Magika 源码目录运行[依赖准备脚本](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/bin/prepare-local-path-dependencies.sh)，
+准备并核对固定的兄弟仓库。假设应用清单位于 `consumer-root/app/Cargo.toml`，添加：
+
+```toml
+[dependencies]
+qubit-magika = { path = "../rs-magika", default-features = false }
+qubit-mime = { version = "^0.22", path = "../rs-mime", default-features = false }
+qubit-operation = { version = "^0.3.2", path = "../rs-operation" }
+qubit-spi = "^0.14"
+ort = { version = ">=2.0.0-rc.12,<2.1", default-features = false, features = ["std", "ndarray", "load-dynamic", "api-24"] }
+
+[patch.crates-io]
+qubit-operation = { path = "../rs-operation" }
+```
+
+相对路径以应用的 `Cargo.toml` 所在目录为基准。patch 会让传递依赖中的 crates.io
+`qubit-operation` 也解析到同一份 checkout。普通模式需显式注册
+`MagikaMimeDetectorProvider`；启用 inventory 时，在 `qubit-magika` 上打开 `inventory` feature，
+并在应用中引用 `qubit_magika`，让链接器保留其 inventory 提交项。Magika 的该 feature 会传递启用
+MIME inventory。inventory 只改变发现方式，默认 Provider 仍是
+`repository`，应用还要显式选择 `magika`。
+
+应用可用下面的 feature 同时打开两侧的 inventory，再用 `--features inventory` 检查：
+
+```toml
+[features]
+inventory = ["qubit-magika/inventory"]
+```
+
+此 consumer 使用动态加载 ONNX Runtime。安装 1.24.2 共享库，并将 `ORT_LIBRARY_PATH` 指向库文件；
+Linux 还需把库所在目录加入 `LD_LIBRARY_PATH`。Magika CI 使用经过校验的 1.24.2 Python wheel
+并设置这两个变量。从 Magika 源码目录执行 fixture：
+
+```bash
+cargo +1.94.0 run --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml
+cargo +1.94.0 run --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml --features inventory
+```
+
+fixture 自带 `Cargo.lock`。新建应用通常没有锁文件，应先从 `consumer-root/` 为应用生成，
+再分别检查普通和 inventory 配置中的 Operation 包身份；两棵依赖树都应只显示同一份
+`../rs-operation` checkout 和版本。随后构建并运行两种配置：
+
+```bash
+cargo +1.94.0 generate-lockfile --manifest-path app/Cargo.toml
+cargo +1.94.0 tree --locked --manifest-path app/Cargo.toml -i qubit-operation
+cargo +1.94.0 tree --locked --manifest-path app/Cargo.toml --features inventory -i qubit-operation
+cargo +1.94.0 check --locked --manifest-path app/Cargo.toml
+cargo +1.94.0 run --locked --manifest-path app/Cargo.toml
+cargo +1.94.0 run --locked --manifest-path app/Cargo.toml --features inventory
+```
 
 Inventory 只改变发现方式：Magika 仍是同步 Registry Provider；它的
 `detect_async_path` 便捷方法不会把任务关联到父级 `OperationScope`。带 scope 的
@@ -430,6 +507,8 @@ operation 管理的任务。
 `FileCommandMimeDetector` API。
 受管 `file` backend 在内部 staging 流程中计量 Provider 读取；扩展 backend 的
 `ManagedProvider` session 契约见下文。
+旧版异步内容 hook 返回 `AsyncUnsupported`；若需让 operation 跟踪 staging、worker 执行和清理，
+应使用受管路径。
 
 受管 `repository` Provider 对标记为 `Prefix` 的输入只执行基础 MIME 匹配；即使精细分类映射命中，
 也不会把此前缀交给异步媒体 classifier。需要媒体流精化时，应以 `Complete` 提交完整字节。
@@ -493,7 +572,9 @@ settlement 和 recovery；仅看到失败 outcome 不能确认部分文件已删
 
 已有 `qubit-operation::OperationScope` 时，可调用 `try_submit_detection_in` 创建子操作；它沿用
 父操作的 manager 视图并绑定 MIME 组。同步子操作入口为
-`try_submit_detection_sync_in`。Provider 能力如下：
+`try_submit_detection_sync_in`。若 Provider 输入无法接纳（包括同步子操作不支持该输入类型），
+`MimeSubmitFailure` 会返还原输入，供调用方重试。任务一旦接纳，执行错误由 operation outcome
+报告；资源释放情况需另行等待 settlement。Provider 能力如下：
 
 嵌套 MIME operation 按祖先身份和适用 scope cap 共享 Provider 读取计量。owned bytes 输入和由唯一文件名短路
 完成的输入不会绑定祖先读取树，也不预留祖先的资源槽。首个需要 Provider 读取的后代会从共享读取树预留额度。
@@ -504,6 +585,9 @@ settlement 和 recovery；仅看到失败 outcome 不能确认部分文件已删
 继续计费，未用额度会退还。普通 `Prefix(n)` 声明的是最大输入窗口，不是最小长度。提交预检会按请求和服务的 buffer/read 上限缩短窗口；
 Provider 遇到 EOF 时，实际返回字节也可能更少。若预检无法预留 owned 前缀缓冲区，提交会被拒绝并返还原输入。
 任务接纳后，其他操作可能先耗尽共享祖先读取额度；此时预留失败会由已接纳 operation 以 `MimeError::BudgetExceeded { kind: "read", .. }` 报告。
+`MimeBudgetSummary.bytes_read` 只统计本请求发起并由 MIME 计量路径成功交付的 Provider 字节；重复或重叠读取会重复计数，
+后代请求的字节记在后代自己的报告中。扩展代码绕过 `MeteredReadSession` 执行的 Provider I/O 不计入此值，
+但祖先额度仍会约束整棵读取树的实际用量。
 扩展 backend 可选择 `MeteredReadSession`：每次读取按当前可用额度裁切，临时 scratch 内存另行预留。
 内置受管 `file` Provider 则在自己的 staging 读取中计量。
 
