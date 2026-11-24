@@ -15,7 +15,8 @@ use super::internal::magic_match_state::MagicMatchState;
 /// Indexes content magic rules and tracks their maximum required input size.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MagicIndex {
-    /// Magic entries in repository MIME-type order, then each type's rule order.
+    /// Magic entries in repository MIME-type order, then each type's rule
+    /// order.
     pub(crate) entries: Vec<MagicEntry>,
     /// Largest byte offset needed by any indexed matcher.
     pub(crate) max_test_bytes: usize,

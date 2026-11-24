@@ -141,8 +141,9 @@ fn test_repository_async_candidates_equal_sync() {
 
 #[test]
 fn test_repository_provider_basename_uses_native_separator_semantics() {
-    let repository = Box::leak(Box::new(MimeRepository::from_xml(
-        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+    let repository = Box::leak(Box::new(
+        MimeRepository::from_xml(
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-native-basename">
     <glob pattern="left\right.mimecase" weight="80"/>
   </mime-type>
@@ -153,8 +154,9 @@ fn test_repository_provider_basename_uses_native_separator_semantics() {
     <magic priority="80"><match type="string" value="NEVER" offset="0"/></magic>
   </mime-type>
 </mime-info>"#,
-    )
-    .unwrap()));
+        )
+        .unwrap(),
+    ));
     let detector: Arc<dyn AsyncMimeDetectorBackend> = Arc::new(RepositoryMimeDetector::with_repository(repository));
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();

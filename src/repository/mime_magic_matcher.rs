@@ -14,58 +14,22 @@ use crate::MagicValueType;
 use crate::MimeError;
 use crate::MimeResult;
 
-/// Maximum number of matcher work units evaluated before yielding.
-pub(crate) const MATCH_WORK_PER_BATCH: usize = 4096;
+mod matcher_work_budget;
 
-/// Tracks matcher work across repository rules and matcher nodes.
-#[derive(Debug, Default)]
-pub(crate) struct MatcherWorkBudget {
-    work_in_poll: usize,
-    maximum_work_in_poll: usize,
-    total_work: usize,
-    yields: usize,
-}
-
-impl MatcherWorkBudget {
-    /// Counts one unit of matching work and reports whether the batch is full.
-    pub(crate) fn charge(&mut self) -> bool {
-        self.work_in_poll += 1;
-        self.total_work += 1;
-        if self.work_in_poll == MATCH_WORK_PER_BATCH {
-            self.maximum_work_in_poll = self.maximum_work_in_poll.max(self.work_in_poll);
-            self.work_in_poll = 0;
-            self.yields += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Records the final partial batch after matching completes.
-    pub(crate) fn finish(&mut self) {
-        self.maximum_work_in_poll = self.maximum_work_in_poll.max(self.work_in_poll);
-    }
-
-    /// Returns the largest work batch observed by this matcher operation.
-    #[cfg(test)]
-    pub(crate) fn maximum_work_in_poll(&self) -> usize {
-        self.maximum_work_in_poll
-    }
-
-    /// Returns total counted work units.
-    #[cfg(test)]
-    pub(crate) fn total_work(&self) -> usize {
-        self.total_work
-    }
-
-    /// Returns the number of cooperative yields caused by matcher work.
-    #[cfg(test)]
-    pub(crate) fn yields(&self) -> usize {
-        self.yields
-    }
-}
+#[cfg(test)]
+pub(crate) use matcher_work_budget::MATCH_WORK_PER_BATCH;
+pub(crate) use matcher_work_budget::MatcherWorkBudget;
 
 /// Yields after a complete work batch and reports an accepted stop reason.
+///
+/// # Parameters
+/// - `scope`: Operation scope checked for a stop request after yielding.
+///
+/// # Returns
+/// `Ok(())` if the operation remains active, otherwise the stop reason.
+///
+/// # Errors
+/// Returns the stop reason when the operation has been cancelled or shut down.
 pub(crate) async fn yield_after_work(scope: &OperationScope) -> Result<(), StopReason> {
     yield_to_executor().await;
     match scope.context().stop_reason() {
@@ -327,9 +291,7 @@ impl MimeMagicMatcher {
         work: &mut MatcherWorkBudget,
     ) -> Result<bool, StopReason> {
         match self.value_type {
-            MagicValueType::String | MagicValueType::Byte => {
-                self.matches_bytes_cooperatively(bytes, scope, work).await
-            }
+            MagicValueType::String | MagicValueType::Byte => self.matches_bytes_cooperatively(bytes, scope, work).await,
             MagicValueType::Host16
             | MagicValueType::Host32
             | MagicValueType::Big16

@@ -10,12 +10,12 @@
 
 use std::sync::Arc;
 
-use qubit_mime::MediaStreamClassifier;
 use qubit_mime::AsyncMediaStreamClassifierProvider;
+use qubit_mime::AsyncMimeDetectorProvider;
+use qubit_mime::MediaStreamClassifier;
 use qubit_mime::MediaStreamClassifierRegistry;
 use qubit_mime::MediaStreamClassifierSpec;
 use qubit_mime::MimeConfig;
-use qubit_mime::AsyncMimeDetectorProvider;
 use qubit_mime::MimeDetector;
 use qubit_mime::MimeDetectorRegistry;
 use qubit_mime::MimeDetectorSpec;
@@ -24,8 +24,8 @@ use qubit_mime::MimeExecutionServices;
 use qubit_mime::classifier::media_stream_classifier_inventory::Entry as MediaStreamClassifierInventoryEntry;
 use qubit_mime::detector::mime_detector_inventory::Entry as MimeDetectorInventoryEntry;
 use qubit_spi::ProviderDescriptor;
-use qubit_spi::ProviderMetadata;
 use qubit_spi::ProviderId;
+use qubit_spi::ProviderMetadata;
 use qubit_spi::ProviderSelection;
 use qubit_spi::ServiceProvider;
 use qubit_spi::error::ProviderFailure;
@@ -105,7 +105,8 @@ struct AsyncInventoryConflictDetector(&'static str, &'static str);
 impl ProviderMetadata for AsyncInventoryConflictDetector {
     fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor::new(ProviderId::new(self.0).unwrap())
-            .with_aliases([self.1]).unwrap()
+            .with_aliases([self.1])
+            .unwrap()
     }
 }
 impl AsyncMimeDetectorProvider for AsyncInventoryConflictDetector {
@@ -123,7 +124,8 @@ struct AsyncInventoryConflictClassifier(&'static str, &'static str);
 impl ProviderMetadata for AsyncInventoryConflictClassifier {
     fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor::new(ProviderId::new(self.0).unwrap())
-            .with_aliases([self.1]).unwrap()
+            .with_aliases([self.1])
+            .unwrap()
     }
 }
 impl AsyncMediaStreamClassifierProvider for AsyncInventoryConflictClassifier {
@@ -139,18 +141,38 @@ impl AsyncMediaStreamClassifierProvider for AsyncInventoryConflictClassifier {
 #[test]
 fn test_inventory_selectors_participate_in_cross_capability_conflicts() {
     let detectors = MimeDetectorRegistry::builtin();
-    assert!(detectors.register_async_provider(AsyncInventoryConflictDetector(
-        "inventory-async-detector-canonical-conflict", "external-detector",
-    )).is_err());
-    assert!(detectors.register_async_provider(AsyncInventoryConflictDetector(
-        "inventory-async-detector-alias-conflict", "external-detector-alias",
-    )).is_err());
+    assert!(
+        detectors
+            .register_async_provider(AsyncInventoryConflictDetector(
+                "inventory-async-detector-canonical-conflict",
+                "external-detector",
+            ))
+            .is_err()
+    );
+    assert!(
+        detectors
+            .register_async_provider(AsyncInventoryConflictDetector(
+                "inventory-async-detector-alias-conflict",
+                "external-detector-alias",
+            ))
+            .is_err()
+    );
 
     let classifiers = MediaStreamClassifierRegistry::builtin();
-    assert!(classifiers.register_async_provider(AsyncInventoryConflictClassifier(
-        "inventory-async-classifier-canonical-conflict", "external-classifier",
-    )).is_err());
-    assert!(classifiers.register_async_provider(AsyncInventoryConflictClassifier(
-        "inventory-async-classifier-alias-conflict", "external-classifier-alias",
-    )).is_err());
+    assert!(
+        classifiers
+            .register_async_provider(AsyncInventoryConflictClassifier(
+                "inventory-async-classifier-canonical-conflict",
+                "external-classifier",
+            ))
+            .is_err()
+    );
+    assert!(
+        classifiers
+            .register_async_provider(AsyncInventoryConflictClassifier(
+                "inventory-async-classifier-alias-conflict",
+                "external-classifier-alias",
+            ))
+            .is_err()
+    );
 }

@@ -15,6 +15,7 @@ use std::task::Poll;
 use qubit_fs::read::ReadOptions;
 use qubit_operation::OperationScope;
 
+pub(in crate::detector) use super::provider_read_plan::ProviderReadPlan;
 use crate::AsyncMimeDetectorBackend;
 use crate::BorrowedMimeInput;
 use crate::ContentRequirement;
@@ -28,47 +29,6 @@ use crate::detector::mime_input::InputExtent;
 use crate::detector::mime_input::OwnedMimeInput;
 use crate::detector::mime_operation::MimeSubmitRejection;
 use crate::detector::mime_operation_options::MimeOperationOptions;
-
-/// Immutable provider-read strategy captured once before submission locking.
-#[derive(Debug, Clone, Copy)]
-pub(in crate::detector) struct ProviderReadPlan {
-    /// Minimum content extent declared by the backend.
-    pub requirement: ContentRequirement,
-    /// Same-object random-access capability declared by the backend.
-    pub random_access: crate::RandomAccessCapability,
-    /// Whether provider content is exposed only through a metered session.
-    pub managed_provider_reads: bool,
-}
-
-impl ProviderReadPlan {
-    /// Captures extension capabilities once and enforces managed reads for
-    /// complete and same-object sampling backends.
-    pub(in crate::detector) fn capture(
-        backend: &dyn AsyncMimeDetectorBackend,
-        trusted_self_metered_file: bool,
-    ) -> Self {
-        let requirement = backend.content_requirement();
-        let random_access = backend.random_access_capability();
-        let requested_managed_reads = backend.uses_managed_provider_reads();
-        let managed_provider_reads = requested_managed_reads
-            || (matches!(requirement, ContentRequirement::Complete) && !trusted_self_metered_file)
-            || random_access == crate::RandomAccessCapability::SamplesSameObject;
-        Self {
-            requirement,
-            random_access,
-            managed_provider_reads,
-        }
-    }
-
-    /// Returns the extent needed after filename short-circuiting.
-    pub(in crate::detector) fn requirement_for(self, filename_short_circuit: bool) -> ContentRequirement {
-        if filename_short_circuit {
-            ContentRequirement::Prefix(0)
-        } else {
-            self.requirement
-        }
-    }
-}
 
 /// Shared one-time ownership cell used to return an input after rejection.
 pub(in crate::detector) type InputCell = Arc<Mutex<Option<OwnedMimeInput>>>;
@@ -266,10 +226,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
         if let Some(deadline) = deadline.as_mut()
             && deadline.as_mut().poll(cx).is_ready()
         {
-            return Poll::Ready(Err(MimeError::detector_backend(
-                "mime",
-                "operation deadline expired",
-            )));
+            return Poll::Ready(Err(MimeError::detector_backend("mime", "operation deadline expired")));
         }
         if let Poll::Ready(reason) = stop.as_mut().poll(cx) {
             return Poll::Ready(Err(MimeError::detector_backend(
@@ -283,6 +240,15 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
 }
 
 /// Executes the detection body after its stop and deadline signals are wired.
+///
+/// # Parameters
+/// - `request`: Accepted detection state with its backend and resource budget.
+///
+/// # Returns
+/// The MIME result report with detected type and resource usage.
+///
+/// # Errors
+/// Propagates backend, input-provider, stop, and configured-limit errors.
 async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport> {
     let MimeSubmission {
         scope,
@@ -374,28 +340,27 @@ async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport
                     .unwrap_or(services.max_read_bytes)
                     .min(services.max_read_bytes);
                 let payload_limit = options.max_buffer_bytes.unwrap_or(max_buffer_size).min(max_buffer_size);
-                let mut session =
-                    if read_plan.random_access == crate::RandomAccessCapability::SamplesSameObject {
-                        MeteredReadSession::open_random_access(
-                            &file_system,
-                            &path,
-                            Arc::clone(&services),
-                            Arc::clone(&read_tree),
-                            request_limit,
-                            payload_limit,
-                        )
-                        .await?
-                    } else {
-                        MeteredReadSession::open_sequential(
-                            &file_system,
-                            &path,
-                            Arc::clone(&services),
-                            Arc::clone(&read_tree),
-                            request_limit,
-                            payload_limit,
-                        )
-                        .await?
-                    };
+                let mut session = if read_plan.random_access == crate::RandomAccessCapability::SamplesSameObject {
+                    MeteredReadSession::open_random_access(
+                        &file_system,
+                        &path,
+                        Arc::clone(&services),
+                        Arc::clone(&read_tree),
+                        request_limit,
+                        payload_limit,
+                    )
+                    .await?
+                } else {
+                    MeteredReadSession::open_sequential(
+                        &file_system,
+                        &path,
+                        Arc::clone(&services),
+                        Arc::clone(&read_tree),
+                        request_limit,
+                        payload_limit,
+                    )
+                    .await?
+                };
                 let candidates = backend
                     .guess_provider_content_in(
                         &_scope,
@@ -515,18 +480,18 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
 
+    use super::ProviderReadPlan;
     use super::cell;
     use super::prefix_buffer_bytes;
     use super::preflight;
-    use super::ProviderReadPlan;
     use super::return_input;
     use super::take;
-    use crate::ContentRequirement;
     use crate::AsyncMimeDetectorBackend;
     use crate::BorrowedMimeInput;
+    use crate::ContentRequirement;
     use crate::MimeCandidates;
-    use crate::MimeFuture;
     use crate::MimeError;
+    use crate::MimeFuture;
     use crate::MimeOperationOptions;
     use crate::RandomAccessCapability;
     use crate::detector::MimeExecutionPort;
@@ -599,7 +564,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_read_plan_captures_hooks_once_and_enforces_complete_reads() {
+    fn test_provider_read_plan_captures_hooks_and_enforces_complete_reads() {
         let backend = CapabilityHooks::default();
         let plan = ProviderReadPlan::capture(&backend, false);
 
@@ -611,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_read_plan_allows_only_trusted_file_to_keep_self_metered_complete_reads() {
+    fn test_trusted_file_keeps_self_metered_complete_reads() {
         let backend = CapabilityHooks::default();
         let plan = ProviderReadPlan::capture(&backend, true);
 

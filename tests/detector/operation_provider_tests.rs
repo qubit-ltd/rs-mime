@@ -329,10 +329,7 @@ fn test_provider_capability_hook_can_reenter_runtime_before_submission_lock() {
     let runtime = MimeRuntime::builtin()
         .unwrap()
         .with_execution_services(services.clone())
-        .with_async_provider_selection(
-            &registry,
-            &qubit_spi::ProviderSelection::named("reentrant").unwrap(),
-        )
+        .with_async_provider_selection(&registry, &qubit_spi::ProviderSelection::named("reentrant").unwrap())
         .unwrap();
     *backend.runtime.lock().unwrap() = Some(runtime.clone());
 
@@ -388,7 +385,12 @@ impl AsyncMimeDetectorBackend for ReentrantBackend {
     fn content_requirement(&self) -> ContentRequirement {
         self.requirement_calls.fetch_add(1, Ordering::SeqCst);
         if !self.reentered.swap(true, Ordering::SeqCst) {
-            let runtime = self.runtime.lock().unwrap().clone().expect("runtime installed before submit");
+            let runtime = self
+                .runtime
+                .lock()
+                .unwrap()
+                .clone()
+                .expect("runtime installed before submit");
             let mut nested = runtime
                 .try_submit_detection(
                     OwnedMimeInput::bytes(Arc::from(b"nested".as_slice()), InputExtent::Complete),

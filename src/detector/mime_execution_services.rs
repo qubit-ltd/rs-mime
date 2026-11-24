@@ -370,6 +370,14 @@ impl MimeExecutionServices {
 
     /// Associates a child with its parent's tree without reserving a parent
     /// resource slot. A later provider read promotes the association.
+    ///
+    /// # Parameters
+    /// - `parent`: Parent operation whose tree should own the child.
+    /// - `tree_limit`: Maximum resources allowed in the associated tree.
+    /// - `scope_limit`: Maximum resources allowed for this child scope.
+    ///
+    /// # Returns
+    /// The child context associated with the parent's read tree.
     #[inline]
     pub(crate) fn associate_read_tree_for_parent(
         &self,

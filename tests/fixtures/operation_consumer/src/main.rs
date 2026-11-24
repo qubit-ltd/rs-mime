@@ -2,6 +2,8 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
 use std::future::Future;
@@ -114,10 +116,7 @@ impl AsyncMimeDetectorBackend for ConsumerBackend {
     }
 }
 
-async fn execute(
-    runtime: &MimeRuntime,
-    path: &str,
-) -> Result<qubit_mime::MimeDetectionReport, MimeError> {
+async fn execute(runtime: &MimeRuntime, path: &str) -> Result<qubit_mime::MimeDetectionReport, MimeError> {
     let mut operation = runtime
         .try_submit_detection(
             OwnedMimeInput::Provider {
@@ -206,10 +205,7 @@ impl qubit_fs::spi::AsyncFileSystemSpi for MemoryFileSystem {
     fn open_random_access_reader<'a>(
         &'a self,
         request: qubit_fs::spi::OpenReaderRequest<'a>,
-    ) -> qubit_fs::spi::SpiFuture<
-        'a,
-        qubit_fs::FsResult<qubit_fs::spi::OpenedAsyncRandomAccessReader>,
-    > {
+    ) -> qubit_fs::spi::SpiFuture<'a, qubit_fs::FsResult<qubit_fs::spi::OpenedAsyncRandomAccessReader>> {
         let info = qubit_fs::metadata::OpenedFileInfo::new(
             qubit_fs::metadata::FileSystemId::new("consumer-memory").unwrap(),
             request.path().clone(),
@@ -223,10 +219,7 @@ impl qubit_fs::spi::AsyncFileSystemSpi for MemoryFileSystem {
         Box::pin(async move {
             Ok(qubit_fs::spi::OpenedAsyncRandomAccessReader::new(
                 info,
-                Box::new(RandomInput {
-                    bytes,
-                    fail_first_read,
-                }),
+                Box::new(RandomInput { bytes, fail_first_read }),
             ))
         })
     }
@@ -247,8 +240,7 @@ impl qubit_io::AsyncInput for MemoryInput {
     ) -> Poll<std::io::Result<usize>> {
         let this = self.get_mut();
         let length = count.min(this.bytes.len().saturating_sub(this.offset));
-        output[index..index + length]
-            .copy_from_slice(&this.bytes[this.offset..this.offset + length]);
+        output[index..index + length].copy_from_slice(&this.bytes[this.offset..this.offset + length]);
         this.offset += length;
         Poll::Ready(Ok(length))
     }
@@ -309,13 +301,8 @@ fn main() {
     let group = manager
         .group(qubit_operation::GroupOptions { capacity: 8 })
         .expect("MIME group");
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 8)),
-        16,
-    )
-    .expect("services");
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 8)), 16).expect("services");
     services.prepare().expect("prepare services");
     let registry = MimeDetectorRegistry::default();
     registry
@@ -327,10 +314,7 @@ fn main() {
     let runtime = MimeRuntime::builtin()
         .expect("runtime")
         .with_execution_services(services.clone())
-        .with_async_provider_selection(
-            &registry,
-            &qubit_spi::ProviderSelection::named("complete").unwrap(),
-        )
+        .with_async_provider_selection(&registry, &qubit_spi::ProviderSelection::named("complete").unwrap())
         .expect("select Complete consumer");
     let report = block_on(execute(&runtime, "/consumer")).expect("Complete managed read");
     assert_eq!(report.mime_type.as_deref(), Some("application/x-consumer"));
@@ -338,13 +322,9 @@ fn main() {
     let samples_runtime = MimeRuntime::builtin()
         .expect("runtime")
         .with_execution_services(services.clone())
-        .with_async_provider_selection(
-            &registry,
-            &qubit_spi::ProviderSelection::named("samples").unwrap(),
-        )
+        .with_async_provider_selection(&registry, &qubit_spi::ProviderSelection::named("samples").unwrap())
         .expect("select sampling consumer");
-    let samples =
-        block_on(execute(&samples_runtime, "/consumer-samples")).expect("same-object samples");
+    let samples = block_on(execute(&samples_runtime, "/consumer-samples")).expect("same-object samples");
     assert_eq!(
         samples.budget.bytes_read, 11,
         "repeated random samples count cumulatively"
@@ -368,10 +348,7 @@ fn main() {
     let parent_runtime = MimeRuntime::builtin()
         .expect("runtime")
         .with_execution_services(parent_services.clone())
-        .with_async_provider_selection(
-            &registry,
-            &qubit_spi::ProviderSelection::named("complete").unwrap(),
-        )
+        .with_async_provider_selection(&registry, &qubit_spi::ProviderSelection::named("complete").unwrap())
         .expect("select Complete consumer for parent siblings");
     let parent_options = qubit_operation::OperationOptions {
         child_failure_policy: qubit_operation::ChildFailurePolicy::ContinueSiblings,
@@ -420,20 +397,14 @@ fn main() {
     assert_eq!(sibling_outcomes.len(), 2);
     match &sibling_outcomes[0] {
         qubit_operation::OperationOutcome::Succeeded(report) => {
-            assert_eq!(
-                report.budget.bytes_read, 8,
-                "first sibling consumes the shared budget"
-            );
+            assert_eq!(report.budget.bytes_read, 8, "first sibling consumes the shared budget");
         }
         other => panic!("first sibling should use the parent budget successfully: {other:?}"),
     }
     assert!(
         matches!(
             &sibling_outcomes[1],
-            qubit_operation::OperationOutcome::Failed(MimeError::BudgetExceeded {
-                kind: "read",
-                ..
-            })
+            qubit_operation::OperationOutcome::Failed(MimeError::BudgetExceeded { kind: "read", .. })
         ),
         "second sibling must observe the first sibling's cumulative parent read: {:?}",
         sibling_outcomes[1]

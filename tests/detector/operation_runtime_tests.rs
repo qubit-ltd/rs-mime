@@ -260,11 +260,7 @@ struct NeverWakeFileSystem {
 }
 
 impl NeverWakeFileSystem {
-    fn new(
-        reads: Arc<AtomicUsize>,
-        reader_drops: Arc<AtomicUsize>,
-        control: Arc<NeverWakeControl>,
-    ) -> Self {
+    fn new(reads: Arc<AtomicUsize>, reader_drops: Arc<AtomicUsize>, control: Arc<NeverWakeControl>) -> Self {
         let properties = CountingFileSystem::new(Arc::new(AtomicUsize::new(0))).properties;
         Self {
             properties,
@@ -391,6 +387,9 @@ fn services(
 
 #[test]
 fn test_managed_deadline_wakes_never_waking_provider_read_and_releases_reader() {
+    use std::time::Duration;
+    use std::time::Instant;
+
     use qubit_fs::AsyncFileSystem;
     use qubit_fs::Path;
     use qubit_operation::ClockSource;
@@ -400,8 +399,6 @@ fn test_managed_deadline_wakes_never_waking_provider_read_and_releases_reader() 
     use qubit_operation::OperationOptions;
     use qubit_operation::OperationOutcome;
     use qubit_operation::StopReason;
-    use std::time::Duration;
-    use std::time::Instant;
 
     let repository = Arc::new(
         MimeRepository::from_xml(
@@ -432,22 +429,22 @@ fn test_managed_deadline_wakes_never_waking_provider_read_and_releases_reader() 
         .unwrap(),
     );
     let mut operation = match runtime.try_submit_detection(
-            OwnedMimeInput::Provider {
-                file_system,
-                path: Path::parse("/pending.data").unwrap(),
-            },
-            MimeOperationOptions {
-                operation: OperationOptions {
-                    context: ContextOptions {
-                        clock: Some(clock_source),
-                        deadline: Some(Deadline::at(MonotonicTime::new(clock.domain, 10))),
-                        ..Default::default()
-                    },
+        OwnedMimeInput::Provider {
+            file_system,
+            path: Path::parse("/pending.data").unwrap(),
+        },
+        MimeOperationOptions {
+            operation: OperationOptions {
+                context: ContextOptions {
+                    clock: Some(clock_source),
+                    deadline: Some(Deadline::at(MonotonicTime::new(clock.domain, 10))),
                     ..Default::default()
                 },
                 ..Default::default()
             },
-        ) {
+            ..Default::default()
+        },
+    ) {
         Ok(operation) => operation,
         Err(failure) => panic!("provider operation should be accepted: {:?}", failure.reason),
     };
@@ -484,8 +481,16 @@ fn test_managed_deadline_wakes_never_waking_provider_read_and_releases_reader() 
         "deadline should win while the provider read is pending: {outcome:?}"
     );
     let _settlement = block_on(operation.wait_settlement());
-    assert_eq!(1, reader_drops.load(Ordering::SeqCst), "the pending reader must be released");
-    assert_eq!(0, clock.active_registrations(), "the completed deadline timer must be cancelled");
+    assert_eq!(
+        1,
+        reader_drops.load(Ordering::SeqCst),
+        "the pending reader must be released"
+    );
+    assert_eq!(
+        0,
+        clock.active_registrations(),
+        "the completed deadline timer must be cancelled"
+    );
 
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
@@ -495,6 +500,9 @@ fn test_managed_deadline_wakes_never_waking_provider_read_and_releases_reader() 
 
 #[test]
 fn test_managed_deadline_stops_cooperative_repository_matching() {
+    use std::time::Duration;
+    use std::time::Instant;
+
     use qubit_operation::ClockSource;
     use qubit_operation::ContextOptions;
     use qubit_operation::Deadline;
@@ -502,8 +510,6 @@ fn test_managed_deadline_stops_cooperative_repository_matching() {
     use qubit_operation::OperationOptions;
     use qubit_operation::OperationOutcome;
     use qubit_operation::StopReason;
-    use std::time::Duration;
-    use std::time::Instant;
 
     let magic_rules = (0..8192)
         .map(|index| {
@@ -545,8 +551,14 @@ fn test_managed_deadline_stops_cooperative_repository_matching() {
     while clock.active_registrations() == 0 && startup.elapsed() < Duration::from_secs(2) {
         std::thread::yield_now();
     }
-    assert!(clock.active_registrations() > 0, "accepted matcher should register its deadline");
-    assert!(operation.try_take_outcome().unwrap().is_none(), "wide matcher should still be cooperative");
+    assert!(
+        clock.active_registrations() > 0,
+        "accepted matcher should register its deadline"
+    );
+    assert!(
+        operation.try_take_outcome().unwrap().is_none(),
+        "wide matcher should still be cooperative"
+    );
     clock.advance_to(10);
 
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -554,7 +566,10 @@ fn test_managed_deadline_stops_cooperative_repository_matching() {
         if let Some(outcome) = operation.try_take_outcome().unwrap() {
             break outcome;
         }
-        assert!(Instant::now() < deadline, "deadline did not stop the repository matcher");
+        assert!(
+            Instant::now() < deadline,
+            "deadline did not stop the repository matcher"
+        );
         std::thread::yield_now();
     };
     assert!(matches!(
@@ -572,6 +587,9 @@ fn test_managed_deadline_stops_cooperative_repository_matching() {
 
 #[test]
 fn test_user_cancel_wins_when_racing_a_managed_deadline() {
+    use std::time::Duration;
+    use std::time::Instant;
+
     use qubit_fs::AsyncFileSystem;
     use qubit_fs::Path;
     use qubit_operation::ClockSource;
@@ -581,8 +599,6 @@ fn test_user_cancel_wins_when_racing_a_managed_deadline() {
     use qubit_operation::OperationOptions;
     use qubit_operation::OperationOutcome;
     use qubit_operation::StopReason;
-    use std::time::Duration;
-    use std::time::Instant;
 
     let repository = Arc::new(
         MimeRepository::from_xml(
@@ -636,7 +652,10 @@ fn test_user_cancel_wins_when_racing_a_managed_deadline() {
         std::thread::yield_now();
     }
     assert!(reads.load(Ordering::SeqCst) > 0, "provider read should be pending");
-    assert!(clock.active_registrations() > 0, "operation should register its deadline");
+    assert!(
+        clock.active_registrations() > 0,
+        "operation should register its deadline"
+    );
     assert_eq!(
         qubit_operation::StopRequestStatus::Accepted,
         operation.request_stop(StopReason::UserCancelled),
@@ -659,7 +678,11 @@ fn test_user_cancel_wins_when_racing_a_managed_deadline() {
         OperationOutcome::Stopped(ref report) if report.reason == StopReason::UserCancelled
     ));
     let _settlement = block_on(operation.wait_settlement());
-    assert_eq!(1, reader_drops.load(Ordering::SeqCst), "cancellation should release the reader");
+    assert_eq!(
+        1,
+        reader_drops.load(Ordering::SeqCst),
+        "cancellation should release the reader"
+    );
     assert_eq!(0, clock.active_registrations(), "stop should cancel its deadline timer");
 
     let shutdown = services.shutdown();
@@ -1026,7 +1049,11 @@ fn test_managed_provider_candidate_fallback_preserves_object_key_basename() {
         assert_eq!(4, report.budget.bytes_read);
     }
 
-    assert_eq!(3, opens.load(Ordering::SeqCst), "non-short-circuit policies must read the provider");
+    assert_eq!(
+        3,
+        opens.load(Ordering::SeqCst),
+        "non-short-circuit policies must read the provider"
+    );
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();

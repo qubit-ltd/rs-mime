@@ -235,6 +235,18 @@ impl AsyncMimeDetectorBackend for OwnedRepositoryMimeDetector {
     }
 
     /// Matches provider-derived content while keeping its basename typed.
+    ///
+    /// # Parameters
+    /// - `scope`: Operation scope used to observe cancellation.
+    /// - `input`: Borrowed bytes or managed provider input to inspect.
+    /// - `basename`: Optional original filename used for rule matching.
+    /// - `options`: Limits applied to this detection request.
+    ///
+    /// # Returns
+    /// The matching MIME candidates and content inspection metadata.
+    ///
+    /// # Errors
+    /// Returns an error when input access, detection, or request limits fail.
     fn guess_provider_content_in<'a>(
         &'a self,
         scope: &'a OperationScope,

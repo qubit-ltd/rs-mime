@@ -1184,19 +1184,20 @@ fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
     let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
         let reservation = scope.reserve_resource().unwrap();
         create_empty_staged_with(&scope, reservation, &limits, move || {
-            let recovery_fault = qubit_local_files::test_support::install_test_fault(
-                "host-temp-file-recovery-clone-cleanup",
-            )
-            .expect("creation and initial cleanup fault should install");
-            let result = LocalFileSystem::host()?.create_temp_file_with_options(
-                &LocalTempFileOptions::new().with_privacy(LocalPrivacyRequirement::PlatformDefault),
-            );
-            if let Err(error) = &result {
-                if let Some(recovery) = error.temp_recovery() {
-                    let blocker = recovery.path().parent().unwrap().join("recovery-blocker");
-                    std::fs::write(&blocker, b"hold recovery owner").unwrap();
-                    *blocker_path_for_create.lock().unwrap() = Some(blocker);
-                }
+            let recovery_fault =
+                qubit_local_files::test_support::install_test_fault("host-temp-file-recovery-clone-cleanup")
+                    .expect("creation and initial cleanup fault should install");
+            let result = LocalFileSystem::host()?
+                .create_temp_file_with_options(
+                    &LocalTempFileOptions::new().with_privacy(LocalPrivacyRequirement::PlatformDefault),
+                )
+                .map_err(Box::new);
+            if let Err(error) = &result
+                && let Some(recovery) = error.temp_recovery()
+            {
+                let blocker = recovery.path().parent().unwrap().join("recovery-blocker");
+                std::fs::write(&blocker, b"hold recovery owner").unwrap();
+                *blocker_path_for_create.lock().unwrap() = Some(blocker);
             }
             drop(recovery_fault);
             result
@@ -1217,7 +1218,11 @@ fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
     );
     let report = block_on(handle.wait_settlement());
     assert_eq!(report.status, qubit_operation::SettlementStatus::RecoveryRequired);
-    assert_eq!(1, report.recoveries.len(), "settlement retains the creation recovery owner");
+    assert_eq!(
+        1,
+        report.recoveries.len(),
+        "settlement retains the creation recovery owner"
+    );
 
     let blocker = blocker_path.lock().unwrap().take().expect("recovery blocker path");
     std::fs::remove_file(blocker).unwrap();
@@ -1250,18 +1255,22 @@ fn test_managed_staging_creation_error_without_recovery_keeps_source_and_release
     let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
         let reservation = scope.reserve_resource().unwrap();
         create_empty_staged_with(&scope, reservation, &limits, || {
-            LocalFileSystem::host()?.create_temp_file_with_options(
-                &LocalTempFileOptions::new()
-                    .with_privacy(LocalPrivacyRequirement::PlatformDefault)
-                    .with_max_attempts(0),
-            )
+            LocalFileSystem::host()?
+                .create_temp_file_with_options(
+                    &LocalTempFileOptions::new()
+                        .with_privacy(LocalPrivacyRequirement::PlatformDefault)
+                        .with_max_attempts(0),
+                )
+                .map_err(Box::new)
         })
         .await
     }))
     .unwrap();
     match block_on(handle.wait_outcome()).unwrap() {
         qubit_operation::OperationOutcome::Failed(MimeError::Io(error)) => assert!(
-            error.get_ref().is_some_and(|source| source.is::<qubit_local_files::LocalFileError>()),
+            error
+                .get_ref()
+                .is_some_and(|source| source.is::<qubit_local_files::LocalFileError>()),
             "the structured local-files error remains the typed I/O source"
         ),
         qubit_operation::OperationOutcome::Succeeded(_) => panic!("invalid create options unexpectedly succeeded"),
@@ -1269,7 +1278,10 @@ fn test_managed_staging_creation_error_without_recovery_keeps_source_and_release
     }
     let report = block_on(handle.wait_settlement());
     assert_eq!(report.status, qubit_operation::SettlementStatus::Released);
-    assert!(report.recoveries.is_empty(), "ordinary creation failure releases its reservation");
+    assert!(
+        report.recoveries.is_empty(),
+        "ordinary creation failure releases its reservation"
+    );
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();

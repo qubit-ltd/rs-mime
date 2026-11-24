@@ -13,10 +13,12 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
+#[cfg(test)]
 use qubit_local_files::LocalTempFile;
 use qubit_local_files::LocalTempRecovery;
 use qubit_operation::ResourceId;
 
+use super::staged_temp_owner::StagedTempOwner;
 use crate::MimeError;
 use crate::MimeResult;
 use crate::command_execution::MimeExecutionWorker;
@@ -38,48 +40,6 @@ pub(crate) struct StagedMimeInput {
     pub(super) cleanup_id: Arc<Mutex<Option<ResourceId>>>,
 }
 
-/// Cleanup responsibility retained by an operation-owned staging resource.
-pub(super) enum StagedTempOwner {
-    /// A temporary file successfully created for staging.
-    File(LocalTempFile),
-    /// Native cleanup authority returned with a failed temp creation.
-    Recovery(LocalTempRecovery),
-}
-
-impl StagedTempOwner {
-    /// Returns the path associated with the owned resource.
-    pub(super) fn path(&self) -> &std::path::Path {
-        match self {
-            Self::File(owner) => owner.path(),
-            Self::Recovery(owner) => owner.path(),
-        }
-    }
-
-    /// Writes to a staged file, rejecting recovery-only owners.
-    pub(super) fn as_file_mut(&mut self) -> std::io::Result<&mut std::fs::File> {
-        match self {
-            Self::File(owner) => owner.as_file_mut(),
-            Self::Recovery(_) => Err(std::io::Error::other("temporary recovery owner is not a staged file")),
-        }
-    }
-
-    /// Attempts cleanup while retaining this owner on failure.
-    pub(super) fn cleanup(&mut self) -> std::io::Result<()> {
-        match self {
-            Self::File(owner) => owner.cleanup().map_err(|error| error.into_io_error()),
-            Self::Recovery(owner) => owner.cleanup().map_err(|error| error.into_io_error()),
-        }
-    }
-
-    /// Closes the active file handle when this owner is a staged file.
-    #[cfg(test)]
-    pub(super) fn close(&mut self) {
-        if let Self::File(owner) = self {
-            owner.close();
-        }
-    }
-}
-
 impl StagedMimeInput {
     /// Builds a staged-file test resource around an existing owner.
     ///
@@ -93,7 +53,7 @@ impl StagedMimeInput {
     #[cfg(test)]
     pub(crate) fn new(owner: LocalTempFile, permit: StagingPermit, worker: MimeExecutionWorker) -> Self {
         Self {
-            owner: Mutex::new(StagedTempOwner::File(owner)),
+            owner: Mutex::new(StagedTempOwner::File { owner }),
             permits: Mutex::new(vec![permit]),
             worker,
             staged_bytes: AtomicU64::new(0),
@@ -102,9 +62,18 @@ impl StagedMimeInput {
     }
 
     /// Builds a cleanup-only resource around a failed-creation recovery owner.
+    ///
+    /// # Parameters
+    /// - `owner`: Native recovery authority for the failed temporary-file
+    ///   creation.
+    /// - `worker`: Worker used to retry cleanup.
+    ///
+    /// # Returns
+    /// A staged input that retains recovery responsibility until cleanup
+    /// succeeds.
     pub(crate) fn from_recovery(owner: LocalTempRecovery, worker: MimeExecutionWorker) -> Self {
         Self {
-            owner: Mutex::new(StagedTempOwner::Recovery(owner)),
+            owner: Mutex::new(StagedTempOwner::Recovery { owner }),
             permits: Mutex::new(Vec::new()),
             worker,
             staged_bytes: AtomicU64::new(0),

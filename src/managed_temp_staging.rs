@@ -49,12 +49,13 @@ mod completion;
 mod managed_staging_limits;
 mod managed_temp_cleanup;
 mod staged_mime_input;
+mod staged_temp_owner;
 
 use completion::completion_pair;
 pub(crate) use managed_staging_limits::ManagedStagingLimits;
 use managed_temp_cleanup::ManagedTempCleanup;
-use staged_mime_input::StagedTempOwner;
 pub(crate) use staged_mime_input::StagedMimeInput;
+use staged_temp_owner::StagedTempOwner;
 
 /// Stages owned bytes without performing filesystem work in the caller's
 /// async poll. A rejected worker dispatch returns the job and drops the
@@ -359,7 +360,7 @@ async fn create_empty_staged(
     limits: &ManagedStagingLimits,
 ) -> MimeResult<ResourceRef<StagedMimeInput>> {
     create_empty_staged_with(scope, reservation, limits, || {
-        LocalFileSystem::host()?.create_temp_file()
+        LocalFileSystem::host()?.create_temp_file().map_err(Box::new)
     })
     .await
 }
@@ -368,13 +369,27 @@ async fn create_empty_staged(
 ///
 /// The seam keeps native creation on the execution worker while allowing
 /// deterministic tests of filesystem failures that carry recovery ownership.
+///
+/// # Parameters
+/// - `scope`: Operation scope that owns the resulting staged resource.
+/// - `reservation`: Reserved resource slot consumed by successful creation.
+/// - `limits`: Per-request and service-wide staging limits.
+/// - `create_temp`: Native temporary-file creation operation dispatched to the
+///   worker.
+///
+/// # Returns
+/// A reference to the registered staged file resource.
+///
+/// # Errors
+/// Returns an error when creation, registration, or operation state rejects
+/// staging.
 pub(crate) async fn create_empty_staged_with(
     scope: &OperationScope,
     reservation: ResourceReservation,
     limits: &ManagedStagingLimits,
-    create_temp: impl FnOnce() -> Result<qubit_local_files::LocalTempFile, qubit_local_files::LocalFileError>
-        + Send
-        + 'static,
+    create_temp: impl FnOnce() -> Result<qubit_local_files::LocalTempFile, Box<qubit_local_files::LocalFileError>>
+    + Send
+    + 'static,
 ) -> MimeResult<ResourceRef<StagedMimeInput>> {
     ensure_not_stopped(scope)?;
     let context = scope.context().clone();
@@ -388,7 +403,7 @@ pub(crate) async fn create_empty_staged_with(
             match create_temp() {
                 Ok(temp) => {
                     let staged = StagedMimeInput {
-                        owner: Mutex::new(StagedTempOwner::File(temp)),
+                        owner: Mutex::new(StagedTempOwner::File { owner: temp }),
                         permits: Mutex::new(Vec::new()),
                         worker: worker.clone(),
                         staged_bytes: std::sync::atomic::AtomicU64::new(0),
@@ -397,7 +412,7 @@ pub(crate) async fn create_empty_staged_with(
                     commit_staged(reservation, staged)
                 }
                 Err(error) => {
-                    let (primary, recovery) = error.into_temp_recovery_parts();
+                    let (primary, recovery) = (*error).into_temp_recovery_parts();
                     if let Some(recovery) = recovery {
                         let staged = StagedMimeInput::from_recovery(recovery, worker.clone());
                         let cleanup_id = Arc::clone(&staged.cleanup_id);
@@ -598,6 +613,7 @@ mod lifecycle_tests {
     use qubit_operation::OperationManager;
 
     use super::ManagedStagingLimits;
+    use super::create_empty_staged_with;
     use super::panic_message;
     use super::stage_borrowed_bytes_in;
     use super::stopped_error;
@@ -645,6 +661,44 @@ mod lifecycle_tests {
                 if report.reason == qubit_operation::StopReason::UserCancelled
                     && report.accepted_at.is_none()
         ));
+    }
+
+    #[test]
+    fn test_temp_creation_worker_panic_returns_error_and_releases_reservation() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        services.prepare().unwrap();
+        let limits = ManagedStagingLimits {
+            max_bytes: 8,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port),
+        };
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let reservation = scope.reserve_resource().unwrap();
+            let result = create_empty_staged_with(&scope, reservation, &limits, || {
+                panic!("injected temporary creation panic")
+            })
+            .await;
+            Ok::<_, crate::MimeError>(matches!(
+                result,
+                Err(crate::MimeError::DetectorBackend { ref backend, ref reason })
+                    if backend == "managed staging" && reason == "injected temporary creation panic"
+            ))
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            qubit_operation::OperationOutcome::Succeeded(true)
+        ));
+        assert!(block_on(operation.wait_settlement()).all_released());
+        assert_eq!(0, services.staging_budget().used_bytes());
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 
     #[test]

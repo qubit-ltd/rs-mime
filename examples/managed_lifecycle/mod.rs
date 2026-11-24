@@ -17,6 +17,7 @@ use std::task::Poll;
 use std::task::Wake;
 use std::task::Waker;
 use std::thread;
+use std::time::Duration;
 
 use qubit_fs::AsyncFileSystem;
 use qubit_fs::FsError;
@@ -48,7 +49,6 @@ use qubit_mime::MimeExecutionServices;
 use qubit_mime::MimeOperationOptions;
 use qubit_mime::OwnedMimeInput;
 use qubit_mime::detector::MimeRuntime;
-use qubit_operation::GroupOptions;
 use qubit_operation::AsyncCleanup;
 use qubit_operation::CleanupContext;
 use qubit_operation::CleanupFailure;
@@ -56,9 +56,10 @@ use qubit_operation::CleanupFuture;
 use qubit_operation::CleanupOutcome;
 use qubit_operation::CleanupStage;
 use qubit_operation::DiagnosticSummary;
+use qubit_operation::GroupOptions;
 use qubit_operation::ManagerOptions;
-use qubit_operation::OperationOptions;
 use qubit_operation::OperationManager;
+use qubit_operation::OperationOptions;
 use qubit_operation::OperationOutcome;
 use qubit_operation::RecoveryHandle;
 use qubit_operation::RecoveryPhase;
@@ -68,7 +69,6 @@ use qubit_operation::ResourceId;
 use qubit_operation::ResourceScopeOptions;
 use qubit_operation::ShutdownMode;
 use qubit_operation::ShutdownWait;
-use std::time::Duration;
 
 fn managed_lifecycle(
     file_system: Arc<AsyncFileSystem>,
@@ -148,16 +148,21 @@ fn managed_lifecycle(
     assert!(stopped.services_stopped && stopped.unresolved_recoveries == 0);
     let report = block_on(shutdown.wait_group_shutdown()).expect("wait for MIME group Drain");
     assert_eq!(report.snapshot.active_operations, 0);
-    assert!(settlement_released && settlement_has_no_recovery, "sample PDF settlement should release all resources");
+    assert!(
+        settlement_released && settlement_has_no_recovery,
+        "sample PDF settlement should release all resources"
+    );
     assert!(failure_observed, "controlled MIME error should be visible");
     assert!(failure_released, "failed detection resources should be settled");
-    assert!(outcome_issue.is_none(), "sample PDF outcome should succeed: {outcome_issue:?}");
+    assert!(
+        outcome_issue.is_none(),
+        "sample PDF outcome should succeed: {outcome_issue:?}"
+    );
 }
 
 fn controlled_failure(runtime: &MimeRuntime) -> (bool, bool, Vec<RecoveryHandle>) {
-    let file_system = Arc::new(
-        AsyncFileSystem::from_spi(MemoryProvider::controlled_open_failure()).expect("failure provider"),
-    );
+    let file_system =
+        Arc::new(AsyncFileSystem::from_spi(MemoryProvider::controlled_open_failure()).expect("failure provider"));
     let input = OwnedMimeInput::Provider {
         file_system,
         path: Path::parse("/upload/failure.pdf").expect("failure provider path"),
@@ -421,11 +426,17 @@ fn controlled_recovery_transfer(recovery_store: &RecoveryStore) {
     let id = recovery.id();
     transfer_recovery(recovery, recovery_store);
     assert!(matches!(
-        shutdown.wait_for(Duration::from_secs(2)).expect("wait for transferred manager drain"),
+        shutdown
+            .wait_for(Duration::from_secs(2))
+            .expect("wait for transferred manager drain"),
         ShutdownWait::Completed(_)
     ));
 
-    let retry = recovery_store.try_retry(id).expect("retry stored recovery").wait().expect("observe stored retry");
+    let retry = recovery_store
+        .try_retry(id)
+        .expect("retry stored recovery")
+        .wait()
+        .expect("observe stored retry");
     assert_eq!(retry.recovery.phase, RecoveryPhase::Resolved);
     assert!(!recovery_store.contains(id), "resolved recovery should leave the store");
 }

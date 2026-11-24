@@ -213,3 +213,86 @@ fn push_async<T: Clone>(
 fn unknown_selection_error(service: &str, selectors: &[String]) -> MimeError {
     MimeError::ProviderSelection(format!("unknown {service} selector(s): {}", selectors.join(", ")))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use qubit_spi::FallbackPolicy;
+    use qubit_spi::ProviderSelection;
+
+    use super::AsyncProviderCandidate;
+    use super::MimeError;
+    use super::resolve;
+    use super::should_fallback;
+
+    #[test]
+    fn test_named_selection_reports_unknown_selector_and_service() {
+        let selection = ProviderSelection::named("missing").expect("selector is syntactically valid");
+        let error = match resolve::<String>(
+            &selection,
+            &HashMap::new(),
+            |_| None,
+            Vec::new(),
+            Vec::new(),
+            "detector",
+        ) {
+            Ok(_) => panic!("unknown named selector must be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            MimeError::ProviderSelection(message)
+                if message.contains("detector") && message.contains("missing")
+        ));
+    }
+
+    #[test]
+    fn test_named_selection_keeps_sync_only_provider_candidate() {
+        let selection = ProviderSelection::named("alias").expect("selector is syntactically valid");
+        let candidates = resolve::<String>(
+            &selection,
+            &HashMap::new(),
+            |selector| (selector == "alias").then(|| "canonical".to_owned()),
+            Vec::new(),
+            Vec::new(),
+            "classifier",
+        )
+        .expect("registered sync provider is a valid candidate");
+
+        assert!(matches!(
+            candidates.as_slice(),
+            [AsyncProviderCandidate::SyncOnly { id }] if id == "canonical"
+        ));
+    }
+
+    #[test]
+    fn test_lenient_chain_skips_unknown_and_keeps_async_candidate() {
+        let selection = ProviderSelection::chain_allowing_missing(["missing", "available"])
+            .expect("chain selectors are syntactically valid");
+        let catalog = HashMap::from([(
+            "available".to_owned(),
+            ("canonical".to_owned(), 4, "factory".to_owned()),
+        )]);
+        let candidates = resolve(&selection, &catalog, |_| None, Vec::new(), Vec::new(), "detector")
+            .expect("lenient chain skips unknown selectors");
+
+        assert!(matches!(
+            candidates.as_slice(),
+            [AsyncProviderCandidate::Async { id, provider }]
+                if id == "canonical" && provider == "factory"
+        ));
+    }
+
+    #[test]
+    fn test_fallback_policy_distinguishes_absence_from_other_errors() {
+        let absent = MimeError::AsyncUnsupported;
+        let failed = MimeError::detector_backend("test", "failed");
+
+        assert!(!should_fallback(FallbackPolicy::Never, &absent));
+        assert!(should_fallback(FallbackPolicy::OnAbsence, &absent));
+        assert!(!should_fallback(FallbackPolicy::OnAbsence, &failed));
+        assert!(should_fallback(FallbackPolicy::OnAnyError, &failed));
+    }
+}

@@ -578,6 +578,25 @@ mod async_operation_tests {
     use crate::MimeError;
     use crate::MimeExecutionPort;
     use crate::MimeFuture;
+
+    #[test]
+    fn test_classifier_configuration_defaults_and_mutators() {
+        let mut classifier = FfprobeCommandMediaStreamClassifier::default();
+        assert!(classifier.max_staging_size() > 0);
+        assert_eq!(None, classifier.working_directory());
+        assert!(format!("{classifier:?}").contains("FfprobeCommandMediaStreamClassifier"));
+
+        classifier.set_max_staging_size(123);
+        classifier.set_working_directory(Some("/tmp/media-tools".to_owned()));
+        assert_eq!(123, classifier.max_staging_size());
+        assert_eq!(Some("/tmp/media-tools"), classifier.working_directory());
+        classifier.set_working_directory(None);
+        assert_eq!(None, classifier.working_directory());
+
+        let configured = FfprobeCommandMediaStreamClassifier::new().with_max_staging_size(456);
+        assert_eq!(456, configured.max_staging_size());
+        assert!(!format!("{:?}", configured.command_runner()).is_empty());
+    }
     use crate::MimeOperationOptions;
     use crate::command_execution::AsyncMimeCommandExecutor;
     use crate::command_execution::ManagedMimeCommand;

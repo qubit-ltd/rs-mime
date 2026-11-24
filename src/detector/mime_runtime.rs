@@ -499,9 +499,8 @@ impl MimeRuntime {
             ),
         });
         let filename_short_circuit = filename_winner.is_some();
-        let requirement = read_plan.requirement_for(
-            filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }),
-        );
+        let requirement =
+            read_plan.requirement_for(filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }));
         let permit = match mime_submission::preflight(
             &input,
             &options,
@@ -519,9 +518,7 @@ impl MimeRuntime {
             .unwrap_or(services.max_read_bytes())
             .min(services.max_read_bytes());
         let (pending_tree, standalone_tree) = match parent {
-            Some(parent)
-                if matches!(&input, OwnedMimeInput::Provider { .. }) && !filename_short_circuit =>
-            {
+            Some(parent) if matches!(&input, OwnedMimeInput::Provider { .. }) && !filename_short_circuit => {
                 match services.prepare_read_tree_for_parent(parent, tree_limit, tree_limit) {
                     Ok(binding) => (Some(binding), None),
                     Err(kind) => {
@@ -534,9 +531,7 @@ impl MimeRuntime {
             }
             Some(parent) => (
                 None,
-                Some(
-                    services.associate_read_tree_for_parent(parent, tree_limit, tree_limit),
-                ),
+                Some(services.associate_read_tree_for_parent(parent, tree_limit, tree_limit)),
             ),
             None => (None, Some(services.new_read_tree(tree_limit))),
         };

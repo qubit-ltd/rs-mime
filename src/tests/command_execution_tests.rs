@@ -175,13 +175,7 @@ mod managed_command_executor_tests {
         let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
         let worker_port = Arc::new(FixedMimeExecutionPort::new(1, 4));
         let execution_port: Arc<dyn MimeExecutionPort> = worker_port.clone();
-        let services = Arc::new(MimeExecutionServices::new(
-            manager,
-            group.clone(),
-            execution_port,
-            128,
-        )
-        .unwrap());
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), execution_port, 128).unwrap());
         services.prepare().unwrap();
 
         let worker = MimeExecutionWorker::new(worker_port.clone());
@@ -236,12 +230,14 @@ mod managed_command_executor_tests {
             .expect("staging should finish before the command is accepted");
         let (blocker_started_tx, blocker_started_rx) = mpsc::channel();
         let (release_blocker_tx, release_blocker_rx) = mpsc::channel();
-        assert!(worker_port
-            .try_dispatch(Box::new(move || {
-                blocker_started_tx.send(()).unwrap();
-                release_blocker_rx.recv().unwrap();
-            }))
-            .is_ok());
+        assert!(
+            worker_port
+                .try_dispatch(Box::new(move || {
+                    blocker_started_tx.send(()).unwrap();
+                    release_blocker_rx.recv().unwrap();
+                }))
+                .is_ok()
+        );
         blocker_started_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("controlled worker should be occupied after staging completes");
@@ -249,7 +245,10 @@ mod managed_command_executor_tests {
         child_pending_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("managed command should be accepted and wait behind the blocker");
-        assert!(staged_path.exists(), "staged owner remains live while command is queued");
+        assert!(
+            staged_path.exists(),
+            "staged owner remains live while command is queued"
+        );
         assert_eq!(expected_bytes, budget.used_bytes());
 
         let _ = operation.request_stop(StopReason::Timeout);
@@ -265,7 +264,10 @@ mod managed_command_executor_tests {
             matches!(settlement.as_mut().poll(&mut context), Poll::Pending),
             "settlement must wait for the accepted worker job to return"
         );
-        assert!(staged_path.exists(), "timeout outcome must not release the queued owner's file");
+        assert!(
+            staged_path.exists(),
+            "timeout outcome must not release the queued owner's file"
+        );
         assert_eq!(expected_bytes, budget.used_bytes(), "the staging lease remains held");
 
         release_blocker_tx.send(()).unwrap();

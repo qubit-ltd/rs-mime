@@ -390,10 +390,16 @@ fn managed_lifecycle(
     assert!(stopped.services_stopped && stopped.unresolved_recoveries == 0);
     let report = block_on(shutdown.wait_group_shutdown()).expect("wait for MIME group Drain");
     assert_eq!(report.snapshot.active_operations, 0);
-    assert!(settlement_released && settlement_has_no_recovery, "sample PDF settlement should release all resources");
+    assert!(
+        settlement_released && settlement_has_no_recovery,
+        "sample PDF settlement should release all resources"
+    );
     assert!(failure_observed, "controlled MIME error should be visible");
     assert!(failure_released, "failed detection resources should be settled");
-    assert!(outcome_issue.is_none(), "sample PDF outcome should succeed: {outcome_issue:?}");
+    assert!(
+        outcome_issue.is_none(),
+        "sample PDF outcome should succeed: {outcome_issue:?}"
+    );
 }
 ```
 

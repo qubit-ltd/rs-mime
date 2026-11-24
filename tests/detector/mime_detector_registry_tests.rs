@@ -1000,81 +1000,157 @@ fn test_async_resolution_of_unknown_selector_reports_diagnostic() {
 fn test_sync_and_async_mime_selectors_share_canonical_identity() {
     let registry = MimeDetectorRegistry::default();
     registry
-        .register(TestMimeDetectorProvider::new(
-            "mime-sync-canonical",
-            0,
-            TestProviderBehavior::Success("application/x-sync"),
-        ).with_aliases(&["mime-sync-alias"]))
+        .register(
+            TestMimeDetectorProvider::new(
+                "mime-sync-canonical",
+                0,
+                TestProviderBehavior::Success("application/x-sync"),
+            )
+            .with_aliases(&["mime-sync-alias"]),
+        )
         .unwrap();
-    assert!(registry.register_async_provider(CountedAsyncRegistryProvider {
-        descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-owner").unwrap())
-            .with_aliases(["mime-sync-canonical"]).unwrap(),
-        creations: Arc::new(AtomicUsize::new(0)),
-    }).is_err(), "async alias must not claim a sync canonical ID");
+    assert!(
+        registry
+            .register_async_provider(CountedAsyncRegistryProvider {
+                descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-owner").unwrap())
+                    .with_aliases(["mime-sync-canonical"])
+                    .unwrap(),
+                creations: Arc::new(AtomicUsize::new(0)),
+            })
+            .is_err(),
+        "async alias must not claim a sync canonical ID"
+    );
 
     let reverse = MimeDetectorRegistry::default();
-    reverse.register_async_provider(CountedAsyncRegistryProvider {
-        descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-canonical").unwrap())
-            .with_aliases(["mime-cross-alias"]).unwrap(),
-        creations: Arc::new(AtomicUsize::new(0)),
-    }).unwrap();
-    assert!(reverse.register(TestMimeDetectorProvider::new(
-        "mime-sync-owner", 0, TestProviderBehavior::Success("application/x-sync"),
-    ).with_aliases(&["mime-async-canonical"])).is_err());
-    assert!(reverse.register(TestMimeDetectorProvider::new(
-        "mime-other-owner", 0, TestProviderBehavior::Success("application/x-sync"),
-    ).with_aliases(&["mime-cross-alias"])).is_err());
+    reverse
+        .register_async_provider(CountedAsyncRegistryProvider {
+            descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-canonical").unwrap())
+                .with_aliases(["mime-cross-alias"])
+                .unwrap(),
+            creations: Arc::new(AtomicUsize::new(0)),
+        })
+        .unwrap();
+    assert!(
+        reverse
+            .register(
+                TestMimeDetectorProvider::new(
+                    "mime-sync-owner",
+                    0,
+                    TestProviderBehavior::Success("application/x-sync"),
+                )
+                .with_aliases(&["mime-async-canonical"])
+            )
+            .is_err()
+    );
+    assert!(
+        reverse
+            .register(
+                TestMimeDetectorProvider::new(
+                    "mime-other-owner",
+                    0,
+                    TestProviderBehavior::Success("application/x-sync"),
+                )
+                .with_aliases(&["mime-cross-alias"])
+            )
+            .is_err()
+    );
 
     let reverse = MimeDetectorRegistry::default();
-    reverse.register(TestMimeDetectorProvider::new(
-        "mime-sync-alias-owner", 0, TestProviderBehavior::Success("application/x-sync"),
-    ).with_aliases(&["mime-alias-first"])).unwrap();
-    assert!(reverse.register_async_provider(CountedAsyncRegistryProvider {
-        descriptor: ProviderDescriptor::new(ProviderId::new("mime-alias-first").unwrap()),
-        creations: Arc::new(AtomicUsize::new(0)),
-    }).is_err(), "async canonical ID must not claim an existing sync alias");
+    reverse
+        .register(
+            TestMimeDetectorProvider::new(
+                "mime-sync-alias-owner",
+                0,
+                TestProviderBehavior::Success("application/x-sync"),
+            )
+            .with_aliases(&["mime-alias-first"]),
+        )
+        .unwrap();
+    assert!(
+        reverse
+            .register_async_provider(CountedAsyncRegistryProvider {
+                descriptor: ProviderDescriptor::new(ProviderId::new("mime-alias-first").unwrap()),
+                creations: Arc::new(AtomicUsize::new(0)),
+            })
+            .is_err(),
+        "async canonical ID must not claim an existing sync alias"
+    );
 
     let reverse = MimeDetectorRegistry::default();
-    reverse.register(TestMimeDetectorProvider::new(
-        "mime-sync-alias-first", 0, TestProviderBehavior::Success("application/x-sync"),
-    ).with_aliases(&["mime-shared-alias"])).unwrap();
-    assert!(reverse.register_async_provider(CountedAsyncRegistryProvider {
-        descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-alias-owner").unwrap())
-            .with_aliases(["mime-shared-alias"]).unwrap(),
-        creations: Arc::new(AtomicUsize::new(0)),
-    }).is_err(), "async alias must not claim an existing sync alias");
+    reverse
+        .register(
+            TestMimeDetectorProvider::new(
+                "mime-sync-alias-first",
+                0,
+                TestProviderBehavior::Success("application/x-sync"),
+            )
+            .with_aliases(&["mime-shared-alias"]),
+        )
+        .unwrap();
+    assert!(
+        reverse
+            .register_async_provider(CountedAsyncRegistryProvider {
+                descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-alias-owner").unwrap())
+                    .with_aliases(["mime-shared-alias"])
+                    .unwrap(),
+                creations: Arc::new(AtomicUsize::new(0)),
+            })
+            .is_err(),
+        "async alias must not claim an existing sync alias"
+    );
 
-    registry.register_async_provider(CountedAsyncRegistryProvider {
-        descriptor: ProviderDescriptor::new(ProviderId::new("mime-dual").unwrap()).with_priority(10),
-        creations: Arc::new(AtomicUsize::new(0)),
-    }).unwrap();
-    registry.register(TestMimeDetectorProvider::new(
-        "mime-dual", 0, TestProviderBehavior::Success("application/x-dual"),
-    ).with_aliases(&["mime-dual-alias"])).unwrap();
-    assert!(matches!(registry.create_async_backend(
-        &ProviderSelection::named("mime-dual-alias").unwrap(),
-        &MimeConfig::default(), &services(),
-    ), Err(MimeError::AsyncUnsupported)));
+    registry
+        .register_async_provider(CountedAsyncRegistryProvider {
+            descriptor: ProviderDescriptor::new(ProviderId::new("mime-dual").unwrap()).with_priority(10),
+            creations: Arc::new(AtomicUsize::new(0)),
+        })
+        .unwrap();
+    registry
+        .register(
+            TestMimeDetectorProvider::new("mime-dual", 0, TestProviderBehavior::Success("application/x-dual"))
+                .with_aliases(&["mime-dual-alias"]),
+        )
+        .unwrap();
+    assert!(matches!(
+        registry.create_async_backend(
+            &ProviderSelection::named("mime-dual-alias").unwrap(),
+            &MimeConfig::default(),
+            &services(),
+        ),
+        Err(MimeError::AsyncUnsupported)
+    ));
 }
 
 #[test]
 fn test_async_auto_uses_async_priority_for_a_shared_sync_canonical_id() {
     let registry = MimeDetectorRegistry::default();
-    registry.register(TestMimeDetectorProvider::new(
-        "mime-shared-priority", 1000, TestProviderBehavior::Success("application/x-sync"),
-    )).unwrap();
+    registry
+        .register(TestMimeDetectorProvider::new(
+            "mime-shared-priority",
+            1000,
+            TestProviderBehavior::Success("application/x-sync"),
+        ))
+        .unwrap();
     let shared_creations = Arc::new(AtomicUsize::new(0));
-    registry.register_async_provider(CountedAsyncRegistryProvider {
-        descriptor: ProviderDescriptor::new(ProviderId::new("mime-shared-priority").unwrap()).with_priority(0),
-        creations: Arc::clone(&shared_creations),
-    }).unwrap();
+    registry
+        .register_async_provider(CountedAsyncRegistryProvider {
+            descriptor: ProviderDescriptor::new(ProviderId::new("mime-shared-priority").unwrap()).with_priority(0),
+            creations: Arc::clone(&shared_creations),
+        })
+        .unwrap();
     let higher_async_creations = Arc::new(AtomicUsize::new(0));
-    registry.register_async_provider(CountedAsyncRegistryProvider {
-        descriptor: ProviderDescriptor::new(ProviderId::new("mime-higher-async").unwrap()).with_priority(10),
-        creations: Arc::clone(&higher_async_creations),
-    }).unwrap();
+    registry
+        .register_async_provider(CountedAsyncRegistryProvider {
+            descriptor: ProviderDescriptor::new(ProviderId::new("mime-higher-async").unwrap()).with_priority(10),
+            creations: Arc::clone(&higher_async_creations),
+        })
+        .unwrap();
     let selection = ProviderSelection::auto().with_fallback_policy(FallbackPolicy::Never);
-    assert!(registry.create_async_backend(&selection, &MimeConfig::default(), &services()).is_err());
+    assert!(
+        registry
+            .create_async_backend(&selection, &MimeConfig::default(), &services())
+            .is_err()
+    );
     assert_eq!(1, higher_async_creations.load(Ordering::SeqCst));
     assert_eq!(0, shared_creations.load(Ordering::SeqCst));
 }
@@ -1089,19 +1165,20 @@ struct ReentrantMimeDescriptorProvider {
 impl ProviderMetadata for ReentrantMimeDescriptorProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         if !self.entered.swap(true, Ordering::SeqCst) {
-            self.registry.register(TestMimeDetectorProvider::new(
-                "mime-sync-descriptor-reentry", 0, TestProviderBehavior::Success("application/x-inner"),
-            )).expect("descriptor callback should reenter sync registration");
+            self.registry
+                .register(TestMimeDetectorProvider::new(
+                    "mime-sync-descriptor-reentry",
+                    0,
+                    TestProviderBehavior::Success("application/x-inner"),
+                ))
+                .expect("descriptor callback should reenter sync registration");
         }
         self.descriptor.clone()
     }
 }
 
 impl ServiceProvider<MimeDetectorSpec> for ReentrantMimeDescriptorProvider {
-    fn create_configured(
-        &self,
-        _config: &MimeConfig,
-    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+    fn create_configured(&self, _config: &MimeConfig) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
         Err(ProviderFailure::unsupported(MimeError::AsyncUnsupported))
     }
 }
@@ -1116,10 +1193,12 @@ struct ReentrantAsyncMimeDescriptorProvider {
 impl ProviderMetadata for ReentrantAsyncMimeDescriptorProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         if !self.entered.swap(true, Ordering::SeqCst) {
-            self.registry.register_async_provider(CountedAsyncRegistryProvider {
-                descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-descriptor-reentry").unwrap()),
-                creations: Arc::new(AtomicUsize::new(0)),
-            }).expect("descriptor callback should reenter async registration");
+            self.registry
+                .register_async_provider(CountedAsyncRegistryProvider {
+                    descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-descriptor-reentry").unwrap()),
+                    creations: Arc::new(AtomicUsize::new(0)),
+                })
+                .expect("descriptor callback should reenter async registration");
         }
         self.descriptor.clone()
     }
@@ -1139,21 +1218,35 @@ impl AsyncMimeDetectorProvider for ReentrantAsyncMimeDescriptorProvider {
 fn test_mime_descriptor_callbacks_can_reenter_both_registries() {
     let registry = MimeDetectorRegistry::default();
     let sync_entered = Arc::new(AtomicBool::new(false));
-    registry.register(ReentrantMimeDescriptorProvider {
-        registry: registry.clone(),
-        descriptor: ProviderDescriptor::new(ProviderId::new("mime-sync-descriptor-owner").unwrap()),
-        entered: Arc::clone(&sync_entered),
-    }).expect("sync descriptor reentry should complete");
+    registry
+        .register(ReentrantMimeDescriptorProvider {
+            registry: registry.clone(),
+            descriptor: ProviderDescriptor::new(ProviderId::new("mime-sync-descriptor-owner").unwrap()),
+            entered: Arc::clone(&sync_entered),
+        })
+        .expect("sync descriptor reentry should complete");
     assert!(sync_entered.load(Ordering::SeqCst));
-    assert!(registry.provider_ids().iter().any(|id| id.as_str() == "mime-sync-descriptor-reentry"));
+    assert!(
+        registry
+            .provider_ids()
+            .iter()
+            .any(|id| id.as_str() == "mime-sync-descriptor-reentry")
+    );
 
     let registry = MimeDetectorRegistry::default();
     let async_entered = Arc::new(AtomicBool::new(false));
-    registry.register_async_provider(ReentrantAsyncMimeDescriptorProvider {
-        registry: registry.clone(),
-        descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-descriptor-owner").unwrap()),
-        entered: Arc::clone(&async_entered),
-    }).expect("async descriptor reentry should complete");
+    registry
+        .register_async_provider(ReentrantAsyncMimeDescriptorProvider {
+            registry: registry.clone(),
+            descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-descriptor-owner").unwrap()),
+            entered: Arc::clone(&async_entered),
+        })
+        .expect("async descriptor reentry should complete");
     assert!(async_entered.load(Ordering::SeqCst));
-    assert!(registry.async_provider_ids().iter().any(|id| id.as_str() == "mime-async-descriptor-reentry"));
+    assert!(
+        registry
+            .async_provider_ids()
+            .iter()
+            .any(|id| id.as_str() == "mime-async-descriptor-reentry")
+    );
 }

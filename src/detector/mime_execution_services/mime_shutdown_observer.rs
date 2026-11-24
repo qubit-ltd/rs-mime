@@ -193,6 +193,9 @@ mod tests {
     use std::thread;
     use std::thread::Thread;
 
+    use qubit_local_files::LocalFileSystem;
+    use qubit_local_files::options::LocalTempFileOptions;
+    use qubit_local_files::policy::LocalPrivacyRequirement;
     use qubit_operation::AdmissionError;
     use qubit_operation::GroupOptions;
     use qubit_operation::OperationManager;
@@ -208,12 +211,9 @@ mod tests {
     use crate::detector::MimeExecutionPort;
     use crate::detector::MimeExecutionServices;
     use crate::detector::MimeServiceLifecycle;
-    use crate::managed_temp_staging::create_empty_staged_with;
     use crate::managed_temp_staging::ManagedStagingLimits;
+    use crate::managed_temp_staging::create_empty_staged_with;
     use crate::managed_temp_staging::stage_owned_in;
-    use qubit_local_files::LocalFileSystem;
-    use qubit_local_files::options::LocalTempFileOptions;
-    use qubit_local_files::policy::LocalPrivacyRequirement;
 
     /// Counts shutdown calls while forwarding execution operations to a worker
     /// port.
@@ -239,7 +239,9 @@ mod tests {
 
     impl Debug for LateSubmissionExecutionPort {
         fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
-            formatter.debug_struct("LateSubmissionExecutionPort").finish_non_exhaustive()
+            formatter
+                .debug_struct("LateSubmissionExecutionPort")
+                .finish_non_exhaustive()
         }
     }
 
@@ -763,9 +765,11 @@ mod tests {
                 late_submission_rejected_in_hook.store(true, Ordering::SeqCst);
 
                 let (job_done_tx, job_done_rx) = mpsc::channel();
-                assert!(late_worker_port
-                    .try_dispatch(Box::new(move || job_done_tx.send(()).unwrap()))
-                    .is_ok());
+                assert!(
+                    late_worker_port
+                        .try_dispatch(Box::new(move || job_done_tx.send(()).unwrap()))
+                        .is_ok()
+                );
                 job_done_rx
                     .recv_timeout(std::time::Duration::from_secs(2))
                     .expect("worker must still run until after late admission is rejected");
@@ -877,19 +881,20 @@ mod tests {
         let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
             let reservation = scope.reserve_resource().unwrap();
             create_empty_staged_with(&scope, reservation, &limits, move || {
-                let fault = qubit_local_files::test_support::install_test_fault(
-                    "host-temp-file-recovery-clone-cleanup",
-                )
-                .expect("creation and initial cleanup fault should install");
-                let result = LocalFileSystem::host()?.create_temp_file_with_options(
-                    &LocalTempFileOptions::new().with_privacy(LocalPrivacyRequirement::PlatformDefault),
-                );
-                if let Err(error) = &result {
-                    if let Some(recovery) = error.temp_recovery() {
-                        let blocker = recovery.path().parent().unwrap().join("shutdown-recovery-blocker");
-                        fs::write(&blocker, b"retain failed-creation recovery").unwrap();
-                        *blocker_path_for_create.lock().unwrap() = Some(blocker);
-                    }
+                let fault =
+                    qubit_local_files::test_support::install_test_fault("host-temp-file-recovery-clone-cleanup")
+                        .expect("creation and initial cleanup fault should install");
+                let result = LocalFileSystem::host()?
+                    .create_temp_file_with_options(
+                        &LocalTempFileOptions::new().with_privacy(LocalPrivacyRequirement::PlatformDefault),
+                    )
+                    .map_err(Box::new);
+                if let Err(error) = &result
+                    && let Some(recovery) = error.temp_recovery()
+                {
+                    let blocker = recovery.path().parent().unwrap().join("shutdown-recovery-blocker");
+                    fs::write(&blocker, b"retain failed-creation recovery").unwrap();
+                    *blocker_path_for_create.lock().unwrap() = Some(blocker);
                 }
                 drop(fault);
                 result

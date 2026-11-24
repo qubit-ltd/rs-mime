@@ -32,6 +32,11 @@ pub(super) struct PendingReadTreeRoot {
 pub(super) type PendingRoots = Mutex<HashMap<OperationId, Weak<PendingReadTreeRoot>>>;
 
 /// Removes a pending entry only while it still names the root being retired.
+///
+/// # Parameters
+/// - `pending_roots`: Registry containing pending roots.
+/// - `operation`: Parent operation associated with the root.
+/// - `pending_root`: Root whose registration should be removed.
 pub(super) fn unregister_pending(
     pending_roots: &PendingRoots,
     operation: OperationId,
@@ -40,6 +45,12 @@ pub(super) fn unregister_pending(
     unregister_pending_ptr(pending_roots, operation, Arc::as_ptr(pending_root));
 }
 
+/// Removes a pending root only if the registry still holds the same allocation.
+///
+/// # Parameters
+/// - `pending_roots`: Registry containing pending roots.
+/// - `operation`: Parent operation associated with the root.
+/// - `pending_root`: Allocation identity expected for the registered root.
 fn unregister_pending_ptr(
     pending_roots: &PendingRoots,
     operation: OperationId,
@@ -55,6 +66,7 @@ fn unregister_pending_ptr(
 }
 
 impl Drop for PendingReadTreeRoot {
+    /// Removes this root's weak registration when its final owner is dropped.
     fn drop(&mut self) {
         if let Some(pending_roots) = self.pending_roots.upgrade() {
             unregister_pending_ptr(&pending_roots, self.operation, self as *const Self);

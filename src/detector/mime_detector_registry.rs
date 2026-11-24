@@ -29,8 +29,8 @@ use super::RepositoryMimeDetectorProvider;
 use super::internal::async_provider_entry::AsyncBackendSelection;
 use super::internal::async_provider_entry::AsyncProviderEntry;
 use crate::async_selection::AsyncProviderCandidate;
-use crate::provider_identity::CachedProvider;
-use crate::provider_identity::SelectorIdentityIndex;
+use crate::provider_selector_index::CachedProvider;
+use crate::provider_selector_index::ProviderSelectorIndex;
 
 /// Process-wide MIME detector Registry initialized with built-in providers.
 static GLOBAL_MIME_DETECTOR_REGISTRY: LazyLock<MimeDetectorRegistry> = LazyLock::new(MimeDetectorRegistry::builtin);
@@ -74,7 +74,7 @@ pub struct MimeDetectorRegistry {
     /// Explicit operation-capable factories, indexed by canonical ID/alias.
     async_providers: Arc<RwLock<AsyncProviderMap>>,
     /// Selector ownership shared across sync and async capabilities.
-    selector_ids: Arc<RwLock<SelectorIdentityIndex>>,
+    selector_ids: Arc<RwLock<ProviderSelectorIndex>>,
 }
 
 impl MimeDetectorRegistry {
@@ -92,7 +92,7 @@ impl MimeDetectorRegistry {
         let registry = {
             let providers = super::mime_detector_inventory::build_registry()
                 .expect("submitted MIME detector providers should register");
-            let selector_ids = SelectorIdentityIndex::from_descriptors(providers.descriptors());
+            let selector_ids = ProviderSelectorIndex::from_descriptors(providers.descriptors());
             Self {
                 providers,
                 async_providers: Arc::new(RwLock::new(HashMap::new())),
@@ -368,7 +368,9 @@ impl MimeDetectorRegistry {
         selectors.push(id.clone());
         selectors.extend(descriptor.aliases().iter().map(|alias| alias.as_str().to_owned()));
         if let Err((selector, owner)) = selector_ids.validate(&descriptor) {
-            return Err(format!("provider selector `{selector}` is already owned by `{owner}` (attempted `{id}`)"));
+            return Err(format!(
+                "provider selector `{selector}` is already owned by `{owner}` (attempted `{id}`)"
+            ));
         }
         for selector in &selectors {
             if let Some(existing) = providers.get(selector) {
@@ -425,12 +427,15 @@ impl MimeDetectorRegistry {
         let provider: Arc<dyn ProviderDefinition<MimeDetectorSpec>> = Arc::new(provider);
         let descriptor = provider.descriptor();
         let mut selector_ids = self.selector_ids.write().unwrap_or_else(|e| e.into_inner());
-        selector_ids.validate(&descriptor).map_err(|(selector, owner)| RegistryMutationError::DuplicateSelector {
-            selector: selector.into_boxed_str(),
-            existing_provider: owner.into_boxed_str(),
-            provider: descriptor.id().as_str().into(),
-        })?;
-        self.providers.register_shared(Arc::new(CachedProvider::new(provider, descriptor.clone())))?;
+        selector_ids
+            .validate(&descriptor)
+            .map_err(|(selector, owner)| RegistryMutationError::DuplicateSelector {
+                selector: selector.into_boxed_str(),
+                existing_provider: owner.into_boxed_str(),
+                provider: descriptor.id().as_str().into(),
+            })?;
+        self.providers
+            .register_shared(Arc::new(CachedProvider::new(provider, descriptor.clone())))?;
         selector_ids.insert(&descriptor);
         Ok(())
     }
@@ -462,12 +467,15 @@ impl MimeDetectorRegistry {
         }
         let descriptor = provider.descriptor();
         let mut selector_ids = self.selector_ids.write().unwrap_or_else(|e| e.into_inner());
-        selector_ids.validate(&descriptor).map_err(|(selector, owner)| RegistryMutationError::DuplicateSelector {
-            selector: selector.into_boxed_str(),
-            existing_provider: owner.into_boxed_str(),
-            provider: descriptor.id().as_str().into(),
-        })?;
-        self.providers.register_shared(Arc::new(CachedProvider::new(provider, descriptor.clone())))?;
+        selector_ids
+            .validate(&descriptor)
+            .map_err(|(selector, owner)| RegistryMutationError::DuplicateSelector {
+                selector: selector.into_boxed_str(),
+                existing_provider: owner.into_boxed_str(),
+                provider: descriptor.id().as_str().into(),
+            })?;
+        self.providers
+            .register_shared(Arc::new(CachedProvider::new(provider, descriptor.clone())))?;
         selector_ids.insert(&descriptor);
         Ok(())
     }
@@ -554,7 +562,7 @@ impl Default for MimeDetectorRegistry {
         Self {
             providers: ProviderRegistry::default(),
             async_providers: Arc::new(RwLock::new(HashMap::new())),
-            selector_ids: Arc::new(RwLock::new(SelectorIdentityIndex::default())),
+            selector_ids: Arc::new(RwLock::new(ProviderSelectorIndex::default())),
         }
     }
 }

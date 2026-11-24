@@ -87,6 +87,20 @@ pub(in crate::detector) async fn match_content(
     match_content_with_budget(scope, repository, bytes, &mut work).await
 }
 
+/// Evaluates repository rules while sharing one cooperative work budget.
+///
+/// # Parameters
+/// - `scope`: Operation scope used to detect cancellation between batches.
+/// - `repository`: Immutable MIME rules to evaluate.
+/// - `bytes`: Content prefix tested against repository magic rules.
+/// - `work`: Work counter shared with nested matcher evaluation.
+///
+/// # Returns
+/// Matching MIME candidates at the highest matching priority, in repository
+/// order.
+///
+/// # Errors
+/// Returns a detector backend error if the operation is stopped.
 async fn match_content_with_budget(
     scope: &OperationScope,
     repository: &MimeRepository,
@@ -138,6 +152,13 @@ async fn match_content_with_budget(
         .collect())
 }
 
+/// Converts an operation stop reason into the repository backend error shape.
+///
+/// # Parameters
+/// - `reason`: Stop cause returned by the operation context.
+///
+/// # Returns
+/// A detector error retaining the stop cause for the caller.
 fn stopped(reason: qubit_operation::StopReason) -> MimeError {
     MimeError::DetectorBackend {
         backend: "repository".to_owned(),
@@ -207,9 +228,45 @@ mod cooperative_matcher_tests {
 
     use super::match_content;
     use super::match_content_with_budget;
+    use super::select_candidates;
+    use crate::MimeCandidate;
+    use crate::MimeDetectionPolicy;
     use crate::MimeRepository;
     use crate::repository::mime_magic_matcher::MATCH_WORK_PER_BATCH;
     use crate::repository::mime_magic_matcher::MatcherWorkBudget;
+
+    #[test]
+    fn test_candidate_selection_filters_unmapped_backend_results() {
+        let repository = MimeRepository::from_xml(
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+                <mime-type type="application/x-known"/>
+            </mime-info>"#,
+        )
+        .unwrap();
+        let backend_candidates = vec![MimeCandidate {
+            mime_type: "application/x-not-registered".to_owned(),
+            rank: 7,
+        }];
+
+        assert_eq!(
+            backend_candidates,
+            select_candidates(
+                &repository,
+                backend_candidates.clone(),
+                None,
+                MimeDetectionPolicy::Freedesktop,
+            )
+        );
+        assert!(
+            select_candidates(
+                &repository,
+                backend_candidates,
+                Some("unknown.bin"),
+                MimeDetectionPolicy::Freedesktop,
+            )
+            .is_empty()
+        );
+    }
 
     struct ThreadWake(std::thread::Thread);
     impl Wake for ThreadWake {
@@ -232,7 +289,7 @@ mod cooperative_matcher_tests {
 
     #[test]
     #[ignore = "manual debug-profile sampler for MIME-047 matcher work"]
-    fn sample_matcher_workloads() {
+    fn test_reports_work_for_manual_matcher_samples() {
         const ITERATIONS: usize = 200;
         let early_fail = "<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\"><mime-type type=\"application/x-early\"><magic priority=\"50\"><match type=\"string\" value=\"NEVER\" offset=\"0:255\"/></magic></mime-type></mime-info>".to_owned();
         let late_mismatch = format!(
@@ -290,12 +347,8 @@ mod cooperative_matcher_tests {
                         let mut context = Context::from_waker(&waker);
                         for _ in 0..ITERATIONS {
                             let mut work = MatcherWorkBudget::default();
-                            let mut matching = Box::pin(match_content_with_budget(
-                                &scope,
-                                &repository,
-                                &input,
-                                &mut work,
-                            ));
+                            let mut matching =
+                                Box::pin(match_content_with_budget(&scope, &repository, &input, &mut work));
                             loop {
                                 let poll_started = Instant::now();
                                 let result = matching.as_mut().poll(&mut context);
@@ -324,11 +377,10 @@ mod cooperative_matcher_tests {
                 }))
                 .unwrap();
                 let outcome = block_on(operation.wait_outcome()).unwrap();
-                let (async_ns_per_query, maximum_poll_ns, work_per_query, maximum_poll_work, yields) =
-                    match outcome {
-                        OperationOutcome::Succeeded(stats) => stats,
-                        other => panic!("matcher sample did not succeed: {other:?}"),
-                    };
+                let (async_ns_per_query, maximum_poll_ns, work_per_query, maximum_poll_work, yields) = match outcome {
+                    OperationOutcome::Succeeded(stats) => stats,
+                    other => panic!("matcher sample did not succeed: {other:?}"),
+                };
                 println!(
                     "matcher {name} round={round}: sync_ns/query={sync_ns_per_query}, async_ns/query={async_ns_per_query}, work/query={work_per_query}, max_poll_work={maximum_poll_work}, max_poll_ns={maximum_poll_ns}, yields={yields}"
                 );

@@ -12,4 +12,5 @@ pub(super) mod async_provider_entry;
 pub(super) mod async_repository_matcher;
 pub(super) mod mime_budget;
 pub(super) mod mime_submission;
+pub(super) mod provider_read_plan;
 pub(super) mod remaining_content_reader;
