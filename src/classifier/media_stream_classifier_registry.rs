@@ -531,7 +531,10 @@ mod async_catalog_recovery_tests {
         }));
         assert!(catalog_poisoned.is_err());
         let selector_index_poisoned = catch_unwind(AssertUnwindSafe(|| {
-            let _guard = registry.selector_ids.write().expect("selector index should be unpoisoned");
+            let _guard = registry
+                .selector_ids
+                .write()
+                .expect("selector index should be unpoisoned");
             panic!("poison classifier selector index");
         }));
         assert!(selector_index_poisoned.is_err());
@@ -555,6 +558,10 @@ mod async_catalog_recovery_tests {
         let async_ids = registry.async_provider_ids();
         assert!(async_ids.iter().any(|id| id.as_str() == "ffprobe"));
         assert!(async_ids.iter().any(|id| id.as_str() == "classifier-catalog-recovery"));
-        assert!(registry.register_async_provider(FfprobeCommandMediaStreamClassifierProvider).is_err());
+        assert!(
+            registry
+                .register_async_provider(FfprobeCommandMediaStreamClassifierProvider)
+                .is_err()
+        );
     }
 }

@@ -575,10 +575,10 @@ mod async_catalog_recovery_tests {
 
     use qubit_operation::GroupOptions;
     use qubit_operation::OperationManager;
-    use qubit_spi::ProviderSelection;
     use qubit_spi::ProviderDescriptor;
     use qubit_spi::ProviderId;
     use qubit_spi::ProviderMetadata;
+    use qubit_spi::ProviderSelection;
 
     use super::AsyncMimeDetectorProvider;
     use super::FileCommandMimeDetectorProvider;
@@ -615,7 +615,10 @@ mod async_catalog_recovery_tests {
         }));
         assert!(catalog_poisoned.is_err());
         let selector_index_poisoned = catch_unwind(AssertUnwindSafe(|| {
-            let _guard = registry.selector_ids.write().expect("selector index should be unpoisoned");
+            let _guard = registry
+                .selector_ids
+                .write()
+                .expect("selector index should be unpoisoned");
             panic!("poison detector selector index");
         }));
         assert!(selector_index_poisoned.is_err());
@@ -639,6 +642,10 @@ mod async_catalog_recovery_tests {
         let async_ids = registry.async_provider_ids();
         assert!(async_ids.iter().any(|id| id.as_str() == "repository"));
         assert!(async_ids.iter().any(|id| id.as_str() == "catalog-recovery"));
-        assert!(registry.register_async_provider(FileCommandMimeDetectorProvider).is_err());
+        assert!(
+            registry
+                .register_async_provider(FileCommandMimeDetectorProvider)
+                .is_err()
+        );
     }
 }

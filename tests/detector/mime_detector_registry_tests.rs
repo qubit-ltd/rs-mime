@@ -630,16 +630,18 @@ fn test_async_detector_auto_breaks_equal_priority_by_canonical_id() {
         ("auto-tie-zeta", Arc::clone(&zeta)),
         ("auto-tie-alpha", Arc::clone(&alpha)),
     ] {
-        registry.register_async_provider(FailingAsyncRegistryProvider {
-            descriptor: ProviderDescriptor::new(ProviderId::new(id).unwrap()).with_priority(50),
-            creations,
-            initialization_failure: true,
-        }).unwrap();
+        registry
+            .register_async_provider(FailingAsyncRegistryProvider {
+                descriptor: ProviderDescriptor::new(ProviderId::new(id).unwrap()).with_priority(50),
+                creations,
+                initialization_failure: true,
+            })
+            .unwrap();
     }
 
-    let error = registry.create_async_backend(
-        &ProviderSelection::auto(), &MimeConfig::default(), &services(),
-    ).expect_err("the lexically first tied candidate should fail first");
+    let error = registry
+        .create_async_backend(&ProviderSelection::auto(), &MimeConfig::default(), &services())
+        .expect_err("the lexically first tied candidate should fail first");
     assert!(error.to_string().contains("auto-tie-alpha"), "{error}");
     assert_eq!(1, alpha.load(Ordering::SeqCst));
     assert_eq!(0, zeta.load(Ordering::SeqCst));
