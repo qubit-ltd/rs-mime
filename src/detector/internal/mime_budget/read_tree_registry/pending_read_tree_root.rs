@@ -26,3 +26,18 @@ pub(super) struct PendingReadTreeRoot {
 
 /// Weak lookup table for pending roots keyed by their parent operation.
 pub(super) type PendingRoots = Mutex<HashMap<OperationId, Weak<PendingReadTreeRoot>>>;
+
+/// Removes a pending entry only while it still names the root being retired.
+pub(super) fn unregister_pending(
+    pending_roots: &PendingRoots,
+    operation: OperationId,
+    pending_root: &Arc<PendingReadTreeRoot>,
+) {
+    let mut pending_roots = pending_roots.lock().unwrap_or_else(|e| e.into_inner());
+    let matches = pending_roots
+        .get(&operation)
+        .is_some_and(|registered| registered.as_ptr() == Arc::as_ptr(pending_root));
+    if matches {
+        pending_roots.remove(&operation);
+    }
+}

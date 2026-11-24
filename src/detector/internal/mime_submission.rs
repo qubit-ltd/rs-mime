@@ -27,6 +27,47 @@ use crate::detector::mime_input::OwnedMimeInput;
 use crate::detector::mime_operation::MimeSubmitRejection;
 use crate::detector::mime_operation_options::MimeOperationOptions;
 
+/// Immutable provider-read strategy captured once before submission locking.
+#[derive(Debug, Clone, Copy)]
+pub(in crate::detector) struct ProviderReadPlan {
+    /// Minimum content extent declared by the backend.
+    pub requirement: ContentRequirement,
+    /// Same-object random-access capability declared by the backend.
+    pub random_access: crate::RandomAccessCapability,
+    /// Whether provider content is exposed only through a metered session.
+    pub managed_provider_reads: bool,
+}
+
+impl ProviderReadPlan {
+    /// Captures extension capabilities once and enforces managed reads for
+    /// complete and same-object sampling backends.
+    pub(in crate::detector) fn capture(
+        backend: &dyn AsyncMimeDetectorBackend,
+        trusted_self_metered_file: bool,
+    ) -> Self {
+        let requirement = backend.content_requirement();
+        let random_access = backend.random_access_capability();
+        let requested_managed_reads = backend.uses_managed_provider_reads();
+        let managed_provider_reads = requested_managed_reads
+            || (matches!(requirement, ContentRequirement::Complete) && !trusted_self_metered_file)
+            || random_access == crate::RandomAccessCapability::SamplesSameObject;
+        Self {
+            requirement,
+            random_access,
+            managed_provider_reads,
+        }
+    }
+
+    /// Returns the extent needed after filename short-circuiting.
+    pub(in crate::detector) fn requirement_for(self, filename_short_circuit: bool) -> ContentRequirement {
+        if filename_short_circuit {
+            ContentRequirement::Prefix(0)
+        } else {
+            self.requirement
+        }
+    }
+}
+
 /// Shared one-time ownership cell used to return an input after rejection.
 pub(in crate::detector) type InputCell = Arc<Mutex<Option<OwnedMimeInput>>>;
 
@@ -187,8 +228,8 @@ pub(in crate::detector) struct MimeSubmission {
     pub services: Arc<MimeExecutionServices>,
     /// Detector implementation to invoke.
     pub backend: Arc<dyn AsyncMimeDetectorBackend>,
-    /// Whether provider input must be exposed only through metered reads.
-    pub managed_provider_reads: bool,
+    /// Immutable backend read strategy shared by preflight and execution.
+    pub read_plan: ProviderReadPlan,
     /// Identifier recorded in the returned report.
     pub backend_id: String,
     /// Unique repository filename winner determined during submission
@@ -220,7 +261,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
         input,
         services,
         backend,
-        managed_provider_reads,
+        read_plan,
         backend_id,
         filename_winner,
         max_buffer_size,
@@ -299,14 +340,14 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                     budget: MimeBudgetSummary::default(),
                 });
             }
-            if managed_provider_reads {
+            if read_plan.managed_provider_reads {
                 let request_limit = options
                     .max_read_bytes
                     .unwrap_or(services.max_read_bytes)
                     .min(services.max_read_bytes);
                 let payload_limit = options.max_buffer_bytes.unwrap_or(max_buffer_size).min(max_buffer_size);
                 let mut session =
-                    if backend.random_access_capability() == crate::RandomAccessCapability::SamplesSameObject {
+                    if read_plan.random_access == crate::RandomAccessCapability::SamplesSameObject {
                         MeteredReadSession::open_random_access(
                             &file_system,
                             &path,
@@ -348,8 +389,8 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                     candidates.staging_bytes.max(read_tree.staging_usage().peak()),
                 )
             } else {
-                let candidates = if matches!(backend.content_requirement(), ContentRequirement::Complete)
-                    || backend.random_access_capability() == crate::RandomAccessCapability::SamplesSameObject
+                let candidates = if matches!(read_plan.requirement, ContentRequirement::Complete)
+                    || read_plan.random_access == crate::RandomAccessCapability::SamplesSameObject
                 {
                     backend
                         .guess_content_in(
@@ -364,7 +405,7 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                 } else {
                     let max_bytes = prefix_buffer_bytes(
                         &options,
-                        match backend.content_requirement() {
+                        match read_plan.requirement {
                             ContentRequirement::Prefix(required) => required,
                             ContentRequirement::Complete => unreachable!("complete content was handled above"),
                         },
@@ -440,13 +481,20 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
 mod tests {
     use std::sync::Arc;
     use std::sync::Mutex;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
 
     use super::cell;
     use super::prefix_buffer_bytes;
     use super::preflight;
+    use super::ProviderReadPlan;
     use super::return_input;
     use super::take;
     use crate::ContentRequirement;
+    use crate::AsyncMimeDetectorBackend;
+    use crate::BorrowedMimeInput;
+    use crate::MimeCandidates;
+    use crate::MimeFuture;
     use crate::MimeError;
     use crate::MimeOperationOptions;
     use crate::RandomAccessCapability;
@@ -455,6 +503,46 @@ mod tests {
     use crate::detector::mime_input::InputExtent;
     use crate::detector::mime_input::OwnedMimeInput;
     use crate::detector::mime_operation::MimeSubmitRejection;
+
+    #[derive(Debug, Default)]
+    struct CapabilityHooks {
+        requirement: AtomicUsize,
+        random_access: AtomicUsize,
+        managed: AtomicUsize,
+    }
+
+    impl AsyncMimeDetectorBackend for CapabilityHooks {
+        fn content_requirement(&self) -> ContentRequirement {
+            self.requirement.fetch_add(1, Ordering::SeqCst);
+            ContentRequirement::Complete
+        }
+
+        fn random_access_capability(&self) -> RandomAccessCapability {
+            self.random_access.fetch_add(1, Ordering::SeqCst);
+            RandomAccessCapability::Unsupported
+        }
+
+        fn uses_managed_provider_reads(&self) -> bool {
+            self.managed.fetch_add(1, Ordering::SeqCst);
+            false
+        }
+
+        fn guess_content_in<'a>(
+            &'a self,
+            _scope: &'a qubit_operation::OperationScope,
+            _input: BorrowedMimeInput<'a>,
+            _options: &'a MimeOperationOptions,
+        ) -> MimeFuture<'a, MimeCandidates> {
+            Box::pin(async {
+                Ok(MimeCandidates {
+                    candidates: Vec::new(),
+                    inspected_extent: crate::InspectedExtent::Prefix(0),
+                    retained_prefix: Vec::new(),
+                    staging_bytes: 0,
+                })
+            })
+        }
+    }
 
     #[derive(Debug, Default)]
     struct NoopPort {
@@ -477,6 +565,26 @@ mod tests {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
         let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
         Arc::new(MimeExecutionServices::new(manager, group, Arc::new(NoopPort::default()), 32).unwrap())
+    }
+
+    #[test]
+    fn provider_read_plan_captures_hooks_once_and_enforces_complete_reads() {
+        let backend = CapabilityHooks::default();
+        let plan = ProviderReadPlan::capture(&backend, false);
+
+        assert_eq!(1, backend.requirement.load(Ordering::SeqCst));
+        assert_eq!(1, backend.random_access.load(Ordering::SeqCst));
+        assert_eq!(1, backend.managed.load(Ordering::SeqCst));
+        assert!(plan.managed_provider_reads);
+        assert_eq!(ContentRequirement::Complete, plan.requirement);
+    }
+
+    #[test]
+    fn provider_read_plan_allows_only_trusted_file_to_keep_self_metered_complete_reads() {
+        let backend = CapabilityHooks::default();
+        let plan = ProviderReadPlan::capture(&backend, true);
+
+        assert!(!plan.managed_provider_reads);
     }
 
     fn bytes_input() -> OwnedMimeInput {

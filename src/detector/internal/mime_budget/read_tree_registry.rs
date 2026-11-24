@@ -138,7 +138,8 @@ impl ReadTreeRegistry {
             pending_root
         }?;
         let pending_state = pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
-        matches!(&*pending_state, PendingReadTreeRootState::Reserved(_)).then(|| pending_root.root.child(scope_limit))
+        matches!(&*pending_state, PendingReadTreeRootState::Reserved(_))
+            .then(|| pending_root.root.child(scope_limit))
     }
 
     /// Reserves a parent binding whose anchor will be committed by an
@@ -263,6 +264,7 @@ mod tests {
     use std::pin::Pin;
     use std::sync::Arc;
     use std::sync::Mutex;
+    use std::sync::Weak;
     use std::task::Context;
     use std::task::Poll;
     use std::task::Wake;
@@ -281,6 +283,10 @@ mod tests {
     use super::PendingBinding;
     use super::ReadTreeContext;
     use super::ReadTreeRegistry;
+    use super::pending_read_tree_root::PendingReadTreeRoot;
+    use super::pending_read_tree_root::PendingRoots;
+    use super::pending_read_tree_root::unregister_pending;
+    use super::pending_read_tree_root_state::PendingReadTreeRootState;
 
     struct ThreadWake(thread::Thread);
 
@@ -314,7 +320,9 @@ mod tests {
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let mut operation = group
             .as_async()
-            .try_submit(Default::default(), |scope| async move { Ok::<_, ()>(scope.id()) })
+            .try_submit(Default::default(), |scope| async move {
+                Ok::<_, ()>(scope.id())
+            })
             .unwrap();
 
         match block_on(operation.wait_outcome()).unwrap() {
@@ -325,15 +333,16 @@ mod tests {
 
     /// Runs a test closure in a managed parent operation and waits for
     /// settlement.
-    fn with_parent_scope<T: Send + 'static>(body: impl FnOnce(&OperationScope) -> T + Send + 'static) -> T {
+    fn with_parent_scope<T: Send + 'static>(
+        body: impl FnOnce(&OperationScope) -> T + Send + 'static,
+    ) -> T {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let mut operation = group
             .as_async()
-            .try_submit(
-                Default::default(),
-                move |scope| async move { Ok::<_, ()>(body(&scope)) },
-            )
+            .try_submit(Default::default(), move |scope| async move {
+                Ok::<_, ()>(body(&scope))
+            })
             .unwrap();
         let result = match block_on(operation.wait_outcome()).unwrap() {
             OperationOutcome::Succeeded(result) => result,
@@ -429,11 +438,41 @@ mod tests {
             drop(pending);
             assert!(registry_body.for_operation(operation).is_none());
 
-            let capacity = scope.reserve_resource().expect("dropped ticket releases its slot");
+            let capacity = scope
+                .reserve_resource()
+                .expect("dropped ticket releases its slot");
             drop(capacity);
             operation
         });
         assert!(registry.for_operation(operation).is_none());
+    }
+
+    #[test]
+    fn test_pending_root_removal_preserves_later_replacement() {
+        let operation = operation_id();
+        let old = Arc::new(PendingReadTreeRoot {
+            root: ReadTreeContext::new(8),
+            state: Mutex::new(PendingReadTreeRootState::Detached),
+        });
+        let replacement = Arc::new(PendingReadTreeRoot {
+            root: ReadTreeContext::new(16),
+            state: Mutex::new(PendingReadTreeRootState::Detached),
+        });
+        let pending_roots: PendingRoots = Mutex::new(std::collections::HashMap::new());
+        pending_roots
+            .lock()
+            .unwrap()
+            .insert(operation, Arc::downgrade(&replacement));
+
+        unregister_pending(&pending_roots, operation, &old);
+
+        let registered = pending_roots
+            .lock()
+            .unwrap()
+            .get(&operation)
+            .and_then(Weak::upgrade)
+            .expect("replacement pending root remains indexed");
+        assert!(Arc::ptr_eq(&registered, &replacement));
     }
 
     #[test]
@@ -443,11 +482,17 @@ mod tests {
         let operation = with_parent_scope(move |scope| {
             let operation = scope.id();
             let first = registry_body.reserve_child_for_parent(scope, 8, 4).unwrap();
-            let second = registry_body.reserve_child_for_parent(scope, 16, 6).unwrap();
+            let second = registry_body
+                .reserve_child_for_parent(scope, 16, 6)
+                .unwrap();
             assert!(registry_body.for_operation(operation).is_none());
 
-            let first = first.commit().expect("first accepted child commits its root");
-            let second = second.commit().expect("later accepted child reuses the root");
+            let first = first
+                .commit()
+                .expect("first accepted child commits its root");
+            let second = second
+                .commit()
+                .expect("later accepted child reuses the root");
             assert!(Arc::ptr_eq(&first.tree, &second.tree));
             assert_eq!(first.remaining(), 4);
             assert_eq!(second.remaining(), 6);
@@ -586,8 +631,12 @@ mod tests {
         let mut parent = group
             .as_async()
             .try_submit(Default::default(), move |scope| async move {
-                let first = body_registry.reserve_child_for_parent(&scope, 8, 4).unwrap();
-                let second = body_registry.reserve_child_for_parent(&scope, 8, 4).unwrap();
+                let first = body_registry
+                    .reserve_child_for_parent(&scope, 8, 4)
+                    .unwrap();
+                let second = body_registry
+                    .reserve_child_for_parent(&scope, 8, 4)
+                    .unwrap();
                 pending_tx.send((first, second)).unwrap();
                 Ok::<_, ()>(())
             })
@@ -621,18 +670,25 @@ mod tests {
         let registry = Arc::new(ReadTreeRegistry::default());
         let body_registry = Arc::clone(&registry);
         let (reason_tx, reason_rx) = std::sync::mpsc::channel();
-        let mut parent = block_on(group.try_submit_async(Default::default(), move |scope| async move {
-            let pending = body_registry.reserve_child_for_parent(&scope, 8, 4).unwrap();
-            assert_eq!(
-                qubit_operation::StopRequestStatus::Accepted,
-                scope.request_stop(StopReason::UserCancelled)
-            );
-            poison_mutex(&body_registry.pending_roots);
-            let kind = pending.commit().expect_err("a stopped accepted parent rejects commit");
-            assert!(body_registry.for_operation(scope.id()).is_none());
-            reason_tx.send(kind).unwrap();
-            Ok::<_, ()>(())
-        }))
+        let mut parent = block_on(group.try_submit_async(
+            Default::default(),
+            move |scope| async move {
+                let pending = body_registry
+                    .reserve_child_for_parent(&scope, 8, 4)
+                    .unwrap();
+                assert_eq!(
+                    qubit_operation::StopRequestStatus::Accepted,
+                    scope.request_stop(StopReason::UserCancelled)
+                );
+                poison_mutex(&body_registry.pending_roots);
+                let kind = pending
+                    .commit()
+                    .expect_err("a stopped accepted parent rejects commit");
+                assert!(body_registry.for_operation(scope.id()).is_none());
+                reason_tx.send(kind).unwrap();
+                Ok::<_, ()>(())
+            },
+        ))
         .unwrap();
 
         assert_eq!(ResourceManageErrorKind::Stopped, reason_rx.recv().unwrap());
@@ -671,7 +727,9 @@ mod tests {
         for _ in 0..32 {
             let mut operation = group
                 .as_async()
-                .try_submit(Default::default(), |scope| async move { Ok::<_, ()>(scope.id()) })
+                .try_submit(Default::default(), |scope| async move {
+                    Ok::<_, ()>(scope.id())
+                })
                 .unwrap();
             let id = match block_on(operation.wait_outcome()).unwrap() {
                 OperationOutcome::Succeeded(id) => id,
@@ -699,7 +757,9 @@ mod tests {
 
         assert!(Arc::ptr_eq(
             &replacement,
-            &registry.for_operation(id).expect("replacement should remain bound")
+            &registry
+                .for_operation(id)
+                .expect("replacement should remain bound")
         ));
         assert_eq!(1, registry.roots.lock().unwrap().len());
         drop(replacement);
@@ -743,6 +803,12 @@ mod tests {
         );
 
         drop(context);
-        assert!(registry.roots.lock().unwrap_or_else(|e| e.into_inner()).is_empty());
+        assert!(
+            registry
+                .roots
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        );
     }
 }

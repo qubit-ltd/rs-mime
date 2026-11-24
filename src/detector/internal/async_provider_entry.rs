@@ -16,6 +16,7 @@ pub(crate) type AsyncBackendSelection = (
     String,
     Arc<dyn crate::AsyncMimeDetectorBackend>,
     Option<Arc<crate::MimeRepository>>,
+    bool,
 );
 
 /// Async factory metadata retained for every selector registered to a provider.
@@ -31,6 +32,9 @@ pub(crate) struct AsyncProviderEntry {
     pub(crate) provider: Arc<dyn AsyncMimeDetectorProvider>,
     /// Whether this exact crate built-in uses the bundled repository.
     pub(crate) uses_bundled_repository: bool,
+    /// Whether this exact crate-owned factory uses its private self-metered
+    /// provider staging path.
+    pub(crate) self_metered_provider_reads: bool,
 }
 
 impl std::fmt::Debug for AsyncProviderEntry {
@@ -48,6 +52,7 @@ impl std::fmt::Debug for AsyncProviderEntry {
             .field("priority", &self.priority)
             .field("is_builtin", &self.is_builtin)
             .field("uses_bundled_repository", &self.uses_bundled_repository)
+            .field("self_metered_provider_reads", &self.self_metered_provider_reads)
             .finish_non_exhaustive()
     }
 }

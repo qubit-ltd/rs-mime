@@ -256,7 +256,7 @@ fn test_operation_provider_random_access_backend_preserves_sample_extent() {
 }
 
 #[test]
-fn test_complete_extension_opts_into_metered_sequential_reads_and_eof_probe() {
+fn test_complete_extension_always_uses_metered_sequential_reads_and_eof_probe() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
     let services =
@@ -264,16 +264,6 @@ fn test_complete_extension_opts_into_metered_sequential_reads_and_eof_probe() {
     services.prepare().unwrap();
 
     let opens = Arc::new(AtomicUsize::new(0));
-    let (read_started, _read_started_rx) = mpsc::channel();
-    let file_system = qubit_fs::AsyncFileSystem::from_spi(SnapshotGateFileSystem::new(
-        Arc::new(Mutex::new(b"full".to_vec())),
-        Arc::clone(&opens),
-        read_started,
-        Arc::new(std::sync::atomic::AtomicBool::new(true)),
-        Arc::new(Mutex::new(None)),
-        None,
-    ))
-    .unwrap();
 
     let registry = MimeDetectorRegistry::default();
     registry.register_async_provider(CompleteSessionProvider).unwrap();
@@ -285,30 +275,162 @@ fn test_complete_extension_opts_into_metered_sequential_reads_and_eof_probe() {
             &qubit_spi::ProviderSelection::named("complete-session").unwrap(),
         )
         .unwrap();
-    let mut operation = runtime
-        .try_submit_detection(
-            OwnedMimeInput::Provider {
-                file_system: Arc::new(file_system),
-                path: qubit_fs::Path::parse("/complete").unwrap(),
-            },
-            MimeOperationOptions::default(),
-        )
-        .unwrap_or_else(|_| panic!("complete session operation should be admitted"));
+    for selector in ["file", "complete-session"] {
+        let (read_started, _read_started_rx) = mpsc::channel();
+        let file_system = qubit_fs::AsyncFileSystem::from_spi(SnapshotGateFileSystem::new(
+            Arc::new(Mutex::new(b"full".to_vec())),
+            Arc::clone(&opens),
+            read_started,
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            Arc::new(Mutex::new(None)),
+            None,
+        ))
+        .unwrap();
+        let mut operation = runtime
+            .try_submit_detection(
+                OwnedMimeInput::Provider {
+                    file_system: Arc::new(file_system),
+                    path: qubit_fs::Path::parse("/complete").unwrap(),
+                },
+                MimeOperationOptions::default(),
+            )
+            .unwrap_or_else(|_| panic!("complete session operation should be admitted"));
 
-    match block_on(operation.wait_outcome()).unwrap() {
-        qubit_operation::OperationOutcome::Succeeded(report) => {
-            assert_eq!(report.mime_type.as_deref(), Some("application/x-complete-session"));
-            assert_eq!(
-                report.budget.bytes_read, 4,
-                "the EOF probe transfers no additional bytes"
-            );
+        match block_on(operation.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(report) => {
+                assert_eq!(report.mime_type.as_deref(), Some("application/x-complete-session"));
+                assert_eq!(
+                    report.budget.bytes_read, 4,
+                    "the EOF probe transfers no additional bytes"
+                );
+            }
+            other => panic!("custom provider selected by {selector} should receive managed input: {other:?}"),
         }
-        other => panic!("complete session backend should inspect its opened stream: {other:?}"),
     }
-    assert_eq!(1, opens.load(Ordering::SeqCst));
+    assert_eq!(2, opens.load(Ordering::SeqCst));
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).is_ok());
     assert!(shutdown.stop_services().is_ok());
+}
+
+#[test]
+fn test_provider_capability_hook_can_reenter_runtime_before_submission_lock() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
+    services.prepare().unwrap();
+
+    let backend = Arc::new(ReentrantBackend::default());
+    let registry = MimeDetectorRegistry::default();
+    registry
+        .register_async_provider(ReentrantProvider(Arc::clone(&backend)))
+        .unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("reentrant").unwrap(),
+        )
+        .unwrap();
+    *backend.runtime.lock().unwrap() = Some(runtime.clone());
+
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(b"outer".as_slice()), InputExtent::Complete),
+            MimeOperationOptions::default(),
+        )
+        .unwrap_or_else(|_| panic!("reentrant capability hook must not block submission"));
+    assert!(matches!(
+        block_on(operation.wait_outcome()).unwrap(),
+        qubit_operation::OperationOutcome::Succeeded(_)
+    ));
+    assert_eq!(2, backend.requirement_calls.load(Ordering::SeqCst));
+    assert_eq!(2, backend.random_access_calls.load(Ordering::SeqCst));
+    assert_eq!(2, backend.managed_reads_calls.load(Ordering::SeqCst));
+
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).is_ok());
+    assert!(shutdown.stop_services().is_ok());
+}
+
+#[derive(Debug)]
+struct ReentrantProvider(Arc<ReentrantBackend>);
+
+impl ProviderMetadata for ReentrantProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("reentrant").unwrap())
+    }
+}
+
+impl AsyncMimeDetectorProvider for ReentrantProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        let backend: Arc<dyn AsyncMimeDetectorBackend> = self.0.clone();
+        Ok(backend)
+    }
+}
+
+#[derive(Debug, Default)]
+struct ReentrantBackend {
+    runtime: Mutex<Option<MimeRuntime>>,
+    reentered: std::sync::atomic::AtomicBool,
+    requirement_calls: AtomicUsize,
+    random_access_calls: AtomicUsize,
+    managed_reads_calls: AtomicUsize,
+}
+
+impl AsyncMimeDetectorBackend for ReentrantBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        self.requirement_calls.fetch_add(1, Ordering::SeqCst);
+        if !self.reentered.swap(true, Ordering::SeqCst) {
+            let runtime = self.runtime.lock().unwrap().clone().expect("runtime installed before submit");
+            let mut nested = runtime
+                .try_submit_detection(
+                    OwnedMimeInput::bytes(Arc::from(b"nested".as_slice()), InputExtent::Complete),
+                    MimeOperationOptions::default(),
+                )
+                .unwrap_or_else(|_| panic!("capability reentry should admit a nested operation"));
+            assert!(matches!(
+                block_on(nested.wait_outcome()).unwrap(),
+                qubit_operation::OperationOutcome::Succeeded(_)
+            ));
+        }
+        ContentRequirement::Prefix(0)
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        self.random_access_calls.fetch_add(1, Ordering::SeqCst);
+        RandomAccessCapability::Unsupported
+    }
+
+    fn uses_managed_provider_reads(&self) -> bool {
+        self.managed_reads_calls.fetch_add(1, Ordering::SeqCst);
+        false
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        _scope: &'a qubit_operation::OperationScope,
+        _input: BorrowedMimeInput<'a>,
+        _options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        Box::pin(async {
+            Ok(MimeCandidates {
+                candidates: vec![MimeCandidate {
+                    mime_type: "application/x-reentrant".into(),
+                    rank: 0,
+                }],
+                inspected_extent: InspectedExtent::Prefix(0),
+                retained_prefix: Vec::new(),
+                staging_bytes: 0,
+            })
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -435,7 +557,9 @@ struct CompleteSessionProvider;
 
 impl ProviderMetadata for CompleteSessionProvider {
     fn descriptor(&self) -> ProviderDescriptor {
-        ProviderDescriptor::new(ProviderId::new("complete-session").unwrap())
+        ProviderDescriptor::new(ProviderId::new("file").unwrap())
+            .with_aliases(["complete-session"])
+            .unwrap()
     }
 }
 
@@ -462,7 +586,7 @@ impl AsyncMimeDetectorBackend for CompleteSessionBackend {
     }
 
     fn uses_managed_provider_reads(&self) -> bool {
-        true
+        false
     }
 
     fn guess_content_in<'a>(
