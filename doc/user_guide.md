@@ -237,17 +237,18 @@ budget, or an overridden budget, and probes one extra byte to detect overflow. B
 content-backend modes restore their starting position; if reading and
 restoration both fail, the restoration error takes precedence.
 
-These routes have distinct input contracts. `MimeContentBackend::detect_reader`
-starts at the reader's current position. An ordinary `MimeDetectorBackend`
-reader hook requests `content_requirement()`; its `Prefix(n)` is a maximum
-window, EOF may shorten it, and the hook receives the conservative
-`InputExtent::Prefix`; ordinary automatic provider reads use the same extent.
-`OwnedMimeInput::Bytes` preserves the caller's bytes and declared `InputExtent`
-without implicit truncation and does not count as provider I/O. By default,
-automatic managed reads from ordinary Provider inputs apply
-`content_requirement()`: `Prefix(n)` supplies at most that window, further
-bounded by service limits and EOF, and describes delivered bytes as
-`InputExtent::Prefix`. Complete reads and same-object random-access reads for
+These routes have distinct input contracts. The default
+`MimeContentBackend::detect_reader` buffers the selected window and calls
+`detect_bytes` with a byte slice; `InputExtent` is not part of that synchronous
+hook. The default `MimeDetectorBackend::guess_from_reader` likewise reads its
+declared `content_requirement()` window and calls `guess_from_content` with a
+byte slice; it returns the candidates and prefix bytes, not an extent. Only the
+ordinary automatic managed Provider-read branch attaches the conservative
+`InputExtent::Prefix` to its delivered prefix bytes. `OwnedMimeInput::Bytes`
+preserves the caller's bytes and declared `InputExtent` without implicit
+truncation and does not count as provider I/O. In that automatic managed
+branch, `content_requirement()` bounds `Prefix(n)` by the requested window,
+service limits, and EOF. Complete reads and same-object random-access reads for
 extension backends always use `MeteredReadSession`. An extension backend may
 also opt ordinary sequential prefix reads into that session; in that case the
 backend sets its own read window, while each session request is constrained by
@@ -775,9 +776,15 @@ and read accounting charges actual returned bytes; repeated or overlapping
 from a backend's retained input or command staging memory.
 
 The handle exposes two independent observations. `wait_outcome()` returns the
-MIME detection result (including `MimeDetectionReport` on success);
-`wait_settlement()` observes release or recovery responsibility. An early stopped
-or failed outcome does not by itself prove that staged resources or background
+MIME business result (including `MimeDetectionReport` on success), while
+`wait_settlement()` returns the resource disposition report. A successful
+business outcome can be observed while cleanup is still in progress; success
+does not imply that resources are released. `SettlementReport.status` uses
+`SettlementStatus::Released`, `SettlementStatus::Transferred`, or
+`SettlementStatus::RecoveryRequired` to report resource disposition. Recovery handles identify
+follow-up work for the application or its store; transferring a handle moves
+retry responsibility but does not mean cleanup completed. An early stopped or
+failed outcome also does not by itself prove that staged resources or background
 helpers have been released. Do not interpret dropping a handle or future as proof
 of cancellation. The operation report contains the selected MIME value, backend
 identifier, inspected extent, and budget summary; it does not replace operation
@@ -789,9 +796,11 @@ counter. A complete input can therefore have a prefix inspected extent.
 Set `MimeOperationOptions.operation.context.deadline` when managed work needs
 a scope deadline. Async detection polls the deadline and stop signal alongside
 the backend future, so a deadline can wake a provider read that would not wake
-on its own. The operation reports `Stopped(Timeout)`; an accepted user-cancel
-request keeps its `UserCancelled` reason when it races the deadline. Repository
-matching checks for stop at cooperative batch boundaries. Deadline and stop are
+on its own. A scope deadline ends through the `OperationOutcome::Stopped`
+channel with `StopReason::Timeout`, not as `OperationOutcome::Failed` or as a
+settlement result. An accepted user-cancel request keeps its `UserCancelled`
+reason when it races the deadline. Repository matching checks for stop at
+cooperative batch boundaries. Deadline and stop are
 also checked after the backend becomes ready and before its result is committed,
 so an expired deadline can stop a ready success or error. CPU work is not
 preempted in the middle of a matcher batch. Synchronous child detection is
@@ -879,15 +888,18 @@ The operation phases have separate error channels:
 - **Submission:** a missing service, unsupported input or capability, closed
   admission, or resource admission failure rejects the operation and returns
   the original `OwnedMimeInput` in `MimeSubmitFailure`.
-- **Execution:** after acceptance, provider, backend, deadline, and cleanup
-  errors appear in the operation outcome. A MIME detection failure is
-  `OperationOutcome::Failed`; it is not a submission rejection.
-- **Stopped outcome:** an accepted operation may instead finish as
-  `OperationOutcome::Stopped`, for example with `StopReason::Timeout`. This is
-  the operation's terminal business result, and does not mean cleanup has
-  settled.
-- **Settlement:** inspect `wait_settlement()` for released resources and
-  recovery handles. A shutdown `OperationShutdownPending` can occur before
+- **Execution:** after acceptance, provider and backend failures appear as
+  `OperationOutcome::Failed`; they are not submission rejections. A successful
+  business outcome can precede resource cleanup, so it does not confirm release.
+- **Stopped:** a scope deadline ends through `OperationOutcome::Stopped` with
+  `StopReason::Timeout`; timeout is not a Failed outcome or a settlement status.
+  A stopped outcome also does not prove cleanup has finished.
+- **Settlement and recovery:** `wait_settlement()` returns a report whose
+  `SettlementStatus` is `Released`, `Transferred`, or `RecoveryRequired`.
+  Recovery handles represent
+  follow-up cleanup responsibility; transferring one changes who retries it,
+  not whether the resource has been cleaned. A shutdown
+  `OperationShutdownPending` can occur before
   Drain is published; inspect `snapshot().group` to distinguish it from a
   published Drain that is still waiting for service resources or recovery.
   Refresh the shutdown and recovery snapshots before each retry, resolve or
