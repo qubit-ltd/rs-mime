@@ -54,6 +54,7 @@ impl PendingReadTreeBinding {
             }
             PendingBinding::First {
                 roots,
+                ancestors,
                 pending_roots,
                 registrations,
                 operation,
@@ -122,9 +123,17 @@ impl PendingReadTreeBinding {
                 }
 
                 roots_map.insert(operation, Arc::downgrade(&root));
+                ancestors
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(operation, Arc::downgrade(&root));
                 unregister_pending(&pending_roots, operation, &pending_root);
                 root.register(Registration {
                     roots: Arc::downgrade(&roots),
+                    operation,
+                });
+                root.register(Registration {
+                    roots: Arc::downgrade(&ancestors),
                     operation,
                 });
                 Ok(self.scope_parent.child(self.scope_limit))

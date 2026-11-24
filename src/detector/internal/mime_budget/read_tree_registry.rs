@@ -252,7 +252,7 @@ impl ReadTreeRegistry {
             if root.is_none() {
                 ancestors.remove(&operation);
             }
-            root.or(indexed_root.clone())
+            root.or_else(|| indexed_root.as_ref().map(|root| root.canonical_root()))
         };
         let direct_parent = indexed_root.or_else(|| associated_root.clone());
         if let Some(root) = associated_root.as_ref().filter(|root| root.is_anchored()) {
@@ -292,6 +292,7 @@ impl ReadTreeRegistry {
                 return Ok(PendingReadTreeBinding {
                     binding: PendingBinding::First {
                         roots: Arc::clone(&self.roots),
+                        ancestors: Arc::clone(&self.ancestors),
                         pending_roots: Arc::clone(&self.pending_roots),
                         registrations: Arc::clone(&self.registrations),
                         operation: anchor_operation,
@@ -329,6 +330,7 @@ impl ReadTreeRegistry {
         Ok(PendingReadTreeBinding {
             binding: PendingBinding::First {
                 roots: Arc::clone(&self.roots),
+                ancestors: Arc::clone(&self.ancestors),
                 pending_roots: Arc::clone(&self.pending_roots),
                 registrations: Arc::clone(&self.registrations),
                 operation: anchor_operation,
@@ -377,6 +379,15 @@ impl ReadTreeRegistry {
             .insert(id, Arc::downgrade(tree));
         tree.register(Registration {
             roots: Arc::downgrade(&self.roots),
+            operation: id,
+        });
+        let canonical_root = tree.canonical_root();
+        self.ancestors
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id, Arc::downgrade(&canonical_root));
+        canonical_root.register(Registration {
+            roots: Arc::downgrade(&self.ancestors),
             operation: id,
         });
     }
@@ -1016,6 +1027,130 @@ mod tests {
                     scope.reserve_resource(),
                     Err(ResourceCapacityError::CapacityExceeded)
                 ));
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+        assert!(matches!(
+            block_on(parent.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+        let _settlement = block_on(parent.wait_settlement());
+    }
+
+    #[test]
+    fn test_settled_nested_bytes_branch_does_not_limit_later_siblings() {
+        let mut manager_options = ManagerOptions::default();
+        manager_options.limits.active_operations = 5;
+        manager_options.async_executor.worker_count = 3;
+        let manager = OperationManager::new(manager_options).unwrap();
+        let parent_group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let bytes_group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let provider_group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let registry_body = Arc::clone(&registry);
+        let parent_options = qubit_operation::OperationOptions {
+            limits: qubit_operation::ScopeLimits {
+                resources: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut parent = parent_group
+            .as_async()
+            .try_submit(parent_options, move |scope| async move {
+                let root_context = registry_body.associate_child_for_parent(&scope, 8, 8);
+                registry_body.bind(scope.id(), &root_context);
+
+                // A Bytes-backed branch with a small local allowance performs
+                // the first provider read and fully settles before siblings run.
+                let first_bytes = root_context.child(2);
+                let bytes_registry = Arc::clone(&registry_body);
+                let providers = provider_group.clone();
+                let mut first_branch = bytes_group
+                    .as_async()
+                    .try_submit(Default::default(), move |bytes_scope| async move {
+                        bytes_registry.bind(bytes_scope.id(), &first_bytes);
+                        let provider_registry = Arc::clone(&bytes_registry);
+                        let mut provider = providers
+                            .as_async()
+                            .try_submit(Default::default(), move |provider_scope| async move {
+                                provider_registry.bind(provider_scope.id(), &first_bytes);
+                                let context = provider_registry
+                                    .reserve_child_for_parent(&provider_scope, 8, 8)
+                                    .expect("first provider should reserve the root tree")
+                                    .commit()
+                                    .expect("first provider should commit its read tree");
+                                assert_eq!(2, context.reserve(2).unwrap().commit(2));
+                                assert!(
+                                    context.reserve(1).is_none(),
+                                    "Bytes branch stays capped at 2"
+                                );
+                                Ok::<_, ()>(())
+                            })
+                            .unwrap();
+                        assert!(matches!(
+                            provider.wait_outcome().await.unwrap(),
+                            OperationOutcome::Succeeded(())
+                        ));
+                        let _settlement = provider.wait_settlement().await;
+                        Ok::<_, ()>(())
+                    })
+                    .unwrap();
+                assert!(matches!(
+                    first_branch.wait_outcome().await.unwrap(),
+                    OperationOutcome::Succeeded(())
+                ));
+                let _settlement = first_branch.wait_settlement().await;
+
+                // A direct provider sibling has its own scope and can use the
+                // remaining tree allowance after the small branch settles.
+                let direct = registry_body
+                    .reserve_child_for_parent(&scope, 8, 8)
+                    .expect("direct provider sibling should reuse the root anchor")
+                    .commit()
+                    .expect("direct provider sibling should bind to the root context");
+                assert_eq!(3, direct.reserve(3).unwrap().commit(3));
+
+                // A second Bytes sibling also gets a fresh local allowance.
+                let second_bytes = root_context.child(4);
+                let bytes_registry = Arc::clone(&registry_body);
+                let providers = provider_group.clone();
+                let mut second_branch = bytes_group
+                    .as_async()
+                    .try_submit(Default::default(), move |bytes_scope| async move {
+                        bytes_registry.bind(bytes_scope.id(), &second_bytes);
+                        let provider_registry = Arc::clone(&bytes_registry);
+                        let mut provider = providers
+                            .as_async()
+                            .try_submit(Default::default(), move |provider_scope| async move {
+                                provider_registry.bind(provider_scope.id(), &second_bytes);
+                                let context = provider_registry
+                                    .reserve_child_for_parent(&provider_scope, 8, 8)
+                                    .expect("second provider should reuse the root anchor")
+                                    .commit()
+                                    .expect("second provider should keep its direct Bytes parent");
+                                assert_eq!(3, context.reserve(3).unwrap().commit(3));
+                                Ok::<_, ()>(())
+                            })
+                            .unwrap();
+                        assert!(matches!(
+                            provider.wait_outcome().await.unwrap(),
+                            OperationOutcome::Succeeded(())
+                        ));
+                        let _settlement = provider.wait_settlement().await;
+                        Ok::<_, ()>(())
+                    })
+                    .unwrap();
+                assert!(matches!(
+                    second_branch.wait_outcome().await.unwrap(),
+                    OperationOutcome::Succeeded(())
+                ));
+                let _settlement = second_branch.wait_settlement().await;
+                assert_eq!(8, root_context.tree.consumed());
+                assert!(
+                    direct.reserve(1).is_none(),
+                    "all siblings share the root limit of 8"
+                );
                 Ok::<_, ()>(())
             })
             .unwrap();

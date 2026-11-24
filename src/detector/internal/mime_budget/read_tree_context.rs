@@ -127,6 +127,15 @@ impl ReadTreeContext {
             .or_else(|| self.parent.as_ref().and_then(|parent| parent.authority_operation()))
     }
 
+    /// Returns the canonical context at the root of this scope chain.
+    pub(crate) fn canonical_root(self: &Arc<Self>) -> Arc<Self> {
+        let mut root = Arc::clone(self);
+        while let Some(parent) = root.parent.as_ref() {
+            root = Arc::clone(parent);
+        }
+        root
+    }
+
     /// Reports whether the shared root is already anchored to an operation.
     pub(crate) fn is_anchored(&self) -> bool {
         self.anchored.load(Ordering::Acquire)

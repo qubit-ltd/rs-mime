@@ -27,6 +27,8 @@ pub(super) enum PendingBinding {
     First {
         /// Weak registrations retained while child contexts own the root.
         roots: Arc<Roots>,
+        /// Canonical ancestor roots indexed by operation identity.
+        ancestors: Arc<Roots>,
         /// Pending roots shared by accepted siblings before the first commit.
         pending_roots: Arc<PendingRoots>,
         /// Lock that serializes pending and committed root registration.
