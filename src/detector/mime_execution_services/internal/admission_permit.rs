@@ -31,7 +31,8 @@ impl AdmissionPermit {
 }
 
 impl Drop for AdmissionPermit {
-    /// Decrements the active count and wakes settlement waiters after unlocking.
+    /// Decrements the active count and wakes settlement waiters after
+    /// unlocking.
     ///
     /// # Parameters
     /// - `self`: Admission guard being released.

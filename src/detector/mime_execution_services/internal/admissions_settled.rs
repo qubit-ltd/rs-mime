@@ -38,7 +38,8 @@ impl Future for AdmissionsSettled {
     /// Unit is returned once admission tracking becomes idle.
     type Output = ();
 
-    /// Checks the active admission count and registers the current task if needed.
+    /// Checks the active admission count and registers the current task if
+    /// needed.
     ///
     /// # Parameters
     /// - `self`: Waiter being polled.

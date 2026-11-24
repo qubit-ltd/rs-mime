@@ -70,23 +70,11 @@ impl AdmissionTracker {
     /// - `self`: Tracker whose mutex availability is checked.
     ///
     /// # Returns
-    /// `Some(true)` or `Some(false)` when the mutex is available, or `None` when
-    /// a concurrent operation currently holds it.
+    /// `Some(true)` or `Some(false)` when the mutex is available, or `None`
+    /// when a concurrent operation currently holds it.
     #[cfg(test)]
     pub(in crate::detector::mime_execution_services) fn try_has_active(&self) -> Option<bool> {
         self.state.try_lock().ok().map(|state| state.active != 0)
-    }
-
-    /// Counts registered settlement waiters for synchronization in tests.
-    ///
-    /// # Parameters
-    /// - `self`: Tracker whose waiter queue is inspected.
-    ///
-    /// # Returns
-    /// The number of tasks currently waiting for the admission count to reach zero.
-    #[cfg(test)]
-    pub(in crate::detector::mime_execution_services) fn waiter_count(&self) -> usize {
-        self.state.lock().unwrap_or_else(|error| error.into_inner()).waiters.len()
     }
 
     /// Releases one permit and wakes waiters if the active count reaches zero.

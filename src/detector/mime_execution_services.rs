@@ -35,22 +35,22 @@ use super::internal::mime_budget::ReadTreeContext;
 use super::internal::mime_budget::ReadTreeRegistry;
 use super::internal::mime_budget::StagingBudget;
 
+mod internal;
 mod mime_execution_dispatch_failure;
 mod mime_execution_dispatch_failure_kind;
 mod mime_execution_port;
 mod mime_service_lifecycle;
 mod mime_shutdown_observer;
 mod mime_shutdown_snapshot;
-mod internal;
 mod prepare_permit;
 
+use internal::AdmissionTracker;
 pub use mime_execution_dispatch_failure::MimeExecutionDispatchFailure;
 pub use mime_execution_dispatch_failure_kind::MimeExecutionDispatchFailureKind;
 pub use mime_execution_port::MimeExecutionPort;
 pub use mime_service_lifecycle::MimeServiceLifecycle;
 pub use mime_shutdown_observer::MimeShutdownObserver;
 pub use mime_shutdown_snapshot::MimeShutdownSnapshot;
-use internal::AdmissionTracker;
 use prepare_permit::PreparePermit;
 
 /// Services shared by MIME requests. Runtime construction is explicit so a
@@ -335,7 +335,8 @@ impl MimeExecutionServices {
     /// released.
     ///
     /// # Returns
-    /// A future that becomes ready when the shared admission count reaches zero.
+    /// A future that becomes ready when the shared admission count reaches
+    /// zero.
     pub(super) fn admissions_settled(&self) -> impl std::future::Future<Output = ()> {
         self.admissions.settled()
     }
@@ -711,10 +712,10 @@ mod tests {
                         }
                     }
                 }
-            } else if matches!(self.action, WakerAction::AdmissionState) {
-                if self.services.admissions.try_has_active().is_none() {
-                    self.tracker_reentry_succeeded.store(false, Ordering::SeqCst);
-                }
+            } else if matches!(self.action, WakerAction::AdmissionState)
+                && self.services.admissions.try_has_active().is_none()
+            {
+                self.tracker_reentry_succeeded.store(false, Ordering::SeqCst);
             }
         }
 
@@ -884,7 +885,6 @@ mod tests {
         let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
         let services = MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 32).unwrap();
         services.prepare().unwrap();
-        let admission = services.begin_admission(false).expect("admission should start");
         let probe = Arc::new(WakerProbe {
             services: services.clone(),
             action: WakerAction::AdmissionState,
@@ -900,30 +900,20 @@ mod tests {
         let (tx, rx) = mpsc::sync_channel(1);
         let waiter = std::thread::spawn(move || {
             *waiter_probe.thread.lock().unwrap() = Some(std::thread::current());
-            let settled = block_on_with_waker(waiter_services.admissions_settled(), waker);
-            tx.send(settled).unwrap();
+            let admission = waiter_services.begin_admission(false).expect("admission should start");
+            let mut context = Context::from_waker(&waker);
+            let mut settled = Box::pin(waiter_services.admissions_settled());
+            assert!(settled.as_mut().poll(&mut context).is_pending());
+            drop(admission);
+            assert!(settled.as_mut().poll(&mut context).is_ready());
+            drop(settled);
+            drop(waker);
+            tx.send(()).unwrap();
         });
-
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while probe.clones.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
-            std::thread::yield_now();
-        }
-        assert!(
-            probe.clones.load(Ordering::SeqCst) > 0,
-            "waker clone must re-enter the admission tracker"
-        );
-        while services.admissions.waiter_count() == 0 && std::time::Instant::now() < deadline {
-            std::thread::yield_now();
-        }
-        assert_eq!(
-            1,
-            services.admissions.waiter_count(),
-            "waker must be registered before release"
-        );
-        drop(admission);
         rx.recv_timeout(std::time::Duration::from_secs(2))
-            .expect("admission waiter should wake");
+            .expect("settlement waiter should finish");
         waiter.join().unwrap();
+        assert!(probe.clones.load(Ordering::SeqCst) >= 2);
         assert!(probe.wakes.load(Ordering::SeqCst) > 0);
         assert!(probe.drops.load(Ordering::SeqCst) > 0);
         assert!(
