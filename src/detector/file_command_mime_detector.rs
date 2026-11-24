@@ -1488,7 +1488,7 @@ mod file_operation_tests {
     }
 
     #[test]
-    fn test_full_command_queue_returns_typed_busy_after_preserving_lifecycle() {
+    fn test_full_command_queue_rejects_staging_before_command_dispatch() {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let port = Arc::new(crate::FixedMimeExecutionPort::new(1, 1));
@@ -1544,5 +1544,73 @@ mod file_operation_tests {
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
         let _ = shutdown.stop_services().unwrap();
         let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_command_dispatch_queue_full_after_staging_cleans_up_without_running_command() {
+        #[derive(Debug, Default)]
+        struct StageThenRejectPort {
+            calls: AtomicUsize,
+            events: std::sync::Mutex<Vec<&'static str>>,
+        }
+        impl MimeExecutionPort for StageThenRejectPort {
+            fn prepare(&self) -> Result<(), MimeError> { Ok(()) }
+            fn shutdown(&self) -> Result<(), MimeError> { Ok(()) }
+            fn try_dispatch(
+                &self,
+                job: Box<dyn FnOnce() + Send + 'static>,
+            ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+                self.events.lock().unwrap().push("cleanup");
+                job();
+                Ok(())
+            }
+            fn try_dispatch_with_status(
+                &self,
+                job: Box<dyn FnOnce() + Send + 'static>,
+            ) -> Result<(), crate::MimeExecutionDispatchFailure> {
+                let call = self.calls.fetch_add(1, Ordering::SeqCst);
+                if call < 2 {
+                    self.events.lock().unwrap().push(if call == 0 { "staging_create" } else { "staging_write" });
+                    job();
+                    Ok(())
+                } else {
+                    self.events.lock().unwrap().push("command_submit_rejected");
+                    Err(crate::MimeExecutionDispatchFailure::new(
+                        crate::MimeExecutionDispatchFailureKind::QueueFull,
+                        job,
+                    ))
+                }
+            }
+        }
+
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let port = Arc::new(StageThenRejectPort::default());
+        let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap();
+        services.prepare().unwrap();
+        let detector = FileCommandMimeDetector::new()
+            .with_execution_services(services.clone());
+        let input: Arc<[u8]> = Arc::from(b"staged file input".as_slice());
+        let mut operation = group.as_async().try_submit(Default::default(), move |scope| async move {
+            detector.guess_content_in(
+                &scope,
+                BorrowedMimeInput::Bytes { content: &input, extent: InputExtent::Complete, filename: None },
+                &MimeOperationOptions::default(),
+            ).await
+        }).unwrap();
+        let outcome = block_on(operation.wait_outcome()).unwrap();
+        assert!(matches!(outcome, OperationOutcome::Failed(MimeError::CommandQueueBusy)), "{outcome:?}");
+        assert_eq!("staging_create", port.events.lock().unwrap()[0]);
+        assert_eq!("staging_write", port.events.lock().unwrap()[1]);
+        assert_eq!("command_submit_rejected", port.events.lock().unwrap()[2]);
+        let settlement = block_on(operation.wait_settlement());
+        assert!(settlement.all_released(), "staged file cleanup must settle: {settlement:?}");
+        assert_eq!(3, port.calls.load(Ordering::SeqCst), "staging and rejected command dispatches");
+        assert!(port.events.lock().unwrap()[3..].contains(&"cleanup"));
+        assert_eq!(0, services.staging_budget().used_bytes());
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 }

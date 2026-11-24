@@ -608,7 +608,7 @@ mod async_operation_tests {
     use crate::managed_temp_staging::StagedMimeInput;
 
     #[test]
-    fn test_managed_ffprobe_reports_command_queue_busy_after_staging() {
+    fn test_full_command_queue_rejects_ffprobe_staging_before_command_dispatch() {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
@@ -650,6 +650,73 @@ mod async_operation_tests {
         ));
         assert!(block_on(operation.wait_settlement()).all_released());
         release_tx.send(()).unwrap();
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_ffprobe_command_dispatch_queue_full_after_staging_cleans_up_without_runner() {
+        #[derive(Debug, Default)]
+        struct StageThenRejectPort {
+            calls: AtomicUsize,
+            events: Mutex<Vec<&'static str>>,
+        }
+        impl MimeExecutionPort for StageThenRejectPort {
+            fn prepare(&self) -> Result<(), MimeError> { Ok(()) }
+            fn shutdown(&self) -> Result<(), MimeError> { Ok(()) }
+            fn try_dispatch(
+                &self,
+                job: Box<dyn FnOnce() + Send + 'static>,
+            ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+                self.events.lock().unwrap().push("cleanup");
+                job();
+                Ok(())
+            }
+            fn try_dispatch_with_status(
+                &self,
+                job: Box<dyn FnOnce() + Send + 'static>,
+            ) -> Result<(), crate::MimeExecutionDispatchFailure> {
+                let call = self.calls.fetch_add(1, Ordering::SeqCst);
+                if call < 2 {
+                    self.events.lock().unwrap().push(if call == 0 { "staging_create" } else { "staging_write" });
+                    job();
+                    Ok(())
+                } else {
+                    self.events.lock().unwrap().push("command_submit_rejected");
+                    Err(crate::MimeExecutionDispatchFailure::new(
+                        crate::MimeExecutionDispatchFailureKind::QueueFull,
+                        job,
+                    ))
+                }
+            }
+        }
+
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
+        let port = Arc::new(StageThenRejectPort::default());
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 128).unwrap());
+        services.prepare().unwrap();
+        let classifier = FfprobeCommandMediaStreamClassifier::from_mime_config(MimeConfig::default())
+            .with_execution_services(Arc::clone(&services));
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            classifier.classify_in(
+                &scope,
+                BorrowedMimeInput::Bytes { content: b"staged ffprobe input", extent: InputExtent::Complete, filename: None },
+                &MimeOperationOptions::default(),
+            ).await
+        })).unwrap();
+        let outcome = block_on(operation.wait_outcome()).unwrap();
+        assert!(matches!(outcome, OperationOutcome::Failed(MimeError::CommandQueueBusy)), "{outcome:?}");
+        assert_eq!("staging_create", port.events.lock().unwrap()[0]);
+        assert_eq!("staging_write", port.events.lock().unwrap()[1]);
+        assert_eq!("command_submit_rejected", port.events.lock().unwrap()[2]);
+        let settlement = block_on(operation.wait_settlement());
+        assert!(settlement.all_released(), "staged file cleanup must settle: {settlement:?}");
+        assert_eq!(3, port.calls.load(Ordering::SeqCst), "staging and rejected command dispatches");
+        assert!(port.events.lock().unwrap()[3..].contains(&"cleanup"));
+        assert_eq!(0, services.staging_budget().used_bytes());
         let shutdown = services.shutdown();
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
         let _ = shutdown.stop_services().unwrap();
