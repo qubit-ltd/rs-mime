@@ -74,8 +74,10 @@ implementation, `detect_prefix` matches filename and content candidates
 without passing the prefix to a complete-media classifier. Types that implement
 `MimeDetector` directly define their own behavior. Managed async operations use
 an async backend: attaching execution services defaults it to the bundled
-`repository`, and another backend must be selected explicitly. A sync-only
-backend returns `AsyncUnsupported` instead of falling back to synchronous work.
+`repository`, and another backend must be selected explicitly. Resolving a
+sync-only provider factory for managed async work fails with `AsyncUnsupported`
+while configuring the runtime, before any operation is submitted; it never
+falls back to synchronous work.
 See the user guide for the managed operation lifecycle and provider capability
 limits.
 
@@ -141,13 +143,13 @@ entry points.
 Managed detection uses owned inputs, explicit scopes, finite request budgets,
 and separate outcome and settlement observation. Construction and provider
 registration do not start workers; applications prepare and stop the MIME
-execution services explicitly. A sync-only provider selected for managed async
-work returns `AsyncUnsupported`; it is not run synchronously from an async
-operation. The legacy synchronous `FileCommandMimeDetector` API remains
+execution services explicitly. Resolving a sync-only provider factory for the
+managed async backend fails with `AsyncUnsupported` during runtime
+configuration, before submission. The legacy synchronous `FileCommandMimeDetector` API remains
 available. Dropping an in-flight future does not prove that accepted work has
-stopped; observe settlement before releasing
-resources. Once group admission closes, already accepted in-group parents can
-still dispatch required descendants; new external scopes must have entered
+stopped; observe settlement before releasing resources. Once group admission
+closes, already accepted in-group parents can still dispatch required
+descendants; new external scopes must have entered
 before closure. A partial temporary-file creation error can retain a cleanup
 owner in the same operation scope, so its error outcome alone does not confirm
 cleanup. Recovery transferred to a `RecoveryStore` remains retryable after the

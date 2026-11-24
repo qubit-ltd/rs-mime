@@ -540,8 +540,8 @@ settlement，再释放 typed handle，最后等待组 Drain。若存在未解决
 
 `MimeRuntime::builtin()` 默认使用内置 repository。调用 `with_execution_services` 附加执行服务时，
 也会默认安装 repository 受管异步 backend；如需其他异步实现，可再用
-`with_async_provider_selection` 替换它。仅支持同步的 Provider 会在该选择配置阶段以
-`AsyncUnsupported` 拒绝，发生在提交任务之前。内置 `repository` 和 `file` Provider 都提供受管异步
+`with_async_provider_selection` 替换它。为异步 backend 解析仅支持同步的 Provider 工厂时，会在
+runtime 配置阶段以 `AsyncUnsupported` 失败，早于任务提交。内置 `repository` 和 `file` Provider 都提供受管异步
 backend。`file` 要求完整内容；
 它不支持随机访问，只表示不能处理要求随机访问的输入。注册 Provider 不会启动检测任务。
 未配置执行服务时，提交会以 `ExecutionServicesRequired` 拒绝；所选 backend
@@ -643,7 +643,7 @@ Provider 遇到 EOF 时，实际返回字节也可能更少。若预检无法预
 | --- | --- | --- |
 | `repository` | 支持 | 根据提供的字节匹配仓库规则；不支持随机访问输入。 |
 | `file` | 支持，须显式选择 | 要求完整内容，不支持随机访问。任何附加的异步 classifier 都会在 factory 创建时以 `UnsupportedCapability` 拒绝。 |
-| 仅同步的自定义 Provider | 不支持 | 异步选择返回 `AsyncUnsupported`，不会回退为同步执行。 |
+| 仅同步的自定义 Provider | 不支持 | 为异步选择解析其工厂时，会在 runtime 配置阶段以 `AsyncUnsupported` 失败；不会回退为同步执行。 |
 
 路径输入会按 native path 语义提取 basename，再交给专用文件名匹配入口；完整路径不会被重新当作文件名解析。
 POSIX basename 内的反斜杠仍是文件名内容；非 UTF-8 本地 basename 会以 lossy 字符串进行匹配。
@@ -709,8 +709,9 @@ classifier；直接实现 `MimeDetector` 的类型自行决定其行为。异步
 `MimeDetectorBackend` 默认保留原有行为。覆盖 `supports_async_content_detection` 并返回 `false` 可在读取前拒绝；
 需要检查内容时则提供异步内容 hook。前缀后端可以在不加载完整资源的情况下检查大文件；声明
 `ContentRequirement::Complete` 后端不能使用前缀入口。自定义完整内容后端可以通过覆盖独立的
-`guess_from_async_provider_path` hook 检查异步 Provider 路径。受管异步操作必须显式选择异步 backend；仅支持同步的 backend 会返回
-`AsyncUnsupported`，不会在异步流程中回退到同步执行。受管路径要求注入执行服务和有限预算，并将业务
+`guess_from_async_provider_path` hook 检查异步 Provider 路径。受管异步操作使用 runtime 配置的 backend；
+附加执行服务时默认使用 `repository`。解析仅支持同步的 Provider 工厂会在 runtime 配置阶段以
+`AsyncUnsupported` 失败，不会在异步流程中回退到同步执行。受管路径要求注入执行服务和有限预算，并将业务
 结果与资源 settlement 分开观察。丢弃进行中的 future 不能证明已接纳工作停止；释放资源前应观察
 settlement。前缀读取期间可能同时保留 Provider 缓冲区和 worker 的 owned 副本；`max_buffer_size`
 限制单个缓冲区，不限制两者合计内存。

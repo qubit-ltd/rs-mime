@@ -272,8 +272,10 @@ method is not overridden. It returns `CompleteContentRequired` when the backend
 declares `Complete`. A backend requiring the whole resource must override
 `guess_from_reader`, implement bounded reading and position restoration, and
 override `guess_from_file` when local file handling needs special behavior.
-Managed async operations select an explicit async backend; a sync-only backend
-returns `AsyncUnsupported` instead of falling back to synchronous work. The
+Managed async operations use the configured async backend, defaulting to
+`repository`; selecting another provider is explicit. Resolving a sync-only
+provider factory fails with `AsyncUnsupported` while configuring the runtime,
+before submission, and never falls back to synchronous work. The
 managed path requires configured execution services and finite budgets, and
 separates business outcome from resource settlement. Dropping an in-flight
 future does not prove that accepted work has stopped. `MimeDetectorAdapter`
@@ -642,8 +644,9 @@ same entry point.
 `MimeRuntime::builtin()` starts with the bundled repository. Attaching execution
 services with `with_execution_services` also installs a repository-backed async
 backend by default; `with_async_provider_selection` replaces it when another
-async implementation is needed. A sync-only provider is rejected with
-`AsyncUnsupported` while that selection is being created, before submission.
+async implementation is needed. Resolving a sync-only provider factory fails
+with `AsyncUnsupported` during this runtime configuration call, before
+submission.
 The built-in `repository` and
 `file` providers both expose managed async backends. `file` requires complete
 content; its lack of random-access support only rules out inputs that require
@@ -801,7 +804,7 @@ capabilities are:
 | --- | --- | --- |
 | `repository` | Yes | Matches supplied bytes against repository rules; does not support random-access input. |
 | `file` | Yes, after explicit selection | Requires complete content and does not support random-access input. Attaching any async classifier is rejected with `UnsupportedCapability` during factory creation. |
-| Sync-only custom provider | No | Async selection returns `AsyncUnsupported`; it is not run synchronously as a fallback. |
+| Sync-only custom provider | No | Resolving its factory for async selection fails with `AsyncUnsupported` during runtime configuration; it is not run synchronously as a fallback. |
 
 For path-backed inputs, filename rules receive the native path basename through
 the basename matching entry point; the full path is not reinterpreted as a

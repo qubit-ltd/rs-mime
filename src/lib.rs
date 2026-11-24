@@ -66,8 +66,9 @@
 //! automatically. Backends that need async inspection must implement the async
 //! hook, and managed operations need an async-capable provider with prepared
 //! execution services. Attaching execution services to `MimeRuntime` selects
-//! the bundled `repository` async backend by default; a sync-only selection
-//! returns `AsyncUnsupported` before submission. Submission-time rejection
+//! the bundled `repository` async backend by default; resolving a sync-only
+//! provider factory for the async backend returns `AsyncUnsupported` while
+//! configuring the runtime, before submission. Submission-time rejection
 //! returns the owned input in `MimeSubmitFailure`; errors after acceptance are
 //! reported by the operation outcome, with resource release observed through
 //! settlement. The legacy `detect_async_path` entry preserves the
@@ -89,10 +90,12 @@
 //! conservative `InputExtent::Prefix`, even if EOF arrives early.
 //! `OwnedMimeInput::Bytes` preserves the caller-supplied bytes and
 //! `InputExtent` without implicit truncation and does not count as provider
-//! I/O. Managed provider reads use `MeteredReadSession` and the operation's
-//! shared read budget. The legacy `max_bytes` path arguments remain explicit
-//! prefix limits for callers of those APIs; they do not redefine the ordinary
-//! backend window.
+//! I/O. Extension backends use `MeteredReadSession` for managed provider reads
+//! that require complete input, same-object sampling, or opted-in sequential
+//! access; those reads share the operation's read budget. Ordinary automatic
+//! prefix reads are bounded byte inputs. The legacy `max_bytes` path arguments
+//! remain explicit prefix limits for callers of those APIs; they do not
+//! redefine the ordinary backend window.
 //!
 //! Configure a preferred detector and an explicit fallback. This is useful when
 //! `file` should be used on systems where it is available, while still allowing

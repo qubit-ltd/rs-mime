@@ -58,8 +58,9 @@ fn main() -> qubit_mime::MimeResult<()> {
 对于内置 detector 和通过本 crate blanket `MimeDetector` 实现接入的 backend，
 `detect_prefix` 会匹配文件名和内容候选，不会把前缀交给需要完整媒体内容的
 classifier。直接实现 `MimeDetector` 的类型自行决定其行为。受管异步操作使用异步 backend：附加
-执行服务后默认采用 crate 内置的 `repository`；改用其他 backend 时需显式选择。仅支持同步的
-backend 会返回 `AsyncUnsupported`，不会在异步流程里回退到同步执行。
+执行服务后默认采用 crate 内置的 `repository`；改用其他 backend 时需显式选择。为受管异步
+backend 解析仅支持同步的 Provider 工厂时，会在 runtime 配置阶段以 `AsyncUnsupported` 失败，
+早于任何操作提交；不会回退到同步执行。
 受管操作的生命周期和 Provider 能力限制见用户手册。
 
 旧入口 `detect_async_path` 在 `PreferFilename` 下仍会对唯一文件名候选提前返回。内置
@@ -95,7 +96,8 @@ EOF，并额外探测一个字节以检查是否超限。两者都会恢复起�
 `CompleteContentRequired`，因此完整内容 backend 必须覆盖该 hook。adapter 委托给 backend
 reader hook；自定义随机访问覆盖仍可使用。受管检测通过 owned input、显式 scope 和有限请求预算管理执行过程，并分别观察业务结果与资源
 settlement。创建 runtime 或注册 Provider 不会启动 worker；应用需显式准备和停止 MIME 执行服务。
-仅支持同步的 Provider 被选作受管异步 backend 时会返回 `AsyncUnsupported`，不会在异步操作中同步执行；旧的同步
+为受管异步 backend 解析仅支持同步的 Provider 工厂时，会在 runtime 配置阶段以
+`AsyncUnsupported` 失败，早于提交；不会在异步操作中同步执行。旧的同步
 `FileCommandMimeDetector` API 仍可使用。丢弃进行中的 future 不能证明已接纳工作停止；释放资源前应观察 settlement。前缀读取期间可能同时保留 Provider
 缓冲区和 worker 的 owned 副本；`max_buffer_size` 限制单个缓冲区，不限制两者合计内存。无文件名时，若同一 MIME 对应的多个映射具有不同
 MIME 对，细化会保留原 MIME；可传入匹配的文件名或消除映射冲突来指定细化对。
