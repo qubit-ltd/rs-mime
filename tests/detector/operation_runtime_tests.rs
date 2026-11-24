@@ -172,6 +172,77 @@ fn block_on<F: Future>(future: F) -> F::Output {
 }
 
 #[derive(Debug)]
+struct ReadyAtDeadlineProvider {
+    clock: Arc<DeadlineClock>,
+    cancel_before_deadline: bool,
+    fail: bool,
+}
+
+impl ProviderMetadata for ReadyAtDeadlineProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("ready-at-deadline").unwrap())
+    }
+}
+
+impl AsyncMimeDetectorProvider for ReadyAtDeadlineProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(ReadyAtDeadlineBackend {
+            clock: Arc::clone(&self.clock),
+            cancel_before_deadline: self.cancel_before_deadline,
+            fail: self.fail,
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct ReadyAtDeadlineBackend {
+    clock: Arc<DeadlineClock>,
+    cancel_before_deadline: bool,
+    fail: bool,
+}
+
+impl AsyncMimeDetectorBackend for ReadyAtDeadlineBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(1)
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        scope: &'a qubit_operation::OperationScope,
+        _input: BorrowedMimeInput<'a>,
+        _options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        Box::pin(std::future::poll_fn(move |_cx| {
+            if self.cancel_before_deadline {
+                let _ = scope.request_stop(qubit_operation::StopReason::UserCancelled);
+            }
+            self.clock.advance_to(10);
+            if self.fail {
+                Poll::Ready(Err(MimeError::detector_backend(
+                    "ready-at-deadline",
+                    "backend failed",
+                )))
+            } else {
+                Poll::Ready(Ok(MimeCandidates {
+                    candidates: Vec::new(),
+                    inspected_extent: qubit_mime::InspectedExtent::Prefix(0),
+                    retained_prefix: Vec::new(),
+                    staging_bytes: 0,
+                }))
+            }
+        }))
+    }
+}
+
+#[derive(Debug)]
 struct DeadlineClockState {
     ticks: u64,
     registrations: Vec<(u64, bool, Waker)>,
@@ -547,10 +618,12 @@ fn test_managed_deadline_wakes_never_waking_provider_read_and_releases_reader() 
             std::thread::sleep(Duration::from_millis(1));
         }
     };
-    let mut outcome = wait_for_outcome(&mut operation);
+    let outcome = wait_for_outcome(&mut operation);
     if outcome.is_none() {
         control.release();
-        outcome = wait_for_outcome(&mut operation);
+        let _ = wait_for_outcome(&mut operation);
+        let _settlement = block_on(operation.wait_settlement());
+        panic!("deadline signal did not wake the pending provider read; manual release was cleanup only");
     }
 
     assert!(registered, "the accepted operation must register its deadline");
@@ -658,6 +731,86 @@ fn test_managed_deadline_stops_cooperative_repository_matching() {
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();
     let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_deadline_after_backend_ready_wins_before_result_commit() {
+    use qubit_operation::ClockSource;
+    use qubit_operation::ContextOptions;
+    use qubit_operation::Deadline;
+    use qubit_operation::MonotonicTime;
+    use qubit_operation::OperationOptions;
+    use qubit_operation::OperationOutcome;
+    use qubit_operation::SettlementStatus;
+    use qubit_operation::StopReason;
+
+    for (fail, cancel_before_deadline, expected_reason) in [
+        (false, false, StopReason::Timeout),
+        (true, false, StopReason::Timeout),
+        (false, true, StopReason::UserCancelled),
+    ] {
+        let repository = Arc::new(
+            MimeRepository::from_xml(
+                r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info"><mime-type type="application/x-unused"/></mime-info>"#,
+            )
+            .unwrap(),
+        );
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let services = services(&manager, 4, Arc::new(TestExecution::default()));
+        services.prepare().unwrap();
+        let clock = Arc::new(DeadlineClock::new());
+        let registry = MimeDetectorRegistry::default();
+        registry
+            .register_async_provider(ReadyAtDeadlineProvider {
+                clock: Arc::clone(&clock),
+                cancel_before_deadline,
+                fail,
+            })
+            .unwrap();
+        let runtime = MimeRuntime::new(MimeConfig::default(), repository)
+            .with_execution_services(services.clone())
+            .with_async_provider_selection(
+                &registry,
+                &qubit_spi::ProviderSelection::named("ready-at-deadline").unwrap(),
+            )
+            .unwrap();
+        let clock_source: Arc<dyn ClockSource> = clock.clone();
+        let mut operation = runtime.try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(b"X".as_slice()), InputExtent::Complete),
+            MimeOperationOptions {
+                operation: OperationOptions {
+                    context: ContextOptions {
+                        clock: Some(clock_source),
+                        deadline: Some(Deadline::at(MonotonicTime::new(clock.domain, 10))),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| {
+            panic!("backend operation should be accepted: {:?}", failure.reason)
+        });
+
+        let outcome = block_on(operation.wait_outcome()).unwrap();
+        assert!(
+            matches!(outcome, OperationOutcome::Stopped(ref report) if report.reason == expected_reason),
+            "same-poll deadline/cancellation must decide the outcome, fail={fail}, cancel={cancel_before_deadline}: {outcome:?}"
+        );
+        let settlement = block_on(operation.wait_settlement());
+        assert_eq!(SettlementStatus::Released, settlement.status);
+        assert_eq!(
+            0,
+            clock.active_registrations(),
+            "finished operation cancels its deadline timer"
+        );
+
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
 }
 
 #[test]
