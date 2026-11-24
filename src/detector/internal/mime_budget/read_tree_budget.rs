@@ -8,6 +8,8 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use super::ReadCounters;
 
@@ -15,7 +17,7 @@ use super::ReadCounters;
 #[derive(Debug)]
 pub(in crate::detector) struct ReadTreeBudget {
     /// Maximum bytes shared by the root operation and all descendants.
-    pub(super) limit: u64,
+    pub(super) limit: AtomicU64,
     /// Committed and reserved bytes charged to the shared tree.
     pub(super) counters: Mutex<ReadCounters>,
 }
@@ -31,7 +33,7 @@ impl ReadTreeBudget {
     #[must_use = "the read budget must be retained for its operation scopes"]
     pub(in crate::detector) fn new(limit: u64) -> Arc<Self> {
         Arc::new(Self {
-            limit,
+            limit: AtomicU64::new(limit),
             counters: Mutex::new(ReadCounters::default()),
         })
     }
@@ -43,7 +45,23 @@ impl ReadTreeBudget {
     #[must_use]
     #[allow(dead_code)]
     pub(in crate::detector) fn consumed(&self) -> u64 {
-        self.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
+        self.counters
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .consumed
+    }
+
+    /// Selects the cumulative limit before the first read is reserved.
+    pub(in crate::detector) fn select_limit_before_reads(&self, limit: u64) {
+        let counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
+        if counters.consumed == 0 && counters.reserved == 0 {
+            self.limit.store(limit, Ordering::Release);
+        }
+    }
+
+    /// Returns the cumulative allowance selected for this tree.
+    pub(in crate::detector) fn limit(&self) -> u64 {
+        self.limit.load(Ordering::Acquire)
     }
 }
 

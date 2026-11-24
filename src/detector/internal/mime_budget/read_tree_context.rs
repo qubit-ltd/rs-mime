@@ -6,12 +6,15 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+use std::fmt;
 use std::mem::take;
 use std::ptr::eq;
 use std::ptr::from_ref;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::Weak;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use super::ReadPermit;
 use super::ReadScopeBudget;
@@ -19,9 +22,10 @@ use super::ReadTreeBudget;
 use super::RequestStagingUsage;
 use super::ScopeCounters;
 use super::registration::Registration;
+use qubit_operation::OperationResourceAuthority;
+use qubit_operation::OperationId;
 
 /// Read accounting context inherited by MIME descendants.
-#[derive(Debug)]
 pub(crate) struct ReadTreeContext {
     /// Request-local accounting for concurrently held staging permits.
     #[allow(dead_code)] // Used by request report assembly in the following task.
@@ -33,8 +37,24 @@ pub(crate) struct ReadTreeContext {
     /// Keeps an external-parent anchor alive while a child operation is held.
     #[allow(dead_code)]
     parent: Option<Arc<ReadTreeContext>>,
+    /// Weak authority for the operation that owns the shared tree anchor.
+    resource_authority: Option<OperationResourceAuthority>,
+    /// Operation whose resource scope owns the shared tree anchor.
+    authority_operation: Option<OperationId>,
+    /// Whether the shared root already owns an operation resource anchor.
+    anchored: Arc<AtomicBool>,
     /// Operation IDs that must be unregistered when this context is dropped.
     registrations: Mutex<Vec<Registration>>,
+}
+
+impl fmt::Debug for ReadTreeContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ReadTreeContext")
+            .field("remaining", &self.remaining())
+            .field("consumed", &self.consumed())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ReadTreeContext {
@@ -55,8 +75,66 @@ impl ReadTreeContext {
                 parent: None,
             }),
             parent: None,
+            resource_authority: None,
+            authority_operation: None,
+            anchored: Arc::new(AtomicBool::new(true)),
             registrations: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Creates an uncommitted root associated with an operation authority.
+    pub(crate) fn new_for_operation(
+        limit: u64,
+        authority: OperationResourceAuthority,
+        operation: OperationId,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            staging_usage: Arc::new(RequestStagingUsage::default()),
+            tree: ReadTreeBudget::new(limit),
+            scope: Arc::new(ReadScopeBudget {
+                limit,
+                counters: Mutex::new(ScopeCounters::default()),
+                parent: None,
+            }),
+            parent: None,
+            resource_authority: Some(authority),
+            authority_operation: Some(operation),
+            anchored: Arc::new(AtomicBool::new(false)),
+            registrations: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// Returns the authority associated with the shared root, if any.
+    pub(crate) fn resource_authority(&self) -> Option<OperationResourceAuthority> {
+        self.resource_authority.clone().or_else(|| {
+            self.parent
+                .as_ref()
+                .and_then(|parent| parent.resource_authority())
+        })
+    }
+
+    /// Returns the operation whose weak authority owns this read-tree root.
+    pub(crate) fn authority_operation(&self) -> Option<OperationId> {
+        self.authority_operation.or_else(|| {
+            self.parent
+                .as_ref()
+                .and_then(|parent| parent.authority_operation())
+        })
+    }
+
+    /// Reports whether the shared root is already anchored to an operation.
+    pub(crate) fn is_anchored(&self) -> bool {
+        self.anchored.load(Ordering::Acquire)
+    }
+
+    /// Marks the shared root as anchored after the resource commit succeeds.
+    pub(crate) fn mark_anchored(&self) {
+        self.anchored.store(true, Ordering::Release);
+    }
+
+    /// Selects the shared-tree limit while no read has yet been reserved.
+    pub(crate) fn select_tree_limit_before_reads(&self, limit: u64) {
+        self.tree.select_limit_before_reads(limit);
     }
 
     /// Creates a child scope that shares the root and is bounded by its parent.
@@ -77,6 +155,9 @@ impl ReadTreeContext {
                 parent: Some(Arc::clone(&self.scope)),
             }),
             parent: Some(Arc::clone(self)),
+            resource_authority: self.resource_authority(),
+            authority_operation: self.authority_operation(),
+            anchored: Arc::clone(&self.anchored),
             registrations: Mutex::new(Vec::new()),
         })
     }
@@ -100,7 +181,7 @@ impl ReadTreeContext {
         let tree = self.tree.counters.lock().unwrap_or_else(|e| e.into_inner());
         let mut remaining = self
             .tree
-            .limit
+            .limit()
             .saturating_sub(tree.consumed.saturating_add(tree.reserved));
         drop(tree);
         let mut scope = Some(Arc::clone(&self.scope));
@@ -124,7 +205,11 @@ impl ReadTreeContext {
     #[must_use]
     #[inline]
     pub(crate) fn consumed(&self) -> u64 {
-        self.scope.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
+        self.scope
+            .counters
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .consumed
     }
 
     /// Reserves read capacity across the root tree and every ancestor scope.
@@ -139,7 +224,7 @@ impl ReadTreeContext {
         if bytes
             > self
                 .tree
-                .limit
+                .limit()
                 .saturating_sub(tree.consumed.saturating_add(tree.reserved))
         {
             return None;
@@ -158,9 +243,17 @@ impl ReadTreeContext {
             {
                 drop(counters);
                 for reserved in &scopes {
-                    reserved.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= bytes;
+                    reserved
+                        .counters
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .reserved -= bytes;
                 }
-                self.tree.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= bytes;
+                self.tree
+                    .counters
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .reserved -= bytes;
                 return None;
             }
             counters.reserved += bytes;
@@ -182,10 +275,10 @@ impl ReadTreeContext {
     /// - `registration`: Weak roots map and operation ID to remove on drop.
     pub(super) fn register(&self, registration: Registration) {
         let mut registrations = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
-        if !registrations
-            .iter()
-            .any(|item| item.operation == registration.operation && Weak::ptr_eq(&item.roots, &registration.roots))
-        {
+        if !registrations.iter().any(|item| {
+            item.operation == registration.operation
+                && Weak::ptr_eq(&item.roots, &registration.roots)
+        }) {
             registrations.push(registration);
         }
     }
@@ -195,7 +288,8 @@ impl ReadTreeContext {
 impl Drop for ReadTreeContext {
     /// Unregisters this context from each weak operation index.
     fn drop(&mut self) {
-        let registrations = take(&mut *self.registrations.lock().unwrap_or_else(|e| e.into_inner()));
+        let registrations =
+            take(&mut *self.registrations.lock().unwrap_or_else(|e| e.into_inner()));
         let context = from_ref(self);
         for registration in registrations {
             let Some(roots) = registration.roots.upgrade() else {
@@ -264,7 +358,9 @@ mod tests {
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let mut operation = group
             .as_async()
-            .try_submit(Default::default(), |scope| async move { Ok::<_, ()>(scope.id()) })
+            .try_submit(Default::default(), |scope| async move {
+                Ok::<_, ()>(scope.id())
+            })
             .unwrap();
         match block_on(operation.wait_outcome()).unwrap() {
             OperationOutcome::Succeeded(id) => id,
@@ -314,7 +410,9 @@ mod tests {
             .is_err()
         );
 
-        let permit = child.reserve(4).expect("reservation should recover all counters");
+        let permit = child
+            .reserve(4)
+            .expect("reservation should recover all counters");
         assert_eq!(3, permit.commit(3));
         assert_eq!(3, root.consumed());
         assert_eq!(3, child.consumed());
@@ -336,7 +434,9 @@ mod tests {
         assert_eq!(child.remaining(), 2);
         assert!(child.reserve(3).is_none());
 
-        let provisional = child.reserve(2).expect("remaining child capacity should fit");
+        let provisional = child
+            .reserve(2)
+            .expect("remaining child capacity should fit");
         assert_eq!(root.remaining(), 5);
         drop(provisional);
         assert_eq!(root.remaining(), 7);
@@ -427,7 +527,11 @@ mod tests {
 
         assert_eq!(root.remaining(), 1);
         assert!(sibling.reserve(2).is_none());
-        assert_eq!(root.remaining(), 1, "failed sibling reservation must roll back");
+        assert_eq!(
+            root.remaining(),
+            1,
+            "failed sibling reservation must roll back"
+        );
 
         drop(in_flight);
         assert_eq!(root.remaining(), 5);
@@ -478,7 +582,10 @@ mod tests {
         let roots = Arc::new(Mutex::new(HashMap::new()));
         let old = ReadTreeContext::new(8);
         let replacement = ReadTreeContext::new(16);
-        roots.lock().unwrap().insert(operation, Arc::downgrade(&replacement));
+        roots
+            .lock()
+            .unwrap()
+            .insert(operation, Arc::downgrade(&replacement));
         old.register(Registration {
             roots: Arc::downgrade(&roots),
             operation,
@@ -488,7 +595,13 @@ mod tests {
 
         assert!(Arc::ptr_eq(
             &replacement,
-            &roots.lock().unwrap().get(&operation).unwrap().upgrade().unwrap()
+            &roots
+                .lock()
+                .unwrap()
+                .get(&operation)
+                .unwrap()
+                .upgrade()
+                .unwrap()
         ));
     }
 
