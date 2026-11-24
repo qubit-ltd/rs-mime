@@ -262,6 +262,7 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::task::Context;
     use std::task::Poll;
     use std::task::Wake;
@@ -277,6 +278,7 @@ mod tests {
     use qubit_operation::ResourceManageErrorKind;
     use qubit_operation::StopReason;
 
+    use super::PendingBinding;
     use super::ReadTreeContext;
     use super::ReadTreeRegistry;
 
@@ -352,6 +354,16 @@ mod tests {
             .unwrap()
             .commit()
             .unwrap()
+    }
+
+    fn poison_mutex<T: Send>(mutex: &Mutex<T>) {
+        thread::scope(|scope| {
+            let poisoner = scope.spawn(|| {
+                let _guard = mutex.lock().unwrap();
+                panic!("poison read-tree recovery mutex");
+            });
+            assert!(poisoner.join().is_err());
+        });
     }
 
     #[test]
@@ -483,6 +495,88 @@ mod tests {
     }
 
     #[test]
+    fn test_existing_child_borrows_pending_root_and_siblings_recover_poisoned_locks() {
+        let mut manager_options = ManagerOptions::default();
+        manager_options.scope_limits.resources = 1;
+        let manager = OperationManager::new(manager_options).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let body_registry = Arc::clone(&registry);
+        let mut parent = group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                let first = body_registry
+                    .reserve_child_for_parent(&scope, 8, 8)
+                    .expect("the first child reserves the parent tree");
+                let pending_root = match &first.binding {
+                    PendingBinding::First { pending_root, .. } => Arc::clone(pending_root),
+                    PendingBinding::Existing(_) => {
+                        panic!("the first child must own the pending root")
+                    }
+                };
+
+                poison_mutex(&body_registry.registrations);
+                poison_mutex(&body_registry.roots);
+                poison_mutex(&body_registry.pending_roots);
+                poison_mutex(&pending_root.state);
+
+                let borrowed = body_registry
+                    .existing_child_for_parent(&scope, 6)
+                    .expect("a reserved tree is borrowable before its first commit");
+                let second = body_registry
+                    .reserve_child_for_parent(&scope, 16, 4)
+                    .expect("an accepted sibling reuses the first pending root");
+
+                assert_eq!(3, borrowed.reserve(3).unwrap().commit(3));
+                let first = first.commit().expect("the first sibling commits the root");
+                let second = second.commit().expect("the later sibling reuses the root");
+                assert!(Arc::ptr_eq(&borrowed.tree, &first.tree));
+                assert!(Arc::ptr_eq(&first.tree, &second.tree));
+                assert_eq!(3, second.tree.consumed());
+                assert!(matches!(
+                    scope.reserve_resource(),
+                    Err(qubit_operation::ResourceCapacityError::CapacityExceeded)
+                ));
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+
+        assert!(matches!(
+            block_on(parent.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+        let _settlement = block_on(parent.wait_settlement());
+        drop(registry);
+    }
+
+    #[test]
+    fn test_child_for_parent_maps_stopped_scope_without_registering_a_tree() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let body_registry = Arc::clone(&registry);
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let mut parent = group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                assert_eq!(
+                    qubit_operation::StopRequestStatus::Accepted,
+                    scope.request_stop(StopReason::UserCancelled)
+                );
+                let result = body_registry.child_for_parent(&scope, 8, 4);
+                result_tx.send((scope.id(), result.err())).unwrap();
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+
+        let (operation, error) = result_rx.recv().unwrap();
+        assert_eq!(Some(ResourceManageErrorKind::Stopped), error);
+        assert!(registry.for_operation(operation).is_none());
+        let _outcome = block_on(parent.wait_outcome()).unwrap();
+        let _settlement = block_on(parent.wait_settlement());
+    }
+
+    #[test]
     fn test_accepted_sibling_bindings_share_tree_after_parent_body_returns() {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
@@ -504,6 +598,7 @@ mod tests {
             OperationOutcome::Succeeded(())
         ));
 
+        poison_mutex(&registry.pending_roots);
         let first = first
             .commit()
             .expect("accepted child retains its reserved parent tree after body return");
@@ -532,6 +627,7 @@ mod tests {
                 qubit_operation::StopRequestStatus::Accepted,
                 scope.request_stop(StopReason::UserCancelled)
             );
+            poison_mutex(&body_registry.pending_roots);
             let kind = pending.commit().expect_err("a stopped accepted parent rejects commit");
             assert!(body_registry.for_operation(scope.id()).is_none());
             reason_tx.send(kind).unwrap();
