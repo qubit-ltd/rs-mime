@@ -26,6 +26,9 @@ use crate::detector::internal::mime_budget::registration::Registration;
 pub(crate) struct PendingReadTreeBinding {
     /// Existing or first-root binding state to commit after admission.
     pub(super) binding: PendingBinding,
+    /// This ticket's immediate MIME parent scope, which may differ between
+    /// tickets sharing the same canonical anchor reservation.
+    pub(super) scope_parent: Arc<ReadTreeContext>,
     /// Maximum bytes exposed by the child context produced at commit.
     pub(super) scope_limit: u64,
     /// Cumulative limit selected by this first actual provider request.
@@ -45,7 +48,10 @@ impl PendingReadTreeBinding {
     /// anchor.
     pub(crate) fn commit(self) -> Result<Arc<ReadTreeContext>, ResourceManageErrorKind> {
         match self.binding {
-            PendingBinding::Existing(root) => Ok(root.child(self.scope_limit)),
+            PendingBinding::Existing(root) => {
+                debug_assert!(Arc::ptr_eq(&root.tree, &self.scope_parent.tree));
+                Ok(self.scope_parent.child(self.scope_limit))
+            }
             PendingBinding::First {
                 roots,
                 pending_roots,
@@ -57,6 +63,7 @@ impl PendingReadTreeBinding {
                 let mut roots_map = roots.lock().unwrap_or_else(|e| e.into_inner());
                 let existing = roots_map.get(&operation).and_then(Weak::upgrade);
                 if let Some(existing) = existing.as_ref().filter(|root| root.is_anchored()) {
+                    debug_assert!(Arc::ptr_eq(&existing.tree, &self.scope_parent.tree));
                     let mut pending_state = pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
                     match &mut *pending_state {
                         PendingReadTreeRootState::Reserved(reservation) => {
@@ -65,7 +72,7 @@ impl PendingReadTreeBinding {
                         PendingReadTreeRootState::Detached | PendingReadTreeRootState::Failed(_) => {}
                     }
                     unregister_pending(&pending_roots, operation, &pending_root);
-                    return Ok(existing.child(self.scope_limit));
+                    return Ok(self.scope_parent.child(self.scope_limit));
                 }
                 if existing.is_none() {
                     roots_map.remove(&operation);
@@ -75,7 +82,7 @@ impl PendingReadTreeBinding {
                 let reservation = match &mut *pending_state {
                     PendingReadTreeRootState::Reserved(reservation) => reservation.take(),
                     PendingReadTreeRootState::Detached => {
-                        return Ok(pending_root.root.child(self.scope_limit));
+                        return Ok(self.scope_parent.child(self.scope_limit));
                     }
                     PendingReadTreeRootState::Failed(kind) => return Err(*kind),
                 };
@@ -84,11 +91,12 @@ impl PendingReadTreeBinding {
                 };
 
                 let root = Arc::clone(&pending_root.root);
-                root.select_tree_limit_before_reads(self.tree_limit);
+                let _binding = root.tree.binding.lock().unwrap_or_else(|e| e.into_inner());
                 let anchor = ParentReadBudgetAnchor::new(Arc::clone(&root));
                 match reservation.commit(anchor) {
                     Ok(resource) => {
                         drop(resource);
+                        root.select_tree_limit_before_reads(self.tree_limit);
                         root.mark_anchored();
                     }
                     Err(error) => {
@@ -101,9 +109,10 @@ impl PendingReadTreeBinding {
                             // A stopped parent remains an error; ScopeEnded is
                             // safe to detach because it cannot admit new children.
                             drop(reservation);
+                            root.select_tree_limit_before_reads(self.tree_limit);
                             *pending_state = PendingReadTreeRootState::Detached;
                             unregister_pending(&pending_roots, operation, &pending_root);
-                            return Ok(root.child(self.scope_limit));
+                            return Ok(self.scope_parent.child(self.scope_limit));
                         }
                         drop(reservation);
                         *pending_state = PendingReadTreeRootState::Failed(kind);
@@ -118,7 +127,7 @@ impl PendingReadTreeBinding {
                     roots: Arc::downgrade(&roots),
                     operation,
                 });
-                Ok(root.child(self.scope_limit))
+                Ok(self.scope_parent.child(self.scope_limit))
             }
         }
     }

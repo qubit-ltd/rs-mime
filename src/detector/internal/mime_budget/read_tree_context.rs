@@ -224,6 +224,7 @@ impl ReadTreeContext {
     /// # Returns
     /// A permit when every applicable limit has capacity; otherwise `None`.
     pub(crate) fn reserve(&self, bytes: u64) -> Option<ReadPermit> {
+        let _binding = self.tree.binding.lock().unwrap_or_else(|e| e.into_inner());
         let mut tree = self.tree.counters.lock().unwrap_or_else(|e| e.into_inner());
         if bytes
             > self

@@ -158,7 +158,8 @@ impl ReadTreeRegistry {
     ///
     /// # Parameters
     /// - `parent`: Parent operation whose read tree should own the child.
-    /// - `tree_limit`: Maximum resources allowed in the associated tree.
+    /// - `tree_limit`: Retained for call-site compatibility; an uncommitted
+    ///   association does not select the shared tree limit.
     /// - `scope_limit`: Maximum resources allowed for this child scope.
     ///
     /// # Returns
@@ -166,7 +167,7 @@ impl ReadTreeRegistry {
     pub(in crate::detector) fn associate_child_for_parent(
         &self,
         parent: &OperationScope,
-        tree_limit: u64,
+        _tree_limit: u64,
         scope_limit: u64,
     ) -> Arc<ReadTreeContext> {
         let _registration = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
@@ -202,7 +203,10 @@ impl ReadTreeRegistry {
         let mut ancestors = self.ancestors.lock().unwrap_or_else(|e| e.into_inner());
         let root = ancestors.get(&operation).and_then(Weak::upgrade).unwrap_or_else(|| {
             ancestors.remove(&operation);
-            ReadTreeContext::new_for_operation(tree_limit, parent.resource_authority(), operation)
+            // An association does not represent a provider read and must not
+            // choose the cumulative tree cap. The first committed read ticket
+            // selects it while holding the tree binding lock.
+            ReadTreeContext::new_for_operation(u64::MAX, parent.resource_authority(), operation)
         });
         ancestors.insert(operation, Arc::downgrade(&root));
         root.register(Registration {
@@ -248,11 +252,13 @@ impl ReadTreeRegistry {
             if root.is_none() {
                 ancestors.remove(&operation);
             }
-            root.or(indexed_root)
+            root.or(indexed_root.clone())
         };
+        let direct_parent = indexed_root.or_else(|| associated_root.clone());
         if let Some(root) = associated_root.as_ref().filter(|root| root.is_anchored()) {
             return Ok(PendingReadTreeBinding {
                 binding: PendingBinding::Existing(Arc::clone(root)),
+                scope_parent: direct_parent.unwrap_or_else(|| Arc::clone(root)),
                 scope_limit,
                 tree_limit,
             });
@@ -271,7 +277,8 @@ impl ReadTreeRegistry {
                 .and_then(Weak::upgrade);
             if let Some(root) = anchored_root.filter(|root| root.is_anchored()) {
                 return Ok(PendingReadTreeBinding {
-                    binding: PendingBinding::Existing(root),
+                    binding: PendingBinding::Existing(Arc::clone(&root)),
+                    scope_parent: direct_parent.unwrap_or(root),
                     scope_limit,
                     tree_limit,
                 });
@@ -281,6 +288,7 @@ impl ReadTreeRegistry {
         {
             let mut pending_roots = self.pending_roots.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(pending_root) = pending_roots.get(&anchor_operation).and_then(Weak::upgrade) {
+                let scope_parent = direct_parent.unwrap_or_else(|| Arc::clone(&pending_root.root));
                 return Ok(PendingReadTreeBinding {
                     binding: PendingBinding::First {
                         roots: Arc::clone(&self.roots),
@@ -289,6 +297,7 @@ impl ReadTreeRegistry {
                         operation: anchor_operation,
                         pending_root,
                     },
+                    scope_parent,
                     scope_limit,
                     tree_limit,
                 });
@@ -305,9 +314,10 @@ impl ReadTreeRegistry {
             ResourceCapacityError::Stopped => ResourceManageErrorKind::Stopped,
             ResourceCapacityError::CapacityExceeded => ResourceManageErrorKind::CapacityExceeded,
         })?;
+        let root_context_for_parent = associated_root
+            .unwrap_or_else(|| ReadTreeContext::new_for_operation(u64::MAX, authority.clone(), anchor_operation));
         let pending_root = Arc::new(PendingReadTreeRoot {
-            root: associated_root
-                .unwrap_or_else(|| ReadTreeContext::new_for_operation(tree_limit, authority.clone(), anchor_operation)),
+            root: Arc::clone(&root_context_for_parent),
             state: Mutex::new(PendingReadTreeRootState::Reserved(Some(reservation))),
             pending_roots: Arc::downgrade(&self.pending_roots),
             operation: anchor_operation,
@@ -324,6 +334,7 @@ impl ReadTreeRegistry {
                 operation: anchor_operation,
                 pending_root,
             },
+            scope_parent: direct_parent.unwrap_or(root_context_for_parent),
             scope_limit,
             tree_limit,
         })
@@ -628,7 +639,7 @@ mod tests {
             let first = registry_body.associate_child_for_parent(scope, 8, 8);
             let second = registry_body.associate_child_for_parent(scope, 99, 6);
             assert!(Arc::ptr_eq(&first.tree, &second.tree));
-            assert_eq!(8, first.tree.limit());
+            assert_eq!(u64::MAX, first.tree.limit());
             assert_eq!(8, first.scope.limit);
             assert_eq!(6, second.scope.limit);
 
@@ -637,7 +648,8 @@ mod tests {
             assert_eq!(4, grandchild.reserve(4).unwrap().commit(4));
             assert_eq!(4, second.reserve(4).unwrap().commit(4));
             assert_eq!(8, first.tree.consumed());
-            assert!(second.reserve(1).is_none());
+            assert_eq!(1, second.reserve(1).unwrap().commit(1));
+            assert_eq!(9, first.tree.consumed());
         });
     }
 
@@ -1061,14 +1073,11 @@ mod tests {
                 .commit()
                 .expect("provider read promotes the ancestor association");
             assert!(Arc::ptr_eq(&intermediate.tree, &direct_provider.tree));
-            assert_eq!(
-                16,
-                direct_provider.tree.limit(),
-                "the first actual provider request selects the tree limit"
-            );
+            assert_eq!(16, direct_provider.tree.limit(), "the first actual provider request selects the tree limit");
 
             assert_eq!(6, intermediate.reserve(6).unwrap().commit(6));
             assert_eq!(2, direct_provider.reserve(2).unwrap().commit(2));
+            assert_eq!(8, direct_provider.reserve(8).unwrap().commit(8));
             assert!(direct_provider.reserve(1).is_none());
         });
     }
@@ -1259,6 +1268,7 @@ mod tests {
         let body_registry = Arc::clone(&registry);
         let (reason_tx, reason_rx) = std::sync::mpsc::channel();
         let mut parent = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let borrowed = body_registry.associate_child_for_parent(&scope, 2, 4);
             let pending = body_registry.reserve_child_for_parent(&scope, 8, 4).unwrap();
             assert_eq!(
                 qubit_operation::StopRequestStatus::Accepted,
@@ -1267,6 +1277,7 @@ mod tests {
             poison_mutex(&body_registry.pending_roots);
             let kind = pending.commit().expect_err("a stopped accepted parent rejects commit");
             assert!(body_registry.for_operation(scope.id()).is_none());
+            assert_eq!(u64::MAX, borrowed.tree.limit(), "failed anchor commit must not select a tree cap");
             reason_tx.send(kind).unwrap();
             Ok::<_, ()>(())
         }))
