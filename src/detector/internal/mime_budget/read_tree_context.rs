@@ -77,6 +77,7 @@ impl ReadTreeContext {
             scope: Arc::new(ReadScopeBudget {
                 limit,
                 counters: Mutex::new(ScopeCounters::default()),
+                local_consumed: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 parent: None,
             }),
             parent: None,
@@ -104,6 +105,7 @@ impl ReadTreeContext {
             scope: Arc::new(ReadScopeBudget {
                 limit,
                 counters: Mutex::new(ScopeCounters::default()),
+                local_consumed: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 parent: None,
             }),
             parent: None,
@@ -116,15 +118,20 @@ impl ReadTreeContext {
 
     /// Returns the authority associated with the shared root, if any.
     pub(crate) fn resource_authority(&self) -> Option<OperationResourceAuthority> {
-        self.resource_authority
-            .clone()
-            .or_else(|| self.parent.as_ref().and_then(|parent| parent.resource_authority()))
+        self.resource_authority.clone().or_else(|| {
+            self.parent
+                .as_ref()
+                .and_then(|parent| parent.resource_authority())
+        })
     }
 
     /// Returns the operation whose weak authority owns this read-tree root.
     pub(crate) fn authority_operation(&self) -> Option<OperationId> {
-        self.authority_operation
-            .or_else(|| self.parent.as_ref().and_then(|parent| parent.authority_operation()))
+        self.authority_operation.or_else(|| {
+            self.parent
+                .as_ref()
+                .and_then(|parent| parent.authority_operation())
+        })
     }
 
     /// Returns the canonical context at the root of this scope chain.
@@ -169,6 +176,7 @@ impl ReadTreeContext {
             scope: Arc::new(ReadScopeBudget {
                 limit: limit.min(self.scope.limit),
                 counters: Mutex::new(ScopeCounters::default()),
+                local_consumed: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 parent: Some(Arc::clone(&self.scope)),
             }),
             parent: Some(Arc::clone(self)),
@@ -222,7 +230,18 @@ impl ReadTreeContext {
     #[must_use]
     #[inline]
     pub(crate) fn consumed(&self) -> u64 {
-        self.scope.counters.lock().unwrap_or_else(|e| e.into_inner()).consumed
+        self.scope
+            .counters
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .consumed
+    }
+
+    /// Returns bytes read directly by this operation, excluding descendants.
+    #[must_use]
+    #[inline]
+    pub(crate) fn bytes_read(&self) -> u64 {
+        self.scope.local_consumed.load(Ordering::Acquire)
     }
 
     /// Reserves read capacity across the root tree and every ancestor scope.
@@ -257,9 +276,17 @@ impl ReadTreeContext {
             {
                 drop(counters);
                 for reserved in &scopes {
-                    reserved.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= bytes;
+                    reserved
+                        .counters
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .reserved -= bytes;
                 }
-                self.tree.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= bytes;
+                self.tree
+                    .counters
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .reserved -= bytes;
                 return None;
             }
             counters.reserved += bytes;
@@ -269,6 +296,7 @@ impl ReadTreeContext {
         }
         Some(ReadPermit {
             tree: Arc::clone(&self.tree),
+            local_consumed: Arc::clone(&self.scope.local_consumed),
             scopes,
             reserved: bytes,
             committed: false,
@@ -281,10 +309,10 @@ impl ReadTreeContext {
     /// - `registration`: Weak roots map and operation ID to remove on drop.
     pub(super) fn register(&self, registration: Registration) {
         let mut registrations = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
-        if !registrations
-            .iter()
-            .any(|item| item.operation == registration.operation && Weak::ptr_eq(&item.roots, &registration.roots))
-        {
+        if !registrations.iter().any(|item| {
+            item.operation == registration.operation
+                && Weak::ptr_eq(&item.roots, &registration.roots)
+        }) {
             registrations.push(registration);
         }
     }
@@ -294,7 +322,8 @@ impl ReadTreeContext {
 impl Drop for ReadTreeContext {
     /// Unregisters this context from each weak operation index.
     fn drop(&mut self) {
-        let registrations = take(&mut *self.registrations.lock().unwrap_or_else(|e| e.into_inner()));
+        let registrations =
+            take(&mut *self.registrations.lock().unwrap_or_else(|e| e.into_inner()));
         let context = from_ref(self);
         for registration in registrations {
             let Some(roots) = registration.roots.upgrade() else {
@@ -363,7 +392,9 @@ mod tests {
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let mut operation = group
             .as_async()
-            .try_submit(Default::default(), |scope| async move { Ok::<_, ()>(scope.id()) })
+            .try_submit(Default::default(), |scope| async move {
+                Ok::<_, ()>(scope.id())
+            })
             .unwrap();
         match block_on(operation.wait_outcome()).unwrap() {
             OperationOutcome::Succeeded(id) => id,
@@ -413,7 +444,9 @@ mod tests {
             .is_err()
         );
 
-        let permit = child.reserve(4).expect("reservation should recover all counters");
+        let permit = child
+            .reserve(4)
+            .expect("reservation should recover all counters");
         assert_eq!(3, permit.commit(3));
         assert_eq!(3, root.consumed());
         assert_eq!(3, child.consumed());
@@ -435,7 +468,9 @@ mod tests {
         assert_eq!(child.remaining(), 2);
         assert!(child.reserve(3).is_none());
 
-        let provisional = child.reserve(2).expect("remaining child capacity should fit");
+        let provisional = child
+            .reserve(2)
+            .expect("remaining child capacity should fit");
         assert_eq!(root.remaining(), 5);
         drop(provisional);
         assert_eq!(root.remaining(), 7);
@@ -526,7 +561,11 @@ mod tests {
 
         assert_eq!(root.remaining(), 1);
         assert!(sibling.reserve(2).is_none());
-        assert_eq!(root.remaining(), 1, "failed sibling reservation must roll back");
+        assert_eq!(
+            root.remaining(),
+            1,
+            "failed sibling reservation must roll back"
+        );
 
         drop(in_flight);
         assert_eq!(root.remaining(), 5);
@@ -577,7 +616,10 @@ mod tests {
         let roots = Arc::new(Mutex::new(HashMap::new()));
         let old = ReadTreeContext::new(8);
         let replacement = ReadTreeContext::new(16);
-        roots.lock().unwrap().insert(operation, Arc::downgrade(&replacement));
+        roots
+            .lock()
+            .unwrap()
+            .insert(operation, Arc::downgrade(&replacement));
         old.register(Registration {
             roots: Arc::downgrade(&roots),
             operation,
@@ -587,7 +629,13 @@ mod tests {
 
         assert!(Arc::ptr_eq(
             &replacement,
-            &roots.lock().unwrap().get(&operation).unwrap().upgrade().unwrap()
+            &roots
+                .lock()
+                .unwrap()
+                .get(&operation)
+                .unwrap()
+                .upgrade()
+                .unwrap()
         ));
     }
 

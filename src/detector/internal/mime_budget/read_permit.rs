@@ -7,6 +7,8 @@
 // =============================================================================
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use super::ReadScopeBudget;
 use super::ReadTreeBudget;
@@ -18,6 +20,8 @@ pub(crate) struct ReadPermit {
     pub(super) tree: Arc<ReadTreeBudget>,
     /// Scopes charged for this read, from the current scope through its roots.
     pub(super) scopes: Vec<Arc<ReadScopeBudget>>,
+    /// Counter owned by the scope that initiated this read.
+    pub(super) local_consumed: Arc<AtomicU64>,
     /// Capacity provisionally reserved before provider I/O.
     pub(super) reserved: u64,
     /// Whether completion has replaced the reservation with actual bytes.
@@ -36,7 +40,10 @@ impl ReadPermit {
     /// # Panics
     /// Panics if the provider returned more bytes than were reserved.
     pub(crate) fn commit(mut self, actual: u64) -> u64 {
-        assert!(actual <= self.reserved, "provider returned more bytes than reserved");
+        assert!(
+            actual <= self.reserved,
+            "provider returned more bytes than reserved"
+        );
         let mut counters = self.tree.counters.lock().unwrap_or_else(|e| e.into_inner());
         counters.reserved -= self.reserved;
         counters.consumed += actual;
@@ -45,6 +52,7 @@ impl ReadPermit {
             counters.reserved -= self.reserved;
             counters.consumed += actual;
         }
+        self.local_consumed.fetch_add(actual, Ordering::AcqRel);
         self.committed = true;
         actual
     }
@@ -54,9 +62,17 @@ impl Drop for ReadPermit {
     /// Releases provisional bytes when the read did not commit.
     fn drop(&mut self) {
         if !self.committed {
-            self.tree.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= self.reserved;
+            self.tree
+                .counters
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .reserved -= self.reserved;
             for scope in &self.scopes {
-                scope.counters.lock().unwrap_or_else(|e| e.into_inner()).reserved -= self.reserved;
+                scope
+                    .counters
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .reserved -= self.reserved;
             }
         }
     }
@@ -84,6 +100,45 @@ mod tests {
         assert_eq!(7, root.remaining());
         assert_eq!(4, child.remaining());
         assert_eq!(2, grandchild.remaining());
+        assert_eq!(0, root.bytes_read());
+        assert_eq!(0, child.bytes_read());
+        assert_eq!(3, grandchild.bytes_read());
+    }
+
+    #[test]
+    fn test_repeated_scope_reads_count_locally_and_still_charge_parent_allowance() {
+        let root = ReadTreeContext::new(10);
+        let parent = root.child(8);
+        let child = parent.child(6);
+
+        child.reserve(3).unwrap().commit(2);
+        child.reserve(2).unwrap().commit(2);
+
+        assert_eq!(
+            4,
+            child.bytes_read(),
+            "repeated reads count every delivered byte"
+        );
+        assert_eq!(
+            0,
+            parent.bytes_read(),
+            "descendant reads do not enter the parent's report"
+        );
+        assert_eq!(
+            0,
+            root.bytes_read(),
+            "descendant reads do not enter the root's report"
+        );
+        assert_eq!(
+            4,
+            parent.remaining(),
+            "descendant reads still consume parent allowance"
+        );
+        assert_eq!(
+            6,
+            root.remaining(),
+            "descendant reads still consume shared tree allowance"
+        );
     }
 
     #[test]
@@ -95,7 +150,10 @@ mod tests {
         assert_eq!(child.remaining(), 2);
 
         let result = catch_unwind(AssertUnwindSafe(|| permit.commit(5)));
-        assert!(result.is_err(), "a read cannot commit more than it reserved");
+        assert!(
+            result.is_err(),
+            "a read cannot commit more than it reserved"
+        );
         assert_eq!(root.consumed(), 0);
         assert_eq!(child.consumed(), 0);
         assert_eq!(root.remaining(), 8);
