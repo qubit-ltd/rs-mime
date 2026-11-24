@@ -761,9 +761,9 @@ fn test_managed_session_open_deadline_skips_extension_backend() {
                 operation: qubit_operation::OperationOptions {
                     context: qubit_operation::ContextOptions {
                         clock: Some(clock),
-                        deadline: Some(qubit_operation::Deadline::at(
-                            qubit_operation::MonotonicTime::new(domain, 5),
-                        )),
+                        deadline: Some(qubit_operation::Deadline::at(qubit_operation::MonotonicTime::new(
+                            domain, 5,
+                        ))),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -834,9 +834,9 @@ fn test_automatic_prefix_deadline_after_final_read_skips_extension_backend() {
                 operation: qubit_operation::OperationOptions {
                     context: qubit_operation::ContextOptions {
                         clock: Some(clock),
-                        deadline: Some(qubit_operation::Deadline::at(
-                            qubit_operation::MonotonicTime::new(domain, 5),
-                        )),
+                        deadline: Some(qubit_operation::Deadline::at(qubit_operation::MonotonicTime::new(
+                            domain, 5,
+                        ))),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -844,7 +844,12 @@ fn test_automatic_prefix_deadline_after_final_read_skips_extension_backend() {
                 ..Default::default()
             },
         )
-        .unwrap_or_else(|failure| panic!("automatic prefix final-read deadline operation rejected: {:?}", failure.reason));
+        .unwrap_or_else(|failure| {
+            panic!(
+                "automatic prefix final-read deadline operation rejected: {:?}",
+                failure.reason
+            )
+        });
 
     match block_on(operation.wait_outcome()).unwrap() {
         qubit_operation::OperationOutcome::Stopped(report) => {
@@ -852,7 +857,11 @@ fn test_automatic_prefix_deadline_after_final_read_skips_extension_backend() {
         }
         other => panic!("automatic prefix should preserve the deadline outcome: {other:?}"),
     }
-    assert_eq!(read_calls.load(Ordering::SeqCst), 1, "the full prefix was delivered in one read");
+    assert_eq!(
+        read_calls.load(Ordering::SeqCst),
+        1,
+        "the full prefix was delivered in one read"
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 0, "extension backend must not be called");
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);

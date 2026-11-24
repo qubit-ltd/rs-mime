@@ -55,14 +55,13 @@ mod staged_temp_owner;
 use completion::completion_pair;
 pub(crate) use managed_staging_limits::ManagedStagingLimits;
 use managed_temp_cleanup::ManagedTempCleanup;
-use resource_identity::ResourceIdentity;
-pub(crate) use staged_mime_input::StagedMimeInput;
-use staged_temp_owner::StagedTempOwner;
-
 #[cfg(test)]
 pub(crate) use resource_identity::PublishEvent;
 #[cfg(test)]
 pub(crate) use resource_identity::PublishHook;
+use resource_identity::ResourceIdentity;
+pub(crate) use staged_mime_input::StagedMimeInput;
+use staged_temp_owner::StagedTempOwner;
 
 /// Stages owned bytes without performing filesystem work in the caller's
 /// async poll. A rejected worker dispatch returns the job and drops the
@@ -407,6 +406,21 @@ pub(crate) async fn create_empty_staged_with(
     create_empty_staged_with_impl(scope, reservation, limits, create_temp).await
 }
 
+/// Creates an empty staged file while exposing identity publication to tests.
+///
+/// # Parameters
+/// - `scope`: operation whose stop state governs staging.
+/// - `reservation`: recovery reservation that owns the created file.
+/// - `limits`: shared staging limits applied to the file.
+/// - `hook`: optional observer for cleanup identity publication.
+/// - `create_temp`: test factory for the native temporary file.
+///
+/// # Returns
+/// The managed reference to the empty staged file.
+///
+/// # Errors
+/// Returns an error if the operation is stopped, creation fails, or the
+/// reservation cannot retain the file.
 #[cfg(test)]
 pub(crate) async fn create_empty_staged_with_hook(
     scope: &OperationScope,
@@ -420,6 +434,20 @@ pub(crate) async fn create_empty_staged_with_hook(
     create_empty_staged_with_inner(scope, reservation, limits, hook, create_temp).await
 }
 
+/// Creates an empty staged file without test instrumentation.
+///
+/// # Parameters
+/// - `scope`: operation whose stop state governs staging.
+/// - `reservation`: recovery reservation that owns the created file.
+/// - `limits`: shared staging limits applied to the file.
+/// - `create_temp`: factory for the native temporary file.
+///
+/// # Returns
+/// The managed reference to the empty staged file.
+///
+/// # Errors
+/// Returns an error if the operation is stopped, creation fails, or the
+/// reservation cannot retain the file.
 #[cfg(not(test))]
 async fn create_empty_staged_with_impl(
     scope: &OperationScope,
@@ -432,6 +460,21 @@ async fn create_empty_staged_with_impl(
     create_empty_staged_with_inner(scope, reservation, limits, create_temp).await
 }
 
+/// Creates and registers an empty staged file, then publishes its recovery ID.
+///
+/// # Parameters
+/// - `scope`: operation whose stop state governs staging.
+/// - `reservation`: recovery reservation that owns the created file.
+/// - `limits`: shared staging limits applied to the file.
+/// - `hook`: optional test observer for identity publication.
+/// - `create_temp`: factory for the native temporary file.
+///
+/// # Returns
+/// The managed reference to the empty staged file.
+///
+/// # Errors
+/// Returns an error if the operation is stopped, creation fails, or the
+/// reservation cannot retain the file.
 async fn create_empty_staged_with_inner(
     scope: &OperationScope,
     reservation: ResourceReservation,
@@ -591,6 +634,11 @@ pub(crate) fn commit_staged(
     }
 }
 
+/// Transfers a created staged file to recovery and publishes its assigned ID.
+///
+/// # Parameters
+/// - `reservation`: recovery reservation receiving the staged file.
+/// - `staged`: file whose assigned recovery ID is published after transfer.
 fn retain_creation_recovery(reservation: ResourceReservation, staged: StagedMimeInput) {
     let identity = Arc::clone(&staged.cleanup_id);
     let cleanup = Arc::new(ManagedTempCleanup {
@@ -601,6 +649,12 @@ fn retain_creation_recovery(reservation: ResourceReservation, staged: StagedMime
     identity.publish(id);
 }
 
+/// Transfers a partially created staged file to recovery and publishes its ID.
+///
+/// # Parameters
+/// - `reservation`: recovery reservation receiving the partial file.
+/// - `partial`: file whose assigned recovery ID is published after transfer.
+/// - `cleanup`: cleanup policy retained with the partial file.
 fn retain_partial_for_cleanup(
     reservation: ResourceReservation,
     partial: StagedMimeInput,
@@ -657,10 +711,7 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 ///
 /// # Returns
 /// A cleanup failure associated with the staged resource.
-fn cleanup_failure(
-    id: ResourceId,
-    source: Arc<dyn std::error::Error + Send + Sync>,
-) -> CleanupFailure {
+fn cleanup_failure(id: ResourceId, source: Arc<dyn std::error::Error + Send + Sync>) -> CleanupFailure {
     CleanupFailure {
         resource_id: id,
         stage: CleanupStage::Drop,

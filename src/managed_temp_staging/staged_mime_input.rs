@@ -17,8 +17,8 @@ use std::sync::atomic::Ordering;
 use qubit_local_files::LocalTempFile;
 use qubit_local_files::LocalTempRecovery;
 
-use super::staged_temp_owner::StagedTempOwner;
 use super::resource_identity::ResourceIdentity;
+use super::staged_temp_owner::StagedTempOwner;
 use crate::MimeError;
 use crate::MimeResult;
 use crate::command_execution::MimeExecutionWorker;

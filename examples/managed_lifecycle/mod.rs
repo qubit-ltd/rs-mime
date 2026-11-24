@@ -9,10 +9,10 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::mpsc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc;
 use std::task::Context;
 use std::task::Poll;
 use std::task::Wake;
@@ -380,10 +380,7 @@ fn pending_group_resource_shutdown(recovery_store: &RecoveryStore) {
             Ok::<_, String>(())
         })
         .expect("run cleanup fixture");
-    assert!(matches!(
-        completion.outcome,
-        OperationOutcome::Succeeded(())
-    ));
+    assert!(matches!(completion.outcome, OperationOutcome::Succeeded(())));
     assert_eq!(completion.settlement.recovery_count, 1);
     let recovery = completion.settlement.recoveries[0].clone();
     assert_eq!(recovery.snapshot().phase, RecoveryPhase::Pending);
@@ -413,13 +410,9 @@ fn pending_group_resource_shutdown(recovery_store: &RecoveryStore) {
 
     let (finished_tx, finished_rx) = mpsc::channel();
     execution
-        .try_dispatch(Box::new(move || {
-            finished_tx.send(()).expect("report worker dispatch")
-        }))
+        .try_dispatch(Box::new(move || finished_tx.send(()).expect("report worker dispatch")))
         .unwrap_or_else(|_| panic!("workers remain available while group Drain is pending"));
-    finished_rx
-        .recv()
-        .expect("observe worker job after pending stop");
+    finished_rx.recv().expect("observe worker job after pending stop");
 
     transfer_recovery(recovery.clone(), recovery_store);
     drop(completion);
@@ -429,19 +422,11 @@ fn pending_group_resource_shutdown(recovery_store: &RecoveryStore) {
     let cleanup_deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let snapshot = shutdown.snapshot();
-        let group = snapshot
-            .group
-            .expect("Drain remains observable while cleanup runs");
-        if group.service_resources == 0
-            && group.cleaning_resources == 0
-            && group.recovery_groups == 0
-        {
+        let group = snapshot.group.expect("Drain remains observable while cleanup runs");
+        if group.service_resources == 0 && group.cleaning_resources == 0 && group.recovery_groups == 0 {
             break;
         }
-        assert!(
-            Instant::now() < cleanup_deadline,
-            "group resource cleanup must settle"
-        );
+        assert!(Instant::now() < cleanup_deadline, "group resource cleanup must settle");
         thread::sleep(Duration::from_millis(1));
     }
     let stopped = shutdown.stop_services().unwrap_or_else(|error| {
@@ -459,7 +444,6 @@ fn pending_group_resource_shutdown(recovery_store: &RecoveryStore) {
     assert!(retry.failures.is_empty());
     assert_eq!(recovery.snapshot().phase, RecoveryPhase::Resolved);
 }
-
 
 fn process_recoveries(recoveries: Vec<RecoveryHandle>, recovery_store: &RecoveryStore) {
     let mut seen = Vec::new();

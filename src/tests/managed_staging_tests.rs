@@ -132,10 +132,7 @@ impl MimeExecutionPort for RejectCleanupAfterFirstDispatch {
         self.inner.prepare()
     }
 
-    fn try_dispatch(
-        &self,
-        job: Box<dyn FnOnce() + Send + 'static>,
-    ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+    fn try_dispatch(&self, job: Box<dyn FnOnce() + Send + 'static>) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
         if self.dispatches.fetch_add(1, Ordering::AcqRel) == 0 {
             self.inner.try_dispatch(job)
         } else {
@@ -1490,10 +1487,13 @@ fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
         PublishEvent::Publishing(id) => id,
         event => panic!("expected identity publication, got {event:?}"),
     };
-    assert!(matches!(
-        event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
-        PublishEvent::CleanupPending
-    ), "the real partial-owner cleanup polls while its ID is unpublished");
+    assert!(
+        matches!(
+            event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+            PublishEvent::CleanupPending
+        ),
+        "the real partial-owner cleanup polls while its ID is unpublished"
+    );
     let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
     let mut context = Context::from_waker(&waker);
     {
@@ -1504,7 +1504,10 @@ fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
     assert_eq!(13, services.staging_budget().used_bytes());
     pending_release_tx.send(()).unwrap();
     publish_release_tx.send(()).unwrap();
-    assert!(matches!(commit_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(), Err(crate::MimeError::ExecutionServicesRequired)));
+    assert!(matches!(
+        commit_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+        Err(crate::MimeError::ExecutionServicesRequired)
+    ));
     let report = block_on(handle.wait_settlement());
     assert_eq!(qubit_operation::SettlementStatus::RecoveryRequired, report.status);
     assert_eq!(1, report.cleanup_failures.len());
@@ -1547,7 +1550,10 @@ fn test_managed_staging_commit_failure_successful_cleanup_releases_permit() {
     let permit = services.staging_budget().try_reserve(13).unwrap();
     let staged = StagedMimeInput::new(temp, permit, MimeExecutionWorker::new(port));
     let reservation = reservation_slot.lock().unwrap().take().unwrap();
-    assert!(matches!(commit_staged(reservation, staged), Err(MimeError::ExecutionServicesRequired)));
+    assert!(matches!(
+        commit_staged(reservation, staged),
+        Err(MimeError::ExecutionServicesRequired)
+    ));
     let report = block_on(handle.wait_settlement());
     assert!(report.cleanup_failures.is_empty());
     assert!(!path.exists());
@@ -1610,18 +1616,29 @@ fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
         PublishEvent::Publishing(id) => id,
         event => panic!("expected identity publication, got {event:?}"),
     };
-    assert!(matches!(
-        event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
-        PublishEvent::CleanupPending
-    ), "the real retained recovery cleanup polls while its ID is unpublished");
+    assert!(
+        matches!(
+            event_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap(),
+            PublishEvent::CleanupPending
+        ),
+        "the real retained recovery cleanup polls while its ID is unpublished"
+    );
     let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
     let mut context = Context::from_waker(&waker);
     {
         let mut outcome = std::pin::pin!(handle.wait_outcome());
         assert!(outcome.as_mut().poll(&mut context).is_pending());
     }
-    let owner_path = recovery_owner_path.lock().unwrap().clone().expect("creation recovery owner path");
-    let blocker = blocker_path.lock().unwrap().clone().expect("creation recovery blocker path");
+    let owner_path = recovery_owner_path
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("creation recovery owner path");
+    let blocker = blocker_path
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("creation recovery blocker path");
     assert!(owner_path.exists(), "owner remains live during early cleanup polling");
     assert!(blocker.exists(), "blocker remains live during early cleanup polling");
     pending_release_tx.send(()).unwrap();
