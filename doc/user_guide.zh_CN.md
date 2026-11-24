@@ -242,6 +242,9 @@ EOF 时停止。该上限来自 MIME 配置；所选文件名仓库中的 magic 
 启动配置完成后再调用 `seal()`。封闭状态由 Registry 克隆共享，之后同步和异步注册都会被拒绝，
 已有 Provider 仍可读取和创建。异步创建会先快照选中的 Provider，再调用其工厂；回调不持有异步
 注册表锁，回调期间注册的新 Provider 只影响后续创建。
+同步和异步能力可以使用同一个 canonical ID，但两侧的每个 selector（ID 或 alias）都必须指向
+同一个 ID。若原配置让两侧的同一 selector 指向不同 Provider，升级前应重命名其中一个 selector，
+或让两种能力统一使用同一个 canonical ID。
 
 需要在链接时发现 Provider，可以启用可选的 `inventory` feature：
 

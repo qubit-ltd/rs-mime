@@ -993,3 +993,86 @@ fn test_async_resolution_of_unknown_selector_reports_diagnostic() {
         .expect_err("unknown selector should have a selection diagnostic");
     assert!(error.to_string().contains("not-registered"));
 }
+
+#[test]
+fn test_sync_and_async_mime_selectors_share_canonical_identity() {
+    let registry = MimeDetectorRegistry::default();
+    registry
+        .register(TestMimeDetectorProvider::new(
+            "mime-sync-canonical",
+            0,
+            TestProviderBehavior::Success("application/x-sync"),
+        ).with_aliases(&["mime-sync-alias"]))
+        .unwrap();
+    assert!(registry.register_async_provider(CountedAsyncRegistryProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-owner").unwrap())
+            .with_aliases(["mime-sync-canonical"]).unwrap(),
+        creations: Arc::new(AtomicUsize::new(0)),
+    }).is_err(), "async alias must not claim a sync canonical ID");
+
+    let reverse = MimeDetectorRegistry::default();
+    reverse.register_async_provider(CountedAsyncRegistryProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-canonical").unwrap())
+            .with_aliases(["mime-cross-alias"]).unwrap(),
+        creations: Arc::new(AtomicUsize::new(0)),
+    }).unwrap();
+    assert!(reverse.register(TestMimeDetectorProvider::new(
+        "mime-sync-owner", 0, TestProviderBehavior::Success("application/x-sync"),
+    ).with_aliases(&["mime-async-canonical"])).is_err());
+    assert!(reverse.register(TestMimeDetectorProvider::new(
+        "mime-other-owner", 0, TestProviderBehavior::Success("application/x-sync"),
+    ).with_aliases(&["mime-cross-alias"])).is_err());
+
+    let reverse = MimeDetectorRegistry::default();
+    reverse.register(TestMimeDetectorProvider::new(
+        "mime-sync-alias-owner", 0, TestProviderBehavior::Success("application/x-sync"),
+    ).with_aliases(&["mime-alias-first"])).unwrap();
+    assert!(reverse.register_async_provider(CountedAsyncRegistryProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("mime-alias-first").unwrap()),
+        creations: Arc::new(AtomicUsize::new(0)),
+    }).is_err(), "async canonical ID must not claim an existing sync alias");
+
+    let reverse = MimeDetectorRegistry::default();
+    reverse.register(TestMimeDetectorProvider::new(
+        "mime-sync-alias-first", 0, TestProviderBehavior::Success("application/x-sync"),
+    ).with_aliases(&["mime-shared-alias"])).unwrap();
+    assert!(reverse.register_async_provider(CountedAsyncRegistryProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-alias-owner").unwrap())
+            .with_aliases(["mime-shared-alias"]).unwrap(),
+        creations: Arc::new(AtomicUsize::new(0)),
+    }).is_err(), "async alias must not claim an existing sync alias");
+
+    registry.register_async_provider(CountedAsyncRegistryProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("mime-dual").unwrap()).with_priority(10),
+        creations: Arc::new(AtomicUsize::new(0)),
+    }).unwrap();
+    registry.register(TestMimeDetectorProvider::new(
+        "mime-dual", 0, TestProviderBehavior::Success("application/x-dual"),
+    ).with_aliases(&["mime-dual-alias"])).unwrap();
+    assert!(matches!(registry.create_async_backend(
+        &ProviderSelection::named("mime-dual-alias").unwrap(),
+        &MimeConfig::default(), &services(),
+    ), Err(MimeError::AsyncUnsupported)));
+}
+
+#[test]
+fn test_async_auto_uses_async_priority_for_a_shared_sync_canonical_id() {
+    let registry = MimeDetectorRegistry::default();
+    registry.register(TestMimeDetectorProvider::new(
+        "mime-shared-priority", 1000, TestProviderBehavior::Success("application/x-sync"),
+    )).unwrap();
+    let shared_creations = Arc::new(AtomicUsize::new(0));
+    registry.register_async_provider(CountedAsyncRegistryProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("mime-shared-priority").unwrap()).with_priority(0),
+        creations: Arc::clone(&shared_creations),
+    }).unwrap();
+    let higher_async_creations = Arc::new(AtomicUsize::new(0));
+    registry.register_async_provider(CountedAsyncRegistryProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("mime-higher-async").unwrap()).with_priority(10),
+        creations: Arc::clone(&higher_async_creations),
+    }).unwrap();
+    let selection = ProviderSelection::auto().with_fallback_policy(FallbackPolicy::Never);
+    assert!(registry.create_async_backend(&selection, &MimeConfig::default(), &services()).is_err());
+    assert_eq!(1, higher_async_creations.load(Ordering::SeqCst));
+    assert_eq!(0, shared_creations.load(Ordering::SeqCst));
+}

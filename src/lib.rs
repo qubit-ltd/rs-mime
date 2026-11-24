@@ -118,6 +118,7 @@ mod managed_temp_staging;
 mod mime_config;
 mod mime_error;
 mod mime_result;
+mod provider_identity;
 mod temp_staging;
 #[cfg(test)]
 mod tests;
