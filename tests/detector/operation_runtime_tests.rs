@@ -1816,14 +1816,20 @@ fn test_operation_runtime_group_resource_cleanup_precedes_port_shutdown() {
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
     let shutdown_for_thread = shutdown.clone();
-    let stop = std::thread::spawn(move || shutdown_for_thread.stop_services());
+    let (stop_result_tx, stop_result_rx) = mpsc::channel();
+    let stop = std::thread::spawn(move || stop_result_tx.send(shutdown_for_thread.stop_services()).unwrap());
     entered_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("group Drain should dispatch managed-resource cleanup");
     assert_eq!(0, port.shutdowns.load(Ordering::SeqCst));
     assert_eq!(1, group.snapshot().service_resource_scopes);
+    let stop_result = stop_result_rx.recv_timeout(Duration::from_secs(2));
     release_tx.send(()).unwrap();
-    assert!(matches!(stop.join().unwrap(), Err(MimeError::OperationShutdownPending)));
+    stop.join().unwrap();
+    assert!(matches!(
+        stop_result.expect("stop_services should report while cleanup is blocked"),
+        Err(MimeError::OperationShutdownPending)
+    ));
     assert!(shutdown.snapshot().group.is_some());
     assert_eq!(0, port.shutdowns.load(Ordering::SeqCst));
     drop(scope);
