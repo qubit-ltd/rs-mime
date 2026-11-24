@@ -1,5 +1,7 @@
 # rs-mime 0.22.0 详细设计：可取消的异步检测与受控后端组合
 
+> **历史设计，已被替代：** 2026-11-16 起，当前行为以[中文用户指南](user_guide.zh_CN.md)为准，实现状态以[验收记录](acceptance-0.22.0-operation-0.2.zh_CN.md)为准。本文保留历史上下文；其中 operation 0.1、Supervisor、ResourceUse、result/released 和私有 adapter 调用方式不再作为实施依据。完整外部执行器适配等待 operation 0.3 公开接口验收，尚未实现或发布。
+
 - 状态：历史设计草案，不再作为当前实施依据。当前用法见[英文用户指南](user_guide.md)和[中文用户指南](user_guide.zh_CN.md)；实现状态与验收证据见[0.22.0 验收记录](acceptance-0.22.0-operation-0.2.zh_CN.md)。
 - 初稿日期：2026-11-11；缺失恢复与上游核对：2026-11-13。
 - 初稿时版本：qubit-mime 0.21.1；计划目标：0.22.0。
