@@ -28,12 +28,14 @@ const MAX_OWNED_BYTES: usize = 16 * 1024 * 1024;
 
 /// A provider object whose reads are charged to request and ancestor budgets.
 ///
-/// The session owns one opened provider reader. Each call reserves read-tree
-/// capacity and service owned-memory capacity before touching that reader. It
-/// reads into private scratch storage, then copies only a successful read's
-/// returned bytes into the backend buffer and commits that count. A provider
-/// error or a dropped read future may leave partial data in scratch, but that
-/// data is discarded and is never exposed to the backend.
+/// The session owns one opened provider reader. Each call is clipped to the
+/// available read-tree allowance and reserves service owned-memory capacity
+/// independently before touching that reader. It reads into private scratch
+/// storage, then copies only a successful read's returned bytes into the
+/// backend buffer and commits that count. A provider error or a dropped read
+/// future may leave partial data in scratch, but that data is discarded and is
+/// never exposed to the backend. Successfully returned bytes remain charged;
+/// unused reservation is returned, and failed open attempts charge no bytes.
 #[must_use = "retain the session for all provider reads in one backend call"]
 pub struct MeteredReadSession {
     /// The one opened provider object used for every read in this session.

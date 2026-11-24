@@ -110,6 +110,15 @@ POSIX basename 中的反斜杠属于文件名数据，非 UTF-8 本地 basename 
 返回成功或错误，超时仍可能先结束 operation。若用户取消已被接受，竞争时保留 `UserCancelled` 原因。
 已经派发给 command 或 staging worker 的工作，会一直保留资源 owner，直到 worker job 实际结算。
 
+嵌套 MIME operation 会沿 operation ancestor 共享 Provider 读取计量。由唯一文件名短路完成的输入和 owned bytes
+输入不会绑定祖先读取额度，也不占用祖先的资源槽。需要读取 Provider 的后代会传播祖先身份及适用的 scope cap；
+首次读取时从共享祖先树预留额度。若绑定无法在准入前完成，或祖先已结束，提交会带回原输入并拒绝；任务接纳后
+无法提交待处理绑定，则 operation 以 `ReadBudgetBinding` 失败。
+
+读取额度按成功交付的字节计费。Provider 打开失败计零；前缀读取在错误或取消前已交付的字节继续计费，未使用的
+预留额度会退还。普通 `Prefix(n)` 无法预留所需额度时会以 typed budget error 拒绝，不会静默裁切。相较之下，
+`MeteredReadSession` 会按可用额度裁切单次读取，单独预留临时 scratch 内存，并可用剩余额度探测 EOF。
+
 检测器只负责判断 MIME 类型，不能证明文件可以安全打开或执行。Native command
 Provider 依赖对应的可执行文件，也可能因命令不可用、超时或输出无效而失败。
 
