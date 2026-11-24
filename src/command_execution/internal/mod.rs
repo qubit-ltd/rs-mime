@@ -7,6 +7,7 @@
 // =============================================================================
 //! Private lifecycle state and polling signals for managed command execution.
 
+mod command_dispatch_payload;
 mod poll_signal;
 mod prepared_command;
 mod signal_state;

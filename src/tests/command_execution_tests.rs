@@ -272,7 +272,6 @@ mod managed_command_executor_tests {
                 .expect("command job is held");
             job();
         }
-
     }
 
     impl MimeExecutionPort for StagingThenHoldCommandPort {
@@ -519,17 +518,22 @@ mod managed_command_executor_tests {
                     command_pending_tx.send(()).unwrap();
                 }
                 result
-            }).await;
+            })
+            .await;
             result_tx.send(result).unwrap();
             Ok::<_, MimeError>(())
-        })).unwrap();
+        }))
+        .unwrap();
 
         let staged_path = staged_path_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         command_queued_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         command_pending_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("accepted command should be pending before the test destroys it");
-        assert!(staged_path.exists(), "command input stays live until abandonment is confirmed");
+        assert!(
+            staged_path.exists(),
+            "command input stays live until abandonment is confirmed"
+        );
         worker_port.destroy_held();
         let command_result = result_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         let outcome = block_on(operation.wait_outcome()).unwrap();

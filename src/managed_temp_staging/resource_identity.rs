@@ -11,6 +11,7 @@
 use std::sync::Mutex;
 
 use qubit_operation::ResourceId;
+
 use crate::safe_wake::wake_safely;
 
 // Implements the cancellable waiter and its synchronized publication state.

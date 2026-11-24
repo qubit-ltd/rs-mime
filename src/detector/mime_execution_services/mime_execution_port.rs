@@ -50,12 +50,13 @@ pub trait MimeExecutionPort: Debug + Send + Sync + 'static {
     /// - `job`: Owned job to dispatch.
     ///
     /// # Returns
-    /// `Ok(())` after acceptance, or the unchanged job after rejection. Acceptance
-    /// transfers one-shot ownership: implementations must either run the job or
-    /// explicitly destroy it. MIME adapters observe destruction before invocation
-    /// and publish the corresponding terminal result. Normal queue drain continues
-    /// to run every accepted job. Rejection must return the original job without
-    /// invoking or destroying it, so MIME can perform its typed fallback after
+    /// `Ok(())` after acceptance, or the unchanged job after rejection.
+    /// Acceptance transfers one-shot ownership: implementations must either
+    /// run the job or explicitly destroy it. MIME adapters observe
+    /// destruction before invocation and publish the corresponding terminal
+    /// result. Normal queue drain continues to run every accepted job.
+    /// Rejection must return the original job without invoking or
+    /// destroying it, so MIME can perform its typed fallback after
     /// detaching its cancellation observer.
     #[inline]
     fn try_dispatch(&self, job: Box<dyn FnOnce() + Send + 'static>) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {

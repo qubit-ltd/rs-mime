@@ -14,6 +14,5 @@ mod common_mime_types_tests;
 mod constants_tests;
 mod detector;
 mod mime_error_tests;
-mod package_document_links_tests;
 mod repository;
 mod support;

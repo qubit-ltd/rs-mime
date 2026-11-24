@@ -81,7 +81,12 @@ impl<T> PollSignal<T> {
             if let Some(value) = state.value.take() {
                 (Poll::Ready(value), state.waker.take())
             } else {
-                (Poll::Pending, state.waker.replace(candidate.take().expect("candidate waker is present")))
+                (
+                    Poll::Pending,
+                    state
+                        .waker
+                        .replace(candidate.take().expect("candidate waker is present")),
+                )
             }
         };
         drop(old_waker);
@@ -108,7 +113,12 @@ impl<T> PollSignal<T> {
             if let Some(value) = state.value.as_ref() {
                 (Poll::Ready(value.clone()), None)
             } else {
-                (Poll::Pending, state.waker.replace(candidate.take().expect("candidate waker is present")))
+                (
+                    Poll::Pending,
+                    state
+                        .waker
+                        .replace(candidate.take().expect("candidate waker is present")),
+                )
             }
         };
         drop(old_waker);
@@ -140,7 +150,8 @@ mod tests {
     impl Wake for ReenterSignalWake {
         fn wake(self: Arc<Self>) {
             let signal = self.signal.upgrade().expect("signal remains alive");
-            self.lock_was_free.store(signal.state.try_lock().is_ok(), Ordering::SeqCst);
+            self.lock_was_free
+                .store(signal.state.try_lock().is_ok(), Ordering::SeqCst);
         }
     }
 

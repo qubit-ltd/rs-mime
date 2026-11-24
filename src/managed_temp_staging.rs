@@ -47,14 +47,17 @@ use crate::detector::StagingPermit;
 use crate::detector::mime_input::OwnedMimeInput;
 
 mod completion;
+mod internal;
 mod managed_staging_limits;
 mod managed_temp_cleanup;
 mod resource_identity;
 mod staged_mime_input;
 mod staged_temp_owner;
 
-use completion::completion_pair;
 use completion::Completer;
+use completion::completion_pair;
+use internal::CreateStagedPayload;
+use internal::WriteChunkPayload;
 pub(crate) use managed_staging_limits::ManagedStagingLimits;
 use managed_temp_cleanup::ManagedTempCleanup;
 #[cfg(test)]
@@ -66,29 +69,6 @@ pub(crate) use resource_identity::PublishHook;
 use resource_identity::ResourceIdentity;
 pub(crate) use staged_mime_input::StagedMimeInput;
 use staged_temp_owner::StagedTempOwner;
-
-type CreateTempJob = Box<
-    dyn FnOnce() -> Result<qubit_local_files::LocalTempFile, Box<qubit_local_files::LocalFileError>> + Send + 'static,
->;
-
-struct CreateStagedPayload {
-    context: OperationContext,
-    reservation: ResourceReservation,
-    create_temp: CreateTempJob,
-    worker: MimeExecutionWorker,
-    sender: Completer<MimeResult<ResourceRef<StagedMimeInput>>>,
-    #[cfg(test)]
-    hook: Option<resource_identity::PublishHook>,
-}
-
-struct WriteChunkPayload {
-    context: OperationContext,
-    staged: ResourceRef<StagedMimeInput>,
-    bytes: Vec<u8>,
-    permit: StagingPermit,
-    owned_permit: OwnedMemoryPermit,
-    sender: Completer<MimeResult<()>>,
-}
 
 /// Stages owned bytes without performing filesystem work in the caller's
 /// async poll. A rejected worker dispatch returns the job and drops the
@@ -543,7 +523,15 @@ async fn create_empty_staged_with_inner(
         hook,
     };
     let run = move |payload: CreateStagedPayload| {
-        let CreateStagedPayload { context, reservation, create_temp, worker, sender, #[cfg(test)] hook } = payload;
+        let CreateStagedPayload {
+            context,
+            reservation,
+            create_temp,
+            worker,
+            sender,
+            #[cfg(test)]
+            hook,
+        } = payload;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             ensure_context_active(&context)?;
             match create_temp() {
@@ -584,7 +572,9 @@ async fn create_empty_staged_with_inner(
         sender.complete(result);
     };
     let abandon = |payload: CreateStagedPayload| {
-        let CreateStagedPayload { reservation, sender, .. } = payload;
+        let CreateStagedPayload {
+            reservation, sender, ..
+        } = payload;
         drop(reservation);
         sender.complete(Err(MimeError::ExecutionServicesRequired));
     };
@@ -627,9 +617,23 @@ async fn write_chunk_in(
     ensure_not_stopped(scope)?;
     let context = scope.context().clone();
     let (sender, receiver) = completion_pair();
-    let payload = WriteChunkPayload { context, staged, bytes, permit, owned_permit, sender };
+    let payload = WriteChunkPayload {
+        context,
+        staged,
+        bytes,
+        permit,
+        owned_permit,
+        sender,
+    };
     let run = move |payload: WriteChunkPayload| {
-        let WriteChunkPayload { context, staged, bytes, permit, owned_permit, sender } = payload;
+        let WriteChunkPayload {
+            context,
+            staged,
+            bytes,
+            permit,
+            owned_permit,
+            sender,
+        } = payload;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let result = ensure_context_active(&context).and_then(|()| staged.write_chunk(&bytes, permit));
             drop(bytes);
@@ -645,7 +649,14 @@ async fn write_chunk_in(
         sender.complete(result);
     };
     let abandon = |payload: WriteChunkPayload| {
-        let WriteChunkPayload { staged, bytes, permit, owned_permit, sender, .. } = payload;
+        let WriteChunkPayload {
+            staged,
+            bytes,
+            permit,
+            owned_permit,
+            sender,
+            ..
+        } = payload;
         drop((staged, bytes, permit, owned_permit));
         sender.complete(Err(MimeError::ExecutionServicesRequired));
     };
@@ -1020,7 +1031,8 @@ mod lifecycle_tests {
             })
             .await;
             Ok::<_, ()>(result)
-        })).unwrap();
+        }))
+        .unwrap();
 
         queued.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
         port.drop_next();
@@ -1050,14 +1062,16 @@ mod lifecycle_tests {
                 let mut temp = LocalFileSystem::host().unwrap().create_temp_file().map_err(Box::new)?;
                 temp.as_file_mut().unwrap().write_all(b"seed").unwrap();
                 Ok(temp)
-            }).await?;
+            })
+            .await?;
             let path = staged.path().unwrap();
             let observed = staged.clone();
             let permit = limits.budget.try_reserve(3).unwrap();
             let owned = limits.budget.try_reserve_owned(3).unwrap();
             let write_result = write_chunk_in(&scope, &limits.worker, staged, b"end".to_vec(), permit, owned).await;
             Ok::<_, crate::MimeError>((write_result, observed, path))
-        })).unwrap();
+        }))
+        .unwrap();
 
         queued.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
         port.run_next();

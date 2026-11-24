@@ -31,10 +31,10 @@ use qubit_operation::DiagnosticSummary;
 use qubit_operation::ExecutionFailure;
 use qubit_operation::ExecutionPhase;
 use qubit_operation::ExternalBindError;
+use qubit_operation::OperationContext;
 use qubit_operation::OperationControl;
 use qubit_operation::OperationId;
 use qubit_operation::OperationOutcome;
-use qubit_operation::OperationContext;
 use qubit_operation::OperationScope;
 use qubit_operation::PanicSummary;
 use qubit_operation::PreparedExternalOperation;
@@ -45,21 +45,14 @@ use qubit_operation::StopReason;
 use qubit_operation::StopReport;
 
 use super::PollSignal;
+use super::command_dispatch_payload::CommandDispatchPayload;
 use crate::command_execution::MimeCommandOutput;
 use crate::command_execution::MimeExecutionWorker;
 use crate::command_execution::SystemMimeCommandExecutor;
 use crate::detector::MimeExecutionDispatchFailureKind;
 use crate::managed_temp_staging::StagedMimeInput;
 
-struct CommandDispatchPayload {
-    context: OperationContext,
-    runner: CommandRunner,
-    command: Command,
-    input: ResourceRef<StagedMimeInput>,
-    task: Arc<PreparedCommand>,
-    cancellation: CommandCancellation,
-}
-
+/// Owns the command inputs and completion state transferred to the worker.
 /// Operation-owned state that runs one command and publishes its lifecycle
 /// facts.
 pub(in crate::command_execution) struct PreparedCommand {
@@ -145,7 +138,14 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
             cancellation: self.cancellation.clone(),
         };
         let run = move |payload: CommandDispatchPayload| {
-            let CommandDispatchPayload { context, runner, command, input, task, cancellation } = payload;
+            let CommandDispatchPayload {
+                context,
+                runner,
+                command,
+                input,
+                task,
+                cancellation,
+            } = payload;
             task.started.store(true, Ordering::Release);
             if let Some(reason) = task.current_stop_reason(&context) {
                 drop(input);
@@ -168,9 +168,7 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
                         CommandErrorKind::Cancelled | CommandErrorKind::CancelledBeforeStart
                     ) && error.cleanup_failures().is_empty() =>
                 {
-                    let reason = task
-                        .accepted_stop_reason(&context)
-                        .unwrap_or(StopReason::UserCancelled);
+                    let reason = task.accepted_stop_reason(&context).unwrap_or(StopReason::UserCancelled);
                     OperationOutcome::Stopped(StopReport {
                         reason,
                         accepted_at: None,
@@ -200,7 +198,9 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
                 .expect("bound before activation");
             task.publish(OperationOutcome::ExecutionFailed(ExecutionFailure {
                 operation_id,
-                summary: DiagnosticSummary::new("MIME command worker accepted but discarded the command before execution"),
+                summary: DiagnosticSummary::new(
+                    "MIME command worker accepted but discarded the command before execution",
+                ),
                 source: Some(Arc::new(MimeExecutionDispatchFailureKind::Unavailable)),
             }));
             task.released.store(true, Ordering::Release);
@@ -322,6 +322,13 @@ impl PreparedCommand {
     /// Returns a stop accepted by the operation context or this command.
     /// Polling the deadline signal once records an already elapsed deadline
     /// before the command can enter the runner.
+    ///
+    /// # Parameters
+    /// - `context`: Operation context whose deadline and stop state gate
+    ///   execution.
+    ///
+    /// # Returns
+    /// The first accepted stop reason, if execution must not proceed.
     fn current_stop_reason(&self, context: &OperationContext) -> Option<StopReason> {
         if let Some(reason) = self.accepted_stop_reason(context) {
             self.remember_stop_reason(reason);
@@ -339,6 +346,10 @@ impl PreparedCommand {
         reason
     }
 
+    /// Caches the first stop reason observed by this command.
+    ///
+    /// # Parameters
+    /// - `reason`: Stop reason to retain unless an earlier one was recorded.
     fn remember_stop_reason(&self, reason: StopReason) {
         let mut cached = self.stop_reason.lock().unwrap_or_else(|e| e.into_inner());
         if cached.is_none() {
@@ -347,12 +358,21 @@ impl PreparedCommand {
     }
 
     /// Reads an already accepted reason without advancing a deadline signal.
+    ///
+    /// # Parameters
+    /// - `context`: Operation context containing any accepted stop reason.
+    ///
+    /// # Returns
+    /// The context's stop reason, or the reason cached by this command.
     fn accepted_stop_reason(&self, context: &OperationContext) -> Option<StopReason> {
         let cached = *self.stop_reason.lock().unwrap_or_else(|e| e.into_inner());
         context.stop_reason().or(cached)
     }
 
     /// Publishes terminal stop facts after the request/input owner is dropped.
+    ///
+    /// # Parameters
+    /// - `reason`: Accepted reason included in the stopped outcome.
     fn publish_stopped(&self, reason: StopReason) {
         self.publish(OperationOutcome::Stopped(StopReport {
             reason,
@@ -581,10 +601,7 @@ mod tests {
     impl Wake for StopLockWake {
         fn wake(self: Arc<Self>) {
             let command = self.command.upgrade().expect("command remains alive");
-            let lock_was_free = !matches!(
-                command.stop_reason.try_lock(),
-                Err(std::sync::TryLockError::WouldBlock)
-            );
+            let lock_was_free = !matches!(command.stop_reason.try_lock(), Err(std::sync::TryLockError::WouldBlock));
             self.lock_was_free.store(lock_was_free, Ordering::SeqCst);
             panic!("observer wake failed after reentering stop state");
         }
@@ -1366,7 +1383,10 @@ mod tests {
         .unwrap();
 
         if cache_stop_before_expiry {
-            assert!(matches!(block_on(operation.wait_outcome()).unwrap(), OperationOutcome::Succeeded(())));
+            assert!(matches!(
+                block_on(operation.wait_outcome()).unwrap(),
+                OperationOutcome::Succeeded(())
+            ));
         } else {
             assert!(matches!(
                 block_on(operation.wait_outcome()).unwrap(),

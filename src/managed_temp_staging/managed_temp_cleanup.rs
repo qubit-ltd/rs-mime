@@ -30,6 +30,10 @@ use crate::command_execution::FixedMimeExecutionPort;
 use crate::command_execution::MimeExecutionWorker;
 use crate::detector::MimeExecutionPort;
 
+mod internal;
+
+use internal::CleanupDispatchPayload;
+
 /// Cleanup adapter that dispatches staged-file deletion to the MIME worker.
 pub(super) struct ManagedTempCleanup {
     /// Resource ID recorded for cleanup failure diagnostics.
@@ -98,28 +102,34 @@ impl AsyncCleanup<StagedMimeInput> for ManagedTempCleanup {
 fn cleanup_with_id(resource: StagedMimeInput, retry: bool, resource_id: ResourceId) -> CleanupFuture<StagedMimeInput> {
     let worker = resource.worker.clone();
     let (sender, receiver) = completion_pair();
-    let payload = CleanupDispatchPayload { resource, resource_id, sender };
+    let payload = CleanupDispatchPayload {
+        resource,
+        resource_id,
+        sender,
+    };
     match dispatch_cleanup_job(&worker, payload) {
         Ok(()) => Box::pin(receiver),
         Err((_, payload)) if retry => match recovery_cleanup_port() {
             Ok(port) => {
                 let execution_port: Arc<dyn MimeExecutionPort> = port.clone();
-                match dispatch_cleanup_job(&MimeExecutionWorker::new(execution_port), payload) {
+                match dispatch_cleanup_job(&MimeExecutionWorker::new(execution_port), *payload) {
                     Ok(()) => Box::pin(receiver),
                     Err((_, payload)) => Box::pin(async move {
-                        let CleanupDispatchPayload { resource, .. } = payload;
+                        let CleanupDispatchPayload { resource, .. } = *payload;
                         CleanupOutcome::Failed {
                             failure: cleanup_failure(
                                 resource_id,
-                                Arc::new(Error::other("MIME worker and recovery cleanup port rejected cleanup job")),
+                                Arc::new(Error::other(
+                                    "MIME worker and recovery cleanup port rejected cleanup job",
+                                )),
                             ),
                             resource,
                         }
                     }),
                 }
-            },
+            }
             Err(error) => Box::pin(async move {
-                let CleanupDispatchPayload { resource, .. } = payload;
+                let CleanupDispatchPayload { resource, .. } = *payload;
                 CleanupOutcome::Failed {
                     failure: cleanup_failure(
                         resource_id,
@@ -132,7 +142,7 @@ fn cleanup_with_id(resource: StagedMimeInput, retry: bool, resource_id: Resource
             }),
         },
         Err((_, payload)) => Box::pin(async move {
-            let CleanupDispatchPayload { resource, .. } = payload;
+            let CleanupDispatchPayload { resource, .. } = *payload;
             CleanupOutcome::Failed {
                 failure: cleanup_failure(resource_id, Arc::new(Error::other("MIME worker rejected cleanup job"))),
                 resource,
@@ -141,18 +151,30 @@ fn cleanup_with_id(resource: StagedMimeInput, retry: bool, resource_id: Resource
     }
 }
 
-struct CleanupDispatchPayload {
-    resource: StagedMimeInput,
-    resource_id: ResourceId,
-    sender: super::completion::Completer<CleanupOutcome<StagedMimeInput>>,
-}
-
+/// Dispatches cleanup without blocking the async caller.
+///
+/// # Parameters
+/// - `worker`: Managed worker used for filesystem cleanup.
+/// - `payload`: Resource and completion channel transferred to the worker.
+///
+/// # Returns
+/// `Ok(())` when queued, or the failure kind and payload when rejected.
 fn dispatch_cleanup_job(
     worker: &MimeExecutionWorker,
     payload: CleanupDispatchPayload,
-) -> Result<(), (crate::detector::MimeExecutionDispatchFailureKind, CleanupDispatchPayload)> {
+) -> Result<
+    (),
+    (
+        crate::detector::MimeExecutionDispatchFailureKind,
+        Box<CleanupDispatchPayload>,
+    ),
+> {
     let run = move |payload: CleanupDispatchPayload| {
-        let CleanupDispatchPayload { mut resource, resource_id, sender } = payload;
+        let CleanupDispatchPayload {
+            mut resource,
+            resource_id,
+            sender,
+        } = payload;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             resource
                 .owner
@@ -184,16 +206,24 @@ fn dispatch_cleanup_job(
         };
         sender.complete(outcome);
     };
-    let abandon = |CleanupDispatchPayload { resource, resource_id, sender }| {
+    let abandon = |CleanupDispatchPayload {
+                       resource,
+                       resource_id,
+                       sender,
+                   }| {
         sender.complete(CleanupOutcome::Failed {
             failure: cleanup_failure(
                 resource_id,
-                Arc::new(Error::other("MIME worker accepted cleanup job then discarded it before execution")),
+                Arc::new(Error::other(
+                    "MIME worker accepted cleanup job then discarded it before execution",
+                )),
             ),
             resource,
         });
     };
-    worker.try_dispatch_guarded(payload, run, abandon)
+    worker
+        .try_dispatch_guarded_raw(payload, run, abandon)
+        .map_err(|(kind, payload)| (kind, Box::new(payload)))
 }
 
 #[cfg(test)]
@@ -203,8 +233,8 @@ mod tests {
     use std::pin;
     use std::sync::Arc;
     use std::sync::Mutex;
-    use std::sync::atomic::AtomicU64;
     use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::AtomicU64;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::task::Context;
@@ -289,7 +319,13 @@ mod tests {
 
     impl QueueThenStopPort {
         fn destroy_accepted(&self) {
-            drop(self.queued.lock().unwrap().take().expect("accepted cleanup job is queued"));
+            drop(
+                self.queued
+                    .lock()
+                    .unwrap()
+                    .take()
+                    .expect("accepted cleanup job is queued"),
+            );
         }
     }
 
@@ -337,7 +373,8 @@ mod tests {
                     cleanup_id: Arc::new(ResourceIdentity::default()),
                 },
             )
-        })).unwrap();
+        }))
+        .unwrap();
         let registered = match block_on(identity_operation.wait_outcome()).unwrap() {
             OperationOutcome::Succeeded(resource) => resource,
             _ => panic!("identity fixture should commit"),
@@ -373,7 +410,10 @@ mod tests {
         };
 
         dropped_port.shutdown().unwrap();
-        assert!(matches!(block_on(cleanup_with_id(resource, true, registered.id())), CleanupOutcome::Released));
+        assert!(matches!(
+            block_on(cleanup_with_id(resource, true, registered.id())),
+            CleanupOutcome::Released
+        ));
         assert!(!path.exists());
         assert_eq!(0, budget.used_bytes());
         drop(registered);

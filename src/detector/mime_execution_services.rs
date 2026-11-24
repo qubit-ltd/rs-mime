@@ -658,10 +658,10 @@ mod tests {
     use crate::AsyncMimeDetectorBackend;
     use crate::AsyncMimeDetectorProvider;
     use crate::ContentRequirement;
-    use crate::MimeError;
     use crate::InspectedExtent;
     use crate::MimeCandidates;
     use crate::MimeDetectorRegistry;
+    use crate::MimeError;
     use crate::MimeFuture;
     use crate::MimeRepository;
     use crate::RandomAccessCapability;
@@ -1036,8 +1036,7 @@ mod tests {
         assert!(normal_wake.tracker_reentry_succeeded.load(Ordering::SeqCst));
         assert!(panicking_waiter.as_mut().poll(&mut panicking_context).is_ready());
         assert!(normal_waiter.as_mut().poll(&mut normal_context).is_ready());
-        let _ = block_on_timeout(operation.wait_outcome())
-            .expect("accepted typed operation should complete");
+        let _ = block_on_timeout(operation.wait_outcome()).expect("accepted typed operation should complete");
         let observer = services.shutdown();
         let _ = block_on_timeout(observer.wait_services_settled()).expect("services should settle");
         let _ = observer.stop_services().expect("settled services should stop");
