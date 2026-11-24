@@ -691,3 +691,29 @@ round-9 repair tree 的 `.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb822
 另以不含 patch/path 的独立 manifest 对 `qubit-mime = "=0.22.0"` 执行 crates.io registry 解析；Cargo `1.94.0` 于 2026-11-24 22:55:40 UTC 查询时 exit 101，索引未提供匹配版本（候选从 `0.21.1` 起）。该记录只描述查询时点，不能作为已发布或解析成功的证明。完整输出见仓库外 `.validation/rs-mime-7ba30d05-ae3c-4132-82d6-38ea44cb8227-round-10/registry-independent.log`。
 
 以上均为固定历史 head 与对应 hosted/本地依赖图的观察，不表示后续最终候选结果。候选 head、后续门禁和发布状态须在相应验证完成后另行记录；本节不改变已有发布边界。
+
+## 2026-11-24 T5 最终候选阶段证据（源码 head c5b7e08）
+
+本节记录已核对的本地候选证据；它不代表 T5 的所有消费者和原工作区整合复验均已完成。`rs-mime` 候选源码 HEAD 为 `c5b7e089fe2eb87a9ef21a0161fb53dc37e591dc`，验证工作树在检查前后干净，锁文件未变。
+
+| 验收 | 结果 | 相对证据名 |
+| --- | --- | --- |
+| `align-ci` | exit 0；style 与 CI check 成功 | `align-ci-package-test-dedup.log` |
+| 完整 `ci-check` | exit 0；完整 feature matrix、package 与 audit 成功 | `ci-check-package-test-dedup.log` |
+| Coverage | functions 95.02% (1165/1226)、lines 94.51% (17292/18297)、regions 95.05% (30642/32237)，均满足既定阈值 | `target/infra/coverage/raw.json` |
+| Audit | 扫描 89 个 Cargo.lock 依赖，门禁成功 | `ci-check-package-test-dedup.log` |
+
+完整 CI 日志还记录默认测试 340 passed、0 failed、1 ignored，mod integration tests 444 passed、0 failed、1 ignored，包内文档链接 6 passed，以及 Rustdoc 64 passed 和 1 个 compile-fail 用例通过。matrix 和 package 阶段成功；未提高 coverage 阈值或扩大覆盖范围。
+
+锁定 metadata/tree 身份核对覆盖根 crate、operation consumer、documentation consumer 与 Magika fixture 四份 manifest；每份都只解析到注册 sibling 上唯一的 `qubit-operation v0.3.2`。相对证据为 `candidate-metadata.result`、`operation-fixture-identity.log`、`candidate-magika-metadata.result`、`candidate-magika-tree.result`。其中 Magika consumer 子任务固定 `rs-mime@c5b7e089fe2eb87a9ef21a0161fb53dc37e591dc` 与登记的 `rs-magika@d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b`，其余 sibling SHA 与上节 hosted Magika 图相同。default 和 inventory 两次 consumer 均 exit 0，且都实际加载 ONNX Runtime 1.24.2；记录见 `T5-magika-candidate.md`、`candidate-magika-default.result`、`candidate-magika-inventory.result` 及对应 `.log`。
+
+| 定向验收 | 结果 | 相对证据名 |
+| --- | --- | --- |
+| operation consumer | locked `cargo run` exit 0 | `consumer-smoke-exit-records.log` |
+| documentation consumer 与 managed lifecycle | locked `cargo run` exit 0；共享 `managed_lifecycle` 示例测试 6 passed | `consumer-smoke-exit-records.log`、`documentation-consumer-postcommit.log` |
+| 真实文件工具 | 系统 `file` 对 PNG 返回 `image/png`；公共文件入口测试 1 passed，真实文件集成 3 passed | `consumer-smoke-exit-records.log`、`smoke-postcommit.log` |
+| 真实 FFprobe | integration smoke 1 passed | `smoke-postcommit.log` |
+
+这些记录补齐了当前候选的 manifest、consumer 与真实工具检查。原工作区整合复验仍待完成；在该复验完成前，不把它标记为通过。后续若出现新验证结果，应继续引用每条命令自己的相对日志与退出记录。
+
+本节是 evidence-only 文档变更，会产生新的提交 SHA，但只改本验收 Markdown；它不会改变或替代受测源码候选 `c5b7e089fe2eb87a9ef21a0161fb53dc37e591dc`。此后其它文件如有变化，须另行验证并记录，已有发布边界保持不变。
