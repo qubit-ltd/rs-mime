@@ -371,11 +371,18 @@ consumer-root/
 └── rs-local-files/
 ```
 
-Use Magika's
-[`prepare-local-path-dependencies.sh`](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/bin/prepare-local-path-dependencies.sh)
-from its source checkout to prepare and check the pinned sibling dependencies.
-For an application whose `Cargo.toml` is directly under `consumer-root/app/`,
-the relevant manifest entries are:
+Run these two steps from the Magika checkout. First, run the
+[preparation script](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/bin/prepare-local-path-dependencies.sh)
+to fill in missing sibling checkouts. Then, from the Magika repository root,
+run the read-only
+[`check-locked-local-path-dependencies.sh`](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/lib/check-locked-local-path-dependencies.sh)
+to verify the pinned commits and clean worktrees. The check reports commit
+mismatches and dirty worktrees; resolve drift in an independent layout that
+matches the pins, rather than changing an existing checkout. See Magika's
+[fixed-source setup instructions](https://github.com/qubit-ltd/rs-magika/blob/main/README.md#fixed-source-consumer)
+for the same preparation and verification contract. For an application whose
+`Cargo.toml` is directly under `consumer-root/app/`, the relevant manifest
+entries are:
 
 ```toml
 [dependencies]

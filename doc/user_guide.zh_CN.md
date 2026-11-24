@@ -291,8 +291,12 @@ consumer-root/
 └── rs-local-files/
 ```
 
-在 Magika 源码目录运行[依赖准备脚本](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/bin/prepare-local-path-dependencies.sh)，
-准备并核对固定的兄弟仓库。假设应用清单位于 `consumer-root/app/Cargo.toml`，添加：
+在 Magika checkout 中分两步操作。首先运行[依赖准备脚本](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/bin/prepare-local-path-dependencies.sh)，
+补齐缺少的兄弟 checkout。然后从 Magika 仓库根目录运行只读的
+[`check-locked-local-path-dependencies.sh`](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/lib/check-locked-local-path-dependencies.sh)，
+核验固定提交和工作区干净状态。核验会报告提交不符或工作区有未提交改动；请在符合 pins 的独立布局中处理漂移，
+不要改动现有 checkout。Magika 的[固定源码接入说明](https://github.com/qubit-ltd/rs-magika/blob/main/README.zh_CN.md#固定源码接入)
+也说明了相同的准备与核验契约。假设应用清单位于 `consumer-root/app/Cargo.toml`，添加：
 
 ```toml
 [dependencies]
