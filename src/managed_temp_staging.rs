@@ -418,6 +418,7 @@ pub(crate) async fn create_empty_staged_with(
                         let cleanup_id = Arc::clone(&staged.cleanup_id);
                         let policy = Arc::new(ManagedTempCleanup {
                             resource_id: Arc::clone(&cleanup_id),
+                            attempts: std::sync::atomic::AtomicUsize::new(0),
                         });
                         let id = reservation.retain_with_for_cleanup(staged, policy);
                         *cleanup_id.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(id);
@@ -523,6 +524,7 @@ pub(crate) fn commit_staged(
     let cleanup_id = Arc::clone(&staged.cleanup_id);
     let policy = Arc::new(ManagedTempCleanup {
         resource_id: Arc::clone(&cleanup_id),
+        attempts: std::sync::atomic::AtomicUsize::new(0),
     });
     match reservation.commit_with(staged, Arc::clone(&policy)) {
         Ok(resource) => {

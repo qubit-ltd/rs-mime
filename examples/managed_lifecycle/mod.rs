@@ -388,6 +388,8 @@ impl AsyncCleanup<usize> for FailOnceCleanup {
     }
 }
 
+/// Exercises recovery-store transfer with a synthetic cleanup owner to
+/// demonstrate the store protocol independently of the staged-file lifecycle.
 fn controlled_recovery_transfer(recovery_store: &RecoveryStore) {
     let manager = OperationManager::new(ManagerOptions::default()).expect("recovery operation manager");
     let resource_id = Arc::new(Mutex::new(None));
