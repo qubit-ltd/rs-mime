@@ -178,7 +178,8 @@ impl MimeExecutionServices {
     ///
     /// # Errors
     /// Returns [`crate::MimeError::InvalidOperationBudget`] when the read
-    /// limit is zero.
+    /// limit is zero, or [`crate::MimeError::GroupBinding`] when the manager
+    /// and root group do not belong together.
     pub fn new(
         sync_manager: OperationManager,
         root_group: OperationGroup,
@@ -188,6 +189,9 @@ impl MimeExecutionServices {
         if max_read_bytes == 0 {
             return Err(crate::MimeError::InvalidOperationBudget);
         }
+        let _ = sync_manager
+            .with_group(&root_group)
+            .map_err(crate::MimeError::GroupBinding)?;
         let manager = sync_manager.as_async();
         let async_root_group = root_group.as_async();
         Ok(Self {
@@ -1752,7 +1756,7 @@ mod tests {
         let failed_stop = observer.snapshot();
         assert!(failed_stop.operations_settled);
         assert!(!failed_stop.services_stopped);
-        assert!(failed_stop.group.is_none());
+        assert!(failed_stop.group.is_some());
 
         let stopped = observer.stop_services().unwrap();
         assert!(stopped.operations_settled);
