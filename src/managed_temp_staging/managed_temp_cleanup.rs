@@ -31,7 +31,7 @@ use crate::detector::MimeExecutionPort;
 /// Cleanup adapter that dispatches staged-file deletion to the MIME worker.
 pub(super) struct ManagedTempCleanup {
     /// Resource ID recorded for cleanup failure diagnostics.
-    pub(super) resource_id: Arc<Mutex<Option<ResourceId>>>,
+    pub(super) resource_id: Arc<super::resource_identity::ResourceIdentity>,
     /// Number of cleanup attempts made through this policy.
     pub(super) attempts: AtomicUsize,
 }
@@ -64,8 +64,17 @@ impl AsyncCleanup<StagedMimeInput> for ManagedTempCleanup {
     /// ownership, violating the worker contract.
     fn cleanup(self: Arc<Self>, resource: StagedMimeInput, _context: CleanupContext) -> CleanupFuture<StagedMimeInput> {
         let retry = self.attempts.fetch_add(1, Ordering::AcqRel) > 0;
+        let identity = Arc::clone(&self.resource_id);
+        Box::pin(async move {
+            let id = identity.wait().await;
+            cleanup_with_id(resource, retry, id).await
+        })
+    }
+}
+
+fn cleanup_with_id(resource: StagedMimeInput, retry: bool, resource_id: ResourceId) -> CleanupFuture<StagedMimeInput> {
         let worker = resource.worker.clone();
-        let cleanup_id = Arc::clone(&self.resource_id);
+        let cleanup_id = resource_id;
         let retained = Arc::new(Mutex::new(Some(resource)));
         let for_job = Arc::clone(&retained);
         let (sender, receiver) = completion_pair();
@@ -94,11 +103,11 @@ impl AsyncCleanup<StagedMimeInput> for ManagedTempCleanup {
                     CleanupOutcome::Released
                 }
                 Ok(Err(error)) => CleanupOutcome::Failed {
-                    failure: cleanup_failure(&cleanup_id, Arc::new(error)),
+                    failure: cleanup_failure(cleanup_id, Arc::new(error)),
                     resource,
                 },
                 Err(payload) => CleanupOutcome::Failed {
-                    failure: cleanup_failure(&cleanup_id, Arc::new(Error::other(panic_message(payload.as_ref())))),
+                    failure: cleanup_failure(cleanup_id, Arc::new(Error::other(panic_message(payload.as_ref())))),
                     resource,
                 },
             };
@@ -133,11 +142,10 @@ impl AsyncCleanup<StagedMimeInput> for ManagedTempCleanup {
                 .unwrap_or_else(|poison| poison.into_inner())
                 .take()
                 .expect("rejected cleanup job has not taken ownership");
-            let failure = cleanup_failure(&resource.cleanup_id, Arc::new(Error::other(failure_text)));
+            let failure = cleanup_failure(cleanup_id, Arc::new(Error::other(failure_text)));
             return Box::pin(async move { CleanupOutcome::Failed { failure, resource } });
         }
         Box::pin(receiver)
-    }
 }
 
 #[cfg(test)]
@@ -172,6 +180,7 @@ mod tests {
 
     use super::super::staged_temp_owner::StagedTempOwner;
     use super::ManagedTempCleanup;
+    use super::super::resource_identity::ResourceIdentity;
     use super::TEST_RECOVERY_PORT_LOCK;
     use super::recovery_cleanup_port;
     use crate::MimeError;
@@ -218,6 +227,60 @@ mod tests {
     }
 
     #[test]
+    fn test_cleanup_waits_for_identity_before_dispatch_and_keeps_owner() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        port.prepare().unwrap();
+        let worker = MimeExecutionWorker::new(port);
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
+            commit_staged(scope.reserve_resource().unwrap(), StagedMimeInput {
+                owner: Mutex::new(StagedTempOwner::File { owner }),
+                permits: Mutex::new(Vec::new()),
+                worker,
+                staged_bytes: AtomicU64::new(0),
+                cleanup_id: Arc::new(ResourceIdentity::default()),
+            })
+        })).unwrap();
+        let registered = match block_on(operation.wait_outcome()).unwrap() {
+            OperationOutcome::Succeeded(resource) => resource,
+            _ => panic!("resource identity fixture should succeed"),
+        };
+
+        let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
+        let path = owner.path().to_path_buf();
+        let identity = Arc::new(ResourceIdentity::default());
+        let resource = StagedMimeInput {
+            owner: Mutex::new(StagedTempOwner::File { owner }),
+            permits: Mutex::new(Vec::new()),
+            worker: MimeExecutionWorker::new(Arc::new(RejectingPort)),
+            staged_bytes: AtomicU64::new(0),
+            cleanup_id: Arc::clone(&identity),
+        };
+        let cleanup = Arc::new(ManagedTempCleanup {
+            resource_id: Arc::clone(&identity),
+            attempts: AtomicUsize::new(0),
+        });
+        let mut future = pin::pin!(cleanup.cleanup(resource, CleanupContext::new(ContextOptions::default()).unwrap()));
+        let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
+        let mut context = Context::from_waker(&waker);
+        assert!(future.as_mut().poll(&mut context).is_pending());
+        assert!(path.exists(), "pending cleanup must retain the native owner");
+        identity.publish(registered.id());
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(CleanupOutcome::Failed { failure, mut resource }) => {
+                assert_eq!(registered.id(), failure.resource_id);
+                assert!(path.exists(), "failed dispatch must preserve the owner");
+                resource.owner.get_mut().unwrap().cleanup().unwrap();
+            }
+            _ => panic!("identity publication must wake cleanup to report failure"),
+        }
+        drop(registered);
+        assert!(block_on(operation.wait_settlement()).all_released());
+    }
+
+    #[test]
     fn test_rejected_cleanup_dispatch_preserves_resource_and_identity() {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
@@ -230,7 +293,7 @@ mod tests {
             permits: Mutex::new(Vec::new()),
             worker,
             staged_bytes: AtomicU64::new(0),
-            cleanup_id: Arc::new(Mutex::new(None)),
+            cleanup_id: Arc::new(ResourceIdentity::default()),
         };
         let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
             let reservation = scope.reserve_resource().unwrap();
@@ -293,8 +356,24 @@ mod tests {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
-        let services = MimeExecutionServices::new(manager, group, port.clone(), 16).unwrap();
+        let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap();
         services.prepare().unwrap();
+        let fixture_port = Arc::clone(&port);
+        let mut identity_operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
+            let resource = StagedMimeInput {
+                owner: Mutex::new(StagedTempOwner::File { owner }),
+                permits: Mutex::new(Vec::new()),
+                worker: MimeExecutionWorker::new(fixture_port),
+                staged_bytes: AtomicU64::new(0),
+                cleanup_id: Arc::new(ResourceIdentity::default()),
+            };
+            commit_staged(scope.reserve_resource().unwrap(), resource)
+        })).unwrap();
+        let registered = match block_on(identity_operation.wait_outcome()).unwrap() {
+            OperationOutcome::Succeeded(resource) => resource,
+            _ => panic!("identity fixture should register"),
+        };
         let budget = services.staging_budget();
         let permit = budget.try_reserve(7).unwrap();
         let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
@@ -305,7 +384,7 @@ mod tests {
             permits: Mutex::new(vec![permit]),
             worker: MimeExecutionWorker::new(port.clone()),
             staged_bytes: AtomicU64::new(0),
-            cleanup_id: Arc::new(Mutex::new(None)),
+            cleanup_id: Arc::new(ResourceIdentity::published(registered.id())),
         };
         assert!(
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -335,6 +414,8 @@ mod tests {
         assert!(!path.exists(), "cleanup releases the native file");
         assert_eq!(0, budget.used_bytes(), "permit release follows file cleanup");
 
+        drop(registered);
+        assert!(block_on(identity_operation.wait_settlement()).all_released());
         let shutdown = services.shutdown();
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
         let _ = shutdown.stop_services().unwrap();
@@ -349,7 +430,7 @@ mod tests {
         let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 16).unwrap());
         services.prepare().unwrap();
         let worker = MimeExecutionWorker::new(port.clone());
-        let registered_cleanup_id = Arc::new(Mutex::new(None));
+        let registered_cleanup_id = Arc::new(ResourceIdentity::default());
         let registered_worker = worker.clone();
         let registered_id = Arc::clone(&registered_cleanup_id);
         let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
@@ -384,19 +465,12 @@ mod tests {
             permits: Mutex::new(vec![permit]),
             worker,
             staged_bytes: AtomicU64::new(0),
-            cleanup_id: Arc::new(Mutex::new(Some(registered.id()))),
+            cleanup_id: Arc::new(ResourceIdentity::published(registered.id())),
         };
         assert!(
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let _owner = resource.owner.lock().unwrap();
                 panic!("poison the owner mutex before failed cleanup recovery");
-            }))
-            .is_err()
-        );
-        assert!(
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _resource_id = resource.cleanup_id.lock().unwrap();
-                panic!("poison the cleanup identity mutex before diagnostic recovery");
             }))
             .is_err()
         );
@@ -463,7 +537,7 @@ mod tests {
             permits: Mutex::new(vec![permit]),
             worker,
             staged_bytes: AtomicU64::new(7),
-            cleanup_id: Arc::new(Mutex::new(None)),
+            cleanup_id: Arc::new(ResourceIdentity::default()),
         };
         let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
             commit_staged(scope.reserve_resource().unwrap(), staged)
