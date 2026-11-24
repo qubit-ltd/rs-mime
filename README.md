@@ -104,8 +104,11 @@ provider-path hook when content inspection is required.
   `repository`; select `file` explicitly. A rejected submission returns the
   original input in `MimeSubmitFailure`. Detection errors after acceptance are
   reported by the operation outcome, and resource release is observed through
-  settlement. The target 0.22 operation surface is still under acceptance; see
-  the guide and [acceptance record](doc/acceptance-0.22.0-operation-0.2.zh_CN.md).
+  settlement. During shutdown, `stop_services()` publishes group Drain before
+  returning `OperationShutdownPending` for live group resources or recovery;
+  resolve or transfer recovery and release retained handles before retrying.
+  The [user guide](doc/user_guide.md#managed-detection-operations-0220)
+  and runnable lifecycle example show the complete sequence.
 - Optional `FileCommandMimeDetector`, which uses the system
   `file --mime-type --brief` command for content detection.
 - Optional `FfprobeCommandMediaStreamClassifier` for refining ambiguous media
@@ -127,9 +130,11 @@ These input routes keep separate contracts: an ordinary backend's
 `ContentRequirement::Prefix(n)` is the maximum window requested from a reader,
 and ordinary automatic provider reads pass it as `InputExtent::Prefix` even
 when EOF shortens it. `OwnedMimeInput::Bytes` keeps the bytes and `InputExtent`
-supplied by the caller and is not charged as Provider I/O. Managed provider
-input is read through `MeteredReadSession` against the operation's shared read
-budget. The legacy `max_bytes` arguments on
+supplied by the caller and is not charged as Provider I/O. Extension backends
+receive complete or same-object random-access provider input through
+`MeteredReadSession`; ordinary prefix backends can opt into that session.
+Session reads share the operation's read budget. The built-in managed `file`
+provider meters its own staging reads. The legacy `max_bytes` arguments on
 `detect_path` and `detect_async_path` remain explicit prefix limits for those
 entry points.
 

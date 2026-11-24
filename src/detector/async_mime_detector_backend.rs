@@ -80,7 +80,9 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     /// Returns the content window this backend requests. For `Prefix(n)`, `n`
     /// is an upper bound on bytes supplied, not a minimum input length. A short
     /// input, including one that reaches EOF before `n`, is still passed to the
-    /// backend. Ordinary automatic provider reads also describe the delivered
+    /// backend. This requirement bounds ordinary reader and provider input; it
+    /// does not truncate `OwnedMimeInput::Bytes` or change its caller-declared
+    /// `InputExtent`. Ordinary automatic provider reads also describe delivered
     /// bytes conservatively as `InputExtent::Prefix`. Implementations that
     /// require a minimum length must check the actual input length and return
     /// an appropriate typed error themselves.
@@ -105,13 +107,14 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     /// must be delivered through a metered same-object read session instead
     /// of an unbounded filesystem handle.
     ///
-    /// Complete reads and same-object sampling always use metered sessions,
-    /// regardless of this compatibility hook's return value. Ordinary
-    /// automatic `Prefix(n)` reads are bounded by the requested window and
-    /// applicable service limits; EOF can deliver fewer than `n` bytes, which
-    /// remain conservatively described as `InputExtent::Prefix`. A backend
-    /// that opts into sequential `MeteredReadSession` access may override this
-    /// method to return `true`. Built-in providers may meter their own reads.
+    /// For extension backends, complete reads and same-object sampling always
+    /// use metered sessions, regardless of this compatibility hook's return
+    /// value. Ordinary automatic `Prefix(n)` reads are bounded by the requested
+    /// window and applicable service limits; EOF can deliver fewer than `n`
+    /// bytes, which remain conservatively described as `InputExtent::Prefix`.
+    /// A backend that opts into sequential `MeteredReadSession` access may
+    /// override this method to return `true`. Built-in providers may meter
+    /// their own reads instead of exposing a session.
     ///
     /// # Returns
     /// `true` when ordinary sequential prefix input should be opened once and

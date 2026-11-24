@@ -228,9 +228,10 @@ host platform's path semantics.
 The top-level `MimeDetector::detect_reader` treats the reader as a whole
 resource: detection starts at logical byte zero even when the caller's cursor
 is elsewhere, then restores the original position. The default
-`MimeContentBackend::detect_reader` has a different contract and reads only
-from the current position, then passes those bytes to `detect_bytes`; it does
-not call a reader-specific hook. `Prefix(n)` reads at most `n` bytes and stops
+`MimeContentBackend::detect_reader` has a different contract: it reads only
+from the current position, buffers the selected window, and passes the
+resulting `&[u8]` to `detect_bytes`; it does not call a reader-specific hook.
+`Prefix(n)` reads at most `n` bytes and stops
 early at EOF. `Complete` reads through EOF within the default 16 MiB buffer
 budget, or an overridden budget, and probes one extra byte to detect overflow. Both
 content-backend modes restore their starting position; if reading and
@@ -242,9 +243,11 @@ reader hook requests `content_requirement()`; its `Prefix(n)` is a maximum
 window, EOF may shorten it, and the hook receives the conservative
 `InputExtent::Prefix`; ordinary automatic provider reads use the same extent.
 `OwnedMimeInput::Bytes` preserves the caller's bytes and declared `InputExtent`
-without implicit truncation and does not count as provider I/O. Managed
-provider input is read through `MeteredReadSession` and charged to the operation's shared read
-budget. The legacy `max_bytes` parameters on `detect_path` and
+without implicit truncation and does not count as provider I/O. Extension
+backends receive complete or same-object random-access provider input through
+`MeteredReadSession`; ordinary prefix backends may opt into the session. These
+session reads share the operation's read budget. The built-in managed `file`
+provider meters its staging reads internally. The legacy `max_bytes` parameters on `detect_path` and
 `detect_async_path` remain explicit prefix limits for those path calls; they do
 not replace `content_requirement()` for ordinary backend reader hooks.
 
@@ -512,7 +515,7 @@ and a reason naming the invalid side and syntax problem. Valid custom names do
 not need to appear in the embedded repository or start with `video/` or
 `audio/`.
 
-## Managed Detection Operations (0.22.0 Target)
+## Managed Detection Operations (0.22.0)
 
 `MimeRuntime` adds an opt-in managed submission path for applications that already
 use `qubit-operation`. It accepts owned byte inputs with an explicit `Prefix` or
@@ -812,20 +815,42 @@ the accepted operation. A classifier also needs explicit async selection and a
 compatible same-object capability; do not assume `ffprobe` is available
 through every detector selection.
 
-For the shutdown and retry sequence, follow the runnable
-[`managed_lifecycle` example](../examples/managed_lifecycle.rs): close root
-submissions, observe outcomes and settlement, release operation handles,
-resolve or transfer recovery work, stop services from outside their worker
-pool, then wait for group Drain. Admit required external scopes before group
-admission closes; an already accepted parent may still dispatch descendants
-afterward. Pending settlement is unresolved work, not release confirmation.
-`stop_services()` returns `OperationShutdownPending` while operations or
-recovery remain unresolved, and it does not retry recovery automatically. The
-pending recovery must be resolved or transferred to a separately retained
-`RecoveryStore`; once transferred, that store can retry it after MIME services
-stop. The 0.22.0 target remains under acceptance; see the
-[acceptance record](acceptance-0.22.0-operation-0.2.zh_CN.md) for tested behavior
-and outstanding lifecycle checks.
+For shutdown, the runnable [`managed_lifecycle` example](../examples/managed_lifecycle.rs)
+shows both the ordinary path and a pending path. The latter keeps a group
+service resource and a failed-cleanup recovery live: the first
+`stop_services()` publishes Drain and returns `OperationShutdownPending`, while
+the execution port still accepts work. The application inspects the shutdown
+snapshot, transfers recovery to its retained `RecoveryStore`, closes the
+service resource scope and drops its resource reference, observes the shutdown
+snapshot until service-resource cleanup settles, retries
+`stop_services()`, then waits for group Drain. The store retries transferred
+recovery after MIME workers stop. Do not wait for full Drain while retaining
+typed operation handles or blocking recoveries. Admit required external scopes
+before group admission closes; an already accepted parent may still dispatch
+descendants afterward. Pending settlement is unresolved work, not release
+confirmation. `stop_services()` does not retry recovery automatically.
+After a successful transfer, the application recovery store owns retry
+responsibility and must outlive any needed retry. The MIME execution port stays
+available while group Drain is pending so MIME-owned command and staging
+cleanup can finish. A custom cleanup strategy must keep its dependencies
+available after the original execution port stops, or finish recovery first.
+
+The operation phases have separate error channels:
+
+- **Construction and selection:** a zero cumulative read limit fails service
+  construction with `InvalidOperationBudget`; selecting a sync-only backend fails with
+  `AsyncUnsupported` before submission.
+- **Submission:** a missing service, unsupported input or capability, closed
+  admission, or resource admission failure rejects the operation and returns
+  the original `OwnedMimeInput` in `MimeSubmitFailure`.
+- **Execution:** after acceptance, provider, backend, deadline, and cleanup
+  errors appear in the operation outcome. A MIME detection failure is
+  `OperationOutcome::Failed`; it is not a submission rejection.
+- **Settlement:** inspect `wait_settlement()` for released resources and
+  recovery handles. `stop_services()` publishes Drain and returns
+  `OperationShutdownPending` while a tracked operation, service resource, or
+  recovery remains unresolved. Resolve or transfer recovery, release typed
+  handles and service resources, then retry from outside the worker pool.
 
 `FixedMimeExecutionPort::shutdown()` must be called from a synchronous context
 outside its worker pool. Concurrent shutdown calls wait for the same workers to
@@ -845,6 +870,8 @@ Important `MimeError` cases include:
 - `Config` or `InvalidConfigurationValue` for invalid settings.
 - `InvalidXmlAttribute` when a filename glob cannot be compiled, including
   patterns rejected by the regex size limit.
+- `OperationShutdownPending` while service shutdown is waiting for operation
+  settlement, group resources, or recovery to be resolved or transferred.
 
 Log or inspect the concrete error before switching to a fallback. A successful
 `None` is not an operational failure; it means that no candidate matched.
