@@ -11,11 +11,11 @@ use std::sync::Arc;
 use qubit_operation::ResourceManageErrorKind;
 
 use crate::detector::internal::mime_budget::ReadTreeContext;
+use crate::detector::internal::mime_budget::index_entry::IndexEntry;
 use crate::detector::internal::mime_budget::parent_read_budget_anchor::ParentReadBudgetAnchor;
 use crate::detector::internal::mime_budget::read_tree_registry::pending_binding::PendingBinding;
 use crate::detector::internal::mime_budget::read_tree_registry::pending_read_tree_root::unregister_pending;
 use crate::detector::internal::mime_budget::read_tree_registry::pending_read_tree_root_state::PendingReadTreeRootState;
-use crate::detector::internal::mime_budget::registration::IndexEntry;
 use crate::detector::internal::mime_budget::registration::Registration;
 
 /// Holds a parent read-tree binding until child admission is known.

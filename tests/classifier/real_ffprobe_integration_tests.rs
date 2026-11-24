@@ -63,11 +63,10 @@ fn block_on_timeout<F: Future>(future: F, timeout: Duration) -> Option<F::Output
 
 #[test]
 #[ignore = "requires an explicitly prepared FFprobe binary and libraries"]
-fn real_ffprobe_integration_tests_classifies_ogg_with_managed_command() {
+fn test_classifies_ogg_with_managed_ffprobe_command() {
     assert!(!REAL_OGG.is_empty(), "the real Ogg fixture must be present");
 
-    let manager = qubit_operation::OperationManager::new(Default::default())
-        .expect("create operation manager");
+    let manager = qubit_operation::OperationManager::new(Default::default()).expect("create operation manager");
     let group = manager
         .group(qubit_operation::GroupOptions { capacity: 2 })
         .expect("create operation group");
@@ -80,9 +79,7 @@ fn real_ffprobe_integration_tests_classifies_ogg_with_managed_command() {
         )
         .expect("create managed MIME execution services"),
     );
-    services
-        .prepare()
-        .expect("prepare managed MIME execution services");
+    services.prepare().expect("prepare managed MIME execution services");
 
     let backend = Arc::new(
         FfprobeCommandMediaStreamClassifierProvider
@@ -113,10 +110,7 @@ fn real_ffprobe_integration_tests_classifies_ogg_with_managed_command() {
         let outcome = block_on_timeout(operation.wait_outcome(), TEST_TIMEOUT)
             .expect("FFprobe operation exceeded its bounded test wait");
         assert!(
-            matches!(
-                outcome,
-                Ok(OperationOutcome::Succeeded(MediaStreamType::AudioOnly))
-            ),
+            matches!(outcome, Ok(OperationOutcome::Succeeded(MediaStreamType::AudioOnly))),
             "real FFprobe must classify the Ogg fixture as AudioOnly; attempt {attempt} got {outcome:?}; ensure ffprobe is on PATH and its shared libraries are available"
         );
 

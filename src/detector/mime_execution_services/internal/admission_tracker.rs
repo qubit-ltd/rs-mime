@@ -12,10 +12,10 @@ use std::sync::Mutex;
 use std::task::Context;
 use std::task::Poll;
 
-use super::admission_state::WaiterRegistration;
 use super::AdmissionPermit;
 use super::AdmissionState;
 use super::AdmissionsSettled;
+use super::WaiterRegistration;
 
 /// Tracks callbacks that may still publish an operation observer.
 ///
@@ -35,9 +35,7 @@ impl AdmissionTracker {
     ///
     /// # Returns
     /// A permit whose drop removes this admission from the active count.
-    pub(in crate::detector::mime_execution_services) fn register(
-        self: &Arc<Self>,
-    ) -> AdmissionPermit {
+    pub(in crate::detector::mime_execution_services) fn register(self: &Arc<Self>) -> AdmissionPermit {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.active += 1;
         drop(state);
@@ -51,9 +49,7 @@ impl AdmissionTracker {
     ///
     /// # Returns
     /// A future that completes when all active admission permits are dropped.
-    pub(in crate::detector::mime_execution_services) fn settled(
-        self: &Arc<Self>,
-    ) -> AdmissionsSettled {
+    pub(in crate::detector::mime_execution_services) fn settled(self: &Arc<Self>) -> AdmissionsSettled {
         AdmissionsSettled::new(Arc::downgrade(self))
     }
 
@@ -65,11 +61,7 @@ impl AdmissionTracker {
     /// # Returns
     /// `true` when the active count is nonzero.
     pub(in crate::detector::mime_execution_services) fn has_active(&self) -> bool {
-        self.state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .active
-            != 0
+        self.state.lock().unwrap_or_else(|error| error.into_inner()).active != 0
     }
 
     /// Checks the active count without waiting for the tracker mutex in tests.
@@ -105,10 +97,11 @@ impl AdmissionTracker {
     }
 
     /// Removes a future's waiter registration after it is dropped.
-    pub(in crate::detector::mime_execution_services) fn unregister_waiter(
-        &self,
-        identity: &Arc<()>,
-    ) {
+    ///
+    /// # Parameters
+    /// - `self`: Tracker whose waiter queue is updated.
+    /// - `identity`: Stable identity of the dropped future.
+    pub(in crate::detector::mime_execution_services) fn unregister_waiter(&self, identity: &Arc<()>) {
         let removed = {
             let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
             state
@@ -127,6 +120,7 @@ impl AdmissionTracker {
     ///
     /// # Parameters
     /// - `self`: Tracker whose count is checked.
+    /// - `identity`: Stable identity of the future registering its waiter.
     /// - `context`: Poll context supplying the waiter waker.
     ///
     /// # Returns
@@ -151,11 +145,7 @@ impl AdmissionTracker {
                 .iter_mut()
                 .find(|waiter| Arc::ptr_eq(&waiter.identity, identity))
             {
-                (
-                    false,
-                    None,
-                    Some(std::mem::replace(&mut waiter.waker, candidate)),
-                )
+                (false, None, Some(std::mem::replace(&mut waiter.waker, candidate)))
             } else {
                 state.waiters.push(WaiterRegistration {
                     identity: Arc::clone(identity),
@@ -166,20 +156,16 @@ impl AdmissionTracker {
         };
         drop(unused);
         drop(replaced);
-        if ready {
-            Poll::Ready(())
-        } else {
-            Poll::Pending
-        }
+        if ready { Poll::Ready(()) } else { Poll::Pending }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::future::Future;
+    use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
-    use std::sync::Arc;
     use std::task::Context;
     use std::task::Poll;
     use std::task::Wake;
@@ -203,12 +189,14 @@ mod tests {
     fn test_tracker_recovers_from_poison_and_deduplicates_waiters() {
         let tracker = Arc::new(AdmissionTracker::default());
         let poisoned = Arc::clone(&tracker);
-        assert!(std::thread::spawn(move || {
-            let _state = poisoned.state.lock().unwrap();
-            panic!("poison admission tracker for recovery test");
-        })
-        .join()
-        .is_err());
+        assert!(
+            std::thread::spawn(move || {
+                let _state = poisoned.state.lock().unwrap();
+                panic!("poison admission tracker for recovery test");
+            })
+            .join()
+            .is_err()
+        );
 
         let permit = tracker.register();
         assert!(tracker.has_active());
@@ -249,12 +237,14 @@ mod tests {
             assert_eq!(3, Arc::strong_count(&wake));
             drop(settled);
             assert_eq!(2, Arc::strong_count(&wake));
-            assert!(tracker
-                .state
-                .lock()
-                .unwrap_or_else(|error| error.into_inner())
-                .waiters
-                .is_empty());
+            assert!(
+                tracker
+                    .state
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .waiters
+                    .is_empty()
+            );
         }
     }
 

@@ -314,13 +314,11 @@ impl Drop for ReadTreeContext {
                 continue;
             };
             let mut roots = roots.lock().unwrap_or_else(|e| e.into_inner());
-            let matches = roots
-                .get(&registration.operation)
-                .is_some_and(|registered| {
-                    eq(registered.owner.as_ptr(), context)
-                        && Weak::ptr_eq(&registered.owner, &registration.owner)
-                        && Weak::ptr_eq(&registered.target, &registration.target)
-                });
+            let matches = roots.get(&registration.operation).is_some_and(|registered| {
+                eq(registered.owner.as_ptr(), context)
+                    && Weak::ptr_eq(&registered.owner, &registration.owner)
+                    && Weak::ptr_eq(&registered.target, &registration.target)
+            });
             if matches {
                 roots.remove(&registration.operation);
             }
@@ -346,7 +344,7 @@ mod tests {
     use qubit_operation::OperationManager;
     use qubit_operation::OperationOutcome;
 
-    use super::super::registration::IndexEntry;
+    use super::super::index_entry::IndexEntry;
     use super::super::registration::Registration;
     use super::ReadTreeContext;
 
@@ -626,13 +624,7 @@ mod tests {
 
         assert!(Arc::ptr_eq(
             &replacement,
-            &roots
-                .lock()
-                .unwrap()
-                .get(&operation)
-                .unwrap()
-                .upgrade_target()
-                .unwrap()
+            &roots.lock().unwrap().get(&operation).unwrap().upgrade_target().unwrap()
         ));
     }
 

@@ -1735,9 +1735,10 @@ fn test_operation_runtime_group_shutdown_keeps_other_group() {
 
 #[test]
 fn test_operation_runtime_group_resource_cleanup_precedes_port_shutdown() {
-    use qubit_mime::MimeExecutionPort;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    use qubit_mime::MimeExecutionPort;
 
     #[derive(Debug)]
     struct CleanupPort {
@@ -1783,7 +1784,10 @@ fn test_operation_runtime_group_resource_cleanup_precedes_port_shutdown() {
                 entered.send(()).unwrap();
                 release_rx.recv().unwrap();
             }));
-            assert!(dispatched.is_ok(), "cleanup dispatch must be accepted before port shutdown");
+            assert!(
+                dispatched.is_ok(),
+                "cleanup dispatch must be accepted before port shutdown"
+            );
         }
     }
 
@@ -1819,10 +1823,7 @@ fn test_operation_runtime_group_resource_cleanup_precedes_port_shutdown() {
     assert_eq!(0, port.shutdowns.load(Ordering::SeqCst));
     assert_eq!(1, group.snapshot().service_resource_scopes);
     release_tx.send(()).unwrap();
-    assert!(matches!(
-        stop.join().unwrap(),
-        Err(MimeError::OperationShutdownPending)
-    ));
+    assert!(matches!(stop.join().unwrap(), Err(MimeError::OperationShutdownPending)));
     assert!(shutdown.snapshot().group.is_some());
     assert_eq!(0, port.shutdowns.load(Ordering::SeqCst));
     drop(scope);

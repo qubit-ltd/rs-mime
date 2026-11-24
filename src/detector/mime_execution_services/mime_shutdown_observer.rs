@@ -134,10 +134,11 @@ impl MimeShutdownObserver {
     ///
     /// # Errors
     /// Returns [`crate::MimeError::OperationShutdownPending`] while tracked
-    /// operations have not settled, a service resource scope remains registered,
-    /// or any recovery is unresolved. The group Drain handle is published
-    /// before resource and recovery checks, so callers can observe progress and
-    /// retry this method. Propagates an execution shutdown error.
+    /// operations have not settled, a service resource scope remains
+    /// registered, or any recovery is unresolved. The group Drain handle is
+    /// published before resource and recovery checks, so callers can
+    /// observe progress and retry this method. Propagates an execution
+    /// shutdown error.
     pub fn stop_services(&self) -> Result<MimeShutdownSnapshot, crate::MimeError> {
         let _stop;
         {

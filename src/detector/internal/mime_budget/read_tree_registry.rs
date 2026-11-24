@@ -25,10 +25,10 @@ use qubit_operation::ResourceCapacityError;
 use qubit_operation::ResourceManageErrorKind;
 
 use super::ReadTreeContext;
+use super::index_entry::IndexEntry;
+use super::index_entry::Roots;
 use super::parent_read_budget_anchor::ParentReadBudgetAnchor;
-use super::registration::IndexEntry;
 use super::registration::Registration;
-use super::registration::Roots;
 
 #[path = "read_tree_registry/pending_binding.rs"]
 mod pending_binding;
@@ -634,17 +634,13 @@ mod tests {
             let stale_root = ReadTreeContext::new(3);
             let stale_weak = Arc::downgrade(&stale_root);
             drop(stale_root);
-            registry_body
-                .roots
-                .lock()
-                .unwrap()
-                .insert(
-                    operation,
-                    IndexEntry {
-                        owner: stale_weak.clone(),
-                        target: stale_weak.clone(),
-                    },
-                );
+            registry_body.roots.lock().unwrap().insert(
+                operation,
+                IndexEntry {
+                    owner: stale_weak.clone(),
+                    target: stale_weak.clone(),
+                },
+            );
 
             let child = registry_body.child_for_parent(scope, 12, 8).unwrap();
             assert!(stale_weak.upgrade().is_none());

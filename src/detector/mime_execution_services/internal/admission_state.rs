@@ -7,16 +7,7 @@
 // =============================================================================
 //! Mutable count and wake queue shared by in-flight admission guards.
 
-use std::sync::Arc;
-use std::task::Waker;
-
-/// One future's current notification target.
-pub(in crate::detector::mime_execution_services) struct WaiterRegistration {
-    /// Identity owned by the observing future.
-    pub(in crate::detector::mime_execution_services) identity: Arc<()>,
-    /// Current task waker for that future.
-    pub(in crate::detector::mime_execution_services) waker: Waker,
-}
+use super::WaiterRegistration;
 
 /// State protected by the admission tracker mutex.
 ///

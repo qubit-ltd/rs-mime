@@ -12,9 +12,9 @@ use std::sync::Mutex;
 use qubit_operation::OperationId;
 
 use crate::detector::internal::mime_budget::ReadTreeContext;
+use crate::detector::internal::mime_budget::index_entry::Roots;
 use crate::detector::internal::mime_budget::read_tree_registry::pending_read_tree_root::PendingReadTreeRoot;
 use crate::detector::internal::mime_budget::read_tree_registry::pending_read_tree_root::PendingRoots;
-use crate::detector::internal::mime_budget::registration::Roots;
 
 /// Describes whether a pending child binding borrows or creates the root.
 pub(super) enum PendingBinding {

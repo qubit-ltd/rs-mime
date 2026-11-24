@@ -16,7 +16,7 @@ use std::task::Poll;
 
 use super::AdmissionTracker;
 
-/// Resolves when the tracker has no in-flight admission permits.
+/// Future that resolves when the tracker has no in-flight admission permits.
 pub(in crate::detector::mime_execution_services) struct AdmissionsSettled {
     /// Tracker observed without extending its lifetime.
     tracker: Weak<AdmissionTracker>,
@@ -32,9 +32,7 @@ impl AdmissionsSettled {
     ///
     /// # Returns
     /// A future that can be polled for the zero-admission condition.
-    pub(in crate::detector::mime_execution_services) fn new(
-        tracker: Weak<AdmissionTracker>,
-    ) -> Self {
+    pub(in crate::detector::mime_execution_services) fn new(tracker: Weak<AdmissionTracker>) -> Self {
         Self {
             tracker,
             identity: Arc::new(()),
@@ -65,6 +63,7 @@ impl Future for AdmissionsSettled {
 }
 
 impl Drop for AdmissionsSettled {
+    /// Unregisters this future's waiter when it is dropped.
     fn drop(&mut self) {
         if let Some(tracker) = self.tracker.upgrade() {
             tracker.unregister_waiter(&self.identity);

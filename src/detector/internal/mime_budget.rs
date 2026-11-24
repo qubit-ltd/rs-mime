@@ -44,6 +44,8 @@ pub(in crate::detector) use read_tree_budget::ReadTreeBudget;
 #[path = "mime_budget/read_tree_context.rs"]
 mod read_tree_context;
 pub(crate) use read_tree_context::ReadTreeContext;
+#[path = "mime_budget/index_entry.rs"]
+mod index_entry;
 #[path = "mime_budget/parent_read_budget_anchor.rs"]
 mod parent_read_budget_anchor;
 #[path = "mime_budget/read_permit.rs"]
