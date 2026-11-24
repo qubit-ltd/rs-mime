@@ -98,11 +98,12 @@ impl MimeRepository {
     /// contains an unsupported value. A supported `DOCTYPE` is masked before
     /// parsing so XML parser error positions still refer to the original text;
     /// an XML declaration after a `DOCTYPE` is rejected. Elements in the
-    /// shared MIME-info namespace are parsed; child elements from other
-    /// namespaces are ignored as extensions. The supported standard elements
-    /// are `mime-type`, `comment`, `alias`, `sub-class-of`, `glob`, `magic`,
-    /// and nested `match`; other standard elements are ignored. See the
-    /// `repository-supported-subset.xml` fixture for an example.
+    /// root must use the shared MIME-info namespace. Standard `mime-type`,
+    /// `comment`, `alias`, `sub-class-of`, `glob`, `magic`, and nested `match`
+    /// elements are parsed; other standard elements are ignored. Elements in
+    /// other namespaces are ignored as extensions, including their nested
+    /// elements. See the `repository-supported-subset.xml` fixture for an
+    /// example.
     pub fn from_xml(xml: &str) -> MimeResult<Self> {
         let xml = strip_doctype(xml);
         let document = Document::parse(&xml)?;
