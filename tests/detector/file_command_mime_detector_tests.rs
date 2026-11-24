@@ -107,6 +107,96 @@ fn test_file_based_detector_native_basename_preserves_backslash() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn test_public_prefer_filename_uses_native_basename_without_provider_or_command_io() {
+    use qubit_fs::FileSystem;
+    use qubit_fs::Path as FsPath;
+
+    use crate::support::PrefixFileSystemSpi;
+
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-native-basename">
+    <glob pattern="left\right.mimecase" weight="80"/>
+  </mime-type>
+  <mime-type type="application/x-string-basename">
+    <glob pattern="right.mimecase" weight="50"/>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("custom filename repository should parse");
+    let detector = FileCommandMimeDetector::with_repository(&repository);
+    let native_name = r"left\right.mimecase";
+
+    assert_eq!(
+        Some("application/x-string-basename".to_owned()),
+        detector
+            .detect_by_filename(native_name)
+            .expect("bare filename hint should retain string separator semantics"),
+    );
+
+    let temp_dir = LocalFileSystem::host()
+        .expect("host filesystem should open")
+        .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
+        .expect("temporary directory should be created");
+    let local_file = temp_dir.path().join(native_name);
+    std::fs::write(&local_file, b"fixture").expect("local fixture should be written");
+    let marker = temp_dir.path().join("file-command-invoked");
+    let executable_dir = temp_dir.path().join("bin");
+    std::fs::create_dir(&executable_dir).expect("command directory should be created");
+    let executable = executable_dir.join(FileCommandMimeDetector::COMMAND);
+    let script = format!(
+        "#!/bin/sh\nprintf invoked >> '{}'\nprintf 'application/x-command-content\\n'\n",
+        marker.display(),
+    );
+    std::fs::write(&executable, script).expect("fake file command should be written");
+    let mut permissions = std::fs::metadata(&executable)
+        .expect("fake file command metadata should be readable")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable, permissions)
+        .expect("fake file command should be executable");
+    let _path_guard = PathEnvGuard::prepend(&executable_dir);
+
+    assert_eq!(
+        Some("application/x-native-basename".to_owned()),
+        detector
+            .detect_file(&local_file, MimeDetectionPolicy::PreferFilename)
+            .expect("public local-file API should use the native POSIX basename"),
+    );
+    assert!(
+        !marker.exists(),
+        "filename success should skip the system file command"
+    );
+
+    let provider = PrefixFileSystemSpi::hierarchical(b"provider content".to_vec());
+    let filesystem =
+        FileSystem::from_spi(provider.clone()).expect("filesystem facade should build");
+    let path = FsPath::parse("/left\\right.mimecase").expect("typed provider path should parse");
+    let public_detector: &dyn MimeDetector = &detector;
+    assert_eq!(
+        Some("application/x-native-basename".to_owned()),
+        public_detector
+            .detect_path(&filesystem, &path, 16, MimeDetectionPolicy::PreferFilename,)
+            .expect("public provider-path API should use the typed native basename"),
+    );
+    assert_eq!(
+        0,
+        provider.opened(),
+        "filename success should skip provider content reads"
+    );
+    assert_eq!(
+        0,
+        provider.stat_calls(),
+        "filename success should skip provider metadata reads"
+    );
+    assert!(
+        !marker.exists(),
+        "provider filename success should not invoke the system file command"
+    );
+}
+
 #[test]
 fn test_is_available_can_be_called_without_panicking() {
     #[cfg(unix)]
