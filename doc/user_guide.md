@@ -355,8 +355,10 @@ When loading shared MIME-info XML, the root and standard rule elements must use
 the `http://www.freedesktop.org/standards/shared-mime-info` namespace. Elements
 from other namespaces are treated as extensions and ignored, including their
 nested elements; malformed attributes on standard elements still produce an
-error. A standard `magic` element must still contain at least one standard
-`match` element.
+error. The parsed standard subset is `mime-type`, `comment`, `alias`,
+`sub-class-of`, `glob`, `magic`, and nested `match`; other standard elements
+are ignored. A standard `magic` element must still contain at least one
+standard `match` element.
 
 Nested magic matchers are limited to 128 levels, counting the root matcher as
 level one. XML rules deeper than this return `InvalidXmlAttribute`, and
@@ -496,8 +498,12 @@ that the store accepts and successfully retries. Run it with
 `cargo run --example managed_lifecycle`; the CI consumer fixture invokes the
 same entry point.
 
-Select an async-capable provider with `MimeRuntime::with_async_provider_selection`
-when the runtime needs an async implementation. The built-in `repository` and
+`MimeRuntime::builtin()` starts with the bundled repository. Attaching execution
+services with `with_execution_services` also installs a repository-backed async
+backend by default; `with_async_provider_selection` replaces it when another
+async implementation is needed. A sync-only provider is rejected with
+`AsyncUnsupported` while that selection is being created, before submission.
+The built-in `repository` and
 `file` providers both expose managed async backends. `file` requires complete
 content; its lack of random-access support only rules out inputs that require
 random access. Provider registration itself does not start detection work. A
@@ -506,6 +512,11 @@ runtime without execution services returns a typed
 returns `AsyncUnsupported`. Both rejections return the original
 `OwnedMimeInput` in `MimeSubmitFailure`, so the caller can retry or choose another
 path. Once accepted, detection failures are reported by the operation handle.
+The existing `FileCommandMimeDetector` synchronous APIs remain available; the
+managed backend is selected through `MimeRuntime` for operation-backed work.
+When `file` is selected with an async classifier, its factory rejects the
+selection with `UnsupportedCapability` during runtime configuration, even if
+the submitted input would not require classifier refinement.
 
 For the managed `repository` provider, an input marked `Prefix` is used only for
 base MIME matching. It is not passed to an async media classifier, even when a

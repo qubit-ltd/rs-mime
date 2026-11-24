@@ -131,7 +131,10 @@ impl super::AsyncMimeDetectorProvider for FileCommandMimeDetectorProvider {
     /// The configured backend when no unsupported classifier is requested.
     ///
     /// # Errors
-    /// Returns an unsupported-capability error when a classifier is supplied.
+    /// Returns an unsupported-capability error when a classifier is supplied,
+    /// regardless of whether a particular input would invoke refinement. This
+    /// check happens while the async backend is being created, before
+    /// submission.
     fn create_async_backend_with_classifier(
         &self,
         _config: &MimeConfig,

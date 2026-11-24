@@ -276,7 +276,8 @@ classifier；如果环境提供 `ffprobe`，再使用 `FfprobeCommandMediaStream
 加载 shared MIME-info XML 时，根元素和标准规则元素必须使用
 `http://www.freedesktop.org/standards/shared-mime-info` 命名空间。其他命名空间的元素会作为扩展
 忽略，其嵌套元素也不会被解析；标准元素中的非法属性仍会报错。标准 `magic` 元素仍必须至少包含一个
-标准 `match` 元素。
+标准 `match` 元素。解析的标准子集包括 `mime-type`、`comment`、`alias`、`sub-class-of`、`glob`、
+`magic` 和嵌套的 `match`；其他标准元素会被忽略。
 
 嵌套 magic matcher 最多 128 层，根 matcher 计为第 1 层。超过限制的 XML 规则会返回
 `InvalidXmlAttribute`，程序化构造的 matcher 会返回 `InvalidMagicMatcher`。可在保持匹配语义的前提下
@@ -402,13 +403,20 @@ settlement，再释放 typed handle，最后等待组 Drain。若存在未解决
 检查错误可见且 settlement 仍确认资源释放；独立恢复用例确认 transfer 被 store 接收，再由 store 重试成功。
 完整样例可通过 `cargo run --example managed_lifecycle` 运行，CI 的 consumer fixture 也运行同一入口。
 
-如需异步实现，使用 `MimeRuntime::with_async_provider_selection` 选择明确支持异步的
-Provider。内置 `repository` 和 `file` Provider 都提供受管异步 backend。`file` 要求完整内容；
+`MimeRuntime::builtin()` 默认使用内置 repository。调用 `with_execution_services` 附加执行服务时，
+也会默认安装 repository 受管异步 backend；如需其他异步实现，可再用
+`with_async_provider_selection` 替换它。仅支持同步的 Provider 会在该选择配置阶段以
+`AsyncUnsupported` 拒绝，发生在提交任务之前。内置 `repository` 和 `file` Provider 都提供受管异步
+backend。`file` 要求完整内容；
 它不支持随机访问，只表示不能处理要求随机访问的输入。注册 Provider 不会启动检测任务。
 未配置执行服务时，提交会以 `ExecutionServicesRequired` 拒绝；所选 backend
 没有异步能力时会以 `AsyncUnsupported` 拒绝。这些提交前拒绝都通过
 `MimeSubmitFailure` 原样返还 `OwnedMimeInput`，调用方可以重试或改走其他入口。任务接纳后
 发生的检测错误则由 operation handle 报告。
+现有 `FileCommandMimeDetector` 同步 API 仍可使用；受管 backend 用于通过 `MimeRuntime` 执行
+operation 管理的任务。
+若为 `file` 选择 async classifier，factory 会在 runtime 配置阶段以 `UnsupportedCapability` 拒绝，
+即使某个输入本身不会触发 classifier 精化也一样。
 
 受管 `repository` Provider 对标记为 `Prefix` 的输入只执行基础 MIME 匹配；即使精细分类映射命中，
 也不会把此前缀交给异步媒体 classifier。需要媒体流精化时，应以 `Complete` 提交完整字节。

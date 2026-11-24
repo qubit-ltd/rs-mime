@@ -148,7 +148,9 @@ impl MimeRuntime {
     }
 
     /// Attaches shared operation and MIME execution services without starting
-    /// workers.
+    /// workers. This also selects the runtime's repository-backed async
+    /// detector as the default managed backend; an explicit provider
+    /// selection can replace it afterward.
     ///
     /// # Parameters
     /// - `services`: Shared operation manager, group, worker adapter, and
@@ -176,7 +178,9 @@ impl MimeRuntime {
     /// This runtime with the selected async backend.
     ///
     /// # Errors
-    /// Returns an error when execution services are absent or resolution fails.
+    /// Returns an error when execution services are absent or provider
+    /// resolution/factory creation fails. A sync-only provider returns
+    /// [`crate::MimeError::AsyncUnsupported`] here, before any submission.
     pub fn with_async_provider_selection(
         mut self,
         registry: &MimeDetectorRegistry,
@@ -207,7 +211,9 @@ impl MimeRuntime {
     /// This runtime with the selected async detector and classifier.
     ///
     /// # Errors
-    /// Returns an error when services are absent or either selection fails.
+    /// Returns an error when services are absent or either provider selection
+    /// fails. A selected detector factory can reject an unsupported classifier
+    /// during this configuration call, before any operation is submitted.
     pub fn with_async_provider_selection_and_classifier(
         mut self,
         detector_registry: &MimeDetectorRegistry,
