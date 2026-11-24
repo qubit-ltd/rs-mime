@@ -367,6 +367,7 @@ async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport
                         &path,
                         Arc::clone(&services),
                         Arc::clone(&read_tree),
+                        _scope.context().clone(),
                         request_limit,
                         payload_limit,
                     )
@@ -377,6 +378,7 @@ async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport
                         &path,
                         Arc::clone(&services),
                         Arc::clone(&read_tree),
+                        _scope.context().clone(),
                         request_limit,
                         payload_limit,
                     )

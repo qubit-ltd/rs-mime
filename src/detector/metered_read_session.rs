@@ -13,6 +13,7 @@ use qubit_fs::AsyncFileSystem;
 use qubit_fs::Path as FsPath;
 use qubit_fs::read::ReadOptions;
 use qubit_io::AsyncInput;
+use qubit_operation::OperationContext;
 
 // Keeps the provider reader representation private to this session module.
 mod internal;
@@ -47,6 +48,7 @@ pub struct MeteredReadSession {
     read_tree: Arc<ReadTreeContext>,
     /// The remaining cumulative allowance for this provider request.
     request_remaining: u64,
+    operation_context: OperationContext,
     /// The maximum number of bytes any individual read may deliver.
     payload_limit: usize,
     /// The next sequential offset, advanced only by successful sequential
@@ -75,9 +77,11 @@ impl MeteredReadSession {
         path: &FsPath,
         services: Arc<MimeExecutionServices>,
         read_tree: Arc<ReadTreeContext>,
+        operation_context: OperationContext,
         request_limit: u64,
         payload_limit: usize,
     ) -> MimeResult<Self> {
+        ensure_active(&operation_context)?;
         let reader = file_system
             .open_reader(path, ReadOptions::default())
             .await
@@ -86,6 +90,7 @@ impl MeteredReadSession {
             OpenedReader::Sequential(reader),
             services,
             read_tree,
+            operation_context,
             request_limit,
             payload_limit,
         ))
@@ -111,9 +116,11 @@ impl MeteredReadSession {
         path: &FsPath,
         services: Arc<MimeExecutionServices>,
         read_tree: Arc<ReadTreeContext>,
+        operation_context: OperationContext,
         request_limit: u64,
         payload_limit: usize,
     ) -> MimeResult<Self> {
+        ensure_active(&operation_context)?;
         let reader = file_system
             .open_random_access_reader(path, ReadOptions::default())
             .await
@@ -122,6 +129,7 @@ impl MeteredReadSession {
             OpenedReader::RandomAccess(reader),
             services,
             read_tree,
+            operation_context,
             request_limit,
             payload_limit,
         ))
@@ -141,6 +149,7 @@ impl MeteredReadSession {
         reader: OpenedReader,
         services: Arc<MimeExecutionServices>,
         read_tree: Arc<ReadTreeContext>,
+        operation_context: OperationContext,
         request_limit: u64,
         payload_limit: usize,
     ) -> Self {
@@ -149,6 +158,7 @@ impl MeteredReadSession {
             reader,
             services,
             read_tree,
+            operation_context,
             request_remaining,
             payload_limit,
             next_offset: 0,
@@ -228,6 +238,7 @@ impl MeteredReadSession {
     /// Returns an allocation, provider, or budget error without transferring
     /// partial scratch contents to `output`.
     async fn read_at_inner(&mut self, offset: u64, output: &mut [u8], advance: bool) -> MimeResult<usize> {
+        ensure_active(&self.operation_context)?;
         let available = self.request_remaining.min(self.read_tree.remaining());
         let ask = output
             .len()
@@ -283,6 +294,22 @@ impl MeteredReadSession {
     }
 }
 
+fn ensure_active(context: &OperationContext) -> MimeResult<()> {
+    if let Some(reason) = context.stop_reason() {
+        return Err(MimeError::DetectorBackend {
+            backend: "mime".into(),
+            reason: format!("operation stopped: {reason:?}"),
+        });
+    }
+    if context.is_expired() {
+        return Err(MimeError::DetectorBackend {
+            backend: "mime".into(),
+            reason: "operation deadline expired".into(),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::future::Future;
@@ -318,6 +345,8 @@ mod tests {
     use qubit_io::AsyncInput;
     use qubit_operation::GroupOptions;
     use qubit_operation::OperationManager;
+    use qubit_operation::OperationContext;
+    use qubit_operation::StopReason;
 
     use super::MeteredReadSession;
     use crate::FixedMimeExecutionPort;
@@ -471,6 +500,7 @@ mod tests {
             &path,
             Arc::clone(&services),
             Arc::clone(&parent),
+            OperationContext::new(Default::default()).unwrap(),
             7,
             8,
         ))
@@ -507,6 +537,7 @@ mod tests {
             &path,
             Arc::clone(&services),
             Arc::clone(&left),
+            OperationContext::new(Default::default()).unwrap(),
             5,
             8,
         ))
@@ -516,6 +547,7 @@ mod tests {
             &path,
             Arc::clone(&services),
             Arc::clone(&right),
+            OperationContext::new(Default::default()).unwrap(),
             5,
             8,
         ))
@@ -547,6 +579,7 @@ mod tests {
             &path,
             Arc::clone(&services),
             Arc::clone(&root),
+            OperationContext::new(Default::default()).unwrap(),
             8,
             4,
         ))
@@ -578,6 +611,7 @@ mod tests {
             &path,
             Arc::clone(&services),
             Arc::clone(&root),
+            OperationContext::new(Default::default()).unwrap(),
             3,
             2,
         ))
@@ -600,6 +634,23 @@ mod tests {
     }
 
     #[test]
+    fn test_stopped_context_blocks_next_managed_sequential_read() {
+        let services = services();
+        let root = ReadTreeContext::new(8);
+        let context = OperationContext::new(Default::default()).unwrap();
+        let file_system = AsyncFileSystem::from_spi(MemoryFileSystem::new(b"abcdef", false)).unwrap();
+        let path = qubit_fs::Path::parse("/input").unwrap();
+        let mut session = block_on(MeteredReadSession::open_sequential(
+            &file_system, &path, Arc::clone(&services), Arc::clone(&root), context.clone(), 8, 8,
+        )).unwrap();
+        let mut output = [0; 2];
+        assert_eq!(2, block_on(session.read(&mut output)).unwrap());
+        assert!(context.request_stop(StopReason::UserCancelled));
+        assert!(block_on(session.read(&mut output)).is_err());
+        assert_eq!(2, root.consumed());
+    }
+
+    #[test]
     fn test_dropping_pending_read_releases_read_and_scratch_reservations() {
         let services = services();
         let root = ReadTreeContext::new(8);
@@ -612,6 +663,7 @@ mod tests {
             &path,
             Arc::clone(&services),
             Arc::clone(&root),
+            OperationContext::new(Default::default()).unwrap(),
             8,
             8,
         ))

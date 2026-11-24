@@ -102,6 +102,9 @@ fn ensure_not_stopped(scope: &OperationScope) -> MimeResult<()> {
     if let Some(reason) = scope.context().stop_reason() {
         return Err(stopped_error(reason));
     }
+    if scope.context().is_expired() {
+        return Err(stopped_error(StopReason::Timeout));
+    }
     Ok(())
 }
 

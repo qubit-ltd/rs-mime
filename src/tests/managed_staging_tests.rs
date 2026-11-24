@@ -613,6 +613,7 @@ fn test_metered_random_access_reads_share_budget_and_reject_sequential_offsets()
         &path,
         Arc::clone(&services),
         Arc::clone(&read_tree),
+        qubit_operation::OperationContext::new(Default::default()).unwrap(),
         8,
         4,
     ))
@@ -639,6 +640,7 @@ fn test_metered_random_access_reads_share_budget_and_reject_sequential_offsets()
         &path,
         Arc::clone(&services),
         Arc::clone(&failing_tree),
+        qubit_operation::OperationContext::new(Default::default()).unwrap(),
         4,
         4,
     ))
@@ -662,6 +664,7 @@ fn test_metered_random_access_reads_share_budget_and_reject_sequential_offsets()
         &path,
         Arc::clone(&services),
         Arc::clone(&sequential_tree),
+        qubit_operation::OperationContext::new(Default::default()).unwrap(),
         4,
         4,
     ))
@@ -671,6 +674,33 @@ fn test_metered_random_access_reads_share_budget_and_reject_sequential_offsets()
         Err(MimeError::InvalidClassifierInput { .. })
     ));
     assert_eq!(0, sequential_tree.consumed());
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+}
+
+#[test]
+fn test_metered_random_access_stop_after_first_read_blocks_next_provider_call() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+    let services = Arc::new(MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 8).unwrap());
+    services.prepare().unwrap();
+    let (filesystem, opens, reads) = BytesAsyncFs::filesystem(b"012345");
+    let path = FsPath::parse("/input").unwrap();
+    let tree = services.new_read_tree(8);
+    let context = qubit_operation::OperationContext::new(Default::default()).unwrap();
+    let mut session = block_on(MeteredReadSession::open_random_access(
+        &filesystem, &path, Arc::clone(&services), Arc::clone(&tree), context.clone(), 8, 4,
+    )).unwrap();
+    let mut output = [0; 4];
+    let delivered = block_on(session.read_at(0, &mut output)).unwrap();
+    let calls_after_first_read = reads.load(Ordering::SeqCst);
+    assert!(calls_after_first_read > 0);
+    assert!(context.request_stop(qubit_operation::StopReason::UserCancelled));
+    assert!(block_on(session.read_at(1, &mut output)).is_err());
+    assert_eq!(calls_after_first_read, reads.load(Ordering::SeqCst), "stopped session must not call the provider again");
+    assert_eq!(1, opens.load(Ordering::SeqCst));
+    assert_eq!(delivered as u64, tree.consumed(), "successful first read remains charged");
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();
