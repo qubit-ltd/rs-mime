@@ -526,6 +526,82 @@ mod tests {
     }
 
     #[test]
+    fn test_child_for_parent_registers_and_reuses_parent_tree() {
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let registry_body = Arc::clone(&registry);
+        let operation = with_parent_scope(move |scope| {
+            let operation = scope.id();
+            let first = registry_body.child_for_parent(scope, 12, 8).unwrap();
+            let registered = registry_body
+                .for_operation(operation)
+                .expect("first child should register a parent tree");
+            assert!(Arc::ptr_eq(&first.tree, &registered.tree));
+
+            let second = registry_body.child_for_parent(scope, 99, 4).unwrap();
+            assert!(Arc::ptr_eq(&first.tree, &second.tree));
+            assert_eq!(12, first.tree.limit);
+            assert_eq!(8, first.scope.limit);
+            assert_eq!(4, second.scope.limit);
+            assert_eq!(4, second.reserve(4).unwrap().commit(4));
+            assert_eq!(4, first.tree.consumed());
+            operation
+        });
+        assert!(registry.for_operation(operation).is_none());
+    }
+
+    #[test]
+    fn test_child_for_parent_removes_expired_root_before_rebinding() {
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let registry_body = Arc::clone(&registry);
+        let operation = with_parent_scope(move |scope| {
+            let operation = scope.id();
+            let stale_root = ReadTreeContext::new(3);
+            let stale_weak = Arc::downgrade(&stale_root);
+            drop(stale_root);
+            registry_body
+                .roots
+                .lock()
+                .unwrap()
+                .insert(operation, stale_weak.clone());
+
+            let child = registry_body.child_for_parent(scope, 12, 8).unwrap();
+            assert!(stale_weak.upgrade().is_none());
+            let rebound = registry_body
+                .roots
+                .lock()
+                .unwrap()
+                .get(&operation)
+                .and_then(Weak::upgrade)
+                .expect("expired root should be replaced by a live parent tree");
+            assert!(Arc::ptr_eq(&child.tree, &rebound.tree));
+            assert_eq!(12, rebound.tree.limit);
+            operation
+        });
+        assert!(registry.for_operation(operation).is_none());
+    }
+
+    #[test]
+    fn test_unanchored_association_supports_nested_read_tree_descendants() {
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let registry_body = Arc::clone(&registry);
+        with_parent_scope(move |scope| {
+            let first = registry_body.associate_child_for_parent(scope, 8, 8);
+            let second = registry_body.associate_child_for_parent(scope, 99, 6);
+            assert!(Arc::ptr_eq(&first.tree, &second.tree));
+            assert_eq!(8, first.tree.limit);
+            assert_eq!(8, first.scope.limit);
+            assert_eq!(6, second.scope.limit);
+
+            let grandchild = first.child(4);
+            assert_eq!(4, grandchild.scope.limit);
+            assert_eq!(4, grandchild.reserve(4).unwrap().commit(4));
+            assert_eq!(4, second.reserve(4).unwrap().commit(4));
+            assert_eq!(8, first.tree.consumed());
+            assert!(second.reserve(1).is_none());
+        });
+    }
+
+    #[test]
     fn test_external_parent_tree_and_limit_survive_sequential_children() {
         let registry = Arc::new(ReadTreeRegistry::default());
         let registry_body = Arc::clone(&registry);
