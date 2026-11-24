@@ -140,6 +140,63 @@ fn test_repository_async_candidates_equal_sync() {
 }
 
 #[test]
+fn test_repository_provider_basename_uses_native_separator_semantics() {
+    let repository = Box::leak(Box::new(MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-native-basename">
+    <glob pattern="left\right.mimecase" weight="80"/>
+  </mime-type>
+  <mime-type type="application/x-string-basename">
+    <glob pattern="right.mimecase" weight="50"/>
+  </mime-type>
+  <mime-type type="application/x-unmatched-content">
+    <magic priority="80"><match type="string" value="NEVER" offset="0"/></magic>
+  </mime-type>
+</mime-info>"#,
+    )
+    .unwrap()));
+    let detector: Arc<dyn AsyncMimeDetectorBackend> = Arc::new(RepositoryMimeDetector::with_repository(repository));
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+    let bytes = b"%PDF";
+    let basename = r"left\right.mimecase";
+    let mut operation = group
+        .as_async()
+        .try_submit(Default::default(), move |scope| async move {
+            detector
+                .guess_provider_content_in(
+                    &scope,
+                    BorrowedMimeInput::Bytes {
+                        content: bytes,
+                        extent: InputExtent::Prefix,
+                        filename: Some(basename),
+                    },
+                    Some(basename),
+                    &MimeOperationOptions {
+                        policy: qubit_mime::MimeDetectionPolicy::ContentFirst,
+                        ..Default::default()
+                    },
+                )
+                .await
+        })
+        .unwrap();
+
+    let candidates = match block_on(operation.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(candidates) => candidates,
+        other => panic!("provider candidates should be selected: {other:?}"),
+    };
+    assert_eq!(
+        vec!["application/x-native-basename"],
+        candidates
+            .candidates
+            .iter()
+            .map(|candidate| candidate.mime_type.as_str())
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(InspectedExtent::Prefix(bytes.len()), candidates.inspected_extent);
+}
+
+#[test]
 fn test_repository_async_yields_and_stops() {
     use std::sync::Mutex;
     use std::task::Poll;
