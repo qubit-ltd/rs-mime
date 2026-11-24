@@ -72,6 +72,7 @@ impl StagedTempOwner {
     }
 
     /// Closes the active file handle when this owner is a staged file.
+    #[cfg(test)]
     pub(super) fn close(&mut self) {
         if let Self::File(owner) = self {
             owner.close();
