@@ -59,6 +59,11 @@ use resource_identity::ResourceIdentity;
 pub(crate) use staged_mime_input::StagedMimeInput;
 use staged_temp_owner::StagedTempOwner;
 
+#[cfg(test)]
+pub(crate) use resource_identity::PublishEvent;
+#[cfg(test)]
+pub(crate) use resource_identity::PublishHook;
+
 /// Stages owned bytes without performing filesystem work in the caller's
 /// async poll. A rejected worker dispatch returns the job and drops the
 /// reservation before any temporary file is created.
@@ -396,6 +401,46 @@ pub(crate) async fn create_empty_staged_with(
     + Send
     + 'static,
 ) -> MimeResult<ResourceRef<StagedMimeInput>> {
+    #[cfg(test)]
+    return create_empty_staged_with_inner(scope, reservation, limits, None, create_temp).await;
+    #[cfg(not(test))]
+    create_empty_staged_with_impl(scope, reservation, limits, create_temp).await
+}
+
+#[cfg(test)]
+pub(crate) async fn create_empty_staged_with_hook(
+    scope: &OperationScope,
+    reservation: ResourceReservation,
+    limits: &ManagedStagingLimits,
+    hook: Option<resource_identity::PublishHook>,
+    create_temp: impl FnOnce() -> Result<qubit_local_files::LocalTempFile, Box<qubit_local_files::LocalFileError>>
+    + Send
+    + 'static,
+) -> MimeResult<ResourceRef<StagedMimeInput>> {
+    create_empty_staged_with_inner(scope, reservation, limits, hook, create_temp).await
+}
+
+#[cfg(not(test))]
+async fn create_empty_staged_with_impl(
+    scope: &OperationScope,
+    reservation: ResourceReservation,
+    limits: &ManagedStagingLimits,
+    create_temp: impl FnOnce() -> Result<qubit_local_files::LocalTempFile, Box<qubit_local_files::LocalFileError>>
+    + Send
+    + 'static,
+) -> MimeResult<ResourceRef<StagedMimeInput>> {
+    create_empty_staged_with_inner(scope, reservation, limits, create_temp).await
+}
+
+async fn create_empty_staged_with_inner(
+    scope: &OperationScope,
+    reservation: ResourceReservation,
+    limits: &ManagedStagingLimits,
+    #[cfg(test)] hook: Option<resource_identity::PublishHook>,
+    create_temp: impl FnOnce() -> Result<qubit_local_files::LocalTempFile, Box<qubit_local_files::LocalFileError>>
+    + Send
+    + 'static,
+) -> MimeResult<ResourceRef<StagedMimeInput>> {
     ensure_not_stopped(scope)?;
     let context = scope.context().clone();
     let (sender, receiver) = completion_pair();
@@ -414,12 +459,20 @@ pub(crate) async fn create_empty_staged_with(
                         staged_bytes: std::sync::atomic::AtomicU64::new(0),
                         cleanup_id: Arc::new(ResourceIdentity::default()),
                     };
+                    #[cfg(test)]
+                    if let Some(hook) = &hook {
+                        staged.cleanup_id.set_hook(Arc::clone(hook));
+                    }
                     commit_staged(reservation, staged)
                 }
                 Err(error) => {
                     let (primary, recovery) = (*error).into_temp_recovery_parts();
                     if let Some(recovery) = recovery {
                         let staged = StagedMimeInput::from_recovery(recovery, worker.clone());
+                        #[cfg(test)]
+                        if let Some(hook) = &hook {
+                            staged.cleanup_id.set_hook(Arc::clone(hook));
+                        }
                         retain_creation_recovery(reservation, staged);
                     }
                     Err(MimeError::Io(primary.into_io_error()))

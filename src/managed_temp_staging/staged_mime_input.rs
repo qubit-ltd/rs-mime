@@ -41,6 +41,11 @@ pub(crate) struct StagedMimeInput {
 }
 
 impl StagedMimeInput {
+    #[cfg(test)]
+    pub(crate) fn set_cleanup_test_hook(&self, hook: super::resource_identity::PublishHook) {
+        self.cleanup_id.set_hook(hook);
+    }
+
     /// Builds a staged-file test resource around an existing owner.
     ///
     /// # Parameters
