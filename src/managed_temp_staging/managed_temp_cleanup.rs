@@ -41,6 +41,15 @@ static RECOVERY_CLEANUP_PORT: OnceLock<Arc<FixedMimeExecutionPort>> = OnceLock::
 #[cfg(test)]
 static TEST_RECOVERY_PORT_LOCK: Mutex<()> = Mutex::new(());
 
+/// Serializes tests that dispatch retries through the process recovery
+/// executor.
+#[cfg(test)]
+pub(crate) fn recovery_cleanup_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    TEST_RECOVERY_PORT_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
+
 /// Gets the process recovery executor and ensures its workers are ready.
 fn recovery_cleanup_port() -> Result<&'static Arc<FixedMimeExecutionPort>, MimeError> {
     let port = RECOVERY_CLEANUP_PORT.get_or_init(|| Arc::new(FixedMimeExecutionPort::new(1, 16)));
@@ -193,8 +202,8 @@ mod tests {
     use super::super::resource_identity::ResourceIdentity;
     use super::super::staged_temp_owner::StagedTempOwner;
     use super::ManagedTempCleanup;
-    use super::TEST_RECOVERY_PORT_LOCK;
     use super::recovery_cleanup_port;
+    use super::recovery_cleanup_test_guard;
     use crate::MimeError;
     use crate::command_execution::FixedMimeExecutionPort;
     use crate::command_execution::MimeExecutionWorker;
@@ -535,7 +544,7 @@ mod tests {
 
     #[test]
     fn test_transferred_staged_recovery_retries_after_service_shutdown() {
-        let _recovery_port_guard = TEST_RECOVERY_PORT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _recovery_port_guard = recovery_cleanup_test_guard();
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
@@ -611,7 +620,7 @@ mod tests {
 
     #[test]
     fn test_rejected_recovery_dispatch_retains_owner_identity_and_budget() {
-        let _recovery_port_guard = TEST_RECOVERY_PORT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _recovery_port_guard = recovery_cleanup_test_guard();
         let recovery_port = recovery_cleanup_port().unwrap();
         let started = Arc::new(std::sync::Barrier::new(2));
         let release = Arc::new(std::sync::Barrier::new(2));

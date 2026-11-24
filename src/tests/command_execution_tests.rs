@@ -703,6 +703,8 @@ mod managed_command_executor_tests {
 
     #[test]
     fn test_managed_executor_maps_full_worker_queue_to_busy_and_releases_input() {
+        let _recovery_port_guard = crate::managed_temp_staging::recovery_cleanup_test_guard();
+
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
         let port = Arc::new(FixedMimeExecutionPort::new(1, 1));

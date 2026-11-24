@@ -66,6 +66,7 @@ use crate::managed_temp_staging::StagedMimeInput;
 use crate::managed_temp_staging::commit_staged;
 use crate::managed_temp_staging::create_empty_staged_with;
 use crate::managed_temp_staging::create_empty_staged_with_hook;
+use crate::managed_temp_staging::recovery_cleanup_test_guard;
 use crate::managed_temp_staging::sentinel_read_limit;
 use crate::managed_temp_staging::stage_owned_in;
 use crate::managed_temp_staging::within_staging_limit;
@@ -1448,6 +1449,8 @@ fn test_managed_staging_cleanup_failure_retains_owner_for_retry() {
 
 #[test]
 fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
+    let _recovery_port_guard = recovery_cleanup_test_guard();
+
     #[derive(Debug)]
     struct RejectingCleanupPort;
     impl MimeExecutionPort for RejectingCleanupPort {
@@ -1523,7 +1526,12 @@ fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
     );
     assert_eq!(13, services.staging_budget().used_bytes());
     let retry = report.recoveries[0].try_retry().unwrap();
-    assert!(block_on(retry.wait_async()).failures.is_empty());
+    let retry_report = block_on(retry.wait_async());
+    assert!(
+        retry_report.failures.is_empty(),
+        "retry failures: {:#?}",
+        retry_report.failures
+    );
     assert_eq!(0, services.staging_budget().used_bytes());
     assert!(!path.exists());
     let shutdown = services.shutdown();
@@ -1570,6 +1578,8 @@ fn test_managed_staging_commit_failure_successful_cleanup_releases_permit() {
 #[cfg(unix)]
 #[test]
 fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
+    let _recovery_port_guard = recovery_cleanup_test_guard();
+
     let (hook, event_rx, pending_release_tx, publish_release_tx) = controlled_identity_hook();
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
@@ -1664,7 +1674,11 @@ fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
     let recovery = report.recoveries[0].clone();
     let attempt = recovery.try_retry().unwrap();
     let retry_report = block_on(attempt.wait_async());
-    assert!(retry_report.failures.is_empty(), "retry releases the recovery owner");
+    assert!(
+        retry_report.failures.is_empty(),
+        "retry releases the recovery owner; failures: {:#?}",
+        retry_report.failures
+    );
     assert!(
         format!("{port:?}").contains("prepared: true"),
         "the execution port stays available until cleanup resolves"

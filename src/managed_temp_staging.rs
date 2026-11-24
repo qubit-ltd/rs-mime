@@ -57,6 +57,8 @@ use completion::completion_pair;
 pub(crate) use managed_staging_limits::ManagedStagingLimits;
 use managed_temp_cleanup::ManagedTempCleanup;
 #[cfg(test)]
+pub(crate) use managed_temp_cleanup::recovery_cleanup_test_guard;
+#[cfg(test)]
 pub(crate) use resource_identity::PublishEvent;
 #[cfg(test)]
 pub(crate) use resource_identity::PublishHook;
