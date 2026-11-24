@@ -344,38 +344,60 @@ fn managed_lifecycle(
         }
     };
 
-    let outcome = block_on(operation.wait_outcome()).expect("observe MIME outcome");
-    if let OperationOutcome::Succeeded(report) = outcome {
-        println!(
-            "{}: {:?} ({:?}, {} bytes read)",
-            report.backend_id, report.mime_type, report.inspected_extent, report.budget.bytes_read,
-        );
-    }
+    let outcome_issue = match block_on(operation.wait_outcome()) {
+        Ok(OperationOutcome::Succeeded(report)) => {
+            assert_eq!(report.mime_type.as_deref(), Some("application/pdf"));
+            assert_eq!(report.budget.bytes_read, 9);
+            println!(
+                "{}: {:?} ({:?}, {} bytes read)",
+                report.backend_id, report.mime_type, report.inspected_extent, report.budget.bytes_read,
+            );
+            None
+        }
+        Ok(OperationOutcome::Failed(error)) => {
+            let diagnostic = format!("{error:?}");
+            eprintln!("unexpected PDF detection failure: {error}");
+            Some(diagnostic)
+        }
+        Ok(other) => {
+            eprintln!("unexpected PDF detection outcome: {other:?}");
+            Some(format!("{other:?}"))
+        }
+        Err(error) => Some(format!("outcome observation failed: {error:?}")),
+    };
 
     let settlement = block_on(operation.wait_settlement());
-    assert!(settlement.all_released(), "operation resources should be settled");
+    let settlement_released = settlement.all_released();
+    let settlement_has_no_recovery = settlement.recoveries.is_empty();
     drop(operation);
+
+    let (failure_observed, failure_released, failure_recoveries) = controlled_failure(&runtime);
 
     let shutdown = services.shutdown();
     let settled = block_on(shutdown.wait_services_settled()).expect("settle tracked operations");
     assert!(settled.operations_settled);
-    for recovery in shutdown.recovery_handles_snapshot() {
-        recovery
-            .transfer_to(recovery_store)
-            .expect("transfer unresolved cleanup to the application recovery store");
-    }
+    let mut recoveries = shutdown.recovery_handles_snapshot();
+    recoveries.extend(settlement.recoveries.iter().cloned());
+    recoveries.extend(failure_recoveries);
+    process_recoveries(recoveries, recovery_store);
     let stopped = shutdown
         .stop_services()
         .expect("stop MIME services from this sync context");
     assert!(stopped.services_stopped && stopped.unresolved_recoveries == 0);
     let report = block_on(shutdown.wait_group_shutdown()).expect("wait for MIME group Drain");
     assert_eq!(report.snapshot.active_operations, 0);
+    assert!(settlement_released && settlement_has_no_recovery, "sample PDF settlement should release all resources");
+    assert!(failure_observed, "controlled MIME error should be visible");
+    assert!(failure_released, "failed detection resources should be settled");
+    assert!(outcome_issue.is_none(), "sample PDF outcome should succeed: {outcome_issue:?}");
 }
 ```
 
 提交拒绝分支把原输入放回调用方的重试队列。任务接纳后，代码分别观察 MIME 报告与 operation
 settlement，再释放 typed handle，最后等待组 Drain。若存在未解决的 recovery handle，示例会在 worker
-停止前转交给应用长期持有的 recovery store。完整样例可通过 `cargo run --example managed_lifecycle` 运行。
+停止前按 recovery phase 尝试处理或转交给应用长期持有的 recovery store。共享入口还运行受控读取失败，
+检查错误可见且 settlement 仍确认资源释放；独立恢复用例确认 transfer 被 store 接收，再由 store 重试成功。
+完整样例可通过 `cargo run --example managed_lifecycle` 运行，CI 的 consumer fixture 也运行同一入口。
 
 如需异步实现，使用 `MimeRuntime::with_async_provider_selection` 选择明确支持异步的
 Provider。内置 `repository` 和 `file` Provider 都提供受管异步 backend。`file` 要求完整内容；

@@ -9,6 +9,9 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::task::Context;
 use std::task::Poll;
 use std::task::Wake;
@@ -46,11 +49,26 @@ use qubit_mime::MimeOperationOptions;
 use qubit_mime::OwnedMimeInput;
 use qubit_mime::detector::MimeRuntime;
 use qubit_operation::GroupOptions;
+use qubit_operation::AsyncCleanup;
+use qubit_operation::CleanupContext;
+use qubit_operation::CleanupFailure;
+use qubit_operation::CleanupFuture;
+use qubit_operation::CleanupOutcome;
+use qubit_operation::CleanupStage;
+use qubit_operation::DiagnosticSummary;
 use qubit_operation::ManagerOptions;
+use qubit_operation::OperationOptions;
 use qubit_operation::OperationManager;
 use qubit_operation::OperationOutcome;
+use qubit_operation::RecoveryHandle;
+use qubit_operation::RecoveryPhase;
 use qubit_operation::RecoveryStore;
 use qubit_operation::RecoveryStoreOptions;
+use qubit_operation::ResourceId;
+use qubit_operation::ResourceScopeOptions;
+use qubit_operation::ShutdownMode;
+use qubit_operation::ShutdownWait;
+use std::time::Duration;
 
 fn managed_lifecycle(
     file_system: Arc<AsyncFileSystem>,
@@ -88,38 +106,93 @@ fn managed_lifecycle(
         }
     };
 
-    let outcome = block_on(operation.wait_outcome()).expect("observe MIME outcome");
-    if let OperationOutcome::Succeeded(report) = outcome {
-        println!(
-            "{}: {:?} ({:?}, {} bytes read)",
-            report.backend_id, report.mime_type, report.inspected_extent, report.budget.bytes_read,
-        );
-    }
+    let outcome_issue = match block_on(operation.wait_outcome()) {
+        Ok(OperationOutcome::Succeeded(report)) => {
+            assert_eq!(report.mime_type.as_deref(), Some("application/pdf"));
+            assert_eq!(report.budget.bytes_read, 9);
+            println!(
+                "{}: {:?} ({:?}, {} bytes read)",
+                report.backend_id, report.mime_type, report.inspected_extent, report.budget.bytes_read,
+            );
+            None
+        }
+        Ok(OperationOutcome::Failed(error)) => {
+            let diagnostic = format!("{error:?}");
+            eprintln!("unexpected PDF detection failure: {error}");
+            Some(diagnostic)
+        }
+        Ok(other) => {
+            eprintln!("unexpected PDF detection outcome: {other:?}");
+            Some(format!("{other:?}"))
+        }
+        Err(error) => Some(format!("outcome observation failed: {error:?}")),
+    };
 
     let settlement = block_on(operation.wait_settlement());
-    assert!(settlement.all_released(), "operation resources should be settled");
+    let settlement_released = settlement.all_released();
+    let settlement_has_no_recovery = settlement.recoveries.is_empty();
     drop(operation);
+
+    let (failure_observed, failure_released, failure_recoveries) = controlled_failure(&runtime);
 
     let shutdown = services.shutdown();
     let settled = block_on(shutdown.wait_services_settled()).expect("settle tracked operations");
     assert!(settled.operations_settled);
-    for recovery in shutdown.recovery_handles_snapshot() {
-        recovery
-            .transfer_to(recovery_store)
-            .expect("transfer unresolved cleanup to the application recovery store");
-    }
+    let mut recoveries = shutdown.recovery_handles_snapshot();
+    recoveries.extend(settlement.recoveries.iter().cloned());
+    recoveries.extend(failure_recoveries);
+    process_recoveries(recoveries, recovery_store);
     let stopped = shutdown
         .stop_services()
         .expect("stop MIME services from this sync context");
     assert!(stopped.services_stopped && stopped.unresolved_recoveries == 0);
     let report = block_on(shutdown.wait_group_shutdown()).expect("wait for MIME group Drain");
     assert_eq!(report.snapshot.active_operations, 0);
+    assert!(settlement_released && settlement_has_no_recovery, "sample PDF settlement should release all resources");
+    assert!(failure_observed, "controlled MIME error should be visible");
+    assert!(failure_released, "failed detection resources should be settled");
+    assert!(outcome_issue.is_none(), "sample PDF outcome should succeed: {outcome_issue:?}");
+}
+
+fn controlled_failure(runtime: &MimeRuntime) -> (bool, bool, Vec<RecoveryHandle>) {
+    let file_system = Arc::new(
+        AsyncFileSystem::from_spi(MemoryProvider::controlled_open_failure()).expect("failure provider"),
+    );
+    let input = OwnedMimeInput::Provider {
+        file_system,
+        path: Path::parse("/upload/failure.pdf").expect("failure provider path"),
+    };
+    let mut operation = match runtime.try_submit_detection(input, MimeOperationOptions::default()) {
+        Ok(operation) => operation,
+        Err(_) => panic!("controlled failure input should be accepted"),
+    };
+    let failure_observed = match block_on(operation.wait_outcome()) {
+        Ok(OperationOutcome::Failed(error)) => {
+            let diagnostic = format!("{error:?}");
+            eprintln!("controlled MIME failure: {error}");
+            diagnostic.contains("controlled provider read failure")
+        }
+        Ok(other) => {
+            eprintln!("controlled provider failure produced {other:?}");
+            false
+        }
+        Err(error) => {
+            eprintln!("controlled failure outcome was unavailable: {error:?}");
+            false
+        }
+    };
+    let settlement = block_on(operation.wait_settlement());
+    let failure_released = settlement.all_released();
+    let recoveries = settlement.recoveries.iter().cloned().collect();
+    drop(operation);
+    (failure_observed, failure_released, recoveries)
 }
 
 struct MemoryProvider {
     id: FileSystemId,
     properties: ProviderProperties,
     content: Arc<[u8]>,
+    fail_open: bool,
 }
 
 impl MemoryProvider {
@@ -138,7 +211,14 @@ impl MemoryProvider {
             id,
             properties,
             content: Arc::from(&b"%PDF-1.7\n"[..]),
+            fail_open: false,
         }
+    }
+
+    fn controlled_open_failure() -> Self {
+        let mut provider = Self::sample_pdf();
+        provider.fail_open = true;
+        provider
     }
 }
 
@@ -161,6 +241,16 @@ impl AsyncFileSystemSpi for MemoryProvider {
 
     fn open_reader<'a>(&'a self, request: OpenReaderRequest<'a>) -> SpiFuture<'a, FsResult<OpenedAsyncReader>> {
         let path = request.path().clone();
+        if self.fail_open {
+            return Box::pin(async move {
+                Err(FsError::new(
+                    FsErrorKind::Other,
+                    FsOperation::OpenReader,
+                    "controlled provider read failure",
+                )
+                .with_path(path))
+            });
+        }
         let info = OpenedFileInfo::new(self.id.clone(), path);
         let input = MemoryInput {
             content: Arc::clone(&self.content),
@@ -223,6 +313,7 @@ pub fn run_example() {
     let mut retry_queue = Vec::new();
     managed_lifecycle(file_system, &recovery_store, &mut retry_queue);
     assert!(retry_queue.is_empty(), "the sample submission should be accepted");
+    controlled_recovery_transfer(&recovery_store);
     if recovery_store.snapshot().groups == 0 {
         recovery_store
             .request_shutdown()
@@ -231,4 +322,110 @@ pub fn run_example() {
     } else {
         eprintln!("the application must keep its recovery store alive for unresolved cleanup");
     }
+}
+
+fn process_recoveries(recoveries: Vec<RecoveryHandle>, recovery_store: &RecoveryStore) {
+    let mut seen = Vec::new();
+    for recovery in recoveries {
+        let id = recovery.id();
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        match recovery.snapshot().phase {
+            RecoveryPhase::Resolved | RecoveryPhase::Transferred => {}
+            RecoveryPhase::Pending => {
+                if let Ok(attempt) = recovery.try_retry() {
+                    let report = attempt.wait().expect("observe recovery retry");
+                    if report.recovery.phase == RecoveryPhase::Resolved {
+                        continue;
+                    }
+                }
+                transfer_recovery(recovery, recovery_store);
+            }
+            RecoveryPhase::Unconfirmed => transfer_recovery(recovery, recovery_store),
+            RecoveryPhase::Running => panic!("settled service recovery must not still be running"),
+        }
+    }
+}
+
+fn transfer_recovery(recovery: RecoveryHandle, recovery_store: &RecoveryStore) {
+    let id = recovery.id();
+    let transfer = recovery
+        .transfer_to(recovery_store)
+        .expect("transfer unresolved cleanup to the application recovery store");
+    assert_eq!(transfer.recovery, id);
+    assert!(recovery_store.contains(id), "the recovery store must own the transfer");
+}
+
+struct FailOnceCleanup {
+    calls: AtomicUsize,
+    resource_id: Arc<Mutex<Option<ResourceId>>>,
+}
+
+impl AsyncCleanup<usize> for FailOnceCleanup {
+    fn cleanup(self: Arc<Self>, resource: usize, _context: CleanupContext) -> CleanupFuture<usize> {
+        Box::pin(async move {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return CleanupOutcome::Failed {
+                    failure: CleanupFailure {
+                        resource_id: self.resource_id.lock().expect("resource ID lock").expect("resource ID"),
+                        stage: CleanupStage::AsyncRelease,
+                        summary: DiagnosticSummary::new("controlled transient cleanup failure"),
+                        source: None,
+                    },
+                    resource,
+                };
+            }
+            let _ = resource;
+            CleanupOutcome::Released
+        })
+    }
+}
+
+fn controlled_recovery_transfer(recovery_store: &RecoveryStore) {
+    let manager = OperationManager::new(ManagerOptions::default()).expect("recovery operation manager");
+    let resource_id = Arc::new(Mutex::new(None));
+    let cleanup_resource_id = Arc::clone(&resource_id);
+    let completion = manager
+        .run_and_settle(OperationOptions::default(), move |scope| {
+            let resources = scope
+                .resource_scope(ResourceScopeOptions { capacity: 1 })
+                .expect("recovery resource scope");
+            let resource = resources
+                .manage_with(
+                    17usize,
+                    FailOnceCleanup {
+                        calls: AtomicUsize::new(0),
+                        resource_id: Arc::clone(&cleanup_resource_id),
+                    },
+                )
+                .expect("managed recovery fixture");
+            *cleanup_resource_id.lock().expect("resource ID lock") = Some(resource.id());
+            drop(resource);
+            Ok::<_, String>(())
+        })
+        .expect("run controlled recovery operation");
+    assert!(matches!(completion.outcome, OperationOutcome::Succeeded(())));
+    assert_eq!(completion.settlement.recovery_count, 1);
+    let recovery = completion.settlement.recoveries[0].clone();
+    let resource_id = resource_id.lock().expect("resource ID lock").expect("resource ID");
+    assert_eq!(recovery.snapshot().resources.as_ref(), [resource_id]);
+    assert_eq!(recovery.snapshot().phase, RecoveryPhase::Pending);
+
+    let shutdown = manager.request_shutdown(ShutdownMode::Drain);
+    assert!(matches!(
+        shutdown.wait_for(Duration::ZERO).expect("observe pending manager drain"),
+        ShutdownWait::Pending(snapshot) if snapshot.recovery_groups == 1
+    ));
+    let id = recovery.id();
+    transfer_recovery(recovery, recovery_store);
+    assert!(matches!(
+        shutdown.wait_for(Duration::from_secs(2)).expect("wait for transferred manager drain"),
+        ShutdownWait::Completed(_)
+    ));
+
+    let retry = recovery_store.try_retry(id).expect("retry stored recovery").wait().expect("observe stored retry");
+    assert_eq!(retry.recovery.phase, RecoveryPhase::Resolved);
+    assert!(!recovery_store.contains(id), "resolved recovery should leave the store");
 }

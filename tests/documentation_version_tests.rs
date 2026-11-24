@@ -119,12 +119,21 @@ fn test_managed_lifecycle_examples_match_runnable_consumer() {
         .collect::<Vec<_>>();
 
     assert_eq!(examples[0], examples[1], "managed lifecycle examples drifted");
+    assert!(examples[0].contains("Some(\"application/pdf\")"));
+    assert!(examples[0].contains("report.budget.bytes_read"));
+    assert!(examples[0].contains("OperationOutcome::Succeeded(report)"));
+    assert!(examples[0].contains("OperationOutcome::Failed(error)"));
+    assert!(examples[0].contains("operation.wait_settlement()"));
+    assert!(examples[0].contains("process_recoveries(recoveries, recovery_store)"));
 
     let example = read(root.join("examples/managed_lifecycle/mod.rs"));
     assert!(
         example.contains(examples[0]),
         "documented lifecycle function is out of sync with the runnable example"
     );
+    assert!(example.contains("fn controlled_failure(runtime: &MimeRuntime)"));
+    assert!(example.contains("fn controlled_recovery_transfer(recovery_store: &RecoveryStore)"));
+    assert!(example.contains("RecoveryPhase::Unconfirmed => transfer_recovery"));
 
     let fixture = read(root.join("tests/fixtures/documentation_consumer/src/main.rs"));
     assert!(
