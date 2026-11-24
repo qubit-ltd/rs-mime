@@ -51,6 +51,15 @@ use crate::command_execution::SystemMimeCommandExecutor;
 use crate::detector::MimeExecutionDispatchFailureKind;
 use crate::managed_temp_staging::StagedMimeInput;
 
+struct CommandDispatchPayload {
+    context: OperationContext,
+    runner: CommandRunner,
+    command: Command,
+    input: ResourceRef<StagedMimeInput>,
+    task: Arc<PreparedCommand>,
+    cancellation: CommandCancellation,
+}
+
 /// Operation-owned state that runs one command and publishes its lifecycle
 /// facts.
 pub(in crate::command_execution) struct PreparedCommand {
@@ -127,9 +136,16 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
             .unwrap_or_else(|e| e.into_inner())
             .take()
             .expect("prepared command can only activate once");
-        let task = Arc::clone(&self);
-        let cancellation = self.cancellation.clone();
-        let job = Box::new(move || {
+        let payload = CommandDispatchPayload {
+            context,
+            runner,
+            command,
+            input,
+            task: Arc::clone(&self),
+            cancellation: self.cancellation.clone(),
+        };
+        let run = move |payload: CommandDispatchPayload| {
+            let CommandDispatchPayload { context, runner, command, input, task, cancellation } = payload;
             task.started.store(true, Ordering::Release);
             if let Some(reason) = task.current_stop_reason(&context) {
                 drop(input);
@@ -174,10 +190,24 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
             task.publish(outcome);
             task.released.store(true, Ordering::Release);
             task.publish_release();
-        });
-        if let Err(failure) = self.worker.try_dispatch_with_status(job) {
-            let kind = failure.kind();
-            drop(failure.into_job());
+        };
+        let abandon = |CommandDispatchPayload { input, task, .. }| {
+            drop(input);
+            let operation_id = task
+                .id
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .expect("bound before activation");
+            task.publish(OperationOutcome::ExecutionFailed(ExecutionFailure {
+                operation_id,
+                summary: DiagnosticSummary::new("MIME command worker accepted but discarded the command before execution"),
+                source: Some(Arc::new(MimeExecutionDispatchFailureKind::Unavailable)),
+            }));
+            task.released.store(true, Ordering::Release);
+            task.publish_release();
+        };
+        if let Err((kind, payload)) = self.worker.try_dispatch_guarded(payload, run, abandon) {
+            drop(payload);
             self.released.store(true, Ordering::Release);
             self.publish_release();
             return Err(ExecutionFailure {

@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use super::Completion;
+use crate::safe_wake::wake_safely;
 
 /// Publishes one result to a waiting completion future.
 ///
@@ -37,7 +38,7 @@ impl<T> Completer<T> {
             state.waker.take()
         };
         if let Some(waker) = waker {
-            waker.wake();
+            wake_safely(waker);
         }
     }
 }
@@ -47,8 +48,16 @@ mod tests {
     use std::sync::Arc;
     use std::task::Context;
     use std::task::Poll;
+    use std::task::Wake;
 
     use super::super::completion_pair;
+
+    struct PanicWake;
+    impl Wake for PanicWake {
+        fn wake(self: Arc<Self>) {
+            panic!("completion observer wake failed");
+        }
+    }
 
     #[test]
     fn test_completion_sender_recovers_a_poisoned_shared_state() {
@@ -64,5 +73,17 @@ mod tests {
         let mut receiver = Box::pin(receiver);
         let mut context = Context::from_waker(std::task::Waker::noop());
         assert!(matches!(receiver.as_mut().poll(&mut context), Poll::Ready(27)));
+    }
+
+    #[test]
+    fn test_panicking_completion_wake_does_not_interrupt_published_value() {
+        let (sender, receiver) = completion_pair::<u8>();
+        let mut receiver = Box::pin(receiver);
+        let waker = std::task::Waker::from(Arc::new(PanicWake));
+        let mut context = Context::from_waker(&waker);
+        assert!(receiver.as_mut().poll(&mut context).is_pending());
+
+        sender.complete(31);
+        assert!(matches!(receiver.as_mut().poll(&mut context), Poll::Ready(31)));
     }
 }

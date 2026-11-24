@@ -9,6 +9,7 @@
 
 use std::io::Error;
 use std::sync::Arc;
+#[cfg(test)]
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicUsize;
@@ -26,6 +27,7 @@ use super::completion::completion_pair;
 use super::panic_message;
 use crate::MimeError;
 use crate::command_execution::FixedMimeExecutionPort;
+use crate::command_execution::MimeExecutionWorker;
 use crate::detector::MimeExecutionPort;
 
 /// Cleanup adapter that dispatches staged-file deletion to the MIME worker.
@@ -95,14 +97,62 @@ impl AsyncCleanup<StagedMimeInput> for ManagedTempCleanup {
 /// A future resolving to cleanup success or a failure that still owns resource.
 fn cleanup_with_id(resource: StagedMimeInput, retry: bool, resource_id: ResourceId) -> CleanupFuture<StagedMimeInput> {
     let worker = resource.worker.clone();
-    let cleanup_id = resource_id;
-    let retained = Arc::new(Mutex::new(Some(resource)));
-    let for_job = Arc::clone(&retained);
     let (sender, receiver) = completion_pair();
-    let job = Box::new(move || {
-        let Some(mut resource) = for_job.lock().unwrap_or_else(|poison| poison.into_inner()).take() else {
-            return;
-        };
+    let payload = CleanupDispatchPayload { resource, resource_id, sender };
+    match dispatch_cleanup_job(&worker, payload) {
+        Ok(()) => Box::pin(receiver),
+        Err((_, payload)) if retry => match recovery_cleanup_port() {
+            Ok(port) => {
+                let execution_port: Arc<dyn MimeExecutionPort> = port.clone();
+                match dispatch_cleanup_job(&MimeExecutionWorker::new(execution_port), payload) {
+                    Ok(()) => Box::pin(receiver),
+                    Err((_, payload)) => Box::pin(async move {
+                        let CleanupDispatchPayload { resource, .. } = payload;
+                        CleanupOutcome::Failed {
+                            failure: cleanup_failure(
+                                resource_id,
+                                Arc::new(Error::other("MIME worker and recovery cleanup port rejected cleanup job")),
+                            ),
+                            resource,
+                        }
+                    }),
+                }
+            },
+            Err(error) => Box::pin(async move {
+                let CleanupDispatchPayload { resource, .. } = payload;
+                CleanupOutcome::Failed {
+                    failure: cleanup_failure(
+                        resource_id,
+                        Arc::new(Error::other(format!(
+                            "MIME worker rejected cleanup job and recovery cleanup port initialization failed: {error}"
+                        ))),
+                    ),
+                    resource,
+                }
+            }),
+        },
+        Err((_, payload)) => Box::pin(async move {
+            let CleanupDispatchPayload { resource, .. } = payload;
+            CleanupOutcome::Failed {
+                failure: cleanup_failure(resource_id, Arc::new(Error::other("MIME worker rejected cleanup job"))),
+                resource,
+            }
+        }),
+    }
+}
+
+struct CleanupDispatchPayload {
+    resource: StagedMimeInput,
+    resource_id: ResourceId,
+    sender: super::completion::Completer<CleanupOutcome<StagedMimeInput>>,
+}
+
+fn dispatch_cleanup_job(
+    worker: &MimeExecutionWorker,
+    payload: CleanupDispatchPayload,
+) -> Result<(), (crate::detector::MimeExecutionDispatchFailureKind, CleanupDispatchPayload)> {
+    let run = move |payload: CleanupDispatchPayload| {
+        let CleanupDispatchPayload { mut resource, resource_id, sender } = payload;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             resource
                 .owner
@@ -124,49 +174,26 @@ fn cleanup_with_id(resource: StagedMimeInput, retry: bool, resource_id: Resource
                 CleanupOutcome::Released
             }
             Ok(Err(error)) => CleanupOutcome::Failed {
-                failure: cleanup_failure(cleanup_id, Arc::new(error)),
+                failure: cleanup_failure(resource_id, Arc::new(error)),
                 resource,
             },
             Err(payload) => CleanupOutcome::Failed {
-                failure: cleanup_failure(cleanup_id, Arc::new(Error::other(panic_message(payload.as_ref())))),
+                failure: cleanup_failure(resource_id, Arc::new(Error::other(panic_message(payload.as_ref())))),
                 resource,
             },
         };
         sender.complete(outcome);
-    });
-    if let Err(job) = worker.try_dispatch(job) {
-        let mut failure_text = "MIME worker rejected cleanup job".to_owned();
-        if retry {
-            match recovery_cleanup_port() {
-                Ok(port) => match port.try_dispatch(job) {
-                    Ok(()) => return Box::pin(receiver),
-                    Err(job) => {
-                        drop(job);
-                        failure_text = "MIME worker and recovery cleanup port rejected cleanup job".to_owned();
-                    }
-                },
-                Err(error) => {
-                    drop(job);
-                    failure_text = format!(
-                        "MIME worker rejected cleanup job and recovery cleanup port initialization failed: {error}"
-                    );
-                }
-            }
-        } else {
-            drop(job);
-        }
-        // If fallback initialization or dispatch failed, retrieve the
-        // original unexecuted job's resource and preserve it for another
-        // recovery attempt.
-        let resource = retained
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .take()
-            .expect("rejected cleanup job has not taken ownership");
-        let failure = cleanup_failure(cleanup_id, Arc::new(Error::other(failure_text)));
-        return Box::pin(async move { CleanupOutcome::Failed { failure, resource } });
-    }
-    Box::pin(receiver)
+    };
+    let abandon = |CleanupDispatchPayload { resource, resource_id, sender }| {
+        sender.complete(CleanupOutcome::Failed {
+            failure: cleanup_failure(
+                resource_id,
+                Arc::new(Error::other("MIME worker accepted cleanup job then discarded it before execution")),
+            ),
+            resource,
+        });
+    };
+    worker.try_dispatch_guarded(payload, run, abandon)
 }
 
 #[cfg(test)]
@@ -177,6 +204,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex;
     use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::AtomicBool;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::task::Context;
@@ -202,6 +230,7 @@ mod tests {
     use super::super::resource_identity::ResourceIdentity;
     use super::super::staged_temp_owner::StagedTempOwner;
     use super::ManagedTempCleanup;
+    use super::cleanup_with_id;
     use super::recovery_cleanup_port;
     use super::recovery_cleanup_test_guard;
     use crate::MimeError;
@@ -245,6 +274,114 @@ mod tests {
         fn shutdown(&self) -> Result<(), MimeError> {
             Ok(())
         }
+    }
+
+    struct QueueThenStopPort {
+        stopped: AtomicBool,
+        queued: Mutex<Option<Box<dyn FnOnce() + Send + 'static>>>,
+    }
+
+    impl std::fmt::Debug for QueueThenStopPort {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("QueueThenStopPort")
+        }
+    }
+
+    impl QueueThenStopPort {
+        fn destroy_accepted(&self) {
+            drop(self.queued.lock().unwrap().take().expect("accepted cleanup job is queued"));
+        }
+    }
+
+    impl MimeExecutionPort for QueueThenStopPort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+
+        fn try_dispatch(
+            &self,
+            job: Box<dyn FnOnce() + Send + 'static>,
+        ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+            if self.stopped.load(Ordering::Acquire) {
+                Err(job)
+            } else {
+                *self.queued.lock().unwrap() = Some(job);
+                Ok(())
+            }
+        }
+
+        fn shutdown(&self) -> Result<(), MimeError> {
+            self.stopped.store(true, Ordering::Release);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_accepted_cleanup_destruction_retains_owner_for_external_retry() {
+        let _recovery_port_guard = recovery_cleanup_test_guard();
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let owner_port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let services = MimeExecutionServices::new(manager, group.clone(), owner_port.clone(), 16).unwrap();
+        services.prepare().unwrap();
+        let worker = MimeExecutionWorker::new(owner_port.clone());
+        let mut identity_operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
+            commit_staged(
+                scope.reserve_resource().unwrap(),
+                StagedMimeInput {
+                    owner: Mutex::new(StagedTempOwner::File { owner }),
+                    permits: Mutex::new(Vec::new()),
+                    worker,
+                    staged_bytes: AtomicU64::new(0),
+                    cleanup_id: Arc::new(ResourceIdentity::default()),
+                },
+            )
+        })).unwrap();
+        let registered = match block_on(identity_operation.wait_outcome()).unwrap() {
+            OperationOutcome::Succeeded(resource) => resource,
+            _ => panic!("identity fixture should commit"),
+        };
+
+        let dropped_port = Arc::new(QueueThenStopPort {
+            stopped: AtomicBool::new(false),
+            queued: Mutex::new(None),
+        });
+        let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
+        let path = owner.path().to_path_buf();
+        let budget = services.staging_budget();
+        let permit = budget.try_reserve(5).unwrap();
+        let resource = StagedMimeInput {
+            owner: Mutex::new(StagedTempOwner::File { owner }),
+            permits: Mutex::new(vec![permit]),
+            worker: MimeExecutionWorker::new(dropped_port.clone()),
+            staged_bytes: AtomicU64::new(5),
+            cleanup_id: Arc::new(ResourceIdentity::published(registered.id())),
+        };
+
+        let cleanup = cleanup_with_id(resource, false, registered.id());
+        dropped_port.destroy_accepted();
+        let resource = match block_on(cleanup) {
+            CleanupOutcome::Failed { failure, resource } => {
+                assert_eq!(registered.id(), failure.resource_id);
+                assert!(failure.summary.to_string().contains("discarded it before execution"));
+                assert!(path.exists());
+                assert_eq!(5, budget.used_bytes());
+                resource
+            }
+            _ => panic!("destroyed accepted cleanup must return the same owner"),
+        };
+
+        dropped_port.shutdown().unwrap();
+        assert!(matches!(block_on(cleanup_with_id(resource, true, registered.id())), CleanupOutcome::Released));
+        assert!(!path.exists());
+        assert_eq!(0, budget.used_bytes());
+        drop(registered);
+        assert!(block_on(identity_operation.wait_settlement()).all_released());
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 
     #[test]

@@ -138,6 +138,8 @@ mod managed_command_executor_tests {
     use std::future::Future;
     use std::sync::Arc;
     use std::sync::Mutex;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
     use std::sync::mpsc;
     use std::task::Context;
     use std::task::Poll;
@@ -270,6 +272,7 @@ mod managed_command_executor_tests {
                 .expect("command job is held");
             job();
         }
+
     }
 
     impl MimeExecutionPort for StagingThenHoldCommandPort {
@@ -298,6 +301,49 @@ mod managed_command_executor_tests {
             let _ = self.command_queued.send(());
             Ok(())
         }
+        fn shutdown(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+    }
+
+    struct HoldCommandPort {
+        held: Mutex<Option<Box<dyn FnOnce() + Send + 'static>>>,
+        queued: mpsc::Sender<()>,
+    }
+
+    impl std::fmt::Debug for HoldCommandPort {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("HoldCommandPort")
+        }
+    }
+
+    impl HoldCommandPort {
+        fn destroy_held(&self) {
+            drop(self.held.lock().unwrap().take().expect("accepted command is held"));
+        }
+    }
+
+    impl MimeExecutionPort for HoldCommandPort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+
+        fn try_dispatch(
+            &self,
+            job: Box<dyn FnOnce() + Send + 'static>,
+        ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+            let mut slot = self.held.lock().unwrap();
+            if slot.is_some() {
+                drop(slot);
+                job();
+            } else {
+                *slot = Some(job);
+                drop(slot);
+                let _ = self.queued.send(());
+            }
+            Ok(())
+        }
+
         fn shutdown(&self) -> Result<(), MimeError> {
             Ok(())
         }
@@ -412,6 +458,96 @@ mod managed_command_executor_tests {
         assert!(settled.all_released());
         assert!(!staged_path.exists(), "worker return allows staged-file cleanup");
         assert_eq!(0, budget.used_bytes(), "settlement releases the staging lease");
+
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_accepted_command_destruction_reports_execution_failure_and_releases_input() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let (command_queued_tx, command_queued_rx) = mpsc::channel();
+        let worker_port = Arc::new(HoldCommandPort {
+            held: Mutex::new(None),
+            queued: command_queued_tx,
+        });
+        let execution_port: Arc<dyn MimeExecutionPort> = worker_port.clone();
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), execution_port, 128).unwrap());
+        services.prepare().unwrap();
+
+        let budget = services.staging_budget();
+        let staging_port = Arc::new(FixedMimeExecutionPort::new(1, 4));
+        staging_port.prepare().unwrap();
+        let limits = ManagedStagingLimits {
+            max_bytes: 64,
+            budget: budget.clone(),
+            worker: MimeExecutionWorker::new(staging_port.clone()),
+        };
+        let read_tree = services.new_read_tree(64);
+        let runner_invocations = Arc::new(AtomicUsize::new(0));
+        let executor = ManagedCommandExecutor::with_runner_invocations(
+            MimeExecutionWorker::new(worker_port.clone()),
+            Arc::clone(&runner_invocations),
+        );
+        let runtime_group = group.clone();
+        let (staged_path_tx, staged_path_rx) = mpsc::channel();
+        let (command_pending_tx, command_pending_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let staged = stage_owned_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::from(b"accepted command input".as_slice()), InputExtent::Complete),
+                limits,
+                read_tree,
+            )
+            .await?;
+            staged_path_tx.send(staged.path()?).unwrap();
+            let request = ManagedMimeCommand::new(
+                CommandRunner::new(Duration::from_secs(5)).disable_logging(true),
+                Command::new("must-not-run"),
+                runtime_group,
+            );
+            let mut command_future = Box::pin(executor.run_in(&scope, request, staged));
+            let mut pending_notified = false;
+            let result = std::future::poll_fn(|cx| {
+                let result = command_future.as_mut().poll(cx);
+                if result.is_pending() && !pending_notified {
+                    pending_notified = true;
+                    command_pending_tx.send(()).unwrap();
+                }
+                result
+            }).await;
+            result_tx.send(result).unwrap();
+            Ok::<_, MimeError>(())
+        })).unwrap();
+
+        let staged_path = staged_path_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        command_queued_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        command_pending_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("accepted command should be pending before the test destroys it");
+        assert!(staged_path.exists(), "command input stays live until abandonment is confirmed");
+        worker_port.destroy_held();
+        let command_result = result_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let outcome = block_on(operation.wait_outcome()).unwrap();
+        assert!(
+            matches!(
+                command_result,
+                Err(MimeError::OperationExecutionFailed(ref failure))
+                    if failure.summary.to_string().contains("accepted but discarded")
+            ),
+            "unexpected command error: {:?}",
+            command_result.as_ref().err()
+        );
+        assert!(matches!(outcome, OperationOutcome::Succeeded(())));
+        assert_eq!(0, runner_invocations.load(Ordering::SeqCst));
+        assert!(block_on(operation.wait_settlement()).all_released());
+        assert!(!staged_path.exists(), "confirmed abandonment permits staged cleanup");
+        assert_eq!(0, budget.used_bytes());
+        staging_port.shutdown().unwrap();
 
         let shutdown = services.shutdown();
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
