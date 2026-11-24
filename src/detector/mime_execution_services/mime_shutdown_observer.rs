@@ -82,12 +82,19 @@ impl MimeShutdownObserver {
     pub async fn wait_services_settled(&self) -> Result<MimeShutdownSnapshot, crate::MimeError> {
         loop {
             self.services.admissions_settled().await;
-            let pending = self
-                .services
-                .observers
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
+            let (generation, pending) = {
+                let submissions = self.services.submission_guard();
+                if self.services.has_admissions() {
+                    drop(submissions);
+                    continue;
+                }
+                let observers = self.services.observers.lock().unwrap_or_else(|e| e.into_inner());
+                let generation = self.services.settlement_generation.load(Ordering::Acquire);
+                let pending = observers.clone();
+                drop(observers);
+                drop(submissions);
+                (generation, pending)
+            };
             for observer in pending {
                 let report = observer.wait_settlement().await;
                 self.services.track_recoveries(&report.recoveries);
@@ -98,18 +105,16 @@ impl MimeShutdownObserver {
                 drop(submissions);
                 continue;
             }
-            let unsettled = self
-                .services
-                .observers
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .iter()
-                .any(|observer| observer.snapshot().settlement.is_none());
-            if unsettled {
+            let observers = self.services.observers.lock().unwrap_or_else(|e| e.into_inner());
+            let changed = generation != self.services.settlement_generation.load(Ordering::Acquire);
+            let unsettled = observers.iter().any(|observer| observer.snapshot().settlement.is_none());
+            if changed || unsettled {
+                drop(observers);
                 drop(submissions);
                 continue;
             }
             self.services.operations_settled.store(true, Ordering::Release);
+            drop(observers);
             drop(submissions);
             return Ok(self.snapshot());
         }
@@ -168,12 +173,12 @@ impl MimeShutdownObserver {
             }
         }
         self.services.execution.shutdown()?;
-        let _lifecycle = self.services.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
         let shutdown = self
             .services
             .root_group
             .request_shutdown(ShutdownMode::Drain)
             .as_async();
+        let _lifecycle = self.services.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
         *self.services.group_shutdown.lock().unwrap_or_else(|e| e.into_inner()) = Some(shutdown);
         self.services
             .lifecycle
