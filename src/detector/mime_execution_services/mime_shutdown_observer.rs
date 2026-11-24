@@ -277,6 +277,7 @@ mod tests {
         worker_port: Arc<FixedMimeExecutionPort>,
         during_prepare: Mutex<Option<Box<dyn FnOnce() + Send>>>,
         shutdown_calls: Arc<AtomicUsize>,
+        prepare_error: AtomicBool,
     }
 
     struct ReleaseOnDrop(mpsc::Sender<()>);
@@ -354,6 +355,9 @@ mod tests {
             let callback = self.during_prepare.lock().unwrap().take();
             if let Some(callback) = callback {
                 callback();
+            }
+            if self.prepare_error.swap(false, Ordering::SeqCst) {
+                return Err(MimeError::ExecutionServicesRequired);
             }
             Ok(())
         }
@@ -644,6 +648,7 @@ mod tests {
             worker_port: Arc::new(FixedMimeExecutionPort::new(1, 1)),
             during_prepare: Mutex::new(None),
             shutdown_calls: Arc::clone(&shutdown_calls),
+            prepare_error: AtomicBool::new(false),
         });
         let services = MimeExecutionServices::new(
             manager,
@@ -777,6 +782,7 @@ mod tests {
             worker_port: Arc::new(FixedMimeExecutionPort::new(1, 1)),
             during_prepare: Mutex::new(Some(Box::new(|| panic!("first prepare panics")))),
             shutdown_calls: Arc::new(AtomicUsize::new(0)),
+            prepare_error: AtomicBool::new(false),
         });
         let services = MimeExecutionServices::new(manager, group, execution, 16).unwrap();
         assert!(
@@ -785,6 +791,77 @@ mod tests {
         assert_eq!(MimeServiceLifecycle::NotStarted, services.lifecycle());
         services.prepare().unwrap();
         assert_eq!(MimeServiceLifecycle::Running, services.lifecycle());
+    }
+
+    #[test]
+    fn test_prepare_error_after_reentrant_shutdown_restores_closed_without_start() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let (observer_tx, observer_rx) = mpsc::channel();
+        let execution = Arc::new(ControlledPrepareExecutionPort {
+            worker_port: Arc::new(FixedMimeExecutionPort::new(1, 1)),
+            during_prepare: Mutex::new(None),
+            shutdown_calls: Arc::new(AtomicUsize::new(0)),
+            prepare_error: AtomicBool::new(true),
+        });
+        let services = MimeExecutionServices::new(
+            manager,
+            group,
+            Arc::clone(&execution) as Arc<dyn MimeExecutionPort>,
+            16,
+        )
+        .unwrap();
+        let callback_services = services.clone();
+        *execution.during_prepare.lock().unwrap() = Some(Box::new(move || {
+            observer_tx.send(callback_services.shutdown()).unwrap();
+        }));
+
+        assert!(services.prepare().is_err());
+        let observer = observer_rx.recv().unwrap();
+        assert_eq!(
+            MimeServiceLifecycle::ClosedWithoutStart,
+            services.lifecycle()
+        );
+        assert!(!services.accepts_children());
+        let _ = block_on(observer.wait_services_settled()).unwrap();
+        assert!(observer.stop_services().unwrap().services_stopped);
+    }
+
+    #[test]
+    fn test_prepare_unwind_after_reentrant_shutdown_restores_closed_without_start() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let (observer_tx, observer_rx) = mpsc::channel();
+        let execution = Arc::new(ControlledPrepareExecutionPort {
+            worker_port: Arc::new(FixedMimeExecutionPort::new(1, 1)),
+            during_prepare: Mutex::new(None),
+            shutdown_calls: Arc::new(AtomicUsize::new(0)),
+            prepare_error: AtomicBool::new(false),
+        });
+        let services = MimeExecutionServices::new(
+            manager,
+            group,
+            Arc::clone(&execution) as Arc<dyn MimeExecutionPort>,
+            16,
+        )
+        .unwrap();
+        let callback_services = services.clone();
+        *execution.during_prepare.lock().unwrap() = Some(Box::new(move || {
+            observer_tx.send(callback_services.shutdown()).unwrap();
+            panic!("prepare unwinds after requesting shutdown");
+        }));
+
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| services.prepare())).is_err()
+        );
+        let observer = observer_rx.recv().unwrap();
+        assert_eq!(
+            MimeServiceLifecycle::ClosedWithoutStart,
+            services.lifecycle()
+        );
+        assert!(!services.accepts_children());
+        let _ = block_on(observer.wait_services_settled()).unwrap();
+        assert!(observer.stop_services().unwrap().services_stopped);
     }
 
     #[test]

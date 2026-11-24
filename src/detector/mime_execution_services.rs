@@ -49,11 +49,29 @@ pub use mime_shutdown_observer::MimeShutdownObserver;
 pub use mime_shutdown_snapshot::MimeShutdownSnapshot;
 
 /// Releases the prepare claim on every return path, including unwinding.
-struct PreparePermit<'a>(&'a AtomicBool);
+struct PreparePermit<'a> {
+    services: &'a MimeExecutionServices,
+    completed: bool,
+}
 
 impl Drop for PreparePermit<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        if !self.completed {
+            let _lifecycle = self
+                .services
+                .lifecycle_lock
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if self.services.lifecycle() == MimeServiceLifecycle::Draining {
+                self.services.lifecycle.store(
+                    MimeServiceLifecycle::ClosedWithoutStart as u8,
+                    Ordering::Release,
+                );
+            }
+            self.services.preparing.store(false, Ordering::Release);
+        } else {
+            self.services.preparing.store(false, Ordering::Release);
+        }
     }
 }
 
@@ -231,7 +249,10 @@ impl MimeExecutionServices {
                 return Err(crate::MimeError::OperationShutdownPending);
             }
         }
-        let _prepare = PreparePermit(&self.preparing);
+        let mut prepare = PreparePermit {
+            services: self,
+            completed: false,
+        };
         self.execution.prepare()?;
         let _guard = self
             .lifecycle_lock
@@ -244,6 +265,7 @@ impl MimeExecutionServices {
             self.admission_frozen.store(true, Ordering::Release);
             self.root_group.close_admission();
         }
+        prepare.completed = true;
         Ok(())
     }
 
