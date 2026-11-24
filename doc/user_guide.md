@@ -446,7 +446,7 @@ cargo +1.94.0 run --locked --manifest-path rs-mime/tests/fixtures/magika_invento
 
 Without `inventory`, the fixture explicitly registers Magika. With it, the
 registry discovers Magika and the fixture still selects it explicitly. Both
-commands assert the `repository` default and detect Python content and a PDF
+run commands assert the `repository` default and detect Python content and a PDF
 filename. For a new app, first create its `Cargo.lock`, then run the same
 `check`, `run`, and `cargo tree -i qubit-operation` commands for both feature
 sets. Each dependency tree should contain one `qubit-operation` package from
