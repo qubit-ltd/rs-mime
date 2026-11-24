@@ -2112,6 +2112,24 @@ fn test_repository_prefer_filename_short_circuits_owned_bytes_and_provider() {
     assert_eq!(bytes_report.budget.bytes_read, 0);
     assert_eq!(bytes_report.budget.staging_bytes, 0);
 
+    let mut non_ascii = runtime
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(b"not text".as_slice()), InputExtent::Complete)
+                .with_filename("报告.txt"),
+            MimeOperationOptions {
+                policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| panic!("non-ASCII filename operation should be admitted: {:?}", failure.reason));
+    let non_ascii_report = match block_on(non_ascii.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Succeeded(report) => report,
+        other => panic!("non-ASCII filename result should succeed: {other:?}"),
+    };
+    assert_eq!(non_ascii_report.mime_type.as_deref(), Some("text/plain"));
+    assert_eq!(non_ascii_report.inspected_extent, qubit_mime::InspectedExtent::Prefix(0));
+    assert_eq!(non_ascii_report.budget.bytes_read, 0);
+
     let opens = Arc::new(AtomicUsize::new(0));
     let fs = Arc::new(AsyncFileSystem::from_spi(CountingFileSystem::new(Arc::clone(&opens))).unwrap());
     let mut provider = runtime
@@ -2138,6 +2156,94 @@ fn test_repository_prefer_filename_short_circuits_owned_bytes_and_provider() {
     assert_eq!(opens.load(Ordering::SeqCst), 0, "provider must not be opened");
 
     let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_filename_short_circuit_rechecks_services_after_shutdown() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let services = services(&manager, 1, Arc::new(TestExecution::default()));
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
+    let shutdown = services.shutdown();
+
+    let failure = match runtime.try_submit_detection(
+        OwnedMimeInput::bytes(Arc::from(b"ignored".as_slice()), InputExtent::Complete)
+            .with_filename("document.pdf"),
+        MimeOperationOptions {
+            policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
+            ..Default::default()
+        },
+    ) {
+        Ok(_) => panic!("closed services must reject filename short-circuit submissions"),
+        Err(failure) => failure,
+    };
+
+    assert!(matches!(failure.reason, qubit_mime::MimeSubmitRejection::ExecutionServicesRequired));
+    assert!(matches!(failure.input, OwnedMimeInput::Bytes { .. }));
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_filename_short_circuit_submission_races_service_shutdown() {
+    use std::sync::Barrier;
+    use std::thread;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let services = services(&manager, 1, Arc::new(TestExecution::default()));
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
+    let barrier = Arc::new(Barrier::new(3));
+
+    let submit_runtime = runtime.clone();
+    let submit_barrier = Arc::clone(&barrier);
+    let submitter = thread::spawn(move || {
+        submit_barrier.wait();
+        submit_runtime.try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(b"ignored".as_slice()), InputExtent::Complete)
+                .with_filename("document.pdf"),
+            MimeOperationOptions {
+                policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
+                ..Default::default()
+            },
+        )
+    });
+
+    let closing_services = services.clone();
+    let close_barrier = Arc::clone(&barrier);
+    let closer = thread::spawn(move || {
+        close_barrier.wait();
+        closing_services.shutdown()
+    });
+    barrier.wait();
+
+    let submission = submitter.join().expect("submission thread should complete");
+    let shutdown = closer.join().expect("shutdown thread should complete");
+    match submission {
+        Ok(mut operation) => match block_on(operation.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(report) => {
+                assert_eq!(report.mime_type.as_deref(), Some("application/pdf"));
+                assert_eq!(report.budget.bytes_read, 0);
+            }
+            other => panic!("admitted filename short circuit should succeed: {other:?}"),
+        },
+        Err(failure) => {
+            assert!(matches!(
+                failure.reason,
+                qubit_mime::MimeSubmitRejection::ExecutionServicesRequired
+            ));
+            assert!(matches!(failure.input, OwnedMimeInput::Bytes { .. }));
+        }
+    }
+
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();
     let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
