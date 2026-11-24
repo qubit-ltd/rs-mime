@@ -574,6 +574,118 @@ mod tests {
     }
 
     #[test]
+    fn test_dispatch_recovers_poisoned_queue_and_runs_the_returned_work() {
+        let port = FixedMimeExecutionPort::new(1, 1);
+        port.prepare().unwrap();
+        let queue = port
+            .running
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .queue
+            .clone();
+        let queue_to_poison = Arc::clone(&queue);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = queue_to_poison.state.lock().unwrap();
+                panic!("poison queue before dispatch");
+            })
+            .join()
+            .is_err()
+        );
+
+        let (done_tx, done_rx) = mpsc::channel();
+        assert!(port
+            .try_dispatch_with_status(Box::new(move || done_tx.send(()).unwrap()))
+            .is_ok());
+        done_rx.recv().unwrap();
+        port.shutdown().unwrap();
+    }
+
+    #[test]
+    fn test_closed_queue_returns_the_unaccepted_job_while_port_is_open() {
+        let port = FixedMimeExecutionPort::new(1, 1);
+        port.prepare().unwrap();
+        let queue = port
+            .running
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .queue
+            .clone();
+        queue.state.lock().unwrap().closed = true;
+        queue.ready.notify_all();
+
+        let ran = Arc::new(AtomicBool::new(false));
+        let job_ran = Arc::clone(&ran);
+        let rejected = port
+            .try_dispatch_with_status(Box::new(move || job_ran.store(true, Ordering::SeqCst)))
+            .expect_err("a closed queue cannot accept work");
+        assert_eq!(
+            crate::detector::MimeExecutionDispatchFailureKind::Unavailable,
+            rejected.kind()
+        );
+        assert!(!ran.load(Ordering::SeqCst));
+        rejected.into_job()();
+        assert!(ran.load(Ordering::SeqCst));
+        port.shutdown().unwrap();
+    }
+
+    #[test]
+    fn test_drop_recovers_poisoned_pool_queue_and_shutdown_locks() {
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let queue = Arc::new(FixedQueue {
+            state: std::sync::Mutex::new(QueueState {
+                jobs: std::collections::VecDeque::new(),
+                closed: false,
+            }),
+            ready: std::sync::Condvar::new(),
+            capacity: 1,
+        });
+        *port.running.lock().unwrap() = Some(RunningWorkers {
+            queue: Arc::clone(&queue),
+            threads: Vec::new(),
+        });
+
+        let pool_to_poison = Arc::clone(&port);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = pool_to_poison.running.lock().unwrap();
+                panic!("poison pool state before drop");
+            })
+            .join()
+            .is_err()
+        );
+        let result_to_poison = Arc::clone(&port);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = result_to_poison.shutdown_failed.lock().unwrap();
+                panic!("poison shutdown result before drop");
+            })
+            .join()
+            .is_err()
+        );
+        let queue_to_poison = Arc::clone(&queue);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = queue_to_poison.state.lock().unwrap();
+                panic!("poison queue state before drop");
+            })
+            .join()
+            .is_err()
+        );
+
+        drop(port);
+        let state = match queue.state.lock() {
+            Ok(_) => panic!("drop should preserve the queue's poison marker"),
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        assert!(state.closed, "drop closes a queue despite poisoned locks");
+    }
+
+    #[test]
     fn test_shutdown_prevents_reprepare_and_returns_later_work() {
         let port = FixedMimeExecutionPort::new(1, 1);
         port.prepare().unwrap();

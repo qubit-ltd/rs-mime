@@ -440,6 +440,32 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy)]
+    enum PreparedCommandLock {
+        Identity,
+        Request,
+        StopReason,
+    }
+
+    fn poison_prepared_command_lock(command: Arc<PreparedCommand>, lock: PreparedCommandLock) {
+        let poisoned = std::thread::spawn(move || match lock {
+            PreparedCommandLock::Identity => {
+                let _guard = command.id.lock().unwrap();
+                panic!("poison prepared identity lock");
+            }
+            PreparedCommandLock::Request => {
+                let _guard = command.request.lock().unwrap();
+                panic!("poison prepared request lock");
+            }
+            PreparedCommandLock::StopReason => {
+                let _guard = command.stop_reason.lock().unwrap();
+                panic!("poison prepared stop-reason lock");
+            }
+        })
+        .join();
+        assert!(poisoned.is_err(), "the selected lock must be poisoned");
+    }
+
     fn execute_prepared_command(
         command: Command,
         reject_dispatch: bool,
@@ -447,6 +473,7 @@ mod tests {
         stop_when_running: bool,
         timeout: std::time::Duration,
         strict_output_limit: bool,
+        poison_lock: Option<PreparedCommandLock>,
     ) -> (
         Result<OperationOutcome<MimeCommandOutput, CommandError>, ExecutionFailure>,
         ChildSnapshot,
@@ -502,6 +529,9 @@ mod tests {
                 command,
                 staged,
             ));
+            if let Some(lock) = poison_lock {
+                poison_prepared_command_lock(Arc::clone(&prepared), lock);
+            }
             let operation_id = scope.id();
             prepared.bind(operation_id).unwrap();
             let activation = Arc::clone(&prepared).activate(scope);
@@ -776,6 +806,7 @@ mod tests {
             false,
             std::time::Duration::from_secs(10),
             false,
+            None,
         );
         let output = match result {
             Ok(OperationOutcome::Succeeded(output)) => output,
@@ -783,6 +814,28 @@ mod tests {
         };
         assert_eq!(Some(0), output.exit_code);
         assert!(output.stdout.starts_with(b"rustc "));
+        assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
+        assert!(snapshot.input_released);
+        assert_eq!(
+            Some(ChildOutcomeKind::Succeeded),
+            snapshot.outcome.map(|summary| summary.kind)
+        );
+        assert!(snapshot.settlement.is_some());
+    }
+
+    #[test]
+    fn test_activation_recovers_poisoned_request_lock_and_releases_input() {
+        let (result, snapshot) = execute_prepared_command(
+            Command::new("rustc").arg("--version"),
+            false,
+            false,
+            false,
+            std::time::Duration::from_secs(10),
+            false,
+            Some(PreparedCommandLock::Request),
+        );
+
+        assert!(matches!(result, Ok(OperationOutcome::Succeeded(_))));
         assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
         assert!(snapshot.input_released);
         assert_eq!(
@@ -801,6 +854,7 @@ mod tests {
             false,
             std::time::Duration::from_secs(10),
             false,
+            None,
         );
         assert!(matches!(result, Ok(OperationOutcome::Failed(error)) if error.kind() == CommandErrorKind::SpawnFailed));
         assert_eq!(qubit_operation::ExecutionPhase::Finished, failed_snapshot.execution);
@@ -818,6 +872,7 @@ mod tests {
             false,
             std::time::Duration::from_secs(10),
             false,
+            Some(PreparedCommandLock::Identity),
         );
         assert!(result.is_err(), "a full command queue rejects activation");
         assert_eq!(qubit_operation::ExecutionPhase::Finished, rejected_snapshot.execution);
@@ -839,6 +894,7 @@ mod tests {
             false,
             std::time::Duration::from_secs(10),
             false,
+            None,
         );
         assert!(matches!(result, Ok(OperationOutcome::Succeeded(_))));
         assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
@@ -859,6 +915,7 @@ mod tests {
             true,
             std::time::Duration::from_secs(10),
             false,
+            Some(PreparedCommandLock::StopReason),
         );
 
         assert!(matches!(result, Ok(OperationOutcome::Stopped(report)) if report.reason == StopReason::Timeout));
@@ -881,6 +938,7 @@ mod tests {
             false,
             std::time::Duration::from_millis(100),
             false,
+            None,
         );
 
         assert!(matches!(result, Ok(OperationOutcome::Failed(error)) if error.kind() == CommandErrorKind::TimedOut));
@@ -902,6 +960,7 @@ mod tests {
             false,
             std::time::Duration::from_secs(10),
             true,
+            None,
         );
 
         assert!(
@@ -927,6 +986,7 @@ mod tests {
             false,
             std::time::Duration::from_secs(10),
             false,
+            None,
         );
 
         assert!(
@@ -980,6 +1040,7 @@ mod tests {
                 Command::new("must-not-start-after-queued-stop"),
                 staged,
             ));
+            poison_prepared_command_lock(Arc::clone(&command), PreparedCommandLock::StopReason);
             command.bind(scope.id()).unwrap();
             let operation_id = scope.id();
             Arc::clone(&command).activate(scope).unwrap();
