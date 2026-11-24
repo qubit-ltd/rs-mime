@@ -310,4 +310,12 @@ deadline 或 stop 使 async detection future 返回，不代表已经派发的 c
 
 本验收页更新后重跑 `cargo test --locked --test package_document_links_tests --test documentation_version_tests`，退出码 0：包内 Markdown 链接 3 项通过，文档版本/示例同步 6 项通过。
 
+### 后续 hosted 回归及新候选
+
+旧候选 `64838461fb11a453f0c1f38ab64c183fd15a315b` 的本地正式 CI 已通过；推送后的 hosted 日志 `/tmp/7ba30d05-rs-mime-hosted-failed.log` 显示 `test_repository_async_yields_and_stops` 在 no-default-features 与 coverage/all-features 两条 job 中均失败，实际结果是 target `Succeeded`，并触发测试的“应在 stop 前结束”断言。根因是原测试仅构造 256 条规则，低于 repository matcher 的单 poll 工作量，heartbeat 取消与 target 完成因此依赖 executor 调度顺序。
+
+修复提交 `f95f83e1992e354799267ab0e1eeb7fb94f7eae0` 把回归改为 8,192 条规则，并由同一个 test body poll backend future；首次观察到 `Pending` 时立即请求 stop，再断言 matcher 返回错误且 operation outcome 为 `Stopped(UserCancelled)`。此方式验证真实协作 yield 和取消观察，不依赖 sleep 或外部 heartbeat。no-default-features 和 all-features 的定向用例各重复 10 次全部通过，`align-ci.sh` 也通过；日志分别为 `/tmp/rs-mime-hosted-race-no-default.log`、`/tmp/rs-mime-hosted-race-all-features.log` 和 `/tmp/rs-mime-t7-validation-7ba30d05/align-ci-hosted-regression.log`。
+
+当前 MIME 候选将固定 operation sibling `6071fc67f6123582353620d51ffd298ae3ddd937`。Cargo manifest 仍解析 `qubit-operation 0.3.2` 本地 path，根锁文件与两个消费者锁文件的 package/version 预期保持一致；更新 pin 后先核验 resolved metadata 和锁文件差异，再执行正式门禁。此处记录时新候选完整 `ci-check.sh` 尚待运行；旧 SHA 的通过结果不能代表新候选通过。
+
 此前固定候选 probe 的边界仍适用：locked metadata、两个消费者与 managed lifecycle 示例、`cargo package --list --locked`、真实 `/usr/bin/file` 和受控 ffprobe runner 均为本地通过；真实 `ffprobe` 不在 PATH。隔离 Cargo registry 检查因当前 registry 无 `qubit-mime ^0.22` 解析版本而失败，不代表发布解析通过。没有运行 GitHub hosted workflow；因此本验收仅证明所记录的本地候选与依赖路径结果，不推断 hosted CI 或 crates.io 结果。
