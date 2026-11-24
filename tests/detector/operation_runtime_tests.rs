@@ -35,6 +35,7 @@ use qubit_mime::MimeOperationOptions;
 use qubit_mime::MimeRepository;
 use qubit_mime::OwnedMimeInput;
 use qubit_mime::RandomAccessCapability;
+use qubit_mime::RepositoryMimeDetector;
 use qubit_mime::detector::MimeRuntime;
 use qubit_spi::ProviderDescriptor;
 use qubit_spi::ProviderId;
@@ -170,11 +171,13 @@ fn block_on<F: Future>(future: F) -> F::Output {
     }
 }
 
+#[derive(Debug)]
 struct DeadlineClockState {
     ticks: u64,
     registrations: Vec<(u64, bool, Waker)>,
 }
 
+#[derive(Debug)]
 struct DeadlineClock {
     domain: qubit_operation::ClockDomainId,
     state: Arc<std::sync::Mutex<DeadlineClockState>>,
@@ -216,6 +219,10 @@ impl DeadlineClock {
             .filter(|(_, active, _)| *active)
             .count()
     }
+
+    fn registration_count(&self) -> usize {
+        self.state.lock().unwrap().registrations.len()
+    }
 }
 
 impl qubit_operation::ClockSource for DeadlineClock {
@@ -249,6 +256,77 @@ struct DeadlineClockRegistration {
 impl qubit_operation::TimerRegistration for DeadlineClockRegistration {
     fn cancel(self: Box<Self>) {
         self.state.lock().unwrap().registrations[self.index].1 = false;
+    }
+}
+
+#[derive(Debug)]
+struct DeadlineYieldRepositoryProvider {
+    repository: Arc<MimeRepository>,
+    clock: Arc<DeadlineClock>,
+    pending_observations: Arc<AtomicUsize>,
+}
+
+impl qubit_spi::ProviderMetadata for DeadlineYieldRepositoryProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(ProviderId::new("deadline-yield-repository").unwrap())
+    }
+}
+
+impl AsyncMimeDetectorProvider for DeadlineYieldRepositoryProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(DeadlineYieldRepositoryBackend {
+            repository: Arc::clone(&self.repository),
+            clock: Arc::clone(&self.clock),
+            pending_observations: Arc::clone(&self.pending_observations),
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct DeadlineYieldRepositoryBackend {
+    repository: Arc<MimeRepository>,
+    clock: Arc<DeadlineClock>,
+    pending_observations: Arc<AtomicUsize>,
+}
+
+impl AsyncMimeDetectorBackend for DeadlineYieldRepositoryBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(self.repository.max_test_bytes())
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        let repository = Arc::clone(&self.repository);
+        let clock = Arc::clone(&self.clock);
+        let pending_observations = Arc::clone(&self.pending_observations);
+        Box::pin(async move {
+            let detector = RepositoryMimeDetector::with_repository(&repository);
+            let mut matching = Box::pin(detector.guess_content_in(scope, input, options));
+            std::future::poll_fn(|cx| {
+                let result = matching.as_mut().poll(cx);
+                if result.is_pending() && pending_observations.fetch_add(1, Ordering::SeqCst) == 0 {
+                    assert!(
+                        clock.active_registrations() > 0,
+                        "managed detection must register its deadline before polling the repository backend"
+                    );
+                    clock.advance_to(10);
+                }
+                result
+            })
+            .await
+        })
     }
 }
 
@@ -500,9 +578,6 @@ fn test_managed_deadline_wakes_never_waking_provider_read_and_releases_reader() 
 
 #[test]
 fn test_managed_deadline_stops_cooperative_repository_matching() {
-    use std::time::Duration;
-    use std::time::Instant;
-
     use qubit_operation::ClockSource;
     use qubit_operation::ContextOptions;
     use qubit_operation::Deadline;
@@ -527,8 +602,23 @@ fn test_managed_deadline_stops_cooperative_repository_matching() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let services = services(&manager, 4, Arc::new(TestExecution::default()));
     services.prepare().unwrap();
-    let runtime = MimeRuntime::new(MimeConfig::default(), repository).with_execution_services(services.clone());
     let clock = Arc::new(DeadlineClock::new());
+    let pending_observations = Arc::new(AtomicUsize::new(0));
+    let registry = MimeDetectorRegistry::default();
+    registry
+        .register_async_provider(DeadlineYieldRepositoryProvider {
+            repository: Arc::clone(&repository),
+            clock: Arc::clone(&clock),
+            pending_observations: Arc::clone(&pending_observations),
+        })
+        .unwrap();
+    let runtime = MimeRuntime::new(MimeConfig::default(), repository)
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("deadline-yield-repository").unwrap(),
+        )
+        .unwrap();
     let clock_source: Arc<dyn ClockSource> = clock.clone();
     let mut operation = runtime
         .try_submit_detection(
@@ -547,31 +637,16 @@ fn test_managed_deadline_stops_cooperative_repository_matching() {
         )
         .unwrap_or_else(|failure| panic!("matcher operation should be accepted: {:?}", failure.reason));
 
-    let startup = Instant::now();
-    while clock.active_registrations() == 0 && startup.elapsed() < Duration::from_secs(2) {
-        std::thread::yield_now();
-    }
-    assert!(
-        clock.active_registrations() > 0,
-        "accepted matcher should register its deadline"
+    let outcome = block_on(operation.wait_outcome()).unwrap();
+    assert_eq!(
+        1,
+        pending_observations.load(Ordering::SeqCst),
+        "backend should yield once before timeout"
     );
     assert!(
-        operation.try_take_outcome().unwrap().is_none(),
-        "wide matcher should still be cooperative"
+        clock.registration_count() > 0,
+        "the accepted operation must register its deadline"
     );
-    clock.advance_to(10);
-
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let outcome = loop {
-        if let Some(outcome) = operation.try_take_outcome().unwrap() {
-            break outcome;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "deadline did not stop the repository matcher"
-        );
-        std::thread::yield_now();
-    };
     assert!(matches!(
         outcome,
         OperationOutcome::Stopped(ref report) if report.reason == StopReason::Timeout
