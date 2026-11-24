@@ -156,7 +156,7 @@ flowchart LR
 | `cargo test --lib test_concurrent_runtime_reports_keep_request_staging_isolated` | 通过，1 test；两种输入并发重叠并分别报告自身峰值。 |
 | `cargo test --lib async_operation_tests` | 通过，8 tests。 |
 
-最终格式对齐、style、完整测试、文档、coverage、audit、CI 和原工作区整合验证结果待本节下方补录。
+该历史检查点之后的 round-4 align、完整 CI、coverage、audit 与候选 worktree 消费者结果见本节下方；原工作区合并后的 CI 尚待执行。
 
 ## 2026-11-18 MIME-011/012 异步注册封闭与回调锁边界
 
@@ -350,3 +350,70 @@ deadline 或 stop 使 async detection future 返回，不代表已经派发的 c
 当时计划固定的 operation sibling 为 `6071fc67f6123582353620d51ffd298ae3ddd937`。Cargo manifest 仍解析 `qubit-operation 0.3.2` 本地 path，根锁文件与两个消费者锁文件的 package/version 预期保持一致；该记录没有为该候选提供完整 `ci-check.sh` 结果，旧 SHA 的通过结果不能代表后续候选通过。round-3 的确切候选与最终门禁仍待后续整合登记。
 
 此前固定候选 probe 的边界仍适用：locked metadata、两个消费者与 managed lifecycle 示例、`cargo package --list --locked`、真实 `/usr/bin/file` 和受控 ffprobe runner 均为本地通过；真实 `ffprobe` 不在 PATH。隔离 Cargo registry 检查因当前 registry 无 `qubit-mime ^0.22` 解析版本而失败，不代表发布解析通过。上述旧候选 probe 未运行 GitHub hosted workflow；本段记录的 `b58d998` hosted run 只确认到一个失败 job，整条 run 仍未完成，因此不推断其余 hosted jobs 或 crates.io 发布解析通过。
+
+## 2026-11-24 T6 MIME-070—079 历史与定向证据
+
+本节将 T6 计划项关联到 round-4 候选 `a4973b9026b2bd4f185652dd255bf2af7cdf18b7` 的实现与回归提交，并记录完整本地门禁、依赖身份和消费者证据。最终 hosted 运行尚未开始：候选 SHA 尚未推送；发布解析仍受 registry 中无 0.22.0 限制。最终交付快照另行登记。
+
+### 固定图与历史边界
+
+round-4 T6 最终验证候选为 `a4973b9026b2bd4f185652dd255bf2af7cdf18b7`，包含下列 T1—T5 提交。本节使用的依赖 pin 图如下：
+
+```mermaid
+flowchart LR
+  mime[rs-mime · a4973b9] --> fs[rs-fs · c7ea1d035498]
+  mime --> local[rs-local-files · 5b52230e0af2]
+  mime --> operation[rs-operation · 2821f739c996]
+  mime -. dev .-> fs_local[rs-fs-local · 3bf4275ed601]
+  fs_local --> fs
+  fs_local --> local
+  fs_local -. optional .-> registry[rs-fs-registry · df6c8b7ce454]
+  fs_local -. dev .-> testkit[rs-fs-testkit · 28bf195b8eef]
+  magika[rs-magika · 6cd6619bb093] -. round-4 validated against sibling .-> mime_sibling[rs-mime validation sibling · 4ec2afb08803]
+  magika --> mime_tsv_pin[rs-mime TSV pin · 33424a6f63fe]
+```
+
+T6 前置核对逐一比对了六个依赖 worktree 的 HEAD 与 `.infra/ci/local-path-dependencies.tsv`：rs-fs `c7ea1d035498aa633f4f3c04d90fdb5d4b73de97`、rs-fs-local `3bf4275ed601e39fdbf8532f9d80d563d9cc7182`、rs-fs-registry `df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c`、rs-fs-testkit `28bf195b8eef9c03d9cb1c5428186758b76aaacd`、rs-local-files `5b52230e0af2997fadc45b5ff48be65b0ca5a70d`、rs-operation `2821f739c996250fa9cfe33a86efc54c2fab6373`。候选 MIME 与依赖为独立 sibling。round-4 Magika 验证实际使用 MIME sibling `4ec2afb08803d7295b92dbb65b076cf8b46eda6f`，但 Magika 的 `.infra/ci/local-path-dependencies.tsv` 仍 pin 旧 MIME SHA `33424a6f63feb8dab3a1214fd68f9ce1151c7762`；该验证没有更新 Magika pin。旧 round-3 MIME `33424a6f63feb8dab3a1214fd68f9ce1151c7762` 与 Magika `6cd6619bb093f2c582b42f5de82c4afe43d15464` 的完整本地门禁历史和 coverage 数值见下表；这些历史结果不替代 round-4 候选的整合门禁。
+
+| 仓库与 checkout | 被测 SHA | `align` | `ci-check` | 关键 coverage | 原始日志 |
+| --- | --- | --- | --- | --- | --- |
+| MIME candidate | `33424a6f63feb8dab3a1214fd68f9ce1151c7762` | `mime-final-align.log`，exit 0 | `mime-final-ci-check.log`，exit 0；主集成测试 428/428 | functions 95.45% (1070/1121)；lines 94.33% (14087/14933)；regions 94.79% (24499/25846) | round-3 `HLFvzT` 证据目录 |
+| MIME original | `33424a6f63feb8dab3a1214fd68f9ce1151c7762` | `mime-original-align.log`，exit 0 | `mime-original-ci-check.log`，exit 0；主集成测试 428/428 | functions 95.45% (1070/1121)；lines 94.33% (14087/14933)；regions 94.79% (24499/25846) | round-3 `HLFvzT` 证据目录 |
+| Magika candidate | `6cd6619bb093f2c582b42f5de82c4afe43d15464` | `magika-final-align-ci.log`，exit 0 | `magika-final-ci-check.log`，exit 0；109 passed，1 ignored | functions 90.73% (411/453)；lines 95.63% (4598/4808)；regions 95.74% (7385/7714) | round-3 `HLFvzT` 证据目录 |
+| Magika original | `6cd6619bb093f2c582b42f5de82c4afe43d15464` | `magika-original-align-ci.log`，exit 0 | `magika-original-ci-check.log`，exit 0；109 passed，1 ignored | functions 90.73% (411/453)；lines 95.63% (4598/4808)；regions 95.74% (7385/7714) | round-3 `HLFvzT` 证据目录 |
+
+两份 MIME `ci-check` 日志均记录 coverage thresholds satisfied 和 `rs-infra-ci: check succeeded`；两份 Magika 日志也记录 coverage thresholds satisfied 和同一成功终态。此表是对 round-3 候选与原树的历史记录，不能外推到本轮候选。
+
+### MIME-070—078 实现与回归索引
+
+| 计划项 | 实现与回归提交 | 对应的定向回归证据 | 结果边界 |
+| --- | --- | --- | --- |
+| MIME-070 共享读取树额度绑定与父链计量 | [实现 `0d7a7eb`](https://github.com/qubit-ltd/rs-mime/commit/0d7a7eb8f00fa56d2266cd335638347a396e762e)；[回归 `541236c`](https://github.com/qubit-ltd/rs-mime/commit/541236c22da428e3b6b1052b9f2a7057b5430d6f) | `test_nested_pending_first_keeps_parent_scope_and_shared_resource_slot`、`test_detached_nested_ticket_keeps_its_parent_chain_and_direct_sibling_scope`、`test_no_read_low_limit_association_does_not_cap_later_direct_provider` | 读取树父绑定回归另重复运行 10 轮，均通过。 |
+| MIME-071 受管命令结果与 deadline 优先级 | [实现 `b3d5525`](https://github.com/qubit-ltd/rs-mime/commit/b3d5525a8d4d647ed36ca6aad30ec9fd718f20ad)；[回归 `8e937b3`](https://github.com/qubit-ltd/rs-mime/commit/8e937b338af86d6e1fb38c91ab576fc54fb565f0) | `test_managed_ffprobe_reports_command_queue_busy_after_staging`、`test_real_context_deadline_stops_parent_before_queued_command_settles` | 覆盖暂存后的队列忙错误和真实 MIME context deadline；系统 `ffprobe` 不在 PATH，真实外部工具场景未验证。 |
+| MIME-072 生命周期准备／停止重入和执行权 | [实现 `167e513`](https://github.com/qubit-ltd/rs-mime/commit/167e513b44bc150e5d4d6f166b49dea37abb2ce8)；[回归 `7d4e839`](https://github.com/qubit-ltd/rs-mime/commit/7d4e839dc54175206d07baf6993bad827633cb67)、[错误与 unwind 恢复 `22c2999`](https://github.com/qubit-ltd/rs-mime/commit/22c2999e9f9abf293bbb478912d1fae325acb9f7) | `test_prepare_callback_can_shutdown_without_publishing_running_or_stopping_early`、`test_shutdown_panic_releases_stop_claim_for_retry`、`test_concurrent_stop_executes_port_shutdown_once`、`test_prepare_panic_releases_prepare_claim_for_retry`、`test_prepare_error_after_reentrant_shutdown_restores_closed_without_start`、`test_prepare_unwind_after_reentrant_shutdown_restores_closed_without_start` | 完整测试通过；shutdown 单次 claim 与准备关闭恢复回归各重复 10 轮通过。 |
+| MIME-073 classifier Debug 不调用外部 provider Debug | [实现 `167e513`](https://github.com/qubit-ltd/rs-mime/commit/167e513b44bc150e5d4d6f166b49dea37abb2ce8)；[回归 `7d4e839`](https://github.com/qubit-ltd/rs-mime/commit/7d4e839dc54175206d07baf6993bad827633cb67) | `test_registry_debug_uses_cached_classifier_identity_only` | provider selector-lock 回归重复运行 10 轮通过。 |
+| MIME-074 普通 Prefix 目标窗口及短读 | [文档与契约 `0f169f8`](https://github.com/qubit-ltd/rs-mime/commit/0f169f8eb543e81acdbe46c399d9058b85bef1e2)；[回归 `9a13dc4`](https://github.com/qubit-ltd/rs-mime/commit/9a13dc4350a8b2c750e32b401c969e130b6df52a)、[`3399c34`](https://github.com/qubit-ltd/rs-mime/commit/3399c3417f21888917ee3cbae0a5c04075f18dd0) | `test_detection_prefix_stops_at_natural_eof`、`test_managed_prefix_backend_observes_static_cap_and_natural_eof`、`test_managed_prefix_owned_budget_rejection_returns_prefix_input` | EOF、静态上限与提交期返还回归随完整 CI 通过。 |
+| MIME-075 managed read 能力和错误边界文档 | [文档 `0f169f8`](https://github.com/qubit-ltd/rs-mime/commit/0f169f8eb543e81acdbe46c399d9058b85bef1e2) | README、双语 user guide、backend trait 文档及 crate 文档随提交同步；与 MIME-074 共用 Prefix 回归 | strict docs 与文档检查通过。 |
+| MIME-076 repository 参数与 matcher work Rustdoc | [源码／Rustdoc 修订 `9a13dc4`](https://github.com/qubit-ltd/rs-mime/commit/9a13dc4350a8b2c750e32b401c969e130b6df52a) | 同一提交修订 `mime_repository.rs` 参数文档及 matcher helper work 说明；未新增独立测试 | strict docs 与文档检查通过。 |
+| MIME-077 POSIX native basename 公开同步入口 | [回归 `b1a4a48`](https://github.com/qubit-ltd/rs-mime/commit/b1a4a48fb595c56992b6562753a562ce2ceb69ce) | `test_public_prefer_filename_uses_native_basename_without_provider_or_command_io`；同一提交增加反斜杠 typed key 与公开 basename 路径用例 | 真实文件测试 3 项和 file 命令路径测试 26 项均通过；feature matrix 随 SHA `a4973b9` 完整 CI 通过。 |
+| MIME-078 Cargo feature matrix 精简 | [矩阵与 workflow `b1a4a48`](https://github.com/qubit-ltd/rs-mime/commit/b1a4a48fb595c56992b6562753a562ce2ceb69ce) | `.infra/ci/cargo-matrix.json` 保留无 feature 与显式 `inventory` 两行 check/test/doc；workflow 删除无消费者的本地矩阵生成 job | 两行 feature matrix 完整执行通过。 |
+| MIME-079 最终证据与交付记录 | 本验收页 | 记录固定依赖图、历史 round-3 门禁、MIME-070—078 提交与回归、round-4 本地 CI、消费者、真实文件和重复并发结果 | round-4 本地证据绑定 SHA `a4973b9026b2bd4f185652dd255bf2af7cdf18b7`；hosted 结果因尚未推送而未运行，最终交付快照单独登记。 |
+
+### 旧 hosted run、发布和环境限制
+
+- 旧 MIME `33424a6f63feb8dab3a1214fd68f9ce1151c7762` 的 [Documentation consumer run 45368213817](https://github.com/qubit-ltd/rs-mime/actions/runs/45368213817) head SHA 精确匹配，查询为 completed / success（updated `2026-11-24T09:47:29Z`）。
+- 同 SHA 的 [Rust CI run 45368214636](https://github.com/qubit-ltd/rs-mime/actions/runs/45368214636) 在 10:14 UTC 前置快照仍 pending；后续于 `2026-11-24T10:22:27Z` 结束为 completed / cancelled。取消不构成通过。两条 run 都针对旧 MIME SHA，不是 round-4 候选的 hosted 结果。
+- round-4 候选 `a4973b9026b2bd4f185652dd255bf2af7cdf18b7` 于 `2026-11-24T10:58:07Z` 提交；截至本次验证摘要，尚未推送，因此没有该 SHA 的 hosted run。此处不把旧 hosted run 外推到新提交。
+- Magika `6cd6619bb093f2c582b42f5de82c4afe43d15464` 的历史完整 CI、coverage 门槛、README/dynamic-loader consumers 与 repository-default sync test 证据保留在历史日志索引。round-4 同图验证再次核对 Magika locked metadata、依赖树和动态 feature、README consumer、dynamic-loader consumer，以及 `test_magika_provider_is_discovered_with_repository_default`（1 项通过）；候选 MIME sibling 为 `4ec2afb08803d7295b92dbb65b076cf8b46eda6f`，但 Magika 已登记 pin 仍是旧 MIME `33424a6`，故这证明 sibling 布局兼容性，不证明 Magika pin 已更新或 Magika hosted/full CI 通过。
+- 纯 registry manifest 使用精确 `qubit-mime = "=0.22.0"` 且无 path/patch。在线 Cargo 更新 index 后仍报告可用版本止于 `0.21.1`，退出码 101；0.22.0 当前尚不可由 registry 解析。这是发布状态边界，不是通过证据。真实 `ffprobe` 缺失，`/usr/bin/file` 可用；受控 ffprobe 测试不能替代真实程序验证。
+- round-4 `align-ci.sh`、完整 `ci-check.sh`、locked operation identity、独立 consumers、真实文件和重复并发定向验证均已在候选 SHA 上完成，详见下节；hosted 结果尚无（未推送）。此前 round-3 MIME 与 Magika 完整本地门禁仅作为对应旧 SHA 的历史证据保留，不外推至当前候选。
+
+### round-4 本地整合门禁与定向验收
+
+验证对应候选 SHA `a4973b9026b2bd4f185652dd255bf2af7cdf18b7`，固定工具链为 Rust 1.94.0 / Cargo 1.94.0。`./.infra/bin/align-ci.sh` 与 `./.infra/bin/ci-check.sh` 均 exit 0；完整门禁含 default/all-feature 测试、doctests、strict docs、style、Clippy、feature matrix、package verification 与 vulnerability audit。单元测试 288 passed、1 ignored，聚合集成测试 432 passed，doctests 64 passed、1 ignored，compile-fail 1 passed。coverage functions 95.05% (1076/1132)、lines 94.36% (14528/15397)、regions 94.85% (25448/26831)，均达到门槛。`cargo test --locked test_shutdown_returns_during_prepare_and_prevents_late_ready_state` 另为 1 passed。独立复审通过。
+
+三个 `cargo metadata --locked --format-version 1` 结果（根 crate、operation consumer、documentation consumer）与对应 locked inversion trees 均解析到同一且唯一的 `qubit-operation 0.3.2` 包身份，路径指向本轮固定 `rs-operation` sibling。`cargo run --locked` 的 operation consumer、documentation consumer，以及 `cargo run --locked --example managed_lifecycle` 均 exit 0。
+
+`cargo test --locked --test mod real_file_integration_tests -- --test-threads=1` 通过 3 项；`cargo test --locked --test mod file_command_mime_detector_tests -- --test-threads=1` 通过 26 项，宿主 `file` 为 `/usr/bin/file`。四组 shutdown、stop-claim、read-tree parent-binding、provider selector-lock 并发回归各重复 10 轮，全部通过；selector-lock filter 每轮匹配两个相近测试。真实 `ffprobe` 未运行：`command -v ffprobe` 不可用；相关受控命令回归仍由完整 CI 覆盖。
+
+门禁在创建提交 `a4973b9026b2bd4f185652dd255bf2af7cdf18b7` 前，对将提交的相同源码与测试内容执行；因此本地验证绑定到该 SHA，不把结果归给其父提交或历史原树。原工作区合并后的 CI 尚未执行；该后续门禁与本表 round-4 候选门禁分开记录。提交时尚未推送，故 hosted CI 没有结果。coverage JSON 被 CI 清理步骤移除，保留的 coverage 百分比与计数来自最终验证摘要。
