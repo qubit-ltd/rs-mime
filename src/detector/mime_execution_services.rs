@@ -240,6 +240,9 @@ impl MimeExecutionServices {
         if self.lifecycle() == MimeServiceLifecycle::NotStarted {
             self.lifecycle
                 .store(MimeServiceLifecycle::Running as u8, Ordering::Release);
+        } else if self.lifecycle() == MimeServiceLifecycle::Draining {
+            self.admission_frozen.store(true, Ordering::Release);
+            self.root_group.close_admission();
         }
         Ok(())
     }
@@ -257,7 +260,13 @@ impl MimeExecutionServices {
             MimeServiceLifecycle::Stopped | MimeServiceLifecycle::ClosedWithoutStart
         ) {
             self.top_closed.store(true, Ordering::Release);
-            let next = if self.lifecycle() == MimeServiceLifecycle::NotStarted {
+            if self.preparing.load(Ordering::Acquire) {
+                self.admission_frozen.store(true, Ordering::Release);
+                self.root_group.close_admission();
+            }
+            let next = if self.lifecycle() == MimeServiceLifecycle::NotStarted
+                && !self.preparing.load(Ordering::Acquire)
+            {
                 MimeServiceLifecycle::ClosedWithoutStart
             } else {
                 MimeServiceLifecycle::Draining

@@ -550,6 +550,7 @@ impl Default for MediaStreamClassifierRegistry {
 
 #[cfg(test)]
 mod async_catalog_recovery_tests {
+    use std::fmt;
     use std::panic::AssertUnwindSafe;
     use std::panic::catch_unwind;
     use std::sync::Arc;
@@ -587,6 +588,40 @@ mod async_catalog_recovery_tests {
         ) -> Result<Arc<dyn crate::AsyncMediaStreamClassifierBackend>, crate::MimeError> {
             Err(crate::MimeError::AsyncUnsupported)
         }
+    }
+
+    struct DebugProbeProvider;
+
+    impl fmt::Debug for DebugProbeProvider {
+        fn fmt(&self, _formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            panic!("provider Debug must not be called while formatting registry")
+        }
+    }
+
+    impl ProviderMetadata for DebugProbeProvider {
+        fn descriptor(&self) -> ProviderDescriptor {
+            ProviderDescriptor::new(ProviderId::new("classifier-debug-probe").unwrap())
+        }
+    }
+
+    impl AsyncMediaStreamClassifierProvider for DebugProbeProvider {
+        fn create_async_backend(
+            &self,
+            _config: &MimeConfig,
+            _services: &MimeExecutionServices,
+        ) -> Result<Arc<dyn crate::AsyncMediaStreamClassifierBackend>, crate::MimeError> {
+            Err(crate::MimeError::AsyncUnsupported)
+        }
+    }
+
+    #[test]
+    fn test_registry_debug_uses_cached_classifier_identity_only() {
+        let registry = MediaStreamClassifierRegistry::default();
+        registry
+            .register_async_provider(DebugProbeProvider)
+            .unwrap();
+        let diagnostic = format!("{registry:?}");
+        assert!(diagnostic.contains("classifier-debug-probe"));
     }
 
     #[test]
