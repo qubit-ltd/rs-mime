@@ -396,12 +396,27 @@ Provider。内置 `repository` 和 `file` Provider 都提供受管异步 backend
 Provider 对象，并向 backend 借出 `MeteredReadSession`。顺序读取使用 `session.read()`；要从同一已打开
 对象采样偏移时使用 `session.read_at()`。处理受管输入时不要重新打开路径或使用原始 filesystem handle。
 
-`uses_managed_provider_reads()` 用于选择该 session。默认情况下，若
-`random_access_capability()` 返回 `RandomAccessCapability::SamplesSameObject`，该方法返回 `true`。
-需要完整顺序读取的 backend 可以在保持 `RandomAccessCapability::Unsupported` 的同时覆盖该方法并返回
-`true`。使用常规有界前缀路径的 `Prefix(n)` backend 会收到 `Bytes`，最多包含 n 字节，并受请求与服务的
-buffer/read 预算进一步限制；若提前遇到 EOF，实际字节会更少，读取不会越过前缀上限。选择受管读取的
-backend 自行控制 session 读取，应遵守声明的输入范围。
+声明完整读取或 `RandomAccessCapability::SamplesSameObject` 的 backend 始终会收到该受计量 session。
+旧 `uses_managed_provider_reads()` hook 仍可供明确需要顺序 session 读取的 `Prefix(n)` backend 选择使用；
+返回 `false` 不能关闭完整读取或随机访问的计量。常规 `Prefix(n)` backend 会收到 `Bytes`，最多包含 n
+字节，并受请求与服务的 buffer/read 预算进一步限制；若提前遇到 EOF，实际字节会更少，读取不会越过前缀上限。
+
+顺序读取应持续调用 `read()`，直到返回零以确认 EOF；单次短读不代表 EOF。调用 `read_at(offset, buffer)`
+可从同一个已打开对象采样。每次调用单独计费，重复或重叠的采样也会计费。若读取超过请求或祖先的剩余额度，
+调用会返回读取预算错误；应将其作为检查失败处理，不要重新打开路径或改用未受计量的 handle。
+
+```rust,ignore
+let mut buffer = [0; 4096];
+loop {
+    let count = session.read(&mut buffer).await?;
+    if count == 0 { break; } // EOF
+    inspect(&buffer[..count]);
+}
+
+let mut sample = [0; 512];
+let count = session.read_at(1024, &mut sample).await?;
+inspect_sample(&sample[..count]);
+```
 
 每次 session 读取都会受调用方 buffer、payload 上限、请求与读取额度树剩余额度以及 8 KiB 分块上限共同约束。
 runtime 在 Provider I/O 前为私有暂存区预留最多 8 KiB，并只把成功返回的字节复制给 backend。Provider
