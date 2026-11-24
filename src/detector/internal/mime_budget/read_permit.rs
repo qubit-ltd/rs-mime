@@ -7,7 +7,6 @@
 // =============================================================================
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use super::ReadScopeBudget;
@@ -20,8 +19,6 @@ pub(crate) struct ReadPermit {
     pub(super) tree: Arc<ReadTreeBudget>,
     /// Scopes charged for this read, from the current scope through its roots.
     pub(super) scopes: Vec<Arc<ReadScopeBudget>>,
-    /// Counter owned by the scope that initiated this read.
-    pub(super) local_consumed: Arc<AtomicU64>,
     /// Capacity provisionally reserved before provider I/O.
     pub(super) reserved: u64,
     /// Whether completion has replaced the reservation with actual bytes.
@@ -52,7 +49,9 @@ impl ReadPermit {
             counters.reserved -= self.reserved;
             counters.consumed += actual;
         }
-        self.local_consumed.fetch_add(actual, Ordering::AcqRel);
+        self.scopes[0]
+            .local_consumed
+            .fetch_add(actual, Ordering::AcqRel);
         self.committed = true;
         actual
     }

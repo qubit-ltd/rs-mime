@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use qubit_operation::OperationId;
@@ -77,7 +78,7 @@ impl ReadTreeContext {
             scope: Arc::new(ReadScopeBudget {
                 limit,
                 counters: Mutex::new(ScopeCounters::default()),
-                local_consumed: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                local_consumed: AtomicU64::new(0),
                 parent: None,
             }),
             parent: None,
@@ -105,7 +106,7 @@ impl ReadTreeContext {
             scope: Arc::new(ReadScopeBudget {
                 limit,
                 counters: Mutex::new(ScopeCounters::default()),
-                local_consumed: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                local_consumed: AtomicU64::new(0),
                 parent: None,
             }),
             parent: None,
@@ -176,7 +177,7 @@ impl ReadTreeContext {
             scope: Arc::new(ReadScopeBudget {
                 limit: limit.min(self.scope.limit),
                 counters: Mutex::new(ScopeCounters::default()),
-                local_consumed: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                local_consumed: AtomicU64::new(0),
                 parent: Some(Arc::clone(&self.scope)),
             }),
             parent: Some(Arc::clone(self)),
@@ -296,7 +297,6 @@ impl ReadTreeContext {
         }
         Some(ReadPermit {
             tree: Arc::clone(&self.tree),
-            local_consumed: Arc::clone(&self.scope.local_consumed),
             scopes,
             reserved: bytes,
             committed: false,
