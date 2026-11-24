@@ -1,0 +1,85 @@
+name: Magika inventory consumer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  magika-inventory-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout rs-mime
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          path: rs-mime
+      - name: Checkout pinned sibling source graph
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-magika
+          ref: d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b
+          path: rs-magika
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-operation
+          ref: 2821f739c996250fa9cfe33a86efc54c2fab6373
+          path: rs-operation
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-fs
+          ref: c7ea1d035498aa633f4f3c04d90fdb5d4b73de97
+          path: rs-fs
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-fs-registry
+          ref: df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c
+          path: rs-fs-registry
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-local-files
+          ref: 5b52230e0af2997fadc45b5ff48be65b0ca5a70d
+          path: rs-local-files
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-fs-local
+          ref: 3bf4275ed601e39fdbf8532f9d80d563d9cc7182
+          path: rs-fs-local
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: qubit-ltd/rs-fs-testkit
+          ref: 28bf195b8eef9c03d9cb1c5428186758b76aaacd
+          path: rs-fs-testkit
+      - name: Install Rust
+        run: rustup toolchain install 1.94.0 --profile minimal
+      - name: Download and verify ONNX Runtime 1.24.2
+        run: |
+          set -euo pipefail
+          wheel="$RUNNER_TEMP/onnxruntime-1.24.2-cp311-cp311-manylinux_x86_64.whl"
+          curl --fail --location --silent --show-error \
+            https://files.pythonhosted.org/packages/2c/32/4e5921ba8b82ac37cad45f1108ca6effd430f49c7f20577d53f317d166ed/onnxruntime-1.24.2-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl \
+            --output "$wheel"
+          echo '93fe190ee555ae8e9c1214bcfcf13af85cd06dd835e8d835ce5a8d01056844fe  '"$wheel" | sha256sum --check
+          mkdir "$RUNNER_TEMP/onnxruntime"
+          unzip -q "$wheel" -d "$RUNNER_TEMP/onnxruntime"
+          echo "ORT_LIBRARY_PATH=$RUNNER_TEMP/onnxruntime/onnxruntime/capi/libonnxruntime.so.1.24.2" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/onnxruntime/onnxruntime/capi:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+      - name: Record pinned source graph
+        run: |
+          for repo in rs-mime rs-magika rs-operation rs-fs rs-fs-registry rs-local-files rs-fs-local rs-fs-testkit; do
+            printf '%s ' "$repo"
+            git -C "$repo" rev-parse HEAD
+          done
+      - name: Verify one operation package identity
+        working-directory: rs-mime
+        run: |
+          set -euo pipefail
+          fixture=tests/fixtures/magika_inventory_consumer/Cargo.toml
+          cargo +1.94.0 tree --locked --manifest-path "$fixture" -i qubit-operation
+          cargo +1.94.0 tree --locked --manifest-path "$fixture" -i qubit-operation --features inventory
+      - name: Run explicitly registered Magika consumer
+        working-directory: rs-mime
+        run: cargo +1.94.0 run --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
+      - name: Run inventory discovered Magika consumer
+        working-directory: rs-mime
+        run: cargo +1.94.0 run --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
