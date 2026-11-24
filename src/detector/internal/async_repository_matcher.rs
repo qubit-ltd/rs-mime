@@ -516,8 +516,8 @@ mod cooperative_matcher_tests {
             MimeRepository::from_xml(
                 r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
                   <mime-type type="application/x-low"><magic priority="50"><match type="string" value="HIT" offset="0"/></magic></mime-type>
-                  <mime-type type="application/x-high-a"><magic priority="80"><match type="string" value="HIT" offset="0"/></magic></mime-type>
-                  <mime-type type="application/x-high-b"><magic priority="80"><match type="string" value="HIT" offset="0"/><match type="string" value="HIT" offset="0"/></magic></mime-type>
+                  <mime-type type="application/x-high-a"><magic priority="80"><match type="string" value="HIT" offset="0"/></magic><magic priority="80"><match type="string" value="HIT" offset="0"/></magic></mime-type>
+                  <mime-type type="application/x-high-b"><magic priority="80"><match type="string" value="HIT" offset="0"/></magic></mime-type>
                 </mime-info>"#,
             )
             .unwrap(),
