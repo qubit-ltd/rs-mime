@@ -7,9 +7,6 @@
 // =============================================================================
 //! Bounded cooperative matcher for immutable MIME repository rules.
 
-use std::future::poll_fn;
-use std::task::Poll;
-
 use qubit_operation::OperationScope;
 
 use crate::MimeCandidate;
@@ -19,9 +16,8 @@ use crate::MimeRepository;
 use crate::MimeResult;
 use crate::MimeType;
 use crate::repository::internal::magic_match_state::MagicMatchState;
-
-/// Maximum number of repository rules evaluated between cooperative yields.
-pub(super) const RULES_PER_BATCH: usize = 32;
+use crate::repository::mime_magic_matcher::MatcherWorkBudget;
+use crate::repository::mime_magic_matcher::yield_after_work;
 
 /// Returns the unique repository filename result when the selected policy
 /// permits skipping content inspection.
@@ -87,23 +83,24 @@ pub(in crate::detector) async fn match_content(
     repository: &MimeRepository,
     bytes: &[u8],
 ) -> MimeResult<Vec<MimeCandidate>> {
+    let mut work = MatcherWorkBudget::default();
+    match_content_with_budget(scope, repository, bytes, &mut work).await
+}
+
+async fn match_content_with_budget(
+    scope: &OperationScope,
+    repository: &MimeRepository,
+    bytes: &[u8],
+    work: &mut MatcherWorkBudget,
+) -> MimeResult<Vec<MimeCandidate>> {
     let mut matches = MagicMatchState::default();
-    let mut rules_in_batch = 0usize;
     for entry in repository.magic_rules() {
-        if rules_in_batch == 0
-            && let Some(reason) = scope.context().stop_reason()
+        if work.charge()
+            && let Err(reason) = yield_after_work(scope).await
         {
-            return Err(MimeError::DetectorBackend {
-                backend: "repository".to_owned(),
-                reason: format!("operation stopped: {reason:?}"),
-            });
+            return Err(stopped(reason));
         }
-        rules_in_batch += 1;
         if matches.skips(entry.priority) {
-            if rules_in_batch == RULES_PER_BATCH {
-                rules_in_batch = 0;
-                yield_to_executor().await;
-            }
             continue;
         }
         let Some(magic) = repository.magic_rule(entry) else {
@@ -111,32 +108,23 @@ pub(in crate::detector) async fn match_content(
         };
         let mut matched = false;
         for matcher in magic.matchers() {
-            match matcher.matches_cooperatively(bytes, scope).await {
+            match matcher.matches_cooperatively(bytes, scope, work).await {
                 Ok(true) => {
                     matched = true;
                     break;
                 }
                 Ok(false) => {}
                 Err(reason) => {
-                    return Err(MimeError::DetectorBackend {
-                        backend: "repository".to_owned(),
-                        reason: format!("operation stopped: {reason:?}"),
-                    });
+                    return Err(stopped(reason));
                 }
             }
         }
         matches.record(entry.priority, entry.mime_index, matched);
-        if rules_in_batch == RULES_PER_BATCH {
-            rules_in_batch = 0;
-            yield_to_executor().await;
-        }
     }
     if let Some(reason) = scope.context().stop_reason() {
-        return Err(MimeError::DetectorBackend {
-            backend: "repository".to_owned(),
-            reason: format!("operation stopped: {reason:?}"),
-        });
+        return Err(stopped(reason));
     }
+    work.finish();
     Ok(matches
         .into_results()
         .into_iter()
@@ -148,6 +136,13 @@ pub(in crate::detector) async fn match_content(
             })
         })
         .collect())
+}
+
+fn stopped(reason: qubit_operation::StopReason) -> MimeError {
+    MimeError::DetectorBackend {
+        backend: "repository".to_owned(),
+        reason: format!("operation stopped: {reason:?}"),
+    }
 }
 
 /// Apply the repository's synchronous filename/content policy to a bounded
@@ -192,33 +187,18 @@ pub(in crate::detector) fn select_candidates(
     .unwrap_or_default()
 }
 
-/// Gives the current executor an opportunity to poll another task.
-async fn yield_to_executor() {
-    // Yield to the current executor after each finite chunk. No timer or
-    // blocking wait is involved.
-    let mut yielded = false;
-    poll_fn(|cx| {
-        if yielded {
-            Poll::Ready(())
-        } else {
-            yielded = true;
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        }
-    })
-    .await;
-}
-
 #[cfg(test)]
 mod cooperative_matcher_tests {
     use std::future::Future;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::sync::atomic::AtomicBool;
     use std::sync::atomic::Ordering;
     use std::task::Context;
     use std::task::Poll;
     use std::task::Wake;
     use std::task::Waker;
+    use std::time::Instant;
 
     use qubit_operation::GroupOptions;
     use qubit_operation::OperationManager;
@@ -226,7 +206,10 @@ mod cooperative_matcher_tests {
     use qubit_operation::StopReason;
 
     use super::match_content;
+    use super::match_content_with_budget;
     use crate::MimeRepository;
+    use crate::repository::mime_magic_matcher::MATCH_WORK_PER_BATCH;
+    use crate::repository::mime_magic_matcher::MatcherWorkBudget;
 
     struct ThreadWake(std::thread::Thread);
     impl Wake for ThreadWake {
@@ -243,6 +226,112 @@ mod cooperative_matcher_tests {
             match future.as_mut().poll(&mut context) {
                 Poll::Ready(value) => return value,
                 Poll::Pending => std::thread::park(),
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "manual debug-profile sampler for MIME-047 matcher work"]
+    fn sample_matcher_workloads() {
+        const ITERATIONS: usize = 200;
+        let early_fail = "<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\"><mime-type type=\"application/x-early\"><magic priority=\"50\"><match type=\"string\" value=\"NEVER\" offset=\"0:255\"/></magic></mime-type></mime-info>".to_owned();
+        let late_mismatch = format!(
+            "<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\"><mime-type type=\"application/x-late\"><magic priority=\"50\"><match type=\"string\" value=\"{}Z\" offset=\"0:31\"/></magic></mime-type></mime-info>",
+            "A".repeat(127),
+        );
+        let wide_shallow = format!(
+            "<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\"><mime-type type=\"application/x-wide\"><magic priority=\"50\"><match type=\"string\" value=\"P\" offset=\"0\">{}</match></magic></mime-type></mime-info>",
+            (0..512)
+                .map(|index| format!("<match type=\"string\" value=\"N{index}\" offset=\"0\"/>"))
+                .collect::<String>(),
+        );
+        let many_roots = format!(
+            "<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\"><mime-type type=\"application/x-roots\"><magic priority=\"50\">{}</magic></mime-type></mime-info>",
+            (0..128)
+                .map(|index| format!("<match type=\"string\" value=\"N{index}\" offset=\"0:31\"/>"))
+                .collect::<String>(),
+        );
+        let normal_rules = format!(
+            "<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\">{}</mime-info>",
+            (0..64)
+                .map(|index| format!("<mime-type type=\"application/x-normal-{index:03}\"><magic priority=\"50\"><match type=\"string\" value=\"SIGNAL-{index:03}\" offset=\"0\"/></magic></mime-type>"))
+                .collect::<String>(),
+        );
+        let scenarios = [
+            ("early_fail", early_fail, vec![b'X'; 256]),
+            ("late_mismatch", late_mismatch, vec![b'A'; 160]),
+            ("wide_shallow", wide_shallow, vec![b'P']),
+            ("many_subthreshold_roots", many_roots, vec![b'X'; 32]),
+            ("normal_rules_64", normal_rules, b"SIGNAL-063".to_vec()),
+        ];
+
+        for (name, xml, bytes) in scenarios {
+            let repository = Arc::new(MimeRepository::from_xml(&xml).unwrap());
+            let input = Arc::new(bytes);
+            for round in 1..=3 {
+                let sync_started = Instant::now();
+                for _ in 0..ITERATIONS {
+                    std::hint::black_box(repository.detect_by_content(&input));
+                }
+                let sync_ns_per_query = sync_started.elapsed().as_nanos() / ITERATIONS as u128;
+
+                let manager = OperationManager::new(Default::default()).unwrap();
+                let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+                let mut operation = block_on(group.try_submit_async(Default::default(), {
+                    let repository = Arc::clone(&repository);
+                    let input = Arc::clone(&input);
+                    move |scope| async move {
+                        let started = Instant::now();
+                        let mut maximum_poll_ns = 0u128;
+                        let mut total_work = 0usize;
+                        let mut maximum_poll_work = 0usize;
+                        let mut yields = 0usize;
+                        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+                        let mut context = Context::from_waker(&waker);
+                        for _ in 0..ITERATIONS {
+                            let mut work = MatcherWorkBudget::default();
+                            let mut matching = Box::pin(match_content_with_budget(
+                                &scope,
+                                &repository,
+                                &input,
+                                &mut work,
+                            ));
+                            loop {
+                                let poll_started = Instant::now();
+                                let result = matching.as_mut().poll(&mut context);
+                                maximum_poll_ns = maximum_poll_ns.max(poll_started.elapsed().as_nanos());
+                                match result {
+                                    Poll::Ready(result) => {
+                                        assert!(result.is_ok(), "baseline workload should complete");
+                                        break;
+                                    }
+                                    Poll::Pending => {}
+                                }
+                            }
+                            drop(matching);
+                            total_work += work.total_work();
+                            maximum_poll_work = maximum_poll_work.max(work.maximum_work_in_poll());
+                            yields += work.yields();
+                        }
+                        Ok::<_, std::convert::Infallible>((
+                            started.elapsed().as_nanos() / ITERATIONS as u128,
+                            maximum_poll_ns,
+                            total_work / ITERATIONS,
+                            maximum_poll_work,
+                            yields,
+                        ))
+                    }
+                }))
+                .unwrap();
+                let outcome = block_on(operation.wait_outcome()).unwrap();
+                let (async_ns_per_query, maximum_poll_ns, work_per_query, maximum_poll_work, yields) =
+                    match outcome {
+                        OperationOutcome::Succeeded(stats) => stats,
+                        other => panic!("matcher sample did not succeed: {other:?}"),
+                    };
+                println!(
+                    "matcher {name} round={round}: sync_ns/query={sync_ns_per_query}, async_ns/query={async_ns_per_query}, work/query={work_per_query}, max_poll_work={maximum_poll_work}, max_poll_ns={maximum_poll_ns}, yields={yields}"
+                );
             }
         }
     }
@@ -285,6 +374,88 @@ mod cooperative_matcher_tests {
             "the matcher should yield within a single wide rule"
         );
         assert!(matches!(outcome, OperationOutcome::Stopped(report) if report.reason == StopReason::UserCancelled));
+    }
+
+    #[test]
+    fn test_cooperative_matching_yields_across_wide_shallow_branch() {
+        let xml = format!(
+            "<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\"><mime-type type=\"application/x-wide-shallow\"><magic priority=\"50\"><match type=\"string\" value=\"P\" offset=\"0\">{}</match></magic></mime-type></mime-info>",
+            (0..10_000)
+                .map(|index| format!("<match type=\"string\" value=\"N{index}\" offset=\"0\"/>"))
+                .collect::<String>(),
+        );
+        let repository = Arc::new(MimeRepository::from_xml(&xml).unwrap());
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let mut stop_response_samples_ns = Vec::new();
+        for _ in 0..5 {
+            let probe_polled = Arc::new(AtomicBool::new(false));
+            let stop_requested_at = Arc::new(Mutex::new(None::<Instant>));
+            let mut operation = block_on(group.try_submit_async(Default::default(), {
+                let probe_polled = Arc::clone(&probe_polled);
+                let stop_requested_at = Arc::clone(&stop_requested_at);
+                let repository = Arc::clone(&repository);
+                move |scope| async move {
+                    let mut matching = Box::pin(match_content(&scope, &repository, b"P"));
+                    let mut stop_requested = false;
+                    let result = std::future::poll_fn(|cx| {
+                        let result = matching.as_mut().poll(cx);
+                        if result.is_pending() && !stop_requested {
+                            stop_requested = true;
+                            probe_polled.store(true, Ordering::SeqCst);
+                            *stop_requested_at.lock().unwrap() = Some(Instant::now());
+                            let _ = scope.context().request_stop(StopReason::UserCancelled);
+                        }
+                        result
+                    })
+                    .await;
+                    Ok::<_, std::convert::Infallible>(result.is_err())
+                }
+            }))
+            .unwrap();
+            let outcome = block_on(operation.wait_outcome()).unwrap();
+            assert!(
+                probe_polled.load(Ordering::SeqCst),
+                "the matcher should yield while traversing a wide shallow branch"
+            );
+            assert!(matches!(outcome, OperationOutcome::Stopped(report) if report.reason == StopReason::UserCancelled));
+            let requested_at = stop_requested_at
+                .lock()
+                .unwrap()
+                .as_ref()
+                .copied()
+                .expect("the test must observe a pending poll before requesting stop");
+            stop_response_samples_ns.push(requested_at.elapsed().as_nanos());
+        }
+        println!("wide_shallow_stop_response_ns={stop_response_samples_ns:?}");
+    }
+
+    #[test]
+    fn test_cooperative_work_budget_caps_cross_root_and_byte_comparisons() {
+        let xml = format!(
+            "<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\">{}</mime-info>",
+            (0..1_000)
+                .map(|index| format!("<mime-type type=\"application/x-root-{index}\"><magic priority=\"50\"><match type=\"string\" value=\"ABCZ\" offset=\"0:1\"/></magic></mime-type>"))
+                .collect::<String>(),
+        );
+        let repository = Arc::new(MimeRepository::from_xml(&xml).unwrap());
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let mut work = MatcherWorkBudget::default();
+            let result = match_content_with_budget(&scope, &repository, b"ABCX", &mut work).await;
+            assert!(result.is_ok());
+            Ok::<_, std::convert::Infallible>((work.total_work(), work.maximum_work_in_poll(), work.yields()))
+        }))
+        .unwrap();
+        let outcome = block_on(operation.wait_outcome()).unwrap();
+        let (total_work, maximum_work_in_poll, yields) = match outcome {
+            OperationOutcome::Succeeded(stats) => stats,
+            other => panic!("work counter operation did not succeed: {other:?}"),
+        };
+        assert!(total_work > MATCH_WORK_PER_BATCH);
+        assert_eq!(maximum_work_in_poll, MATCH_WORK_PER_BATCH);
+        assert!(yields > 0);
     }
 
     #[test]
