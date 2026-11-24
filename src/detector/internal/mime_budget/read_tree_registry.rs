@@ -269,6 +269,8 @@ impl ReadTreeRegistry {
         let pending_root = Arc::new(PendingReadTreeRoot {
             root: associated_root.unwrap_or_else(|| ReadTreeContext::new(tree_limit)),
             state: Mutex::new(PendingReadTreeRootState::Reserved(Some(reservation))),
+            pending_roots: Arc::downgrade(&self.pending_roots),
+            operation,
         });
         self.pending_roots
             .lock()
@@ -422,6 +424,53 @@ mod tests {
         result
     }
 
+    fn with_two_parent_scopes<T: Send + 'static>(
+        body: impl FnOnce(&OperationManager, &OperationScope, &OperationScope) -> T + Send + 'static,
+    ) -> T {
+        let mut manager_options = ManagerOptions::default();
+        manager_options.limits.active_operations = 4;
+        manager_options.limits.queued_operations = 8;
+        manager_options.async_executor.worker_count = 3;
+        let manager = OperationManager::new(manager_options).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let (first_scope_tx, first_scope_rx) = std::sync::mpsc::channel();
+        let (second_scope_tx, second_scope_rx) = std::sync::mpsc::channel();
+        let (release_first, release_first_rx) = std::sync::mpsc::channel();
+        let (release_second, release_second_rx) = std::sync::mpsc::channel();
+        let mut first = group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                first_scope_tx.send(scope).unwrap();
+                let _ = release_first_rx.recv();
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+        let mut second = group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                second_scope_tx.send(scope).unwrap();
+                let _ = release_second_rx.recv();
+                Ok::<_, ()>(())
+            })
+            .unwrap();
+        let first_scope = first_scope_rx.recv().unwrap();
+        let second_scope = second_scope_rx.recv().unwrap();
+        let result = body(&manager, &first_scope, &second_scope);
+        release_first.send(()).unwrap();
+        release_second.send(()).unwrap();
+        assert!(matches!(
+            block_on(first.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+        assert!(matches!(
+            block_on(second.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+        block_on(first.wait_settlement());
+        block_on(second.wait_settlement());
+        result
+    }
+
     fn bind_child(
         registry: &ReadTreeRegistry,
         parent: &OperationScope,
@@ -518,25 +567,121 @@ mod tests {
     }
 
     #[test]
+    fn test_dropping_batch_bindings_for_distinct_parents_clears_pending_index() {
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let registry_body = Arc::clone(&registry);
+        let (
+            distinct_ids,
+            pending_count,
+            pending_empty_after_drop,
+            committed_empty,
+            slots_returned,
+        ) = with_two_parent_scopes(move |_, first, second| {
+            let distinct_ids = first.id() != second.id();
+            let first_binding = registry_body.reserve_child_for_parent(first, 8, 4).unwrap();
+            let second_binding = registry_body.reserve_child_for_parent(second, 8, 4).unwrap();
+            let pending_count = registry_body.pending_roots.lock().unwrap().len();
+            let committed_empty = registry_body.roots.lock().unwrap().is_empty();
+
+            drop((first_binding, second_binding));
+
+            let pending_empty = registry_body.pending_roots.lock().unwrap().is_empty();
+            let committed_empty_after_drop = registry_body.roots.lock().unwrap().is_empty();
+            let first_slot_returned = first.reserve_resource().is_ok();
+            let second_slot_returned = second.reserve_resource().is_ok();
+            (
+                distinct_ids,
+                pending_count,
+                pending_empty,
+                committed_empty && committed_empty_after_drop,
+                first_slot_returned && second_slot_returned,
+            )
+        });
+        assert!(distinct_ids);
+        assert_eq!(2, pending_count);
+        assert!(pending_empty_after_drop);
+        assert!(committed_empty);
+        assert!(slots_returned);
+    }
+
+    #[test]
+    fn test_queued_cancellation_drops_pending_binding_and_returns_parent_slot() {
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let registry_body = Arc::clone(&registry);
+        let (pending_cleared, roots_empty, slot_returned, queued_stopped) =
+            with_two_parent_scopes(move |manager, first, _| {
+                let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+                let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+                let (release_tx, release_rx) = std::sync::mpsc::channel();
+                let mut blocker = group
+                    .as_async()
+                    .try_submit(Default::default(), move |_| async move {
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                        Ok::<_, ()>(())
+                    })
+                    .unwrap();
+                entered_rx.recv().unwrap();
+
+                let pending = registry_body.reserve_child_for_parent(first, 8, 4).unwrap();
+                let mut queued = group
+                    .as_async()
+                    .try_submit(Default::default(), move |_| async move {
+                        drop(pending);
+                        Ok::<_, ()>(())
+                    })
+                    .unwrap();
+                let was_queued = queued.observer().snapshot().execution
+                    == qubit_operation::ExecutionPhase::Queued;
+                let _ = queued.request_stop(StopReason::UserCancelled);
+                release_tx.send(()).unwrap();
+                let queued_stopped = matches!(
+                    block_on(queued.wait_outcome()).unwrap(),
+                    OperationOutcome::Stopped(_)
+                );
+                let settled = block_on(queued.wait_settlement()).all_released();
+                let pending_cleared = registry_body.pending_roots.lock().unwrap().is_empty();
+                let roots_empty = registry_body.roots.lock().unwrap().is_empty();
+                let slot_returned = first.reserve_resource().is_ok();
+                assert!(matches!(
+                    block_on(blocker.wait_outcome()).unwrap(),
+                    OperationOutcome::Succeeded(())
+                ));
+                assert!(block_on(blocker.wait_settlement()).all_released());
+                (pending_cleared && settled, roots_empty, slot_returned, was_queued && queued_stopped)
+            });
+
+        assert!(pending_cleared);
+        assert!(roots_empty);
+        assert!(slot_returned);
+        assert!(queued_stopped);
+    }
+
+    #[test]
     fn test_pending_root_removal_preserves_later_replacement() {
         let operation = operation_id();
+        let pending_roots: PendingRoots = Mutex::new(std::collections::HashMap::new());
+        let pending_roots_weak = Arc::new(pending_roots);
         let old = Arc::new(PendingReadTreeRoot {
             root: ReadTreeContext::new(8),
             state: Mutex::new(PendingReadTreeRootState::Detached),
+            pending_roots: Arc::downgrade(&pending_roots_weak),
+            operation,
         });
         let replacement = Arc::new(PendingReadTreeRoot {
             root: ReadTreeContext::new(16),
             state: Mutex::new(PendingReadTreeRootState::Detached),
+            pending_roots: Arc::downgrade(&pending_roots_weak),
+            operation,
         });
-        let pending_roots: PendingRoots = Mutex::new(std::collections::HashMap::new());
-        pending_roots
+        pending_roots_weak
             .lock()
             .unwrap()
             .insert(operation, Arc::downgrade(&replacement));
 
-        unregister_pending(&pending_roots, operation, &old);
+        unregister_pending(&pending_roots_weak, operation, &old);
 
-        let registered = pending_roots
+        let registered = pending_roots_weak
             .lock()
             .unwrap()
             .get(&operation)
