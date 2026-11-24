@@ -301,3 +301,13 @@ deadline 或 stop 使 async detection future 返回，不代表已经派发的 c
 在当前整合工作树中，`.infra/bin/align-ci.sh` 于 Rust 1.94.0 下通过（日志：任务外 `/tmp/rs-mime-t7-validation-7ba30d05/align-ci-checkpoint.log`）。覆盖缺口诊断后新增 focused tests：`test_candidate_selection_filters_unmapped_backend_results`、`test_temp_creation_worker_panic_returns_error_and_releases_reservation`、`test_classifier_configuration_defaults_and_mutators`，各自定向运行通过。正式 `.infra/bin/coverage.sh` JSON 报告显示 functions `1029/1088`（94.58%）、lines `13301/14099`（94.34%）、regions `23045/24366`（94.58%），低于 functions 95% 门槛；报告和日志位于任务外 `/tmp/rs-mime-t7-validation-7ba30d05/coverage-after-three-tests.json` 与 `coverage-after-three-tests.log`。因此本检查点不代表完整 CI 通过，仍需整合并行补测并重跑 coverage 与完整 CI。
 
 本地 probe 报告 `/tmp/rs-mime-t7-probe/report.txt` 与 `followup-report.txt` 记录：根 crate、两个消费者的 locked metadata 一致，消费者和 managed lifecycle 示例运行、package list、`/usr/bin/file` 后端及受控 ffprobe runner 检查通过。环境没有真实 `ffprobe`。隔离 registry 解析尝试失败，索引未提供 `qubit-mime ^0.22`（当时可见版本止于 0.21.1）；这不是 crates.io 发布安装验证。尚无 GitHub hosted CI 结果。
+
+### T7 最终本地门禁结果
+
+最终被测 MIME 代码提交为 `2497729ad407a9496d04416a56923df6e053a05e`（基于并行整合提交 `deb45be697290a112ae8f07b4e0b61f4081ee66a`）。Rust 1.94.0 下 `.infra/bin/align-ci.sh` 退出码 0，完整 `.infra/bin/ci-check.sh` 退出码 0；日志分别为任务外 `/tmp/rs-mime-t7-validation-7ba30d05/align-ci-integrated.log` 和 `ci-check-integrated.log`。完整 CI 的 coverage 为 functions `1040/1088`（95.59%）、lines `13409/14206`（94.39%）、regions `23277/24572`（94.73%）；本地采集 JSON `/tmp/rs-mime-t7-validation-7ba30d05/coverage-integrated.json`，文本摘要在仓库生成的 `coverage.txt`。CI 包含 style、Clippy、coverage-only Clippy、验证、strict docs、README、release build、feature matrix、project hook、package、coverage 和 audit。单测/集成测试 profile 汇总各 420 项通过；Rustdoc 64 项通过、1 项忽略；文档包链接测试 3 项通过。依赖 audit 扫描 89 个 Cargo.lock 依赖，未报告漏洞。
+
+合并后 `.infra/bin/align-ci.sh` 仅对 selector recovery 三个 Rust 文件执行了 rustfmt 和 import 排序，变更已审核并提交；`git diff --check` 通过。此前诊断 coverage JSON 曾报告 5 个函数数据不匹配，但最终完整 `ci-check.sh` coverage 阶段通过且完整日志无该警告。
+
+本验收页更新后重跑 `cargo test --locked --test package_document_links_tests --test documentation_version_tests`，退出码 0：包内 Markdown 链接 3 项通过，文档版本/示例同步 6 项通过。
+
+此前固定候选 probe 的边界仍适用：locked metadata、两个消费者与 managed lifecycle 示例、`cargo package --list --locked`、真实 `/usr/bin/file` 和受控 ffprobe runner 均为本地通过；真实 `ffprobe` 不在 PATH。隔离 Cargo registry 检查因当前 registry 无 `qubit-mime ^0.22` 解析版本而失败，不代表发布解析通过。没有运行 GitHub hosted workflow；因此本验收仅证明所记录的本地候选与依赖路径结果，不推断 hosted CI 或 crates.io 结果。
