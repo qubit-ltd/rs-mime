@@ -256,7 +256,7 @@ fn test_operation_provider_random_access_backend_preserves_sample_extent() {
 }
 
 #[test]
-fn test_complete_extension_opts_into_metered_sequential_reads_and_eof_probe() {
+fn test_complete_extension_always_uses_metered_sequential_reads_and_eof_probe() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
     let services =
@@ -462,7 +462,7 @@ impl AsyncMimeDetectorBackend for CompleteSessionBackend {
     }
 
     fn uses_managed_provider_reads(&self) -> bool {
-        true
+        false
     }
 
     fn guess_content_in<'a>(

@@ -457,6 +457,15 @@ impl MimeRuntime {
                 input,
             });
         };
+        let Some((backend_id, backend)) = self.async_backend.as_ref().cloned() else {
+            return Err(MimeSubmitFailure {
+                reason: MimeSubmitRejection::AsyncUnsupported,
+                input,
+            });
+        };
+        // Extension hooks may be reentrant. Capture capabilities once before
+        // taking the shared submission lock.
+        let read_plan = mime_submission::ProviderReadPlan::capture(backend.as_ref());
         let _submission = services.submission_guard();
         let can_submit = if parent.is_some() {
             services.accepts_children()
@@ -469,13 +478,6 @@ impl MimeRuntime {
                 input,
             });
         }
-        let Some((backend_id, backend)) = self.async_backend.as_ref().cloned() else {
-            return Err(MimeSubmitFailure {
-                reason: MimeSubmitRejection::AsyncUnsupported,
-                input,
-            });
-        };
-        let managed_provider_reads = backend.uses_managed_provider_reads();
         let max_buffer_size = self.context.config().max_buffer_size();
         let repository = self.async_repository.clone();
         let filename_winner = repository.as_ref().and_then(|repository| match &input {
@@ -491,19 +493,17 @@ impl MimeRuntime {
             ),
         });
         let filename_short_circuit = filename_winner.is_some();
-        let requirement = if filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }) {
-            crate::ContentRequirement::Prefix(0)
-        } else {
-            backend.content_requirement()
-        };
+        let requirement = read_plan.requirement_for(
+            filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }),
+        );
         let permit = match mime_submission::preflight(
             &input,
             &options,
             requirement,
-            backend.random_access_capability(),
+            read_plan.random_access,
             max_buffer_size,
             &services,
-            managed_provider_reads,
+            read_plan.managed_provider_reads,
         ) {
             Ok(permit) => permit,
             Err(reason) => return Err(MimeSubmitFailure { reason, input }),
@@ -542,7 +542,7 @@ impl MimeRuntime {
         let body_standalone_tree = standalone_tree;
         let body_backend_id = backend_id.clone();
         let body_max_buffer_size = max_buffer_size;
-        let body_managed_provider_reads = managed_provider_reads;
+        let body_read_plan = read_plan;
         let body_filename_winner = filename_winner.map(|mime| mime.name().to_owned());
         let body = move |scope: OperationScope| async move {
             let read_tree = if let Some(pending_tree) = body_pending_tree {
@@ -555,7 +555,7 @@ impl MimeRuntime {
                 input: mime_submission::take(&body_cell),
                 services: body_services,
                 backend,
-                managed_provider_reads: body_managed_provider_reads,
+                read_plan: body_read_plan,
                 backend_id: body_backend_id,
                 filename_winner: body_filename_winner,
                 max_buffer_size: body_max_buffer_size,

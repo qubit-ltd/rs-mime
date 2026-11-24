@@ -14,6 +14,7 @@ use qubit_operation::ResourceManageErrorKind;
 use crate::detector::internal::mime_budget::ReadTreeContext;
 use crate::detector::internal::mime_budget::parent_read_budget_anchor::ParentReadBudgetAnchor;
 use crate::detector::internal::mime_budget::read_tree_registry::pending_binding::PendingBinding;
+use crate::detector::internal::mime_budget::read_tree_registry::pending_read_tree_root::unregister_pending;
 use crate::detector::internal::mime_budget::read_tree_registry::pending_read_tree_root_state::PendingReadTreeRootState;
 use crate::detector::internal::mime_budget::registration::Registration;
 
@@ -53,22 +54,22 @@ impl PendingReadTreeBinding {
                 let _registration = registrations.lock().unwrap_or_else(|e| e.into_inner());
                 let mut roots_map = roots.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(existing) = roots_map.get(&operation).and_then(Weak::upgrade) {
-                    let mut pending_state = pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut pending_state =
+                        pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
                     match &mut *pending_state {
                         PendingReadTreeRootState::Reserved(reservation) => {
                             drop(reservation.take());
                         }
-                        PendingReadTreeRootState::Detached | PendingReadTreeRootState::Failed(_) => {}
+                        PendingReadTreeRootState::Detached
+                        | PendingReadTreeRootState::Failed(_) => {}
                     }
-                    pending_roots
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .remove(&operation);
+                    unregister_pending(&pending_roots, operation, &pending_root);
                     return Ok(existing.child(self.scope_limit));
                 }
                 roots_map.remove(&operation);
 
-                let mut pending_state = pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
+                let mut pending_state =
+                    pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
                 let reservation = match &mut *pending_state {
                     PendingReadTreeRootState::Reserved(reservation) => reservation.take(),
                     PendingReadTreeRootState::Detached => {
@@ -95,27 +96,18 @@ impl PendingReadTreeBinding {
                             // safe to detach because it cannot admit new children.
                             drop(reservation);
                             *pending_state = PendingReadTreeRootState::Detached;
-                            pending_roots
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .remove(&operation);
+                            unregister_pending(&pending_roots, operation, &pending_root);
                             return Ok(root.child(self.scope_limit));
                         }
                         drop(reservation);
                         *pending_state = PendingReadTreeRootState::Failed(kind);
-                        pending_roots
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .remove(&operation);
+                        unregister_pending(&pending_roots, operation, &pending_root);
                         return Err(kind);
                     }
                 }
 
                 roots_map.insert(operation, Arc::downgrade(&root));
-                pending_roots
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&operation);
+                unregister_pending(&pending_roots, operation, &pending_root);
                 root.register(Registration {
                     roots: Arc::downgrade(&roots),
                     operation,
