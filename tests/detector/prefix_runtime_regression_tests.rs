@@ -68,6 +68,7 @@ struct PrefixProvider {
     requirement: usize,
     managed_reads: bool,
     observed: Arc<AtomicUsize>,
+    calls: Arc<AtomicUsize>,
 }
 
 impl ProviderMetadata for PrefixProvider {
@@ -86,6 +87,7 @@ impl AsyncMimeDetectorProvider for PrefixProvider {
             requirement: self.requirement,
             managed_reads: self.managed_reads,
             observed: Arc::clone(&self.observed),
+            calls: Arc::clone(&self.calls),
         }))
     }
 }
@@ -95,6 +97,7 @@ struct PrefixBackend {
     requirement: usize,
     managed_reads: bool,
     observed: Arc<AtomicUsize>,
+    calls: Arc<AtomicUsize>,
 }
 
 impl AsyncMimeDetectorBackend for PrefixBackend {
@@ -116,6 +119,7 @@ impl AsyncMimeDetectorBackend for PrefixBackend {
         input: BorrowedMimeInput<'a>,
         _options: &'a MimeOperationOptions,
     ) -> MimeFuture<'a, MimeCandidates> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
             let count = if self.managed_reads {
                 let BorrowedMimeInput::ManagedProvider { session, .. } = input else {
@@ -379,12 +383,14 @@ fn test_managed_prefix_backend_observes_static_cap_and_natural_eof() {
             MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
         services.prepare().unwrap();
         let observed = Arc::new(AtomicUsize::new(usize::MAX));
+        let calls = Arc::new(AtomicUsize::new(0));
         let registry = MimeDetectorRegistry::default();
         registry
             .register_async_provider(PrefixProvider {
                 requirement: 8,
                 managed_reads: true,
                 observed: Arc::clone(&observed),
+                calls: Arc::clone(&calls),
             })
             .unwrap();
         let runtime = MimeRuntime::builtin()
@@ -421,6 +427,7 @@ fn test_managed_prefix_backend_observes_static_cap_and_natural_eof() {
             expected,
             "backend input length for {name}"
         );
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "positive control for {name}");
         let shutdown = services.shutdown();
         assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
         assert!(shutdown.stop_services().unwrap().services_stopped);
@@ -439,12 +446,14 @@ fn test_automatic_prefix_backend_observes_static_cap_and_natural_eof() {
             MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
         services.prepare().unwrap();
         let observed = Arc::new(AtomicUsize::new(usize::MAX));
+        let calls = Arc::new(AtomicUsize::new(0));
         let registry = MimeDetectorRegistry::default();
         registry
             .register_async_provider(PrefixProvider {
                 requirement: 8,
                 managed_reads: false,
                 observed: Arc::clone(&observed),
+                calls: Arc::clone(&calls),
             })
             .unwrap();
         let runtime = MimeRuntime::builtin()
@@ -482,6 +491,7 @@ fn test_automatic_prefix_backend_observes_static_cap_and_natural_eof() {
             expected,
             "backend input length for {name}"
         );
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "positive control for {name}");
         let shutdown = services.shutdown();
         assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
         assert!(shutdown.stop_services().unwrap().services_stopped);
@@ -646,6 +656,7 @@ fn test_automatic_prefix_stops_before_second_read_after_first_read_requests_stop
             requirement: 8,
             managed_reads: false,
             observed: Arc::new(AtomicUsize::new(usize::MAX)),
+            calls: Arc::new(AtomicUsize::new(0)),
         })
         .unwrap();
     let runtime = MimeRuntime::builtin()
@@ -703,6 +714,152 @@ fn test_automatic_prefix_stops_before_second_read_after_first_read_requests_stop
 }
 
 #[test]
+fn test_managed_session_open_deadline_skips_extension_backend() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
+    services.prepare().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let registry = MimeDetectorRegistry::default();
+    registry
+        .register_async_provider(PrefixProvider {
+            requirement: 8,
+            managed_reads: true,
+            observed: Arc::new(AtomicUsize::new(usize::MAX)),
+            calls: Arc::clone(&calls),
+        })
+        .unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("prefix-runtime-test").unwrap(),
+        )
+        .unwrap();
+    let domain = qubit_operation::ClockDomainId::new_unique();
+    let clock = Arc::new(TestDeadlineClock {
+        domain,
+        ticks: std::sync::atomic::AtomicU64::new(0),
+    });
+    let clock_after_open = Arc::clone(&clock);
+    let hook: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        clock_after_open.ticks.store(5, Ordering::Release);
+    });
+    let filesystem = PrefixFileSystem::new(b"abcdefgh".to_vec()).with_open_hook(hook);
+    let filesystem = qubit_fs::AsyncFileSystem::from_spi(filesystem).unwrap();
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::Provider {
+                file_system: Arc::new(filesystem),
+                path: qubit_fs::Path::parse("/input").unwrap(),
+            },
+            MimeOperationOptions {
+                max_buffer_bytes: Some(8),
+                max_read_bytes: Some(8),
+                operation: qubit_operation::OperationOptions {
+                    context: qubit_operation::ContextOptions {
+                        clock: Some(clock),
+                        deadline: Some(qubit_operation::Deadline::at(
+                            qubit_operation::MonotonicTime::new(domain, 5),
+                        )),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| panic!("managed open deadline operation rejected: {:?}", failure.reason));
+
+    match block_on(operation.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Stopped(report) => {
+            assert_eq!(report.reason, qubit_operation::StopReason::Timeout);
+        }
+        other => panic!("managed open should preserve the deadline outcome: {other:?}"),
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "extension backend must not be called");
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+    assert!(shutdown.stop_services().unwrap().services_stopped);
+}
+
+#[test]
+fn test_automatic_prefix_deadline_after_final_read_skips_extension_backend() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
+    services.prepare().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let registry = MimeDetectorRegistry::default();
+    registry
+        .register_async_provider(PrefixProvider {
+            requirement: 4,
+            managed_reads: false,
+            observed: Arc::new(AtomicUsize::new(usize::MAX)),
+            calls: Arc::clone(&calls),
+        })
+        .unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("prefix-runtime-test").unwrap(),
+        )
+        .unwrap();
+    let domain = qubit_operation::ClockDomainId::new_unique();
+    let clock = Arc::new(TestDeadlineClock {
+        domain,
+        ticks: std::sync::atomic::AtomicU64::new(0),
+    });
+    let clock_after_read = Arc::clone(&clock);
+    let hook: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        clock_after_read.ticks.store(5, Ordering::Release);
+    });
+    let filesystem = PrefixFileSystem::new(b"abcdefgh".to_vec()).with_first_read_hook(4, hook);
+    let read_calls = Arc::clone(&filesystem.read_calls);
+    let filesystem = qubit_fs::AsyncFileSystem::from_spi(filesystem).unwrap();
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::Provider {
+                file_system: Arc::new(filesystem),
+                path: qubit_fs::Path::parse("/input").unwrap(),
+            },
+            MimeOperationOptions {
+                max_buffer_bytes: Some(4),
+                max_read_bytes: Some(4),
+                operation: qubit_operation::OperationOptions {
+                    context: qubit_operation::ContextOptions {
+                        clock: Some(clock),
+                        deadline: Some(qubit_operation::Deadline::at(
+                            qubit_operation::MonotonicTime::new(domain, 5),
+                        )),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| panic!("automatic prefix final-read deadline operation rejected: {:?}", failure.reason));
+
+    match block_on(operation.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Stopped(report) => {
+            assert_eq!(report.reason, qubit_operation::StopReason::Timeout);
+        }
+        other => panic!("automatic prefix should preserve the deadline outcome: {other:?}"),
+    }
+    assert_eq!(read_calls.load(Ordering::SeqCst), 1, "the full prefix was delivered in one read");
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "extension backend must not be called");
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+    assert!(shutdown.stop_services().unwrap().services_stopped);
+}
+
+#[test]
 fn test_automatic_prefix_deadline_after_first_read_blocks_second_read() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
@@ -715,6 +872,7 @@ fn test_automatic_prefix_deadline_after_first_read_blocks_second_read() {
             requirement: 8,
             managed_reads: false,
             observed: Arc::new(AtomicUsize::new(usize::MAX)),
+            calls: Arc::new(AtomicUsize::new(0)),
         })
         .unwrap();
     let runtime = MimeRuntime::builtin()
@@ -791,6 +949,7 @@ fn test_managed_prefix_owned_budget_rejection_returns_prefix_input() {
             requirement: 8,
             managed_reads: true,
             observed,
+            calls: Arc::new(AtomicUsize::new(0)),
         })
         .unwrap();
     let runtime = MimeRuntime::builtin()
@@ -832,6 +991,7 @@ struct PrefixFileSystem {
     max_read: usize,
     read_calls: Arc<AtomicUsize>,
     first_read_hook: Option<Arc<dyn Fn() + Send + Sync>>,
+    open_hook: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl PrefixFileSystem {
@@ -867,12 +1027,18 @@ impl PrefixFileSystem {
             max_read: usize::MAX,
             read_calls: Arc::new(AtomicUsize::new(0)),
             first_read_hook: None,
+            open_hook: None,
         }
     }
 
     fn with_first_read_hook(mut self, max_read: usize, hook: Arc<dyn Fn() + Send + Sync>) -> Self {
         self.max_read = max_read;
         self.first_read_hook = Some(hook);
+        self
+    }
+
+    fn with_open_hook(mut self, hook: Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.open_hook = Some(hook);
         self
     }
 }
@@ -904,7 +1070,13 @@ impl qubit_fs::spi::AsyncFileSystemSpi for PrefixFileSystem {
             read_calls: Arc::clone(&self.read_calls),
             first_read_hook: self.first_read_hook.clone(),
         };
-        Box::pin(async move { Ok(qubit_fs::spi::OpenedAsyncReader::new(info, Box::new(input))) })
+        let open_hook = self.open_hook.clone();
+        Box::pin(async move {
+            if let Some(hook) = open_hook {
+                hook();
+            }
+            Ok(qubit_fs::spi::OpenedAsyncReader::new(info, Box::new(input)))
+        })
     }
 
     fn open_random_access_reader<'a>(

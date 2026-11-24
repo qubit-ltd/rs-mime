@@ -304,7 +304,7 @@ impl MeteredReadSession {
 /// # Parameters
 ///
 /// - `context` is the operation state to check before provider I/O.
-fn ensure_active(context: &OperationContext) -> MimeResult<()> {
+pub(crate) fn ensure_active(context: &OperationContext) -> MimeResult<()> {
     if let Some(reason) = context.stop_reason() {
         return Err(MimeError::DetectorBackend {
             backend: "mime".into(),

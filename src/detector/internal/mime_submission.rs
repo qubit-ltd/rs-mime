@@ -28,6 +28,7 @@ use crate::MeteredReadSession;
 use crate::MimeDetectionReport;
 use crate::MimeError;
 use crate::MimeResult;
+use crate::detector::metered_read_session::ensure_active;
 use crate::detector::mime_detection_report::MimeBudgetSummary;
 use crate::detector::mime_execution_services::MimeExecutionServices;
 use crate::detector::mime_input::InputExtent;
@@ -384,6 +385,7 @@ async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport
                     )
                     .await?
                 };
+                ensure_active(&_scope.context())?;
                 let candidates = backend
                     .guess_provider_content_in(
                         &_scope,
@@ -451,6 +453,7 @@ async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport
                             ObservedReadError::Provider(error) => MimeError::from(error),
                         })?
                         .into_bytes();
+                    ensure_active(&_scope.context())?;
                     let candidates = backend
                         .guess_provider_content_in(
                             &_scope,
