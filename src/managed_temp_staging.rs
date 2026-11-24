@@ -27,6 +27,7 @@ use qubit_local_files::LocalFileSystem;
 use qubit_operation::CleanupFailure;
 use qubit_operation::CleanupStage;
 use qubit_operation::DiagnosticSummary;
+use qubit_operation::OperationContext;
 use qubit_operation::OperationScope;
 use qubit_operation::ResourceId;
 use qubit_operation::ResourceRef;
@@ -105,10 +106,18 @@ pub(crate) fn stage_owned_in<'a>(
 /// # Errors
 /// Returns the operation stop reason when stopping has begun.
 fn ensure_not_stopped(scope: &OperationScope) -> MimeResult<()> {
-    if let Some(reason) = scope.context().stop_reason() {
+    ensure_context_active(&scope.context())
+}
+
+/// Applies the stop and deadline checks to a context captured by worker work.
+///
+/// An accepted stop reason takes precedence over deadline expiry so that the
+/// operation's established stop semantics remain unchanged.
+fn ensure_context_active(context: &OperationContext) -> MimeResult<()> {
+    if let Some(reason) = context.stop_reason() {
         return Err(stopped_error(reason));
     }
-    if scope.context().is_expired() {
+    if context.is_expired() {
         return Err(stopped_error(StopReason::Timeout));
     }
     Ok(())
@@ -490,9 +499,7 @@ async fn create_empty_staged_with_inner(
     let worker = limits.worker.clone();
     let job = Box::new(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if let Some(reason) = context.stop_reason() {
-                return Err(stopped_error(reason));
-            }
+            ensure_context_active(&context)?;
             match create_temp() {
                 Ok(temp) => {
                     let staged = StagedMimeInput {
@@ -572,11 +579,8 @@ async fn write_chunk_in(
     let (sender, receiver) = completion_pair();
     let job = Box::new(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let result = if let Some(reason) = context.stop_reason() {
-                Err(stopped_error(reason))
-            } else {
-                staged.write_chunk(&bytes, permit)
-            };
+            let result =
+                ensure_context_active(&context).and_then(|()| staged.write_chunk(&bytes, permit));
             drop(bytes);
             drop(owned_permit);
             result
@@ -724,25 +728,38 @@ fn cleanup_failure(id: ResourceId, source: Arc<dyn std::error::Error + Send + Sy
 mod lifecycle_tests {
     use std::future::Future;
     use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::sync::atomic::AtomicU64;
     use std::sync::mpsc;
     use std::task::Context;
     use std::task::Poll;
     use std::task::Wake;
     use std::task::Waker;
 
+    use qubit_operation::ClockDomainId;
+    use qubit_operation::ClockSource;
+    use qubit_operation::ContextOptions;
+    use qubit_operation::Deadline;
     use qubit_operation::GroupOptions;
+    use qubit_operation::MonotonicTime;
+    use qubit_operation::OperationGroup;
     use qubit_operation::OperationManager;
+    use qubit_operation::OperationOptions;
+    use qubit_operation::OperationOutcome;
+    use qubit_operation::TimerRegistration;
 
     use super::ManagedStagingLimits;
     use super::create_empty_staged_with;
     use super::panic_message;
     use super::stage_borrowed_bytes_in;
     use super::stopped_error;
+    use super::write_chunk_in;
     use crate::InputExtent;
     use crate::command_execution::FixedMimeExecutionPort;
     use crate::command_execution::MimeExecutionWorker;
     use crate::detector::MimeExecutionPort;
     use crate::detector::MimeExecutionServices;
+    use qubit_local_files::LocalFileSystem;
 
     struct ThreadWake(std::thread::Thread);
 
@@ -750,6 +767,118 @@ mod lifecycle_tests {
         fn wake(self: Arc<Self>) {
             self.0.unpark();
         }
+    }
+
+    struct QueuedPort {
+        jobs: Mutex<std::collections::VecDeque<Box<dyn FnOnce() + Send + 'static>>>,
+        queued: mpsc::Sender<()>,
+    }
+
+    impl std::fmt::Debug for QueuedPort {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.debug_struct("QueuedPort").finish_non_exhaustive()
+        }
+    }
+
+    impl QueuedPort {
+        fn run_next(&self) {
+            let job = self
+                .jobs
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("a job was accepted");
+            job();
+        }
+    }
+
+    impl MimeExecutionPort for QueuedPort {
+        fn prepare(&self) -> Result<(), crate::MimeError> {
+            Ok(())
+        }
+
+        fn try_dispatch(
+            &self,
+            job: Box<dyn FnOnce() + Send + 'static>,
+        ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+            self.jobs.lock().unwrap().push_back(job);
+            self.queued.send(()).expect("test is observing queued jobs");
+            Ok(())
+        }
+
+        fn shutdown(&self) -> Result<(), crate::MimeError> {
+            Ok(())
+        }
+    }
+
+    struct TestClock {
+        domain: ClockDomainId,
+        ticks: AtomicU64,
+    }
+
+    impl ClockSource for TestClock {
+        fn now(&self) -> MonotonicTime {
+            MonotonicTime::new(
+                self.domain,
+                self.ticks.load(std::sync::atomic::Ordering::SeqCst),
+            )
+        }
+
+        fn register_deadline(
+            &self,
+            _at: MonotonicTime,
+            _wake: Waker,
+        ) -> Box<dyn TimerRegistration> {
+            Box::new(NoopTimer)
+        }
+    }
+
+    struct NoopTimer;
+
+    impl TimerRegistration for NoopTimer {
+        fn cancel(self: Box<Self>) {}
+    }
+
+    fn queued_services() -> (
+        Arc<QueuedPort>,
+        mpsc::Receiver<()>,
+        Arc<MimeExecutionServices>,
+        OperationGroup,
+        Arc<TestClock>,
+    ) {
+        let (queued_tx, queued_rx) = mpsc::channel();
+        let port = Arc::new(QueuedPort {
+            jobs: Mutex::new(std::collections::VecDeque::new()),
+            queued: queued_tx,
+        });
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let services =
+            Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 64).unwrap());
+        services.prepare().unwrap();
+        let clock = Arc::new(TestClock {
+            domain: ClockDomainId::new_unique(),
+            ticks: AtomicU64::new(0),
+        });
+        (port, queued_rx, services, group, clock)
+    }
+
+    fn deadline_options(clock: &Arc<TestClock>) -> OperationOptions {
+        OperationOptions {
+            context: ContextOptions {
+                clock: Some(clock.clone()),
+                deadline: Some(Deadline::at(MonotonicTime::new(clock.domain, 5))),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn assert_timeout<T>(result: &Result<T, crate::MimeError>) {
+        assert!(matches!(
+            result,
+            Err(crate::MimeError::OperationStopped(report)) if report.reason == qubit_operation::StopReason::Timeout
+        ));
     }
 
     fn block_on<F: Future>(future: F) -> F::Output {
@@ -782,6 +911,136 @@ mod lifecycle_tests {
                 if report.reason == qubit_operation::StopReason::UserCancelled
                     && report.accepted_at.is_none()
         ));
+    }
+
+    #[test]
+    fn test_queued_temp_creation_checks_deadline_before_creating_file() {
+        let (port, queued, services, group, clock) = queued_services();
+        let limits = ManagedStagingLimits {
+            max_bytes: 8,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port.clone()),
+        };
+        let created = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let created_in_job = Arc::clone(&created);
+        let mut operation = block_on(group.try_submit_async(
+            deadline_options(&clock),
+            move |scope| async move {
+                let reservation = scope.reserve_resource().unwrap();
+                let result = create_empty_staged_with(&scope, reservation, &limits, move || {
+                    created_in_job.store(true, std::sync::atomic::Ordering::SeqCst);
+                    LocalFileSystem::host()
+                        .unwrap()
+                        .create_temp_file()
+                        .map_err(Box::new)
+                })
+                .await;
+                Ok::<_, ()>(result)
+            },
+        ))
+        .unwrap();
+
+        queued
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        clock.ticks.store(5, std::sync::atomic::Ordering::SeqCst);
+        port.run_next();
+        let result = match block_on(operation.wait_outcome()).unwrap() {
+            OperationOutcome::Succeeded(result) => result,
+            _ => panic!("test body should observe the staging result"),
+        };
+        assert_timeout(&result);
+        assert!(
+            !created.load(std::sync::atomic::Ordering::SeqCst),
+            "expired queued job must not create a file"
+        );
+        assert!(block_on(operation.wait_settlement()).all_released());
+        assert_eq!(0, services.staging_budget().used_bytes());
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_queued_chunk_write_checks_deadline_before_appending() {
+        use std::io::Write;
+
+        let (port, queued, services, group, clock) = queued_services();
+        let limits = ManagedStagingLimits {
+            max_bytes: 8,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port.clone()),
+        };
+        let mut operation = block_on(group.try_submit_async(
+            deadline_options(&clock),
+            move |scope| async move {
+                let reservation = scope.reserve_resource().unwrap();
+                let staged = create_empty_staged_with(&scope, reservation, &limits, || {
+                    let mut temp = LocalFileSystem::host()
+                        .unwrap()
+                        .create_temp_file()
+                        .map_err(Box::new)?;
+                    temp.as_file_mut().unwrap().write_all(b"seed").unwrap();
+                    Ok(temp)
+                })
+                .await?;
+                let path = staged.path().unwrap();
+                let observed = staged.clone();
+                let permit = limits.budget.try_reserve(3).unwrap();
+                let owned = limits.budget.try_reserve_owned(3).unwrap();
+                let write_result = write_chunk_in(
+                    &scope,
+                    &limits.worker,
+                    staged,
+                    b"end".to_vec(),
+                    permit,
+                    owned,
+                )
+                .await;
+                Ok::<_, crate::MimeError>((write_result, observed, path))
+            },
+        ))
+        .unwrap();
+
+        queued
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        port.run_next();
+        queued
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        clock.ticks.store(5, std::sync::atomic::Ordering::SeqCst);
+        port.run_next();
+        let (write_result, observed, path) = match block_on(operation.wait_outcome()).unwrap() {
+            OperationOutcome::Succeeded(result) => result,
+            _ => panic!("test body should observe the write result"),
+        };
+        assert_timeout(&write_result);
+        assert_eq!(
+            b"seed",
+            std::fs::read(&path).unwrap().as_slice(),
+            "queued write must not append bytes"
+        );
+        assert_eq!(
+            0,
+            services.staging_budget().used_bytes(),
+            "unwritten permits must be returned"
+        );
+        drop(observed);
+        queued
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        port.run_next();
+        assert!(block_on(operation.wait_settlement()).all_released());
+        assert!(
+            !path.exists(),
+            "owner cleanup removes the staged file after settlement"
+        );
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 
     #[test]
