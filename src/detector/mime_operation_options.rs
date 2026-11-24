@@ -43,7 +43,12 @@ pub struct MimeOperationOptions {
     /// EOF; an exhausted budget cannot distinguish an exact-length object
     /// from a longer one.
     pub max_read_bytes: Option<u64>,
-    /// Shared operation context, deadline, and stop options.
+    /// Shared operation context, deadline, and stop options. Async detection
+    /// observes stop and deadline signals while its backend future is pending;
+    /// provider I/O and cooperative matching can therefore be cancelled at
+    /// those boundaries. Already dispatched execution jobs keep their
+    /// operation resources until the job actually settles. Synchronous work
+    /// observes a stop request at its next cooperative boundary.
     pub operation: OperationOptions,
 }
 

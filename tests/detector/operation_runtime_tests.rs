@@ -49,6 +49,10 @@ struct CountingFileSystem {
 
 impl CountingFileSystem {
     fn new(opens: Arc<AtomicUsize>) -> Self {
+        Self::with_semantics(opens, qubit_fs::path::PathSemantics::Hierarchical)
+    }
+
+    fn with_semantics(opens: Arc<AtomicUsize>, semantics: qubit_fs::path::PathSemantics) -> Self {
         use qubit_fs::metadata::FileSystemCapabilities;
         use qubit_fs::metadata::FileSystemCapability;
         use qubit_fs::metadata::FileSystemId;
@@ -56,7 +60,6 @@ impl CountingFileSystem {
         use qubit_fs::metadata::FileSystemLimits;
         use qubit_fs::metadata::SymlinkPolicy;
         use qubit_fs::path::PathConstraints;
-        use qubit_fs::path::PathSemantics;
         use qubit_fs::spi::ProviderOperation;
         use qubit_fs::spi::ProviderOperations;
         use qubit_fs::spi::ProviderProperties;
@@ -65,12 +68,12 @@ impl CountingFileSystem {
                 FileSystemInfo::new(
                     FileSystemId::new("mime-runtime-counting").unwrap(),
                     "mime-runtime-counting",
-                    PathSemantics::Hierarchical,
+                    semantics,
                 ),
                 ProviderOperations::new().with(ProviderOperation::OpenReader),
                 FileSystemCapabilities::new().with_guaranteed(FileSystemCapability::Read),
                 FileSystemLimits::unknown(),
-                PathConstraints::absolute(),
+                PathConstraints::either(),
                 SymlinkPolicy::Reject,
             )
             .unwrap(),
@@ -167,6 +170,198 @@ fn block_on<F: Future>(future: F) -> F::Output {
     }
 }
 
+struct DeadlineClockState {
+    ticks: u64,
+    registrations: Vec<(u64, bool, Waker)>,
+}
+
+struct DeadlineClock {
+    domain: qubit_operation::ClockDomainId,
+    state: Arc<std::sync::Mutex<DeadlineClockState>>,
+}
+
+impl DeadlineClock {
+    fn new() -> Self {
+        Self {
+            domain: qubit_operation::ClockDomainId::new_unique(),
+            state: Arc::new(std::sync::Mutex::new(DeadlineClockState {
+                ticks: 0,
+                registrations: Vec::new(),
+            })),
+        }
+    }
+
+    fn advance_to(&self, ticks: u64) {
+        let wakers = {
+            let mut state = self.state.lock().unwrap();
+            state.ticks = ticks;
+            state
+                .registrations
+                .iter()
+                .filter(|(deadline, active, _)| *active && *deadline <= ticks)
+                .map(|(_, _, waker)| waker.clone())
+                .collect::<Vec<_>>()
+        };
+        for waker in wakers {
+            waker.wake();
+        }
+    }
+
+    fn active_registrations(&self) -> usize {
+        self.state
+            .lock()
+            .unwrap()
+            .registrations
+            .iter()
+            .filter(|(_, active, _)| *active)
+            .count()
+    }
+}
+
+impl qubit_operation::ClockSource for DeadlineClock {
+    fn now(&self) -> qubit_operation::MonotonicTime {
+        qubit_operation::MonotonicTime::new(self.domain, self.state.lock().unwrap().ticks)
+    }
+
+    fn register_deadline(
+        &self,
+        at: qubit_operation::MonotonicTime,
+        wake: Waker,
+    ) -> Box<dyn qubit_operation::TimerRegistration> {
+        let index = {
+            let mut state = self.state.lock().unwrap();
+            let index = state.registrations.len();
+            state.registrations.push((at.ticks(), true, wake));
+            index
+        };
+        Box::new(DeadlineClockRegistration {
+            state: Arc::clone(&self.state),
+            index,
+        })
+    }
+}
+
+struct DeadlineClockRegistration {
+    state: Arc<std::sync::Mutex<DeadlineClockState>>,
+    index: usize,
+}
+
+impl qubit_operation::TimerRegistration for DeadlineClockRegistration {
+    fn cancel(self: Box<Self>) {
+        self.state.lock().unwrap().registrations[self.index].1 = false;
+    }
+}
+
+struct NeverWakeFileSystem {
+    properties: qubit_fs::spi::ProviderProperties,
+    reads: Arc<AtomicUsize>,
+    reader_drops: Arc<AtomicUsize>,
+    control: Arc<NeverWakeControl>,
+}
+
+impl NeverWakeFileSystem {
+    fn new(
+        reads: Arc<AtomicUsize>,
+        reader_drops: Arc<AtomicUsize>,
+        control: Arc<NeverWakeControl>,
+    ) -> Self {
+        let properties = CountingFileSystem::new(Arc::new(AtomicUsize::new(0))).properties;
+        Self {
+            properties,
+            reads,
+            reader_drops,
+            control,
+        }
+    }
+}
+
+impl qubit_fs::spi::AsyncFileSystemSpi for NeverWakeFileSystem {
+    fn properties(&self) -> qubit_fs::spi::ProviderProperties {
+        self.properties.clone()
+    }
+
+    fn stat<'a>(
+        &'a self,
+        _request: qubit_fs::spi::StatRequest<'a>,
+    ) -> qubit_fs::spi::SpiFuture<'a, qubit_fs::FsResult<qubit_fs::spi::StatResponse>> {
+        Box::pin(async { panic!("stat should not be called") })
+    }
+
+    fn open_reader<'a>(
+        &'a self,
+        request: qubit_fs::spi::OpenReaderRequest<'a>,
+    ) -> qubit_fs::spi::SpiFuture<'a, qubit_fs::FsResult<qubit_fs::spi::OpenedAsyncReader>> {
+        let reads = Arc::clone(&self.reads);
+        let reader_drops = Arc::clone(&self.reader_drops);
+        let control = Arc::clone(&self.control);
+        let info = qubit_fs::metadata::OpenedFileInfo::new(
+            qubit_fs::metadata::FileSystemId::new("mime-runtime-counting").unwrap(),
+            request.path().clone(),
+        );
+        Box::pin(async move {
+            Ok(qubit_fs::spi::OpenedAsyncReader::new(
+                info,
+                Box::new(NeverWakeInput {
+                    reads,
+                    reader_drops,
+                    control,
+                }),
+            ))
+        })
+    }
+}
+
+#[derive(Default)]
+struct NeverWakeControl {
+    state: std::sync::Mutex<(Option<Waker>, bool)>,
+}
+
+impl NeverWakeControl {
+    fn release(&self) {
+        let waker = {
+            let mut state = self.state.lock().unwrap();
+            state.1 = true;
+            state.0.clone()
+        };
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+}
+
+struct NeverWakeInput {
+    reads: Arc<AtomicUsize>,
+    reader_drops: Arc<AtomicUsize>,
+    control: Arc<NeverWakeControl>,
+}
+
+impl Drop for NeverWakeInput {
+    fn drop(&mut self) {
+        self.reader_drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl qubit_io::AsyncInput for NeverWakeInput {
+    type Item = u8;
+
+    unsafe fn poll_read_unchecked(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        _output: &mut [u8],
+        _index: usize,
+        _count: usize,
+    ) -> Poll<std::io::Result<usize>> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        let mut state = self.control.state.lock().unwrap();
+        if state.1 {
+            Poll::Ready(Ok(0))
+        } else {
+            state.0 = Some(cx.waker().clone());
+            Poll::Pending
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct TestExecution {
     prepared: std::sync::atomic::AtomicUsize,
@@ -192,6 +387,285 @@ fn services(
 ) -> qubit_mime::MimeExecutionServices {
     let group = manager.group(qubit_operation::GroupOptions { capacity }).unwrap();
     qubit_mime::MimeExecutionServices::new(manager.clone(), group, port, 1024).unwrap()
+}
+
+#[test]
+fn test_managed_deadline_wakes_never_waking_provider_read_and_releases_reader() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+    use qubit_operation::ClockSource;
+    use qubit_operation::ContextOptions;
+    use qubit_operation::Deadline;
+    use qubit_operation::MonotonicTime;
+    use qubit_operation::OperationOptions;
+    use qubit_operation::OperationOutcome;
+    use qubit_operation::StopReason;
+    use std::time::Duration;
+    use std::time::Instant;
+
+    let repository = Arc::new(
+        MimeRepository::from_xml(
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-never">
+    <magic priority="80"><match type="string" value="NEVER" offset="0"/></magic>
+  </mime-type>
+</mime-info>"#,
+        )
+        .unwrap(),
+    );
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let port = Arc::new(TestExecution::default());
+    let services = services(&manager, 4, Arc::clone(&port));
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::new(MimeConfig::default(), repository).with_execution_services(services.clone());
+    let clock = Arc::new(DeadlineClock::new());
+    let clock_source: Arc<dyn ClockSource> = clock.clone();
+    let control = Arc::new(NeverWakeControl::default());
+    let reads = Arc::new(AtomicUsize::new(0));
+    let reader_drops = Arc::new(AtomicUsize::new(0));
+    let file_system = Arc::new(
+        AsyncFileSystem::from_spi(NeverWakeFileSystem::new(
+            Arc::clone(&reads),
+            Arc::clone(&reader_drops),
+            Arc::clone(&control),
+        ))
+        .unwrap(),
+    );
+    let mut operation = match runtime.try_submit_detection(
+            OwnedMimeInput::Provider {
+                file_system,
+                path: Path::parse("/pending.data").unwrap(),
+            },
+            MimeOperationOptions {
+                operation: OperationOptions {
+                    context: ContextOptions {
+                        clock: Some(clock_source),
+                        deadline: Some(Deadline::at(MonotonicTime::new(clock.domain, 10))),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ) {
+        Ok(operation) => operation,
+        Err(failure) => panic!("provider operation should be accepted: {:?}", failure.reason),
+    };
+
+    let startup = Instant::now();
+    while reads.load(Ordering::SeqCst) == 0 && startup.elapsed() < Duration::from_secs(2) {
+        std::thread::yield_now();
+    }
+    assert!(reads.load(Ordering::SeqCst) > 0, "provider read should be pending");
+    let registered = clock.active_registrations() > 0;
+    clock.advance_to(10);
+
+    let wait_for_outcome = |operation: &mut qubit_mime::AsyncMimeOperation| {
+        let started = Instant::now();
+        loop {
+            if let Some(outcome) = operation.try_take_outcome().unwrap() {
+                return Some(outcome);
+            }
+            if started.elapsed() >= Duration::from_millis(500) {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    let mut outcome = wait_for_outcome(&mut operation);
+    if outcome.is_none() {
+        control.release();
+        outcome = wait_for_outcome(&mut operation);
+    }
+
+    assert!(registered, "the accepted operation must register its deadline");
+    assert!(
+        matches!(outcome, Some(OperationOutcome::Stopped(ref report)) if report.reason == StopReason::Timeout),
+        "deadline should win while the provider read is pending: {outcome:?}"
+    );
+    let _settlement = block_on(operation.wait_settlement());
+    assert_eq!(1, reader_drops.load(Ordering::SeqCst), "the pending reader must be released");
+    assert_eq!(0, clock.active_registrations(), "the completed deadline timer must be cancelled");
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_managed_deadline_stops_cooperative_repository_matching() {
+    use qubit_operation::ClockSource;
+    use qubit_operation::ContextOptions;
+    use qubit_operation::Deadline;
+    use qubit_operation::MonotonicTime;
+    use qubit_operation::OperationOptions;
+    use qubit_operation::OperationOutcome;
+    use qubit_operation::StopReason;
+    use std::time::Duration;
+    use std::time::Instant;
+
+    let magic_rules = (0..8192)
+        .map(|index| {
+            format!(
+                "<mime-type type=\"application/x-deadline-{index}\"><magic priority=\"80\"><match type=\"string\" value=\"NEVER{index}\" offset=\"0\"/></magic></mime-type>"
+            )
+        })
+        .collect::<String>();
+    let repository = Arc::new(
+        MimeRepository::from_xml(&format!(
+            "<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\">{magic_rules}</mime-info>"
+        ))
+        .unwrap(),
+    );
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let services = services(&manager, 4, Arc::new(TestExecution::default()));
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::new(MimeConfig::default(), repository).with_execution_services(services.clone());
+    let clock = Arc::new(DeadlineClock::new());
+    let clock_source: Arc<dyn ClockSource> = clock.clone();
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(b"X".as_slice()), InputExtent::Complete),
+            MimeOperationOptions {
+                operation: OperationOptions {
+                    context: ContextOptions {
+                        clock: Some(clock_source),
+                        deadline: Some(Deadline::at(MonotonicTime::new(clock.domain, 10))),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| panic!("matcher operation should be accepted: {:?}", failure.reason));
+
+    let startup = Instant::now();
+    while clock.active_registrations() == 0 && startup.elapsed() < Duration::from_secs(2) {
+        std::thread::yield_now();
+    }
+    assert!(clock.active_registrations() > 0, "accepted matcher should register its deadline");
+    assert!(operation.try_take_outcome().unwrap().is_none(), "wide matcher should still be cooperative");
+    clock.advance_to(10);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let outcome = loop {
+        if let Some(outcome) = operation.try_take_outcome().unwrap() {
+            break outcome;
+        }
+        assert!(Instant::now() < deadline, "deadline did not stop the repository matcher");
+        std::thread::yield_now();
+    };
+    assert!(matches!(
+        outcome,
+        OperationOutcome::Stopped(ref report) if report.reason == StopReason::Timeout
+    ));
+    let _settlement = block_on(operation.wait_settlement());
+    assert_eq!(0, clock.active_registrations(), "deadline timer should be cancelled");
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_user_cancel_wins_when_racing_a_managed_deadline() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+    use qubit_operation::ClockSource;
+    use qubit_operation::ContextOptions;
+    use qubit_operation::Deadline;
+    use qubit_operation::MonotonicTime;
+    use qubit_operation::OperationOptions;
+    use qubit_operation::OperationOutcome;
+    use qubit_operation::StopReason;
+    use std::time::Duration;
+    use std::time::Instant;
+
+    let repository = Arc::new(
+        MimeRepository::from_xml(
+            r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-never">
+    <magic priority="80"><match type="string" value="NEVER" offset="0"/></magic>
+  </mime-type>
+</mime-info>"#,
+        )
+        .unwrap(),
+    );
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let services = services(&manager, 4, Arc::new(TestExecution::default()));
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::new(MimeConfig::default(), repository).with_execution_services(services.clone());
+    let clock = Arc::new(DeadlineClock::new());
+    let clock_source: Arc<dyn ClockSource> = clock.clone();
+    let control = Arc::new(NeverWakeControl::default());
+    let reads = Arc::new(AtomicUsize::new(0));
+    let reader_drops = Arc::new(AtomicUsize::new(0));
+    let file_system = Arc::new(
+        AsyncFileSystem::from_spi(NeverWakeFileSystem::new(
+            Arc::clone(&reads),
+            Arc::clone(&reader_drops),
+            Arc::clone(&control),
+        ))
+        .unwrap(),
+    );
+    let mut operation = runtime
+        .try_submit_detection(
+            OwnedMimeInput::Provider {
+                file_system,
+                path: Path::parse("/pending.data").unwrap(),
+            },
+            MimeOperationOptions {
+                operation: OperationOptions {
+                    context: ContextOptions {
+                        clock: Some(clock_source),
+                        deadline: Some(Deadline::at(MonotonicTime::new(clock.domain, 10))),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap_or_else(|failure| panic!("provider operation should be accepted: {:?}", failure.reason));
+
+    let startup = Instant::now();
+    while reads.load(Ordering::SeqCst) == 0 && startup.elapsed() < Duration::from_secs(2) {
+        std::thread::yield_now();
+    }
+    assert!(reads.load(Ordering::SeqCst) > 0, "provider read should be pending");
+    assert!(clock.active_registrations() > 0, "operation should register its deadline");
+    assert_eq!(
+        qubit_operation::StopRequestStatus::Accepted,
+        operation.request_stop(StopReason::UserCancelled),
+    );
+    clock.advance_to(10);
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let outcome = loop {
+        if let Some(outcome) = operation.try_take_outcome().unwrap() {
+            break outcome;
+        }
+        if Instant::now() >= deadline {
+            control.release();
+            panic!("explicit cancellation did not wake the provider read");
+        }
+        std::thread::yield_now();
+    };
+    assert!(matches!(
+        outcome,
+        OperationOutcome::Stopped(ref report) if report.reason == StopReason::UserCancelled
+    ));
+    let _settlement = block_on(operation.wait_settlement());
+    assert_eq!(1, reader_drops.load(Ordering::SeqCst), "cancellation should release the reader");
+    assert_eq!(0, clock.active_registrations(), "stop should cancel its deadline timer");
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
 }
 
 #[test]
@@ -481,6 +955,78 @@ fn test_managed_provider_uses_native_basename_for_filename_short_circuit() {
         "string filename matching must not open the unrelated provider"
     );
 
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_managed_provider_candidate_fallback_preserves_object_key_basename() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-native-basename">
+    <glob pattern="left\right.mimecase" weight="80"/>
+  </mime-type>
+  <mime-type type="application/x-string-basename">
+    <glob pattern="right.mimecase" weight="50"/>
+  </mime-type>
+  <mime-type type="application/x-unmatched-content">
+    <magic priority="80"><match type="string" value="NEVER" offset="0"/></magic>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("custom filename repository should parse");
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let services = services(&manager, 4, Arc::new(TestExecution::default()));
+    services.prepare().unwrap();
+    let opens = Arc::new(AtomicUsize::new(0));
+    let file_system = Arc::new(
+        AsyncFileSystem::from_spi(CountingFileSystem::with_semantics(
+            Arc::clone(&opens),
+            qubit_fs::path::PathSemantics::ObjectKey,
+        ))
+        .unwrap(),
+    );
+    let runtime =
+        MimeRuntime::new(MimeConfig::default(), Arc::new(repository)).with_execution_services(services.clone());
+
+    for (policy, expected) in [
+        (
+            qubit_mime::MimeDetectionPolicy::ContentFirst,
+            Some("application/x-native-basename"),
+        ),
+        (
+            qubit_mime::MimeDetectionPolicy::Freedesktop,
+            Some("application/x-native-basename"),
+        ),
+        (qubit_mime::MimeDetectionPolicy::VerifyContent, None),
+    ] {
+        let mut operation = runtime
+            .try_submit_detection(
+                OwnedMimeInput::Provider {
+                    file_system: Arc::clone(&file_system),
+                    path: Path::parse_literal(r"/left\right.mimecase").unwrap(),
+                },
+                MimeOperationOptions {
+                    policy,
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_else(|failure| panic!("provider request should be admitted: {:?}", failure.reason));
+        let report = match block_on(operation.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(report) => report,
+            other => panic!("provider content detection should succeed: {other:?}"),
+        };
+
+        assert_eq!(expected, report.mime_type.as_deref());
+        assert_eq!(4, report.budget.bytes_read);
+    }
+
+    assert_eq!(3, opens.load(Ordering::SeqCst), "non-short-circuit policies must read the provider");
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();
