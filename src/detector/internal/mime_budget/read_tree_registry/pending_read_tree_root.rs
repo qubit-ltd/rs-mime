@@ -22,6 +22,10 @@ pub(super) struct PendingReadTreeRoot {
     pub(super) root: Arc<ReadTreeContext>,
     /// Parent resource reservation or its terminal commit state.
     pub(super) state: Mutex<PendingReadTreeRootState>,
+    /// Pending index entry removed when the final binding ticket is dropped.
+    pub(super) pending_roots: Weak<PendingRoots>,
+    /// Parent operation whose weak index entry this root owns.
+    pub(super) operation: OperationId,
 }
 
 /// Weak lookup table for pending roots keyed by their parent operation.
@@ -33,11 +37,27 @@ pub(super) fn unregister_pending(
     operation: OperationId,
     pending_root: &Arc<PendingReadTreeRoot>,
 ) {
+    unregister_pending_ptr(pending_roots, operation, Arc::as_ptr(pending_root));
+}
+
+fn unregister_pending_ptr(
+    pending_roots: &PendingRoots,
+    operation: OperationId,
+    pending_root: *const PendingReadTreeRoot,
+) {
     let mut pending_roots = pending_roots.lock().unwrap_or_else(|e| e.into_inner());
     let matches = pending_roots
         .get(&operation)
-        .is_some_and(|registered| registered.as_ptr() == Arc::as_ptr(pending_root));
+        .is_some_and(|registered| registered.as_ptr() == pending_root);
     if matches {
         pending_roots.remove(&operation);
+    }
+}
+
+impl Drop for PendingReadTreeRoot {
+    fn drop(&mut self) {
+        if let Some(pending_roots) = self.pending_roots.upgrade() {
+            unregister_pending_ptr(&pending_roots, self.operation, self as *const Self);
+        }
     }
 }
