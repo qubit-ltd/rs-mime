@@ -18,7 +18,6 @@ use qubit_operation::CleanupOutcome;
 use qubit_operation::ResourceId;
 
 use super::StagedMimeInput;
-use super::staged_mime_input::StagedTempOwner;
 use super::cleanup_failure;
 use super::completion::completion_pair;
 use super::panic_message;
@@ -127,7 +126,7 @@ mod tests {
     use qubit_operation::OperationOutcome;
 
     use super::ManagedTempCleanup;
-    use super::StagedTempOwner;
+    use super::super::staged_mime_input::StagedTempOwner;
     use crate::MimeError;
     use crate::command_execution::FixedMimeExecutionPort;
     use crate::command_execution::MimeExecutionWorker;
