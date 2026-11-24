@@ -659,7 +659,6 @@ fn parse_offset(value: &str) -> MimeResult<(usize, usize)> {
 /// # Parameters
 /// - `value`: Number text.
 /// - `attribute`: XML attribute name used in diagnostics.
-/// - `attribute`: Attribute name used in error messages.
 ///
 /// # Returns
 /// Parsed integer.
@@ -729,6 +728,7 @@ fn parse_c_string_bytes(value: &str) -> MimeResult<Vec<u8>> {
 /// # Parameters
 /// - `value_type`: Numeric matcher type.
 /// - `value`: Numeric text in decimal, octal, or hexadecimal notation.
+/// - `attribute`: XML attribute name used in diagnostics.
 ///
 /// # Returns
 /// Big-endian bytes with the width required by `value_type`.
@@ -761,6 +761,7 @@ fn parse_numeric_bytes(value_type: MagicValueType, value: &str, attribute: &str)
 /// # Parameters
 /// - `value_type`: Numeric matcher type.
 /// - `value`: Numeric text from the XML attribute.
+/// - `attribute`: XML attribute name used in diagnostics.
 ///
 /// # Returns
 /// Invalid XML attribute error for an oversized numeric value.

@@ -233,6 +233,7 @@ impl MimeMagicMatcher {
     /// # Parameters
     /// - `bytes`: Content prefix tested against this matcher tree.
     /// - `scope`: Operation scope checked between bounded work batches.
+    /// - `work`: Work budget shared with the calling matcher traversal.
     ///
     /// # Returns
     /// `true` when the parent and one complete nested branch match.
@@ -278,6 +279,7 @@ impl MimeMagicMatcher {
     /// # Parameters
     /// - `bytes`: Content prefix tested against the node value.
     /// - `scope`: Operation scope used for bounded yields and cancellation.
+    /// - `work`: Work budget shared with the calling matcher traversal.
     ///
     /// # Returns
     /// `true` when one allowed offset matches the node value.
@@ -306,6 +308,7 @@ impl MimeMagicMatcher {
     /// # Parameters
     /// - `bytes`: Content prefix tested by the raw matcher.
     /// - `scope`: Operation scope checked while scanning offsets.
+    /// - `work`: Work budget shared with the calling matcher traversal.
     ///
     /// # Returns
     /// `true` when the value matches at an allowed offset.
@@ -342,6 +345,7 @@ impl MimeMagicMatcher {
     /// - `bytes`: Content prefix containing the candidate value.
     /// - `offset`: Starting byte offset for this comparison.
     /// - `scope`: Operation scope checked during unusually wide comparisons.
+    /// - `work`: Work budget shared with the calling matcher traversal.
     ///
     /// # Returns
     /// `true` when every value byte matches at the candidate offset.
@@ -376,6 +380,7 @@ impl MimeMagicMatcher {
     /// # Parameters
     /// - `bytes`: Content prefix tested by the numeric matcher.
     /// - `scope`: Operation scope checked while scanning offsets.
+    /// - `work`: Work budget shared with the calling matcher traversal.
     ///
     /// # Returns
     /// `true` when a numeric value matches at an allowed offset.

@@ -13,6 +13,7 @@ mod classifier;
 mod common_mime_types_tests;
 mod constants_tests;
 mod detector;
+mod filesystem_prefix_regression_tests;
 mod mime_error_tests;
 mod repository;
 mod support;

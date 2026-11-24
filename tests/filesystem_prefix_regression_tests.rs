@@ -48,8 +48,32 @@ fn test_detection_prefix_counts_for_oversized_resources() {
             assert_eq!(provider.opened(), 1);
             assert_eq!(provider.stat_calls(), 0);
             assert!(provider.requested_read_bytes() <= maximum);
+            if range {
+                assert_eq!(provider.range_length(), Some(maximum as u64));
+            }
         }
     }
+}
+
+/// A short resource returns its available bytes when the requested prefix reaches EOF.
+#[test]
+fn test_detection_prefix_stops_at_natural_eof() {
+    let detector = RepositoryMimeDetector::new().expect("repository detector");
+    let detector: &dyn MimeDetector = &detector;
+    let provider = PrefixFileSystemSpi::hierarchical(b"%PDF-1.7\n".to_vec());
+    let filesystem = FileSystem::from_spi(provider.clone()).expect("filesystem");
+    let detected = detector
+        .detect_path(
+            &filesystem,
+            &Path::parse("/short.pdf").expect("path"),
+            64,
+            MimeDetectionPolicy::VerifyContent,
+        )
+        .expect("EOF-shortened prefix should be detected");
+
+    assert_eq!(detected.as_deref(), Some("application/pdf"));
+    assert_eq!(provider.opened(), 1);
+    assert_eq!(provider.stat_calls(), 0);
 }
 
 /// Detector admission rejects an excessive limit before opening the provider.
