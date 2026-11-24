@@ -229,9 +229,10 @@ The top-level `MimeDetector::detect_reader` treats the reader as a whole
 resource: detection starts at logical byte zero even when the caller's cursor
 is elsewhere, then restores the original position. The default
 `MimeContentBackend::detect_reader` has a different contract and reads only
-from the current position. `Prefix(n)` reads at most `n` bytes and stops early
-at EOF. `Complete` reads through EOF within the default 16 MiB buffer budget,
-or an overridden budget, and probes one extra byte to detect overflow. Both
+from the current position, then passes those bytes to `detect_bytes`; it does
+not call a reader-specific hook. `Prefix(n)` reads at most `n` bytes and stops
+early at EOF. `Complete` reads through EOF within the default 16 MiB buffer
+budget, or an overridden budget, and probes one extra byte to detect overflow. Both
 content-backend modes restore their starting position; if reading and
 restoration both fail, the restoration error takes precedence.
 
@@ -349,18 +350,19 @@ selectors cause inventory construction to fail. With the feature disabled,
 register providers explicitly as shown above.
 
 Registry-based Magika inventory consumption requires published `qubit-mime`
-0.22 and `qubit-magika` 0.18 releases. Until both are available, follow the
-[fixed-source consumer setup below](#fixed-source-magika-consumer).
+0.22 and `qubit-magika` 0.18 releases. The independent registry manifest
+check on 2026-11-24 found `qubit-mime` 0.22.0 unpublished, so this release
+prerequisite was not met at that check. Until the required releases are
+available, use the fixed-source consumer below.
 
 ### Fixed-source Magika consumer
 
-Use this path while the required `qubit-magika` 0.18 and `qubit-mime` 0.22
-registry releases are unavailable. Check out the repositories beside one
-another, using the revisions in Magika's
-[pinned dependency table](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/ci/local-path-dependencies.tsv):
+The following source combination was exercised with both consumer feature
+paths. Place the repositories under one `consumer-root/` directory:
 
 ```text
 consumer-root/
+├── app/
 ├── rs-magika/
 ├── rs-mime/
 ├── rs-operation/
@@ -371,11 +373,39 @@ consumer-root/
 └── rs-local-files/
 ```
 
-Use Magika's
-[`prepare-local-path-dependencies.sh`](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/bin/prepare-local-path-dependencies.sh)
-from its source checkout to prepare and check the pinned sibling dependencies.
-For an application whose `Cargo.toml` is directly under `consumer-root/app/`,
-the relevant manifest entries are:
+Check out the recorded revisions directly:
+
+| Repository | Revision |
+| --- | --- |
+| `rs-mime` | `c05273cb8ac7ff8bb22d96c4385e38fb12b99d63` |
+| `rs-magika` | `d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b` |
+| `rs-operation` | `2821f739c996250fa9cfe33a86efc54c2fab6373` |
+| `rs-fs` | `c7ea1d035498aa633f4f3c04d90fdb5d4b73de97` |
+| `rs-fs-local` | `3bf4275ed601e39fdbf8532f9d80d563d9cc7182` |
+| `rs-fs-registry` | `df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c` |
+| `rs-fs-testkit` | `28bf195b8eef9c03d9cb1c5428186758b76aaacd` |
+| `rs-local-files` | `5b52230e0af2997fadc45b5ff48be65b0ca5a70d` |
+
+For each repository, clone its GitHub URL and check out the corresponding
+revision with `git -C <repository> checkout --detach <revision>`. For example:
+
+```bash
+git clone https://github.com/qubit-ltd/rs-mime.git
+git -C rs-mime checkout --detach c05273cb8ac7ff8bb22d96c4385e38fb12b99d63
+git clone https://github.com/qubit-ltd/rs-magika.git
+git -C rs-magika checkout --detach d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b
+```
+
+Repeat this pair for each remaining table row. From the `rs-mime` checkout,
+verify that sibling dependencies and lock data match the recorded setup:
+
+```bash
+cd rs-mime
+./.infra/bin/prepare-local-path-dependencies.sh --check-locked
+```
+
+For an application whose
+manifest is under `consumer-root/app/`, use these sibling paths:
 
 ```toml
 [dependencies]
@@ -387,57 +417,49 @@ ort = { version = ">=2.0.0-rc.12,<2.1", default-features = false, features = ["s
 
 [patch.crates-io]
 qubit-operation = { path = "../rs-operation" }
-```
 
-The paths are resolved from the application's manifest directory. The patch
-ensures transitive crates.io references to `qubit-operation` use the same
-checkout as the direct dependency. The normal setup explicitly registers
-`MagikaMimeDetectorProvider`. For inventory discovery, enable `inventory` on
-`qubit-magika` and reference `qubit_magika` in the application so its inventory
-entry is linked; that feature enables MIME inventory transitively. Inventory
-still defaults to `repository`; select `magika` explicitly.
-
-For example, add this application feature and enable it for the inventory
-check:
-
-```toml
 [features]
 inventory = ["qubit-magika/inventory"]
 ```
 
-This fixture uses dynamic ONNX Runtime loading. Install the ONNX Runtime 1.24.2
-shared library and set `ORT_LIBRARY_PATH` to the library file; on Linux also
-include its directory in `LD_LIBRARY_PATH`. Magika's CI uses the verified
-1.24.2 Python wheel and sets both variables. From the Magika checkout, the
-fixture commands use its checked-in lock file:
+The regular entry constructs `ManagedInferenceRuntime` and registers
+`MagikaMimeDetectorProvider` explicitly. The fixture directly references
+`qubit_magika` types, which keeps its provider linked for inventory discovery.
+A custom app can use `use qubit_magika as _;` if it otherwise has no symbol
+reference to the crate. Inventory discovers `magika` through
+`MimeDetectorRegistry::builtin()`, but still leaves `repository` as the default;
+select `magika` explicitly. The complete copyable entry point is the
+[consumer fixture at the tested revision](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/src/main.rs).
+
+The fixture dynamically loads ONNX Runtime 1.24.2. Set `ORT_LIBRARY_PATH` to
+the shared library and, on Linux, add its directory to `LD_LIBRARY_PATH`. The
+[fixed-revision workflow](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/.github/workflows/magika-consumer.yml)
+records the verified wheel URL and SHA-256. From `consumer-root/`, run the
+fixture commands with its checked-in lock file:
 
 ```bash
-cargo +1.94.0 run --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml
-cargo +1.94.0 run --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml --features inventory
+cargo +1.94.0 check --locked --manifest-path rs-mime/tests/fixtures/magika_inventory_consumer/Cargo.toml
+cargo +1.94.0 run --locked --manifest-path rs-mime/tests/fixtures/magika_inventory_consumer/Cargo.toml
+cargo +1.94.0 check --locked --manifest-path rs-mime/tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
+cargo +1.94.0 run --locked --manifest-path rs-mime/tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
 ```
 
-For a new application, first create its lock file, then check that the direct
-and transitive `qubit-operation` references resolve to one package identity in
-both feature configurations; both trees should identify the same `../rs-operation`
-checkout and version. Run these commands from `consumer-root/`:
+Without `inventory`, the fixture explicitly registers Magika. With it, the
+registry discovers Magika and the fixture still selects it explicitly. Both
+commands assert the `repository` default and detect Python content and a PDF
+filename. For a new app, first create its `Cargo.lock`, then run the same
+`check`, `run`, and `cargo tree -i qubit-operation` commands for both feature
+sets. Each dependency tree should contain one `qubit-operation` package from
+the pinned `rs-operation` checkout. The fixture [manifest](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.toml)
+and [lock file](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.lock)
+are in the linked source revision but are excluded from the crate package. The
+`.github` workflow is linked above because it is excluded as well.
 
-```bash
-cargo +1.94.0 generate-lockfile --manifest-path app/Cargo.toml
-cargo +1.94.0 tree --locked --manifest-path app/Cargo.toml -i qubit-operation
-cargo +1.94.0 tree --locked --manifest-path app/Cargo.toml --features inventory -i qubit-operation
-cargo +1.94.0 check --locked --manifest-path app/Cargo.toml
-cargo +1.94.0 run --locked --manifest-path app/Cargo.toml
-cargo +1.94.0 run --locked --manifest-path app/Cargo.toml --features inventory
-```
-
-Inventory changes discovery only: Magika remains a synchronous registry
-provider, and its `detect_async_path` convenience method does not attach work
-to a parent `OperationScope`. The scope-aware `MimeRuntime` path uses the
-provider-level async registry and requires an async-capable provider. The
-built-in `repository` and `file` providers support that path; selecting
-`magika` there returns `AsyncUnsupported`. Keep the `use qubit_magika as _;`
-link reference when using inventory, and explicitly register Magika when
-inventory is disabled.
+Magika remains a synchronous registry provider under both discovery paths;
+its `detect_async_path` convenience method does not attach work to a parent
+`OperationScope`. The scope-aware `MimeRuntime` path requires an async-capable
+provider. The built-in `repository` and `file` providers support it; selecting
+`magika` there returns `AsyncUnsupported`.
 
 For richer inspection, use `MimeRepository` directly to access `MimeType`
 metadata, aliases, comments, filename extensions, magic rules, and super-type
@@ -646,14 +668,12 @@ limits still constrain the combined tree usage.
 current allowances and temporary scratch memory has a separate reservation.
 The built-in managed `file` provider meters its own staging reads internally.
 
-The existing `FileCommandMimeDetector` synchronous APIs remain available; the
+The legacy `FileCommandMimeDetector` synchronous APIs remain available; the
 managed backend is selected through `MimeRuntime` for operation-backed work.
 When `file` is selected with any async classifier, its managed factory rejects
 the selection with `UnsupportedCapability` during runtime configuration, even
-if the submitted input would not require classifier refinement. This restriction
-applies to the managed factory; the legacy synchronous `FileCommandMimeDetector`
-API remains available. The managed `file` backend meters provider bytes
-internally while staging complete input;
+if the submitted input would not require classifier refinement. The managed
+`file` backend meters provider bytes internally while staging complete input;
 extension backends use the exposed `ManagedProvider` session described below.
 The legacy async content hook returns `AsyncUnsupported`; use the managed path
 when staging, worker execution, and cleanup must be tracked by the operation.
@@ -761,7 +781,7 @@ capabilities are:
 | Provider | Managed async backend | Input and refinement limits |
 | --- | --- | --- |
 | `repository` | Yes | Matches supplied bytes against repository rules; does not support random-access input. |
-| `file` | Yes, after explicit selection | Requires complete content and does not support random-access input. Attaching a classifier that needs same-object refinement is rejected with `UnsupportedCapability`. |
+| `file` | Yes, after explicit selection | Requires complete content and does not support random-access input. Attaching any async classifier is rejected with `UnsupportedCapability` during factory creation. |
 | Sync-only custom provider | No | Async selection returns `AsyncUnsupported`; it is not run synchronously as a fallback. |
 
 For path-backed inputs, filename rules receive the native path basename through
@@ -776,20 +796,16 @@ the accepted operation. A classifier also needs explicit async selection and a
 compatible same-object capability; do not assume `ffprobe` is available
 through every detector selection.
 
-`MimeExecutionServices::shutdown()` closes new root submissions and returns a
-repeatable observer. Call `wait_services_settled()` to observe tracked
-operations. If recovery is required, use `recovery_handles_snapshot()` to
-retrieve the unresolved group handles, then resolve or transfer them before
-stopping services. Complete new external admission before group admission
-closes, or dispatch required descendants from an operation scope already
-accepted into the MIME group. After group admission closes, a new external
-scope cannot join for the first time, while accepted in-group parent scopes may
-continue dispatching their descendants. Call `stop_services()` from an external
-synchronous context, then observe group shutdown with `wait_group_shutdown()`. A
-pending settlement is unresolved work, not a release confirmation; group Drain can remain pending
-while callers retain typed handles. `stop_services()` returns
-`OperationShutdownPending` while operations or recovery remain unresolved and
-does not retry recovery automatically. The 0.22.0 target remains under acceptance; see the
+For the shutdown and retry sequence, follow the runnable
+[`managed_lifecycle` example](../examples/managed_lifecycle.rs): close root
+submissions, observe outcomes and settlement, release operation handles,
+resolve or transfer recovery work, stop services from outside their worker
+pool, then wait for group Drain. Admit required external scopes before group
+admission closes; an already accepted parent may still dispatch descendants
+afterward. Pending settlement is unresolved work, not release confirmation.
+`stop_services()` returns `OperationShutdownPending` while operations or
+recovery remain unresolved, and it does not retry recovery automatically. The
+0.22.0 target remains under acceptance; see the
 [acceptance record](acceptance-0.22.0-operation-0.2.zh_CN.md) for tested behavior
 and outstanding lifecycle checks.
 

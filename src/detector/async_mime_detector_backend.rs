@@ -105,9 +105,11 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     /// same-object read session instead of an unbounded filesystem handle.
     ///
     /// Complete reads and same-object sampling always use metered sessions,
-    /// regardless of this compatibility hook's return value. Prefix backends
-    /// normally receive bytes bounded to their requested window; a backend that
-    /// opts into sequential `MeteredReadSession` access may override this
+    /// regardless of this compatibility hook's return value. Ordinary
+    /// automatic `Prefix(n)` reads are bounded by the requested window and
+    /// applicable service limits; EOF can deliver fewer than `n` bytes, which
+    /// remain conservatively described as `InputExtent::Prefix`. A backend
+    /// that opts into sequential `MeteredReadSession` access may override this
     /// method to return `true`. Built-in providers may meter their own reads.
     ///
     /// # Returns

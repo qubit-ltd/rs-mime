@@ -278,8 +278,17 @@ Duplicate submitted selectors fail inventory construction. Without this feature,
 providers continue to require explicit registration.
 
 Registry-based Magika inventory consumption requires published `qubit-mime`
-0.22 and `qubit-magika` 0.18 releases. Until both are available, use the
-[fixed-source consumer setup in the user guide](doc/user_guide.md#fixed-source-magika-consumer) gives the sibling checkout layout, application manifest, dynamic ONNX Runtime prerequisite, and normal/inventory checks. The fixture has its own lock file; an application creates one before using `--locked`. The guide lists both fixture commands and the separate application `cargo tree -i qubit-operation` checks.
+0.22 and `qubit-magika` 0.18 releases. The registry manifest check on
+2026-11-24 found `qubit-mime` 0.22.0 unpublished, so the prerequisite was not
+met then. The [fixed-source consumer guide](doc/user_guide.md#fixed-source-magika-consumer)
+records exact sibling revisions, application setup, `cargo check` and `--locked`
+commands, and the dynamic ONNX Runtime requirement. The [consumer fixture at the tested revision](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/src/main.rs)
+uses explicit registration without `inventory`, and registry discovery plus
+explicit selection with `inventory`. The [workflow at the tested revision](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/.github/workflows/magika-consumer.yml)
+records the verified runtime download. The fixture [manifest](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.toml)
+and [lock file](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.lock),
+its source, and the workflow are available in the source repository; none are
+included in the published crate package.
 
 Important configuration keys include `mime.detector.default`,
 `mime.detector.fallbacks`, `mime.max.buffer.size`,
