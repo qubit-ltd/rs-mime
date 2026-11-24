@@ -534,8 +534,10 @@ fn managed_lifecycle(
 settlement，再释放 typed handle，最后等待组 Drain。若存在未解决的 recovery handle，示例会在 worker
 停止前按 recovery phase 尝试处理或转交给应用长期持有的 recovery store。共享入口还运行受控读取失败，
 检查错误可见且 settlement 仍确认资源释放；独立恢复用例确认 transfer 被 store 接收，再由 store 重试成功。
-暂存清理回归还验证了另一种时序：转交后先完全停止原 MIME 服务，再通过仍由应用持有的 recovery store 重试并完成清理。
-因此需要服务关闭后继续恢复时，应让 recovery store 独立于 MIME 服务存活。
+暂存清理回归还验证了另一种时序：转交内建暂存 recovery 后，先完全停止原 MIME 服务，再由应用持有的
+`RecoveryStore` 重试并完成清理。此服务停止后的库内恢复路径仅保证内建暂存 recovery；其备用清理 port
+由进程持有，随 MIME 进程生命周期结束。需要继续重试时，`RecoveryStore` 必须独立于 MIME 服务存活；
+自定义清理应在服务停止前完成，或自行保留可继续工作的依赖。
 完整样例可通过 `cargo run --locked --example managed_lifecycle` 运行，CI 的 consumer fixture 也运行同一入口。
 
 `MimeRuntime::builtin()` 默认使用内置 repository。调用 `with_execution_services` 附加执行服务时，
@@ -656,16 +658,24 @@ Classifier 也需要单独显式选择异步实现并满足同一对象能力要
 关闭与重试顺序请参照可运行的
 [`managed_lifecycle` 示例](../examples/managed_lifecycle.rs)。普通路径会先观察 outcome 和 settlement，
 释放 operation handle，再等待组 Drain。示例的 Pending 路径同时保留组级 service resource 和一次清理失败
-产生的 recovery：第一次 `stop_services()` 会先发布 Drain，再返回 `OperationShutdownPending`；此时
-MIME worker 仍可接收任务。应用检查 shutdown snapshot，把 recovery 转交给自己长期持有的
+产生的 recovery。关闭时有两种不同的 Pending：若 `stop_services()` 返回
+`OperationShutdownPending` 且 `snapshot.group` 尚无值，说明组 Drain 尚未发布；服务准备、操作结算或准入
+可能仍在进行，也可能有另一个关闭尝试正在执行。操作结算后，关闭尝试会先发布 Drain，再可能因组资源或 recovery
+未解决而返回 Pending。此时 MIME worker 仍可接收任务。示例先等待操作结算，所以其首次 Pending 属于后一种情况。
+未解决操作、资源或 recovery 导致的 Pending 期间，execution port 仍可用；`stop_services()` 成功返回表示端口已停止。
+若另一个关闭尝试仍在执行，应检查 `snapshot.services_stopped`。成功后完整组 Drain 仍可能因调用方持有 typed handle
+而继续等待。等待完整 Drain 前应释放这些 handle 和阻塞中的 recovery。应用检查 shutdown snapshot，把 recovery 转交给自己长期持有的
 `RecoveryStore`，关闭 service resource scope 并释放资源引用；观察 shutdown snapshot，直到 service resource
 清理结束，再重试 `stop_services()`，最后等待组 Drain。
-MIME worker 停止后，应用仍可通过 store 重试已转交的 recovery。转交成功后，重试责任由应用 recovery store
-承担；若之后还要恢复，store 及其重试机制必须继续运行。组 Drain 尚未完成时，MIME execution port 仍可
-供 MIME 自己的 command 和 staging 清理使用。自定义清理器应保证原 execution port 停止后仍有依赖可用，
-或先完成 recovery。不要在仍持有 typed operation handle 或
+转交成功后，重试责任由 `RecoveryStore` 承担；若之后还要恢复，store 及其重试机制必须继续运行。
+库保证的服务关闭后重试路径仅适用于内建暂存 recovery；其备用清理 port 由进程持有，随 MIME 进程生命周期
+结束。组 Drain 尚未完成时，MIME execution port 仍可供 MIME 自己的 command 和 staging 清理使用。
+自定义清理器应在 `stop_services()` 成功前完成，或保留端口停止后仍可独立使用的依赖。不要在仍持有
+typed operation handle 或
 未解决 recovery 时等待完整 Drain。组准入关闭前应先让所需的外部 scope 进入；关闭后，已接纳的父 scope
-仍可派发后代。Pending 表示工作尚未解决，不能据此确认资源已释放；`stop_services()` 不会自动重试 recovery。
+仍可派发后代，且可能在早先快照之后产生新的 recovery。每次重试前都刷新 `snapshot()` 和
+`recovery_handles_snapshot()`，再处理或转交当前所有未解决项。Pending 表示工作尚未解决，不能据此确认资源已释放；
+`stop_services()` 不会自动重试 recovery。
 
 受管操作的错误按发生阶段处理：累计读取上限为零时，构造 execution services 会返回
 `InvalidOperationBudget`；选择仅支持同步的
@@ -673,7 +683,10 @@ backend 时，在提交前返回 `AsyncUnsupported`。提交遇到服务未准�
 `MimeSubmitFailure` 拒绝并返还原 `OwnedMimeInput`。任务接纳之后的 Provider、backend、deadline 和清理错误
 由 operation outcome 报告；MIME 检测失败表现为 `OperationOutcome::Failed`。资源释放与错误结果分开观察：
 通过 settlement 检查释放状态和 recovery，再根据 snapshot 解决或转交 recovery、释放 typed handle 和组资源，
-从 worker pool 外重试停止。
+从 worker pool 外重试停止。关闭返回 `OperationShutdownPending` 时，应检查 `snapshot().group`：尚无值表示
+Drain 未发布；有值则表示 Drain 已发布，但组资源或 recovery 仍可能未解决。每次重试前刷新 shutdown 和
+recovery 快照，处理当前所有 recovery。只有 `stop_services()` 成功返回才确认 execution port 已停止；完整组
+Drain 之后仍可能等待调用方释放 typed handle。
 `FixedMimeExecutionPort::shutdown()` 必须从 worker pool 之外的同步上下文调用。并发关闭调用会等待同一批
 worker 实际退出，并观察相同的最终结果。
 

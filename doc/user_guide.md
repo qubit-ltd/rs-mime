@@ -634,10 +634,13 @@ processes pending recovery and transfers unresolved work to the application's
 long-lived store before workers stop. The shared entry also checks a controlled
 reader failure with a released settlement, then exercises a recovery transfer
 that the store accepts and successfully retries. The staging recovery regression
-also retries a transferred cleanup after the original MIME services have fully
-stopped; the retained store keeps its recovery worker and ownership permits
-alive until resolution. Keep the store alive independently of the MIME services
-if recovery must continue after service shutdown. Run the example with
+also retries a transferred built-in staging cleanup after the original MIME
+services have fully stopped; its fallback cleanup port is process-owned and
+follows the MIME process lifetime. This post-stop library path applies only to
+built-in staging recovery. Keep the `RecoveryStore` alive independently of the
+MIME services while transferred recovery needs retries. Custom cleanup must
+finish before service stop or retain dependencies that can continue on their
+own. Run the example with
 `cargo run --example managed_lifecycle`; the CI consumer fixture invokes the
 same entry point.
 
@@ -826,17 +829,34 @@ the execution port still accepts work. The application inspects the shutdown
 snapshot, transfers recovery to its retained `RecoveryStore`, closes the
 service resource scope and drops its resource reference, observes the shutdown
 snapshot until service-resource cleanup settles, retries
-`stop_services()`, then waits for group Drain. The store retries transferred
-recovery after MIME workers stop. Do not wait for full Drain while retaining
-typed operation handles or blocking recoveries. Admit required external scopes
-before group admission closes; an already accepted parent may still dispatch
-descendants afterward. Pending settlement is unresolved work, not release
-confirmation. `stop_services()` does not retry recovery automatically.
-After a successful transfer, the application recovery store owns retry
-responsibility and must outlive any needed retry. The MIME execution port stays
-available while group Drain is pending so MIME-owned command and staging
-cleanup can finish. A custom cleanup strategy must keep its dependencies
-available after the original execution port stops, or finish recovery first.
+`stop_services()`, then waits for group Drain. There are two distinct pending
+states: if `stop_services()` returns `OperationShutdownPending` before
+`snapshot.group` is present, Drain has not been published yet; service
+preparation, operation settlement, or admissions may still be in progress, or
+another stop attempt may be active.
+After operation settlement, a stop attempt publishes Drain before it can return
+Pending for live group resources or recovery; in that state
+the execution port still accepts worker jobs. The example waits for settlement
+first, so its first Pending is the latter case. A Pending caused by unresolved
+operations, resources, or recovery leaves the execution port available; a
+successful `stop_services()` call confirms it stopped. If another stop attempt
+may be in progress, inspect `snapshot.services_stopped`. Complete group Drain
+may still wait afterward
+while callers retain typed operation handles; do not wait for it while retaining
+those handles or blocking recoveries. Admit required external scopes before
+group admission closes; an already accepted parent may still dispatch
+descendants afterward, which can create new recovery handles after an earlier
+snapshot. Refresh both `snapshot()` and `recovery_handles_snapshot()` before
+each retry, then resolve or transfer every currently unresolved handle.
+Pending settlement is unresolved work, not release confirmation.
+`stop_services()` does not retry recovery automatically.
+
+After a successful transfer, the `RecoveryStore` owns retry responsibility and
+must remain available while retries are needed. The library's post-stop retry
+path is guaranteed only for built-in staging recovery; its fallback cleanup
+port is process-owned and follows the MIME process lifetime. A custom cleanup
+must finish before `stop_services()` succeeds or retain dependencies that can
+continue independently after the execution port stops.
 
 The operation phases have separate error channels:
 
@@ -850,10 +870,14 @@ The operation phases have separate error channels:
   errors appear in the operation outcome. A MIME detection failure is
   `OperationOutcome::Failed`; it is not a submission rejection.
 - **Settlement:** inspect `wait_settlement()` for released resources and
-  recovery handles. `stop_services()` publishes Drain and returns
-  `OperationShutdownPending` while a tracked operation, service resource, or
-  recovery remains unresolved. Resolve or transfer recovery, release typed
-  handles and service resources, then retry from outside the worker pool.
+  recovery handles. A shutdown `OperationShutdownPending` can occur before
+  Drain is published; inspect `snapshot().group` to distinguish it from a
+  published Drain that is still waiting for service resources or recovery.
+  Refresh the shutdown and recovery snapshots before each retry, resolve or
+  transfer current recoveries, release typed handles and service resources,
+  then retry from outside the worker pool. The execution port is stopped only
+  after a successful `stop_services()` call; complete group Drain may still
+  wait for caller-held handles afterward.
 
 `FixedMimeExecutionPort::shutdown()` must be called from a synchronous context
 outside its worker pool. Concurrent shutdown calls wait for the same workers to

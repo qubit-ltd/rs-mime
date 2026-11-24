@@ -34,6 +34,8 @@ pub struct MimeShutdownSnapshot {
     /// Number of retained recovery handles that are not resolved or
     /// transferred.
     pub unresolved_recoveries: usize,
-    /// Group drain progress, once the service port has stopped.
+    /// Group Drain progress, once Drain has been published. The group can
+    /// remain pending after the service port stops, for example while callers
+    /// retain typed operation handles.
     pub group: Option<ShutdownSnapshot>,
 }
