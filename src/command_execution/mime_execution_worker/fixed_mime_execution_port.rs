@@ -577,14 +577,7 @@ mod tests {
     fn test_dispatch_recovers_poisoned_queue_and_runs_the_returned_work() {
         let port = FixedMimeExecutionPort::new(1, 1);
         port.prepare().unwrap();
-        let queue = port
-            .running
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .queue
-            .clone();
+        let queue = port.running.lock().unwrap().as_ref().unwrap().queue.clone();
         let queue_to_poison = Arc::clone(&queue);
         assert!(
             std::thread::spawn(move || {
@@ -596,9 +589,10 @@ mod tests {
         );
 
         let (done_tx, done_rx) = mpsc::channel();
-        assert!(port
-            .try_dispatch_with_status(Box::new(move || done_tx.send(()).unwrap()))
-            .is_ok());
+        assert!(
+            port.try_dispatch_with_status(Box::new(move || done_tx.send(()).unwrap()))
+                .is_ok()
+        );
         done_rx.recv().unwrap();
         port.shutdown().unwrap();
     }
@@ -607,14 +601,7 @@ mod tests {
     fn test_closed_queue_returns_the_unaccepted_job_while_port_is_open() {
         let port = FixedMimeExecutionPort::new(1, 1);
         port.prepare().unwrap();
-        let queue = port
-            .running
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .queue
-            .clone();
+        let queue = port.running.lock().unwrap().as_ref().unwrap().queue.clone();
         queue.state.lock().unwrap().closed = true;
         queue.ready.notify_all();
 

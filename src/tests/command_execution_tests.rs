@@ -58,7 +58,6 @@ fn test_legacy_execution_port_fallback_preserves_rejected_job_and_debug_reason()
     assert!(!debug.contains("job:"));
     failure.into_job()();
     assert!(ran.load(Ordering::SeqCst), "the original job remains recoverable");
-
 }
 
 #[test]
@@ -380,17 +379,21 @@ mod managed_command_executor_tests {
 
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
-        assert!(MimeExecutionWorker::new(port.clone())
-            .try_dispatch(Box::new(move || {
-                started_tx.send(()).unwrap();
-                release_rx.recv().unwrap();
-            }))
-            .is_ok());
+        assert!(
+            MimeExecutionWorker::new(port.clone())
+                .try_dispatch(Box::new(move || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                }))
+                .is_ok()
+        );
         started_rx.recv().unwrap();
         let (queued_tx, queued_rx) = mpsc::channel();
-        assert!(MimeExecutionWorker::new(port.clone())
-            .try_dispatch(Box::new(move || queued_tx.send(()).unwrap()))
-            .is_ok());
+        assert!(
+            MimeExecutionWorker::new(port.clone())
+                .try_dispatch(Box::new(move || queued_tx.send(()).unwrap()))
+                .is_ok()
+        );
         dispatch_tx.send(()).unwrap();
 
         let outcome = block_on(operation.wait_outcome()).unwrap();
