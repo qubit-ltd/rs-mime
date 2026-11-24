@@ -32,5 +32,5 @@ jobs:
         run: cargo run --example managed_lifecycle --locked
       - name: Run documentation consumer fixture
         run: cargo run --manifest-path tests/fixtures/documentation_consumer/Cargo.toml --locked
-      - name: Compile operation consumer
-        run: cargo check --manifest-path tests/fixtures/operation_consumer/Cargo.toml --locked
+      - name: Run operation consumer lifecycle and budget assertions
+        run: cargo run --locked --manifest-path tests/fixtures/operation_consumer/Cargo.toml
