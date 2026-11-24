@@ -205,8 +205,12 @@ mod tests {
     use crate::detector::MimeExecutionPort;
     use crate::detector::MimeExecutionServices;
     use crate::detector::MimeServiceLifecycle;
+    use crate::managed_temp_staging::create_empty_staged_with;
     use crate::managed_temp_staging::ManagedStagingLimits;
     use crate::managed_temp_staging::stage_owned_in;
+    use qubit_local_files::LocalFileSystem;
+    use qubit_local_files::options::LocalTempFileOptions;
+    use qubit_local_files::policy::LocalPrivacyRequirement;
 
     /// Counts shutdown calls while forwarding execution operations to a worker
     /// port.
@@ -752,5 +756,94 @@ mod tests {
 
         let _ = shutdown.stop_services().unwrap();
         assert_eq!(shutdown_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_creation_recovery_blocks_shutdown_and_survives_typed_handle_drop() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let worker_port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+        let shutdown_calls = Arc::new(AtomicUsize::new(0));
+        let execution = Arc::new(CountingExecutionPort {
+            worker_port: Arc::clone(&worker_port),
+            shutdown_calls: Arc::clone(&shutdown_calls),
+        });
+        let services = MimeExecutionServices::new(manager, group.clone(), execution, 1024).unwrap();
+        services.prepare().unwrap();
+        let limits = ManagedStagingLimits {
+            max_bytes: 128,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(worker_port),
+        };
+        let blocker_path = Arc::new(std::sync::Mutex::new(None));
+        let blocker_path_for_create = Arc::clone(&blocker_path);
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            let reservation = scope.reserve_resource().unwrap();
+            create_empty_staged_with(&scope, reservation, &limits, move || {
+                let fault = qubit_local_files::test_support::install_test_fault(
+                    "host-temp-file-recovery-clone-cleanup",
+                )
+                .expect("creation and initial cleanup fault should install");
+                let result = LocalFileSystem::host()?.create_temp_file_with_options(
+                    &LocalTempFileOptions::new().with_privacy(LocalPrivacyRequirement::PlatformDefault),
+                );
+                if let Err(error) = &result {
+                    if let Some(recovery) = error.temp_recovery() {
+                        let blocker = recovery.path().parent().unwrap().join("shutdown-recovery-blocker");
+                        fs::write(&blocker, b"retain failed-creation recovery").unwrap();
+                        *blocker_path_for_create.lock().unwrap() = Some(blocker);
+                    }
+                }
+                drop(fault);
+                result
+            })
+            .await
+        }))
+        .unwrap();
+        let operation_observer = operation.observer();
+        services.track_observer(operation_observer.clone());
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            OperationOutcome::Failed(MimeError::Io(_))
+        ));
+
+        let shutdown = services.shutdown();
+        assert!(matches!(
+            shutdown.stop_services(),
+            Err(MimeError::OperationShutdownPending)
+        ));
+        assert_eq!(0, shutdown_calls.load(Ordering::SeqCst));
+
+        drop(operation);
+        let settled = block_on(shutdown.wait_services_settled()).unwrap();
+        assert!(settled.operations_settled);
+        assert_eq!(1, settled.unresolved_recoveries);
+        let settlement = block_on(operation_observer.wait_settlement());
+        assert_eq!(SettlementStatus::RecoveryRequired, settlement.status);
+        assert_eq!(1, settlement.recoveries.len());
+
+        let handles = shutdown.recovery_handles_snapshot();
+        assert_eq!(1, handles.len());
+        assert_eq!(settlement.recoveries[0].id(), handles[0].id());
+        assert_eq!(handles[0].id(), shutdown.recovery_handles_snapshot()[0].id());
+        assert!(matches!(
+            shutdown.stop_services(),
+            Err(MimeError::OperationShutdownPending)
+        ));
+        assert_eq!(0, shutdown_calls.load(Ordering::SeqCst));
+
+        let blocker = blocker_path.lock().unwrap().take().expect("recovery blocker path");
+        fs::remove_file(blocker).unwrap();
+        let recovery = handles[0].clone();
+        let attempt = recovery.try_retry().unwrap();
+        assert!(block_on(attempt.wait_async()).failures.is_empty());
+        assert_eq!(0, shutdown.snapshot().unresolved_recoveries);
+
+        assert!(shutdown.stop_services().unwrap().services_stopped);
+        assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
+        let report = block_on(shutdown.wait_group_shutdown()).unwrap();
+        assert_eq!(0, report.snapshot.active_operations);
+        assert_eq!(0, report.snapshot.queued_operations);
     }
 }
