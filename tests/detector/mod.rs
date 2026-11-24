@@ -23,6 +23,7 @@ mod mime_execution_port_tests;
 mod mime_runtime_tests;
 mod operation_provider_tests;
 mod operation_runtime_tests;
+mod prefix_runtime_regression_tests;
 mod repository_async_operation_tests;
 mod repository_mime_detector_provider_tests;
 mod repository_mime_detector_tests;
