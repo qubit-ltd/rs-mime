@@ -21,11 +21,17 @@ use super::MimeShutdownSnapshot;
 mod stop_permit;
 
 /// Repeatable MIME shutdown observer. Service settlement is independent of
-/// caller outcome disposal; group shutdown can remain pending afterward. The
-/// after tracked operations settle, a stop attempt publishes group Drain
-/// before returning Pending for live service resources or recovery. The MIME
-/// execution port remains available during that interval so MIME-owned cleanup
-/// can finish. The observer is returned by [`MimeExecutionServices::shutdown`].
+/// caller outcome disposal; group shutdown can remain pending afterward.
+/// While preparation, admissions, or tracked-operation settlement are pending,
+/// `stop_services()` may return Pending without publishing group Drain. After
+/// settlement, a stop attempt publishes Drain before returning Pending for
+/// live service resources or recovery. A Pending caused by unresolved
+/// resources or recovery leaves the execution port available; a successful
+/// call confirms that it stopped. Concurrent stop attempts can themselves
+/// return Pending, so inspect [`MimeShutdownSnapshot::services_stopped`] for
+/// current state. The group Drain may remain pending afterward while callers
+/// retain typed handles.
+/// The observer is returned by [`MimeExecutionServices::shutdown`].
 ///
 /// # Examples
 ///
@@ -64,10 +70,12 @@ impl MimeShutdownObserver {
     }
 
     /// Returns a repeatable snapshot of every unresolved recovery owned by
-    /// the operation group. Callers can retry or transfer these handles even
-    /// after their original typed operation handles have been dropped. After
-    /// transfer, the destination `RecoveryStore` owns retry responsibility and
-    /// must remain available while recovery is still needed.
+    /// the operation group. Refresh it before each stop retry: an already
+    /// accepted parent can dispatch a child after Drain is published, and that
+    /// child can create another recovery. Callers can retry or transfer these
+    /// handles even after their original typed operation handles have been
+    /// dropped. After transfer, the destination `RecoveryStore` owns retry
+    /// responsibility and must remain available while recovery is still needed.
     #[must_use]
     pub fn recovery_handles_snapshot(&self) -> Vec<RecoveryHandle> {
         self.services.unresolved_recovery_handles()
@@ -138,17 +146,28 @@ impl MimeShutdownObserver {
     /// A snapshot of service and operation-group shutdown progress.
     ///
     /// # Errors
-    /// Returns [`crate::MimeError::OperationShutdownPending`] while tracked
-    /// operations have not settled, a service resource scope remains
-    /// registered, or any recovery is unresolved. The group Drain handle is
-    /// published before resource and recovery checks, so callers can
-    /// observe progress and retry this method. The execution port remains
-    /// running while this method returns Pending, allowing MIME-owned command
-    /// and staging cleanup to complete. Once it succeeds, that port is stopped;
-    /// custom cleanup strategies must keep their dependencies available beyond
-    /// that point or finish recovery first. A transferred recovery is no longer
-    /// MIME-owned; its destination `RecoveryStore` must remain available for
-    /// any later retry. Propagates an execution shutdown error.
+    /// Returns [`crate::MimeError::OperationShutdownPending`] while preparation
+    /// or another stop is active, tracked operations or admissions have not
+    /// settled, a service resource scope remains registered, or any recovery
+    /// is unresolved. The group Drain handle is
+    /// published after tracked-operation settlement and before resource and
+    /// recovery checks. A Pending result before publication means preparation,
+    /// another stop, operations, or admissions remain in progress; afterward it
+    /// means callers must resolve service resources or recovery while observing
+    /// the published Drain. The
+    /// execution port remains available while unresolved resources or recovery
+    /// cause Pending. Success confirms that it stopped; a concurrent stop
+    /// attempt may itself return Pending, so inspect
+    /// [`MimeShutdownSnapshot::services_stopped`] for current state. Group
+    /// Drain may still wait for caller-owned typed handles after success. A
+    /// transferred recovery is no longer MIME-owned; its destination
+    /// `RecoveryStore` owns retry responsibility
+    /// and must remain available while retries are needed. The library's
+    /// post-stop retry path is guaranteed only for built-in staging recovery;
+    /// its fallback cleanup port follows the MIME process lifetime. Custom
+    /// cleanup must finish before success or retain dependencies that continue
+    /// independently after the execution port stops. Propagates an execution
+    /// shutdown error.
     pub fn stop_services(&self) -> Result<MimeShutdownSnapshot, crate::MimeError> {
         let _stop;
         {

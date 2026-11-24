@@ -81,10 +81,15 @@ Provider 路径 hook。若自定义 backend 希望在读取前拒绝，还可覆
 - `MimeRuntime` 提供受管检测操作：输入所有权明确，提交拒绝带回原输入，业务结果与资源
   settlement 分开观察。附加执行服务后默认使用内置 `repository`；使用 `file` 时需显式选择。
   提交被拒绝时，`MimeSubmitFailure` 会带回原输入；任务接纳后的检测错误由 operation outcome
-  报告，资源释放情况则通过 settlement 观察。关闭时，若组资源或 recovery 尚未处理，
-  `stop_services()` 会先发布组 Drain，再返回 `OperationShutdownPending`；应用处理或转交 recovery、
-  释放持有的资源后再重试。完整操作顺序见[中文用户手册](doc/user_guide.zh_CN.md#受管检测操作0220)
-  和可运行的生命周期示例。
+  报告，资源释放情况则通过 settlement 观察。关闭时，Pending 且 `snapshot.group` 尚无值，说明组 Drain
+  还未发布；服务准备、操作结算或准入可能仍在进行，也可能有另一个关闭尝试正在执行。操作结算后，
+  `stop_services()` 会先发布组 Drain，再可能因组资源或 recovery 未处理而返回 `OperationShutdownPending`；
+  这种未解决项导致的 Pending 期间，execution port 仍可用。成功返回的 `stop_services()` 表示端口已停止；
+  若另一个关闭尝试仍在执行，应检查 `services_stopped`。调用方仍持有 typed handle 时，完整组 Drain 可能继续等待。
+  处理 recovery、释放资源和 handle 后再重试或等待 Drain。库保证的服务关闭后重试路径仅适用于内建暂存 recovery；
+  转交后由 `RecoveryStore` 承担重试责任，且必须在重试期间存活；内建暂存恢复的备用清理 port 由 MIME 进程持有。
+  自定义清理应在端口停止前完成，或保留可独立继续工作的依赖。
+  完整操作顺序见[中文用户手册](doc/user_guide.zh_CN.md#受管检测操作0220)和可运行的生命周期示例。
 - 可选的 `FileCommandMimeDetector` 使用系统命令 `file --mime-type --brief` 检查内容。
 - 可选的 `FfprobeCommandMediaStreamClassifier` 可进一步区分 WebM、Ogg 等媒体流中的
   仅音频和仅视频结果。

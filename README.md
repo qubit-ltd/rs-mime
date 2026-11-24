@@ -106,9 +106,21 @@ provider-path hook when content inspection is required.
   `repository`; select `file` explicitly. A rejected submission returns the
   original input in `MimeSubmitFailure`. Detection errors after acceptance are
   reported by the operation outcome, and resource release is observed through
-  settlement. During shutdown, `stop_services()` publishes group Drain before
-  returning `OperationShutdownPending` for live group resources or recovery;
-  resolve or transfer recovery and release retained handles before retrying.
+  settlement. During shutdown, a Pending result with no `snapshot.group` means
+  Drain is not published yet; preparation, operation settlement, or admissions
+  may still be in progress, or another stop attempt may be active. After
+  settlement, `stop_services()` publishes Drain before it can return Pending
+  for live service resources or recovery; the execution port remains available
+  when unresolved resources or recovery cause Pending. A successful
+  `stop_services()` call confirms the port stopped; check `services_stopped`
+  when another stop attempt may be in progress. Complete group Drain can still
+  wait while callers hold typed handles. Resolve or transfer
+  recovery and release retained handles and resources before retrying or
+  awaiting Drain. The library's post-stop retry path is guaranteed only for
+  built-in staging recovery, whose fallback cleanup port follows the MIME
+  process lifetime. The `RecoveryStore` owns transferred retries and must
+  outlive them. Custom cleanup must finish before the port stops or retain
+  dependencies that can run independently afterward.
   The [user guide](doc/user_guide.md#managed-detection-operations-0220)
   and runnable lifecycle example show the complete sequence.
 - Optional `FileCommandMimeDetector`, which uses the system
