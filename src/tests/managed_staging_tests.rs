@@ -733,6 +733,143 @@ fn test_metered_sequential_stop_after_first_read_blocks_next_provider_call() {
     let _ = shutdown.stop_services().unwrap();
 }
 
+struct ControlledReadClock {
+    domain: qubit_operation::ClockDomainId,
+    ticks: std::sync::atomic::AtomicU64,
+    expire_after_calls: Option<usize>,
+    calls: AtomicUsize,
+}
+
+impl qubit_operation::ClockSource for ControlledReadClock {
+    fn now(&self) -> qubit_operation::MonotonicTime {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        let ticks = if self.expire_after_calls.is_some_and(|limit| call >= limit) {
+            5
+        } else {
+            self.ticks.load(Ordering::SeqCst)
+        };
+        qubit_operation::MonotonicTime::new(self.domain, ticks)
+    }
+
+    fn register_deadline(
+        &self,
+        _at: qubit_operation::MonotonicTime,
+        _wake: Waker,
+    ) -> Box<dyn qubit_operation::TimerRegistration> {
+        Box::new(NoopReadTimer)
+    }
+}
+
+struct NoopReadTimer;
+
+impl qubit_operation::TimerRegistration for NoopReadTimer {
+    fn cancel(self: Box<Self>) {}
+}
+
+fn deadline_context(clock: Arc<ControlledReadClock>) -> qubit_operation::OperationContext {
+    qubit_operation::OperationContext::new(qubit_operation::ContextOptions {
+        clock: Some(clock.clone()),
+        deadline: Some(qubit_operation::Deadline::at(qubit_operation::MonotonicTime::new(clock.domain, 5))),
+        ..Default::default()
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_metered_final_stop_check_prevents_io_after_expiry_during_preparation() {
+    for random_access in [false, true] {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+        let services = Arc::new(MimeExecutionServices::new(
+            manager,
+            group,
+            Arc::new(FixedMimeExecutionPort::new(1, 1)),
+            8,
+        ).unwrap());
+        services.prepare().unwrap();
+        let (filesystem, opens, reads) = BytesAsyncFs::filesystem(b"012345");
+        let path = FsPath::parse("/input").unwrap();
+        let tree = services.new_read_tree(8);
+        let domain = qubit_operation::ClockDomainId::new_unique();
+        let clock = Arc::new(ControlledReadClock {
+            domain,
+            ticks: std::sync::atomic::AtomicU64::new(0),
+            expire_after_calls: Some(3),
+            calls: AtomicUsize::new(0),
+        });
+        let context = deadline_context(clock);
+        let mut session = if random_access {
+            block_on(MeteredReadSession::open_random_access(
+                &filesystem, &path, Arc::clone(&services), Arc::clone(&tree), context, 8, 4,
+            ))
+        } else {
+            block_on(MeteredReadSession::open_sequential(
+                &filesystem, &path, Arc::clone(&services), Arc::clone(&tree), context, 8, 4,
+            ))
+        }.unwrap();
+        let mut output = [0; 4];
+        let result = if random_access {
+            block_on(session.read_at(0, &mut output))
+        } else {
+            block_on(session.read(&mut output))
+        };
+        assert!(result.is_err(), "expired operation must be rejected before Provider I/O");
+        assert_eq!(1, opens.load(Ordering::SeqCst));
+        assert_eq!(0, reads.load(Ordering::SeqCst), "deadline reached during preparation must block the Provider call");
+        assert_eq!(8, tree.remaining(), "the unstarted read reservation is returned");
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+    }
+}
+
+#[test]
+fn test_metered_open_rejects_stopped_and_expired_context_before_provider_io() {
+    for random_access in [false, true] {
+        for expired in [false, true] {
+            let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+            let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();
+            let services = Arc::new(MimeExecutionServices::new(
+                manager,
+                group,
+                Arc::new(FixedMimeExecutionPort::new(1, 1)),
+                8,
+            ).unwrap());
+            services.prepare().unwrap();
+            let (filesystem, opens, _) = BytesAsyncFs::filesystem(b"012345");
+            let path = FsPath::parse("/input").unwrap();
+            let tree = services.new_read_tree(8);
+            let context = if expired {
+                let domain = qubit_operation::ClockDomainId::new_unique();
+                deadline_context(Arc::new(ControlledReadClock {
+                    domain,
+                    ticks: std::sync::atomic::AtomicU64::new(5),
+                    expire_after_calls: None,
+                    calls: AtomicUsize::new(0),
+                }))
+            } else {
+                let context = qubit_operation::OperationContext::new(Default::default()).unwrap();
+                assert!(context.request_stop(qubit_operation::StopReason::UserCancelled));
+                context
+            };
+            let result = if random_access {
+                block_on(MeteredReadSession::open_random_access(
+                    &filesystem, &path, Arc::clone(&services), Arc::clone(&tree), context, 8, 4,
+                ))
+            } else {
+                block_on(MeteredReadSession::open_sequential(
+                    &filesystem, &path, Arc::clone(&services), Arc::clone(&tree), context, 8, 4,
+                ))
+            };
+            assert!(result.is_err());
+            assert_eq!(0, opens.load(Ordering::SeqCst), "stopped/expired open must not call Provider");
+            let shutdown = services.shutdown();
+            let _ = block_on(shutdown.wait_services_settled()).unwrap();
+            let _ = shutdown.stop_services().unwrap();
+        }
+    }
+}
+
 #[test]
 fn test_managed_staging_cancel_during_provider_read_retains_cleanup_owner() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();

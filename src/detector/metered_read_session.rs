@@ -269,6 +269,10 @@ impl MeteredReadSession {
             .map_err(|source| MimeError::BufferAllocationFailed { requested: ask, source })?;
         scratch.resize(ask, 0);
 
+        // Preparation can take long enough for cancellation or the deadline
+        // to arrive after the early check. Recheck at the actual I/O boundary;
+        // the read and scratch permits unwind if this rejects the call.
+        ensure_active(&self.operation_context)?;
         let count = match &mut self.reader {
             OpenedReader::Sequential(reader) if advance => {
                 reader.read_async(&mut scratch).await.map_err(MimeError::Io)?
