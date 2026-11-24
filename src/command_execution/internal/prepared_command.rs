@@ -558,6 +558,8 @@ mod tests {
                 }
                 Err(error) => Err(error),
             };
+            let settlement = std::future::poll_fn(|cx| prepared.poll_settlement(cx)).await;
+            assert_eq!(qubit_operation::SettlementStatus::Released, settlement.status);
             let snapshot = prepared.snapshot();
             if let Some(release) = release_blocker {
                 release.send(()).unwrap();
