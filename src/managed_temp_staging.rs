@@ -48,12 +48,14 @@ use crate::detector::mime_input::OwnedMimeInput;
 mod completion;
 mod managed_staging_limits;
 mod managed_temp_cleanup;
+mod resource_identity;
 mod staged_mime_input;
 mod staged_temp_owner;
 
 use completion::completion_pair;
 pub(crate) use managed_staging_limits::ManagedStagingLimits;
 use managed_temp_cleanup::ManagedTempCleanup;
+use resource_identity::ResourceIdentity;
 pub(crate) use staged_mime_input::StagedMimeInput;
 use staged_temp_owner::StagedTempOwner;
 
@@ -410,7 +412,7 @@ pub(crate) async fn create_empty_staged_with(
                         permits: Mutex::new(Vec::new()),
                         worker: worker.clone(),
                         staged_bytes: std::sync::atomic::AtomicU64::new(0),
-                        cleanup_id: Arc::new(Mutex::new(None)),
+                        cleanup_id: Arc::new(ResourceIdentity::default()),
                     };
                     commit_staged(reservation, staged)
                 }
@@ -418,13 +420,7 @@ pub(crate) async fn create_empty_staged_with(
                     let (primary, recovery) = (*error).into_temp_recovery_parts();
                     if let Some(recovery) = recovery {
                         let staged = StagedMimeInput::from_recovery(recovery, worker.clone());
-                        let cleanup_id = Arc::clone(&staged.cleanup_id);
-                        let policy = Arc::new(ManagedTempCleanup {
-                            resource_id: Arc::clone(&cleanup_id),
-                            attempts: std::sync::atomic::AtomicUsize::new(0),
-                        });
-                        let id = reservation.retain_with_for_cleanup(staged, policy);
-                        *cleanup_id.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(id);
+                        retain_creation_recovery(reservation, staged);
                     }
                     Err(MimeError::Io(primary.into_io_error()))
                 }
@@ -531,16 +527,35 @@ pub(crate) fn commit_staged(
     });
     match reservation.commit_with(staged, Arc::clone(&policy)) {
         Ok(resource) => {
-            *cleanup_id.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(resource.id());
+            cleanup_id.publish(resource.id());
             Ok(resource)
         }
         Err(error) => {
             let (_, partial, cleanup, reservation) = error.into_parts();
-            let id = reservation.retain_with_for_cleanup(partial, cleanup);
-            *cleanup_id.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(id);
+            retain_partial_for_cleanup(reservation, partial, cleanup);
             Err(MimeError::ExecutionServicesRequired)
         }
     }
+}
+
+fn retain_creation_recovery(reservation: ResourceReservation, staged: StagedMimeInput) {
+    let identity = Arc::clone(&staged.cleanup_id);
+    let cleanup = Arc::new(ManagedTempCleanup {
+        resource_id: Arc::clone(&identity),
+        attempts: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let id = reservation.retain_with_for_cleanup(staged, cleanup);
+    identity.publish(id);
+}
+
+fn retain_partial_for_cleanup(
+    reservation: ResourceReservation,
+    partial: StagedMimeInput,
+    cleanup: Arc<ManagedTempCleanup>,
+) {
+    let identity = Arc::clone(&partial.cleanup_id);
+    let id = reservation.retain_with_for_cleanup(partial, cleanup);
+    identity.publish(id);
 }
 
 /// Returns whether a staged object fits within its byte limit.
@@ -590,14 +605,11 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 /// # Returns
 /// A cleanup failure associated with the staged resource.
 fn cleanup_failure(
-    id: &Arc<Mutex<Option<ResourceId>>>,
+    id: ResourceId,
     source: Arc<dyn std::error::Error + Send + Sync>,
 ) -> CleanupFailure {
     CleanupFailure {
-        resource_id: id
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .expect("registered staging resource has a real operation identity"),
+        resource_id: id,
         stage: CleanupStage::Drop,
         summary: DiagnosticSummary::new(&source.to_string()),
         source: Some(source),
