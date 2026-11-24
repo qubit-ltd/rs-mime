@@ -1205,6 +1205,8 @@ mod async_operation_tests {
                 .with_async_executor(command_executor.clone()),
         );
         let content = vec![0x45; 40 * 1024];
+        let budget = services.staging_budget();
+        let body_budget = budget.clone();
         let operation_services = Arc::clone(&services);
         let mut operation = manager
             .as_async()
@@ -1230,6 +1232,11 @@ mod async_operation_tests {
                         40 * 1024,
                         "managed FFprobe staging should be charged to its bound request"
                     );
+                    assert_eq!(
+                        body_budget.used_bytes(),
+                        40 * 1024,
+                        "managed FFprobe staging should hold shared capacity until settlement"
+                    );
                     result
                 }
             })
@@ -1241,6 +1248,11 @@ mod async_operation_tests {
         assert_eq!(command_executor.calls.load(Ordering::SeqCst), 1);
         assert_eq!(*command_executor.staged_len.lock().unwrap(), Some(40 * 1024));
         let _settlement = block_on(operation.wait_settlement());
+        assert_eq!(
+            0,
+            budget.used_bytes(),
+            "settlement should release all shared FFprobe staging capacity"
+        );
         let path = command_executor.path.lock().unwrap().clone().unwrap();
         assert!(!path.exists(), "staged owner should be cleaned at settlement");
         let shutdown = services.shutdown();
