@@ -33,6 +33,8 @@ use qubit_spi::ProviderDescriptor;
 use qubit_spi::ProviderId;
 use qubit_spi::ProviderMetadata;
 use qubit_spi::ProviderSelection;
+use qubit_spi::ServiceProvider;
+use qubit_spi::error::ProviderFailure;
 use qubit_spi::error::ProviderFailureKind;
 
 use crate::support::TestMimeDetectorProvider;
@@ -1075,4 +1077,83 @@ fn test_async_auto_uses_async_priority_for_a_shared_sync_canonical_id() {
     assert!(registry.create_async_backend(&selection, &MimeConfig::default(), &services()).is_err());
     assert_eq!(1, higher_async_creations.load(Ordering::SeqCst));
     assert_eq!(0, shared_creations.load(Ordering::SeqCst));
+}
+
+#[derive(Debug)]
+struct ReentrantMimeDescriptorProvider {
+    registry: MimeDetectorRegistry,
+    descriptor: ProviderDescriptor,
+    entered: Arc<AtomicBool>,
+}
+
+impl ProviderMetadata for ReentrantMimeDescriptorProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        if !self.entered.swap(true, Ordering::SeqCst) {
+            self.registry.register(TestMimeDetectorProvider::new(
+                "mime-sync-descriptor-reentry", 0, TestProviderBehavior::Success("application/x-inner"),
+            )).expect("descriptor callback should reenter sync registration");
+        }
+        self.descriptor.clone()
+    }
+}
+
+impl ServiceProvider<MimeDetectorSpec> for ReentrantMimeDescriptorProvider {
+    fn create_configured(
+        &self,
+        _config: &MimeConfig,
+    ) -> Result<Arc<dyn MimeDetector>, ProviderFailure<MimeError>> {
+        Err(ProviderFailure::unsupported(MimeError::AsyncUnsupported))
+    }
+}
+
+#[derive(Debug)]
+struct ReentrantAsyncMimeDescriptorProvider {
+    registry: MimeDetectorRegistry,
+    descriptor: ProviderDescriptor,
+    entered: Arc<AtomicBool>,
+}
+
+impl ProviderMetadata for ReentrantAsyncMimeDescriptorProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        if !self.entered.swap(true, Ordering::SeqCst) {
+            self.registry.register_async_provider(CountedAsyncRegistryProvider {
+                descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-descriptor-reentry").unwrap()),
+                creations: Arc::new(AtomicUsize::new(0)),
+            }).expect("descriptor callback should reenter async registration");
+        }
+        self.descriptor.clone()
+    }
+}
+
+impl AsyncMimeDetectorProvider for ReentrantAsyncMimeDescriptorProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn qubit_mime::AsyncMimeDetectorBackend>, MimeError> {
+        Err(MimeError::AsyncUnsupported)
+    }
+}
+
+#[test]
+fn test_mime_descriptor_callbacks_can_reenter_both_registries() {
+    let registry = MimeDetectorRegistry::default();
+    let sync_entered = Arc::new(AtomicBool::new(false));
+    registry.register(ReentrantMimeDescriptorProvider {
+        registry: registry.clone(),
+        descriptor: ProviderDescriptor::new(ProviderId::new("mime-sync-descriptor-owner").unwrap()),
+        entered: Arc::clone(&sync_entered),
+    }).expect("sync descriptor reentry should complete");
+    assert!(sync_entered.load(Ordering::SeqCst));
+    assert!(registry.provider_ids().iter().any(|id| id.as_str() == "mime-sync-descriptor-reentry"));
+
+    let registry = MimeDetectorRegistry::default();
+    let async_entered = Arc::new(AtomicBool::new(false));
+    registry.register_async_provider(ReentrantAsyncMimeDescriptorProvider {
+        registry: registry.clone(),
+        descriptor: ProviderDescriptor::new(ProviderId::new("mime-async-descriptor-owner").unwrap()),
+        entered: Arc::clone(&async_entered),
+    }).expect("async descriptor reentry should complete");
+    assert!(async_entered.load(Ordering::SeqCst));
+    assert!(registry.async_provider_ids().iter().any(|id| id.as_str() == "mime-async-descriptor-reentry"));
 }

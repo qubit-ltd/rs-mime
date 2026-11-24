@@ -37,6 +37,8 @@ use qubit_spi::ProviderDescriptor;
 use qubit_spi::ProviderId;
 use qubit_spi::ProviderMetadata;
 use qubit_spi::ProviderSelection;
+use qubit_spi::ServiceProvider;
+use qubit_spi::error::ProviderFailure;
 use qubit_spi::error::ProviderFailureKind;
 
 #[cfg(unix)]
@@ -593,4 +595,167 @@ fn test_sync_and_async_classifier_selectors_share_canonical_identity() {
     registry.register(TestMediaStreamClassifierProvider::new(
         "classifier-dual", 0, TestProviderBehavior::Success("unused"),
     )).expect("one canonical ID may expose both capabilities");
+}
+
+#[derive(Debug)]
+struct DescriptorClassifierProvider {
+    descriptor: ProviderDescriptor,
+}
+
+impl ProviderMetadata for DescriptorClassifierProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        self.descriptor.clone()
+    }
+}
+
+impl ServiceProvider<MediaStreamClassifierSpec> for DescriptorClassifierProvider {
+    fn create_configured(
+        &self,
+        _config: &MimeConfig,
+    ) -> Result<Arc<dyn qubit_mime::MediaStreamClassifier>, ProviderFailure<MimeError>> {
+        Err(ProviderFailure::unsupported(MimeError::AsyncUnsupported))
+    }
+}
+
+#[derive(Debug)]
+struct DescriptorAsyncClassifierProvider {
+    descriptor: ProviderDescriptor,
+}
+
+impl ProviderMetadata for DescriptorAsyncClassifierProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        self.descriptor.clone()
+    }
+}
+
+impl AsyncMediaStreamClassifierProvider for DescriptorAsyncClassifierProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn qubit_mime::AsyncMediaStreamClassifierBackend>, MimeError> {
+        Err(MimeError::AsyncUnsupported)
+    }
+}
+
+#[test]
+fn test_classifier_sync_async_selector_conflicts_are_symmetric() {
+    let registry = MediaStreamClassifierRegistry::default();
+    registry.register(DescriptorClassifierProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("classifier-sync-id").unwrap()),
+    }).unwrap();
+    assert!(registry.register_async_provider(DescriptorAsyncClassifierProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("classifier-async-owner").unwrap())
+            .with_aliases(["classifier-sync-id"]).unwrap(),
+    }).is_err());
+
+    let registry = MediaStreamClassifierRegistry::default();
+    registry.register_async_provider(DescriptorAsyncClassifierProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("classifier-async-id").unwrap()),
+    }).unwrap();
+    assert!(registry.register(DescriptorClassifierProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("classifier-sync-owner").unwrap())
+            .with_aliases(["classifier-async-id"]).unwrap(),
+    }).is_err());
+
+    let registry = MediaStreamClassifierRegistry::default();
+    registry.register(DescriptorClassifierProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("classifier-sync-alias-owner").unwrap())
+            .with_aliases(["classifier-cross-alias"]).unwrap(),
+    }).unwrap();
+    assert!(registry.register_async_provider(DescriptorAsyncClassifierProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("classifier-async-alias-owner").unwrap())
+            .with_aliases(["classifier-cross-alias"]).unwrap(),
+    }).is_err());
+
+    let registry = MediaStreamClassifierRegistry::default();
+    registry.register_async_provider(DescriptorAsyncClassifierProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("classifier-async-alias-owner").unwrap())
+            .with_aliases(["classifier-cross-alias"]).unwrap(),
+    }).unwrap();
+    assert!(registry.register(DescriptorClassifierProvider {
+        descriptor: ProviderDescriptor::new(ProviderId::new("classifier-sync-alias-owner").unwrap())
+            .with_aliases(["classifier-cross-alias"]).unwrap(),
+    }).is_err());
+}
+
+#[derive(Debug)]
+struct ReentrantClassifierDescriptorProvider {
+    registry: MediaStreamClassifierRegistry,
+    descriptor: ProviderDescriptor,
+    entered: Arc<AtomicBool>,
+}
+
+impl ProviderMetadata for ReentrantClassifierDescriptorProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        if !self.entered.swap(true, Ordering::SeqCst) {
+            self.registry.register(TestMediaStreamClassifierProvider::new(
+                "classifier-sync-descriptor-reentry",
+                0,
+                TestProviderBehavior::Success("unused"),
+            )).expect("descriptor callback should reenter sync registration");
+        }
+        self.descriptor.clone()
+    }
+}
+
+impl ServiceProvider<MediaStreamClassifierSpec> for ReentrantClassifierDescriptorProvider {
+    fn create_configured(
+        &self,
+        _config: &MimeConfig,
+    ) -> Result<Arc<dyn qubit_mime::MediaStreamClassifier>, ProviderFailure<MimeError>> {
+        Err(ProviderFailure::unsupported(MimeError::AsyncUnsupported))
+    }
+}
+
+#[derive(Debug)]
+struct ReentrantAsyncClassifierDescriptorProvider {
+    registry: MediaStreamClassifierRegistry,
+    descriptor: ProviderDescriptor,
+    entered: Arc<AtomicBool>,
+}
+
+impl ProviderMetadata for ReentrantAsyncClassifierDescriptorProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        if !self.entered.swap(true, Ordering::SeqCst) {
+            self.registry.register_async_provider(CountedAsyncClassifierProvider {
+                descriptor: ProviderDescriptor::new(ProviderId::new("classifier-async-descriptor-reentry").unwrap()),
+                creations: Arc::new(AtomicUsize::new(0)),
+            }).expect("descriptor callback should reenter async registration");
+        }
+        self.descriptor.clone()
+    }
+}
+
+impl AsyncMediaStreamClassifierProvider for ReentrantAsyncClassifierDescriptorProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn qubit_mime::AsyncMediaStreamClassifierBackend>, MimeError> {
+        Err(MimeError::AsyncUnsupported)
+    }
+}
+
+#[test]
+fn test_classifier_descriptor_callbacks_can_reenter_both_registries() {
+    let registry = MediaStreamClassifierRegistry::default();
+    let sync_entered = Arc::new(AtomicBool::new(false));
+    registry.register(ReentrantClassifierDescriptorProvider {
+        registry: registry.clone(),
+        descriptor: ProviderDescriptor::new(ProviderId::new("classifier-sync-descriptor-owner").unwrap()),
+        entered: Arc::clone(&sync_entered),
+    }).expect("sync descriptor reentry should complete");
+    assert!(sync_entered.load(Ordering::SeqCst));
+    assert!(registry.provider_ids().iter().any(|id| id.as_str() == "classifier-sync-descriptor-reentry"));
+
+    let registry = MediaStreamClassifierRegistry::default();
+    let async_entered = Arc::new(AtomicBool::new(false));
+    registry.register_async_provider(ReentrantAsyncClassifierDescriptorProvider {
+        registry: registry.clone(),
+        descriptor: ProviderDescriptor::new(ProviderId::new("classifier-async-descriptor-owner").unwrap()),
+        entered: Arc::clone(&async_entered),
+    }).expect("async descriptor reentry should complete");
+    assert!(async_entered.load(Ordering::SeqCst));
+    assert!(registry.async_provider_ids().iter().any(|id| id.as_str() == "classifier-async-descriptor-reentry"));
 }
