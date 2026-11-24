@@ -64,6 +64,17 @@ fn test_magic_index_returns_only_highest_priority_in_source_order_once_per_mime(
 }
 
 #[test]
+fn test_magic_index_deduplicates_independent_equal_priority_rules_in_stable_order() {
+    let mime_types = mime_types_with_rules(&[(2, 40, b"same"), (2, 40, b"same"), (5, 40, b"same")]);
+    let mut index = MagicIndex::default();
+    index.add(2, 0, &rule(40, b"same"));
+    index.add(2, 1, &rule(40, b"same"));
+    index.add(5, 0, &rule(40, b"same"));
+
+    assert_eq!(vec![2, 5], index.matches(&mime_types, b"same"));
+}
+
+#[test]
 fn test_magic_index_replaces_prior_results_and_returns_empty_for_no_match() {
     let mime_types = mime_types_with_rules(&[(1, 20, b"same"), (2, 80, b"same"), (3, 80, b"same")]);
     let mut index = MagicIndex::default();

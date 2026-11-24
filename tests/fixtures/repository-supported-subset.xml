@@ -1,0 +1,12 @@
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-fixture">
+    <comment>Fixture format</comment>
+    <alias type="application/x-fixture-alias"/>
+    <sub-class-of type="application/x-parent"/>
+    <glob pattern="*.fixture"/>
+    <magic priority="40">
+      <match type="string" value="FIXTURE" offset="0"/>
+    </magic>
+    <icon name="fixture-icon"/>
+  </mime-type>
+</mime-info>
