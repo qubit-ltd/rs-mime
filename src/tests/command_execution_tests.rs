@@ -403,8 +403,8 @@ mod managed_command_executor_tests {
 
         let failure = run_managed_command(Command::new("__qubit_mime_managed_executor_missing__"), 4, false, false);
         assert!(
-            matches!(failure, OperationOutcome::ChildFailed(_)),
-            "the parent operation reports the failed managed command as a child failure"
+            matches!(failure, OperationOutcome::Failed(MimeError::Command(_))),
+            "the parent operation reports the typed command error"
         );
     }
 
@@ -428,7 +428,7 @@ mod managed_command_executor_tests {
     #[test]
     fn test_managed_executor_stops_running_child_and_settles_resources() {
         let outcome = run_managed_command(Command::new("sleep").arg("10"), 4, false, true);
-        let stopped = matches!(outcome, OperationOutcome::ChildFailed(_));
+        let stopped = matches!(outcome, OperationOutcome::Stopped(_));
         assert!(
             stopped,
             "a parent stop should surface the cancelled required child: {:?}",
@@ -533,7 +533,7 @@ mod managed_command_executor_tests {
             panic!("parent operation failed before returning the command result: {error:?}");
         }
         assert!(matches!(command_result, Err(MimeError::CommandQueueBusy)));
-        assert!(matches!(outcome, OperationOutcome::ChildFailed(_)));
+        assert!(matches!(outcome, OperationOutcome::Succeeded(())));
     }
 
     #[test]

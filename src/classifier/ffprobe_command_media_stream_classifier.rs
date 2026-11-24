@@ -532,6 +532,7 @@ mod async_operation_tests {
     use std::task::Wake;
     use std::task::Waker;
     use std::thread;
+    use std::time::Duration;
 
     use qubit_config::Config;
     use qubit_fs::AsyncFileSystem;
@@ -603,7 +604,55 @@ mod async_operation_tests {
     use crate::command_execution::MimeCommandOutput;
     use crate::detector::MimeExecutionServices;
     use crate::detector::MimeRuntime;
+    use crate::FixedMimeExecutionPort;
     use crate::managed_temp_staging::StagedMimeInput;
+
+    #[test]
+    fn test_managed_ffprobe_reports_command_queue_busy_after_staging() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 128).unwrap());
+        services.prepare().unwrap();
+        let classifier = FfprobeCommandMediaStreamClassifier::from_mime_config(MimeConfig::default())
+            .with_execution_services(Arc::clone(&services));
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        assert!(port.try_dispatch(Box::new(move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        }))
+        .is_ok());
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(port.try_dispatch(Box::new(|| {})).is_ok());
+
+        let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+            classifier
+                .classify_in(
+                    &scope,
+                    BorrowedMimeInput::Bytes {
+                        content: b"staged ffprobe input",
+                        extent: InputExtent::Complete,
+                        filename: None,
+                    },
+                    &MimeOperationOptions::default(),
+                )
+                .await
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            block_on(operation.wait_outcome()).unwrap(),
+            OperationOutcome::Failed(MimeError::CommandQueueBusy)
+        ));
+        assert!(block_on(operation.wait_settlement()).all_released());
+        release_tx.send(()).unwrap();
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
 
     #[derive(Debug)]
     struct InlinePort;

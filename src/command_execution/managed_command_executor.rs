@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use qubit_command::CommandError;
 use qubit_operation::AsyncOperationHandle;
+use qubit_operation::ChildRequirement;
 use qubit_operation::OperationOptions;
 use qubit_operation::OperationOutcome;
 use qubit_operation::OperationScope;
@@ -80,7 +81,13 @@ impl AsyncMimeCommandExecutor for ManagedCommandExecutor {
                 .map_err(MimeError::GroupBinding)?
                 .as_async();
             let mut handle: AsyncOperationHandle<MimeCommandOutput, CommandError> = manager
-                .try_submit_external_as_child(OperationOptions::default(), Arc::clone(&prepared))
+                .try_submit_external_as_child(
+                    OperationOptions {
+                        requirement: ChildRequirement::Optional,
+                        ..OperationOptions::default()
+                    },
+                    Arc::clone(&prepared),
+                )
                 .map_err(|error| {
                     let (reason, rejected) = error.into_parts();
                     drop(rejected); // exact prepared task remains intact through rejection mapping
