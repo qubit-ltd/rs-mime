@@ -170,9 +170,9 @@ mod managed_command_executor_tests {
     use crate::command_execution::MimeCommandOutput;
     use crate::command_execution::MimeExecutionWorker;
     use crate::detector::MimeDetectorRegistry;
-    use crate::detector::MimeRuntime;
     use crate::detector::MimeExecutionPort;
     use crate::detector::MimeExecutionServices;
+    use crate::detector::MimeRuntime;
     use crate::managed_temp_staging::ManagedStagingLimits;
     use crate::managed_temp_staging::stage_owned_in;
 
@@ -196,9 +196,7 @@ mod managed_command_executor_tests {
         }
 
         fn advance_to(&self, ticks: u64) {
-            self.0
-                .ticks
-                .store(ticks, std::sync::atomic::Ordering::SeqCst);
+            self.0.ticks.store(ticks, std::sync::atomic::Ordering::SeqCst);
             let wakes = self
                 .0
                 .registrations
@@ -224,20 +222,10 @@ mod managed_command_executor_tests {
     }
     impl ClockSource for ManualClock {
         fn now(&self) -> MonotonicTime {
-            MonotonicTime::new(
-                self.0.domain,
-                self.0.ticks.load(std::sync::atomic::Ordering::SeqCst),
-            )
+            MonotonicTime::new(self.0.domain, self.0.ticks.load(std::sync::atomic::Ordering::SeqCst))
         }
-        fn register_deadline(
-            &self,
-            at: MonotonicTime,
-            wake: std::task::Waker,
-        ) -> Box<dyn TimerRegistration> {
-            let id = self
-                .0
-                .next_id
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        fn register_deadline(&self, at: MonotonicTime, wake: std::task::Waker) -> Box<dyn TimerRegistration> {
+            let id = self.0.next_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.0
                 .registrations
                 .lock()
@@ -444,8 +432,7 @@ mod managed_command_executor_tests {
             command_queued: command_queued_tx,
         });
         let execution_port: Arc<dyn MimeExecutionPort> = worker_port.clone();
-        let services =
-            Arc::new(MimeExecutionServices::new(manager, group, execution_port, 128).unwrap());
+        let services = Arc::new(MimeExecutionServices::new(manager, group, execution_port, 128).unwrap());
         services.prepare().unwrap();
 
         let budget = services.staging_budget();
@@ -479,9 +466,7 @@ mod managed_command_executor_tests {
                 },
                 options,
             )
-            .unwrap_or_else(|_| {
-                panic!("public MIME runtime accepts the managed file detector operation")
-            });
+            .unwrap_or_else(|_| panic!("public MIME runtime accepts the managed file detector operation"));
         command_queued_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("staging completes and actual command dispatch is held");
@@ -491,7 +476,7 @@ mod managed_command_executor_tests {
             "command job retains its staged input lease"
         );
         assert!(
-            clock.0.registrations.lock().unwrap().len() > 0,
+            !clock.0.registrations.lock().unwrap().is_empty(),
             "production MIME detect registered its context deadline"
         );
 
@@ -499,9 +484,7 @@ mod managed_command_executor_tests {
         let outcome = block_on_timeout(operation.wait_outcome(), Duration::from_secs(2))
             .expect("production MIME context deadline wakes parent outcome")
             .unwrap();
-        assert!(
-            matches!(outcome, OperationOutcome::Stopped(report) if report.reason == StopReason::Timeout)
-        );
+        assert!(matches!(outcome, OperationOutcome::Stopped(report) if report.reason == StopReason::Timeout));
         assert!(
             clock.0.registrations.lock().unwrap().is_empty(),
             "production deadline signal cancels its timer registration after firing"
@@ -521,8 +504,7 @@ mod managed_command_executor_tests {
         assert_eq!(expected_bytes, budget.used_bytes());
 
         worker_port.release_command();
-        let settled =
-            block_on_timeout(settlement, Duration::from_secs(2)).expect("released command settles");
+        let settled = block_on_timeout(settlement, Duration::from_secs(2)).expect("released command settles");
         assert!(settled.all_released());
         assert_eq!(0, budget.used_bytes());
 
@@ -551,10 +533,7 @@ mod managed_command_executor_tests {
         }
     }
 
-    fn block_on_timeout<F: Future>(
-        future: F,
-        timeout: Duration,
-    ) -> Result<F::Output, &'static str> {
+    fn block_on_timeout<F: Future>(future: F, timeout: Duration) -> Result<F::Output, &'static str> {
         let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
         let mut context = Context::from_waker(&waker);
         let mut future = std::pin::pin!(future);

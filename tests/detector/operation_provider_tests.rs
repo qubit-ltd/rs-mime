@@ -180,7 +180,9 @@ fn test_no_read_low_limit_association_does_not_cap_later_direct_provider() {
                         },
                     )
                     .unwrap_or_else(|failure| panic!("no-read child should be admitted: {:?}", failure.reason));
-                entered_rx.recv().expect("the no-read backend should hold its scope open");
+                entered_rx
+                    .recv()
+                    .expect("the no-read backend should hold its scope open");
 
                 let file_system = Arc::new(
                     qubit_fs::AsyncFileSystem::from_spi(SnapshotGateFileSystem::new(
@@ -212,7 +214,10 @@ fn test_no_read_low_limit_association_does_not_cap_later_direct_provider() {
                     )
                     .unwrap_or_else(|failure| panic!("provider child should be admitted: {:?}", failure.reason));
                 release_tx.send(()).unwrap();
-                assert!(matches!(no_read.wait_outcome().await.unwrap(), OperationOutcome::Succeeded(_)));
+                assert!(matches!(
+                    no_read.wait_outcome().await.unwrap(),
+                    OperationOutcome::Succeeded(_)
+                ));
                 let _ = no_read.wait_settlement().await;
                 drop(no_read);
                 let bytes_read = match provider.wait_outcome().await.unwrap() {
@@ -234,7 +239,10 @@ fn test_no_read_low_limit_association_does_not_cap_later_direct_provider() {
         other => panic!("parent should finish successfully: {other:?}"),
     };
     let _ = block_on(parent.wait_settlement());
-    assert_eq!(4, bytes_read, "the no-read one-byte scope must not cap its provider sibling");
+    assert_eq!(
+        4, bytes_read,
+        "the no-read one-byte scope must not cap its provider sibling"
+    );
     assert_eq!(1, opens.load(Ordering::SeqCst));
 
     let shutdown = services.shutdown();

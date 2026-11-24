@@ -110,16 +110,9 @@ fn test_managed_prefix_backend_observes_static_cap_and_natural_eof() {
         ("natural-eof", b"abc".as_slice(), 8usize, 3usize),
     ] {
         let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-        let group = manager
-            .group(qubit_operation::GroupOptions { capacity: 2 })
-            .unwrap();
-        let services = MimeExecutionServices::new(
-            manager,
-            group,
-            Arc::new(FixedMimeExecutionPort::new(1, 2)),
-            1024,
-        )
-        .unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+        let services =
+            MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
         services.prepare().unwrap();
         let observed = Arc::new(AtomicUsize::new(usize::MAX));
         let registry = MimeDetectorRegistry::default();
@@ -137,8 +130,7 @@ fn test_managed_prefix_backend_observes_static_cap_and_natural_eof() {
                 &qubit_spi::ProviderSelection::named("prefix-runtime-test").unwrap(),
             )
             .unwrap();
-        let filesystem =
-            qubit_fs::AsyncFileSystem::from_spi(PrefixFileSystem::new(content.to_vec())).unwrap();
+        let filesystem = qubit_fs::AsyncFileSystem::from_spi(PrefixFileSystem::new(content.to_vec())).unwrap();
         let mut operation = runtime
             .try_submit_detection(
                 OwnedMimeInput::Provider {
@@ -151,9 +143,7 @@ fn test_managed_prefix_backend_observes_static_cap_and_natural_eof() {
                     ..Default::default()
                 },
             )
-            .unwrap_or_else(|failure| {
-                panic!("{name} prefix operation rejected: {:?}", failure.reason)
-            });
+            .unwrap_or_else(|failure| panic!("{name} prefix operation rejected: {:?}", failure.reason));
 
         match block_on(operation.wait_outcome()).unwrap() {
             qubit_operation::OperationOutcome::Succeeded(report) => {
@@ -167,11 +157,7 @@ fn test_managed_prefix_backend_observes_static_cap_and_natural_eof() {
             "backend input length for {name}"
         );
         let shutdown = services.shutdown();
-        assert!(
-            block_on(shutdown.wait_services_settled())
-                .unwrap()
-                .operations_settled
-        );
+        assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
         assert!(shutdown.stop_services().unwrap().services_stopped);
     }
 }
@@ -179,16 +165,9 @@ fn test_managed_prefix_backend_observes_static_cap_and_natural_eof() {
 #[test]
 fn test_managed_prefix_owned_budget_rejection_returns_prefix_input() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
-    let group = manager
-        .group(qubit_operation::GroupOptions { capacity: 2 })
-        .unwrap();
-    let services = MimeExecutionServices::new(
-        manager,
-        group,
-        Arc::new(FixedMimeExecutionPort::new(1, 2)),
-        1024,
-    )
-    .unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 1024).unwrap();
     services.prepare().unwrap();
     let observed = Arc::new(AtomicUsize::new(usize::MAX));
     let registry = MimeDetectorRegistry::default();
@@ -220,20 +199,14 @@ fn test_managed_prefix_owned_budget_rejection_returns_prefix_input() {
         qubit_mime::MimeSubmitRejection::BudgetExceeded
     ));
     match failure.input {
-        OwnedMimeInput::Bytes {
-            content, extent, ..
-        } => {
+        OwnedMimeInput::Bytes { content, extent, .. } => {
             assert!(Arc::ptr_eq(&bytes, &content));
             assert_eq!(extent, InputExtent::Prefix);
         }
         OwnedMimeInput::Provider { .. } => panic!("rejected owned input changed kind"),
     }
     let shutdown = services.shutdown();
-    assert!(
-        block_on(shutdown.wait_services_settled())
-            .unwrap()
-            .operations_settled
-    );
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
     assert!(shutdown.stop_services().unwrap().services_stopped);
 }
 

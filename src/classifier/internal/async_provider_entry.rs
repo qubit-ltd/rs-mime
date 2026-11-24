@@ -27,6 +27,10 @@ pub(crate) struct AsyncProviderEntry {
 }
 
 impl fmt::Debug for AsyncProviderEntry {
+    /// Formats the stable registration metadata without exposing the factory.
+    ///
+    /// # Parameters
+    /// - `formatter`: Destination formatter for this metadata.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("AsyncProviderEntry")

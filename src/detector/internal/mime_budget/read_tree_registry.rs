@@ -769,8 +769,14 @@ mod tests {
                 assert!(direct.is_anchored());
                 assert_eq!(32, direct.tree.limit());
                 assert_eq!(3, nested.reserve(3).unwrap().commit(3));
-                assert!(nested.reserve(1).is_none(), "nested scope must retain its intermediate parent cap");
-                assert!(direct.reserve(2).is_none(), "nested reads must charge the common parent scope");
+                assert!(
+                    nested.reserve(1).is_none(),
+                    "nested scope must retain its intermediate parent cap"
+                );
+                assert!(
+                    direct.reserve(2).is_none(),
+                    "nested reads must charge the common parent scope"
+                );
                 assert_eq!(1, direct.reserve(1).unwrap().commit(1));
                 assert_eq!(4, direct.tree.consumed());
                 assert!(matches!(
@@ -837,8 +843,14 @@ mod tests {
                 assert!(Arc::ptr_eq(&nested.tree, &direct.tree));
                 assert_eq!(8, nested.tree.limit());
                 assert_eq!(3, nested.reserve(3).unwrap().commit(3));
-                assert!(nested.reserve(1).is_none(), "grandchild reads must charge its direct parent");
-                assert!(direct.reserve(6).is_none(), "direct sibling must see the shared tree consumption");
+                assert!(
+                    nested.reserve(1).is_none(),
+                    "grandchild reads must charge its direct parent"
+                );
+                assert!(
+                    direct.reserve(6).is_none(),
+                    "direct sibling must see the shared tree consumption"
+                );
                 assert_eq!(5, direct.reserve(5).unwrap().commit(5));
                 assert_eq!(8, nested.tree.consumed());
 
@@ -1222,7 +1234,11 @@ mod tests {
                 .commit()
                 .expect("provider read promotes the ancestor association");
             assert!(Arc::ptr_eq(&intermediate.tree, &direct_provider.tree));
-            assert_eq!(16, direct_provider.tree.limit(), "the first actual provider request selects the tree limit");
+            assert_eq!(
+                16,
+                direct_provider.tree.limit(),
+                "the first actual provider request selects the tree limit"
+            );
 
             assert_eq!(6, intermediate.reserve(6).unwrap().commit(6));
             assert_eq!(2, direct_provider.reserve(2).unwrap().commit(2));
@@ -1426,7 +1442,11 @@ mod tests {
             poison_mutex(&body_registry.pending_roots);
             let kind = pending.commit().expect_err("a stopped accepted parent rejects commit");
             assert!(body_registry.for_operation(scope.id()).is_none());
-            assert_eq!(u64::MAX, borrowed.tree.limit(), "failed anchor commit must not select a tree cap");
+            assert_eq!(
+                u64::MAX,
+                borrowed.tree.limit(),
+                "failed anchor commit must not select a tree cap"
+            );
             reason_tx.send(kind).unwrap();
             Ok::<_, ()>(())
         }))

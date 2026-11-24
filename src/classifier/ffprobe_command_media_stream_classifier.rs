@@ -598,13 +598,13 @@ mod async_operation_tests {
         assert_eq!(456, configured.max_staging_size());
         assert!(!format!("{:?}", configured.command_runner()).is_empty());
     }
+    use crate::FixedMimeExecutionPort;
     use crate::MimeOperationOptions;
     use crate::command_execution::AsyncMimeCommandExecutor;
     use crate::command_execution::ManagedMimeCommand;
     use crate::command_execution::MimeCommandOutput;
     use crate::detector::MimeExecutionServices;
     use crate::detector::MimeRuntime;
-    use crate::FixedMimeExecutionPort;
     use crate::managed_temp_staging::StagedMimeInput;
 
     #[test]
@@ -619,11 +619,13 @@ mod async_operation_tests {
 
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
-        assert!(port.try_dispatch(Box::new(move || {
-            started_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-        }))
-        .is_ok());
+        assert!(
+            port.try_dispatch(Box::new(move || {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            }))
+            .is_ok()
+        );
         started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(port.try_dispatch(Box::new(|| {})).is_ok());
 

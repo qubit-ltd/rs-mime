@@ -155,8 +155,7 @@ fn test_public_prefer_filename_uses_native_basename_without_provider_or_command_
         .expect("fake file command metadata should be readable")
         .permissions();
     permissions.set_mode(0o755);
-    std::fs::set_permissions(&executable, permissions)
-        .expect("fake file command should be executable");
+    std::fs::set_permissions(&executable, permissions).expect("fake file command should be executable");
     let _path_guard = PathEnvGuard::prepend(&executable_dir);
 
     assert_eq!(
@@ -165,14 +164,10 @@ fn test_public_prefer_filename_uses_native_basename_without_provider_or_command_
             .detect_file(&local_file, MimeDetectionPolicy::PreferFilename)
             .expect("public local-file API should use the native POSIX basename"),
     );
-    assert!(
-        !marker.exists(),
-        "filename success should skip the system file command"
-    );
+    assert!(!marker.exists(), "filename success should skip the system file command");
 
     let provider = PrefixFileSystemSpi::hierarchical(b"provider content".to_vec());
-    let filesystem =
-        FileSystem::from_spi(provider.clone()).expect("filesystem facade should build");
+    let filesystem = FileSystem::from_spi(provider.clone()).expect("filesystem facade should build");
     let path = FsPath::parse("/left\\right.mimecase").expect("typed provider path should parse");
     let public_detector: &dyn MimeDetector = &detector;
     assert_eq!(

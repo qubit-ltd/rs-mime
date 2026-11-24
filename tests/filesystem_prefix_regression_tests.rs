@@ -55,7 +55,8 @@ fn test_detection_prefix_counts_for_oversized_resources() {
     }
 }
 
-/// A short resource returns its available bytes when the requested prefix reaches EOF.
+/// A short resource returns its available bytes when the requested prefix
+/// reaches EOF.
 #[test]
 fn test_detection_prefix_stops_at_natural_eof() {
     let detector = RepositoryMimeDetector::new().expect("repository detector");

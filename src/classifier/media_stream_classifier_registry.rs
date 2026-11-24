@@ -63,6 +63,10 @@ pub struct MediaStreamClassifierRegistry {
 }
 
 impl std::fmt::Debug for MediaStreamClassifierRegistry {
+    /// Formats the provider IDs and registry state without exposing internals.
+    ///
+    /// # Parameters
+    /// - `formatter`: Destination formatter for registry state.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("MediaStreamClassifierRegistry")
@@ -107,8 +111,7 @@ impl MediaStreamClassifierRegistry {
             .expect("built-in FFprobe classifier provider should register");
         registry
             .set_default_selection(
-                ProviderSelection::named("ffprobe")
-                    .expect("built-in FFprobe selection should be valid"),
+                ProviderSelection::named("ffprobe").expect("built-in FFprobe selection should be valid"),
             )
             .expect("built-in selection should be accepted");
         registry
@@ -141,18 +144,10 @@ impl MediaStreamClassifierRegistry {
     ) -> Result<(String, Arc<dyn crate::AsyncMediaStreamClassifierBackend>), MimeError> {
         let selector_ids = self.selector_ids.read().unwrap_or_else(|e| e.into_inner());
         let async_catalog = {
-            let providers = self
-                .async_providers
-                .read()
-                .unwrap_or_else(|e| e.into_inner());
+            let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
             providers
                 .iter()
-                .map(|(selector, entry)| {
-                    (
-                        selector.clone(),
-                        (entry.id.clone(), entry.priority, entry.clone()),
-                    )
-                })
+                .map(|(selector, entry)| (selector.clone(), (entry.id.clone(), entry.priority, entry.clone())))
                 .collect::<HashMap<_, _>>()
         };
         let mut builtin_ids = async_catalog
@@ -161,9 +156,7 @@ impl MediaStreamClassifierRegistry {
             .map(|(id, priority, _)| (id.clone(), *priority))
             .collect::<Vec<_>>();
         builtin_ids.sort_by(|(left_id, left_priority), (right_id, right_priority)| {
-            right_priority
-                .cmp(left_priority)
-                .then_with(|| left_id.cmp(right_id))
+            right_priority.cmp(left_priority).then_with(|| left_id.cmp(right_id))
         });
         let auto_builtin_ids = builtin_ids.into_iter().map(|(id, _)| id).collect();
         let mut auto_priority_ids = self
@@ -176,11 +169,7 @@ impl MediaStreamClassifierRegistry {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        auto_priority_ids.extend(
-            async_catalog
-                .values()
-                .map(|(id, priority, _)| (id.clone(), *priority)),
-        );
+        auto_priority_ids.extend(async_catalog.values().map(|(id, priority, _)| (id.clone(), *priority)));
         let candidates = crate::async_selection::resolve(
             selection,
             &async_catalog,
@@ -209,8 +198,7 @@ impl MediaStreamClassifierRegistry {
             match result {
                 Ok(selection) => return Ok(selection),
                 Err(error) => {
-                    if !crate::async_selection::should_fallback(selection.fallback_policy(), &error)
-                    {
+                    if !crate::async_selection::should_fallback(selection.fallback_policy(), &error) {
                         return Err(error);
                     }
                     last_error = Some(error);
@@ -218,9 +206,7 @@ impl MediaStreamClassifierRegistry {
             }
         }
         Err(last_error.unwrap_or_else(|| {
-            MimeError::ProviderSelection(
-                "no media stream classifier candidates match the selection".to_owned(),
-            )
+            MimeError::ProviderSelection("no media stream classifier candidates match the selection".to_owned())
         }))
     }
 
@@ -272,19 +258,11 @@ impl MediaStreamClassifierRegistry {
     #[must_use]
     pub fn async_provider_ids(&self) -> Vec<ProviderId> {
         let _snapshot = self.selector_ids.read().unwrap_or_else(|e| e.into_inner());
-        let providers = self
-            .async_providers
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
-        let mut ids = providers
-            .values()
-            .map(|entry| entry.id.clone())
-            .collect::<Vec<_>>();
+        let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
+        let mut ids = providers.values().map(|entry| entry.id.clone()).collect::<Vec<_>>();
         ids.sort();
         ids.dedup();
-        ids.into_iter()
-            .filter_map(|id| ProviderId::new(&id).ok())
-            .collect()
+        ids.into_iter().filter_map(|id| ProviderId::new(&id).ok()).collect()
     }
 
     /// Registers an explicit async classifier factory without constructing a
@@ -311,14 +289,10 @@ impl MediaStreamClassifierRegistry {
         let descriptor = provider.descriptor();
         let id = descriptor.id().as_str().to_owned();
         let priority = descriptor.priority();
-        let is_builtin =
-            TypeId::of::<P>() == TypeId::of::<FfprobeCommandMediaStreamClassifierProvider>();
+        let is_builtin = TypeId::of::<P>() == TypeId::of::<FfprobeCommandMediaStreamClassifierProvider>();
         let provider: Arc<dyn AsyncMediaStreamClassifierProvider> = Arc::new(provider);
         let mut selector_ids = self.selector_ids.write().unwrap_or_else(|e| e.into_inner());
-        let mut providers = self
-            .async_providers
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
         if self.providers.is_sealed() {
             return Err(format!(
                 "cannot register async media classifier `{id}` after registry is sealed"
@@ -326,12 +300,7 @@ impl MediaStreamClassifierRegistry {
         }
         let mut selectors = Vec::with_capacity(1 + descriptor.aliases().len());
         selectors.push(id.clone());
-        selectors.extend(
-            descriptor
-                .aliases()
-                .iter()
-                .map(|alias| alias.as_str().to_owned()),
-        );
+        selectors.extend(descriptor.aliases().iter().map(|alias| alias.as_str().to_owned()));
         if let Err((selector, owner)) = selector_ids.validate(&descriptor) {
             return Err(format!(
                 "provider selector `{selector}` is already owned by `{owner}` (attempted `{id}`)"
@@ -395,13 +364,11 @@ impl MediaStreamClassifierRegistry {
         let mut selector_ids = self.selector_ids.write().unwrap_or_else(|e| e.into_inner());
         selector_ids
             .validate(&descriptor)
-            .map_err(
-                |(selector, owner)| RegistryMutationError::DuplicateSelector {
-                    selector: selector.into_boxed_str(),
-                    existing_provider: owner.into_boxed_str(),
-                    provider: descriptor.id().as_str().into(),
-                },
-            )?;
+            .map_err(|(selector, owner)| RegistryMutationError::DuplicateSelector {
+                selector: selector.into_boxed_str(),
+                existing_provider: owner.into_boxed_str(),
+                provider: descriptor.id().as_str().into(),
+            })?;
         self.providers
             .register_shared(Arc::new(CachedProvider::new(provider, descriptor.clone())))?;
         selector_ids.insert(&descriptor);
@@ -440,13 +407,11 @@ impl MediaStreamClassifierRegistry {
         let mut selector_ids = self.selector_ids.write().unwrap_or_else(|e| e.into_inner());
         selector_ids
             .validate(&descriptor)
-            .map_err(
-                |(selector, owner)| RegistryMutationError::DuplicateSelector {
-                    selector: selector.into_boxed_str(),
-                    existing_provider: owner.into_boxed_str(),
-                    provider: descriptor.id().as_str().into(),
-                },
-            )?;
+            .map_err(|(selector, owner)| RegistryMutationError::DuplicateSelector {
+                selector: selector.into_boxed_str(),
+                existing_provider: owner.into_boxed_str(),
+                provider: descriptor.id().as_str().into(),
+            })?;
         self.providers
             .register_shared(Arc::new(CachedProvider::new(provider, descriptor.clone())))?;
         selector_ids.insert(&descriptor);
@@ -468,10 +433,7 @@ impl MediaStreamClassifierRegistry {
     /// Returns [`RegistryMutationError::Sealed`] when the registry rejects
     /// further configuration changes.
     #[inline]
-    pub fn set_default_selection(
-        &self,
-        selection: ProviderSelection,
-    ) -> Result<(), RegistryMutationError> {
+    pub fn set_default_selection(&self, selection: ProviderSelection) -> Result<(), RegistryMutationError> {
         self.providers.set_default_selection(selection)
     }
 
@@ -479,10 +441,7 @@ impl MediaStreamClassifierRegistry {
     #[inline]
     pub fn seal(&self) {
         let _boundary = self.selector_ids.write().unwrap_or_else(|e| e.into_inner());
-        let _async_providers = self
-            .async_providers
-            .write()
-            .unwrap_or_else(|e| e.into_inner());
+        let _async_providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
         self.providers.seal();
     }
 
@@ -524,9 +483,7 @@ impl MediaStreamClassifierRegistry {
     /// Returns [`ProviderResolutionError`] when the stored default matches no
     /// registered provider.
     #[inline]
-    pub fn resolve(
-        &self,
-    ) -> Result<ResolvingServiceProvider<MediaStreamClassifierSpec>, ProviderResolutionError> {
+    pub fn resolve(&self) -> Result<ResolvingServiceProvider<MediaStreamClassifierSpec>, ProviderResolutionError> {
         let _snapshot = self.selector_ids.read().unwrap_or_else(|e| e.into_inner());
         self.providers.resolve()
     }
@@ -574,9 +531,7 @@ mod async_catalog_recovery_tests {
 
     impl ProviderMetadata for CatalogRecoveryProvider {
         fn descriptor(&self) -> ProviderDescriptor {
-            ProviderDescriptor::new(
-                ProviderId::new("classifier-catalog-recovery").expect("valid provider ID"),
-            )
+            ProviderDescriptor::new(ProviderId::new("classifier-catalog-recovery").expect("valid provider ID"))
         }
     }
 
@@ -617,9 +572,7 @@ mod async_catalog_recovery_tests {
     #[test]
     fn test_registry_debug_uses_cached_classifier_identity_only() {
         let registry = MediaStreamClassifierRegistry::default();
-        registry
-            .register_async_provider(DebugProbeProvider)
-            .unwrap();
+        registry.register_async_provider(DebugProbeProvider).unwrap();
         let diagnostic = format!("{registry:?}");
         assert!(diagnostic.contains("classifier-debug-probe"));
     }
@@ -628,10 +581,7 @@ mod async_catalog_recovery_tests {
     fn test_poisoned_async_catalog_recovers_for_selection_registration_and_sealing() {
         let registry = MediaStreamClassifierRegistry::builtin();
         let catalog_poisoned = catch_unwind(AssertUnwindSafe(|| {
-            let _guard = registry
-                .async_providers
-                .write()
-                .expect("catalog should be unpoisoned");
+            let _guard = registry.async_providers.write().expect("catalog should be unpoisoned");
             panic!("poison classifier async catalog");
         }));
         assert!(catalog_poisoned.is_err());
@@ -644,20 +594,13 @@ mod async_catalog_recovery_tests {
         }));
         assert!(selector_index_poisoned.is_err());
 
-        let manager =
-            OperationManager::new(Default::default()).expect("operation manager should be created");
+        let manager = OperationManager::new(Default::default()).expect("operation manager should be created");
         let group = manager
             .group(GroupOptions { capacity: 1 })
             .expect("operation group should be created");
-        let services = MimeExecutionServices::new(
-            manager,
-            group,
-            Arc::new(FixedMimeExecutionPort::new(1, 1)),
-            32,
-        )
-        .expect("execution services should be created");
-        let selection =
-            ProviderSelection::named("ffprobe").expect("built-in selector should be valid");
+        let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 32)
+            .expect("execution services should be created");
+        let selection = ProviderSelection::named("ffprobe").expect("built-in selector should be valid");
         let (id, _) = registry
             .create_async_backend(&selection, &MimeConfig::default(), &services)
             .expect("selection should recover the poisoned selector index");
@@ -669,11 +612,7 @@ mod async_catalog_recovery_tests {
         assert!(registry.is_sealed());
         let async_ids = registry.async_provider_ids();
         assert!(async_ids.iter().any(|id| id.as_str() == "ffprobe"));
-        assert!(
-            async_ids
-                .iter()
-                .any(|id| id.as_str() == "classifier-catalog-recovery")
-        );
+        assert!(async_ids.iter().any(|id| id.as_str() == "classifier-catalog-recovery"));
         assert!(
             registry
                 .register_async_provider(FfprobeCommandMediaStreamClassifierProvider)
@@ -742,9 +681,7 @@ mod rejected_provider_drop_tests {
         }
     }
 
-    fn rejected_provider(
-        registry: &MediaStreamClassifierRegistry,
-    ) -> (ReentrantDropProvider, mpsc::Receiver<()>) {
+    fn rejected_provider(registry: &MediaStreamClassifierRegistry) -> (ReentrantDropProvider, mpsc::Receiver<()>) {
         let (dropped, received) = mpsc::channel();
         (
             ReentrantDropProvider {
@@ -767,10 +704,7 @@ mod rejected_provider_drop_tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("registration should return");
         assert!(rejected, "duplicate provider should be rejected");
-        assert_eq!(
-            existing, actual,
-            "failed registration must preserve provider records"
-        );
+        assert_eq!(existing, actual, "failed registration must preserve provider records");
     }
 
     #[test]
