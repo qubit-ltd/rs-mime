@@ -63,6 +63,9 @@ pub struct FfprobeCommandMediaStreamClassifier {
     /// Optional test or adapter executor; production uses the managed command
     /// service.
     async_executor: Option<Arc<dyn AsyncMimeCommandExecutor>>,
+    /// Counter at the actual managed runner call site, used by queue tests.
+    #[cfg(test)]
+    test_runner_invocations: Option<Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 impl fmt::Debug for FfprobeCommandMediaStreamClassifier {
@@ -118,6 +121,8 @@ impl FfprobeCommandMediaStreamClassifier {
             max_staging_size: config.media_stream_max_staging_size(),
             execution_services: None,
             async_executor: None,
+            #[cfg(test)]
+            test_runner_invocations: None,
         }
     }
 
@@ -202,6 +207,15 @@ impl FfprobeCommandMediaStreamClassifier {
     #[inline]
     pub fn with_command_runner(mut self, command_runner: CommandRunner) -> Self {
         self.command_runner = command_runner;
+        self
+    }
+
+    #[cfg(test)]
+    fn with_test_runner_invocations(
+        mut self,
+        runner_invocations: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> Self {
+        self.test_runner_invocations = Some(runner_invocations);
         self
     }
 
@@ -499,7 +513,11 @@ impl AsyncMediaStreamClassifierBackend for FfprobeCommandMediaStreamClassifier {
             if let Some(working_directory) = &self.working_directory {
                 command = command.working_directory(working_directory);
             }
-            let managed_executor = ManagedCommandExecutor::new(worker);
+            let managed_executor = if let Some(runner_invocations) = &self.test_runner_invocations {
+                ManagedCommandExecutor::with_runner_invocations(worker, Arc::clone(runner_invocations))
+            } else {
+                ManagedCommandExecutor::new(worker)
+            };
             let executor: &dyn AsyncMimeCommandExecutor = self.async_executor.as_deref().unwrap_or(&managed_executor);
             let output = executor
                 .run_in(
@@ -698,8 +716,10 @@ mod async_operation_tests {
         let port = Arc::new(StageThenRejectPort::default());
         let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 128).unwrap());
         services.prepare().unwrap();
+        let runner_invocations = Arc::new(AtomicUsize::new(0));
         let classifier = FfprobeCommandMediaStreamClassifier::from_mime_config(MimeConfig::default())
-            .with_execution_services(Arc::clone(&services));
+            .with_execution_services(Arc::clone(&services))
+            .with_test_runner_invocations(Arc::clone(&runner_invocations));
         let mut operation = block_on(group.try_submit_async(Default::default(), move |scope| async move {
             classifier.classify_in(
                 &scope,
@@ -712,6 +732,7 @@ mod async_operation_tests {
         assert_eq!("staging_create", port.events.lock().unwrap()[0]);
         assert_eq!("staging_write", port.events.lock().unwrap()[1]);
         assert_eq!("command_submit_rejected", port.events.lock().unwrap()[2]);
+        assert_eq!(0, runner_invocations.load(Ordering::SeqCst), "managed runner must not be invoked");
         let settlement = block_on(operation.wait_settlement());
         assert!(settlement.all_released(), "staged file cleanup must settle: {settlement:?}");
         assert_eq!(3, port.calls.load(Ordering::SeqCst), "staging and rejected command dispatches");

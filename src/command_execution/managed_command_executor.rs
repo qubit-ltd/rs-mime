@@ -8,6 +8,8 @@
 //! Managed async command adapter implementation.
 
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 
 use qubit_command::CommandError;
 use qubit_operation::AsyncOperationHandle;
@@ -33,6 +35,9 @@ use crate::managed_temp_staging::StagedMimeInput;
 pub(crate) struct ManagedCommandExecutor {
     /// Worker used for blocking process execution.
     worker: MimeExecutionWorker,
+    /// Optional test observer for the actual managed runner call site.
+    #[cfg(test)]
+    runner_invocations: Option<Arc<AtomicUsize>>,
 }
 impl ManagedCommandExecutor {
     /// Creates an executor bound to a prepared worker.
@@ -44,7 +49,20 @@ impl ManagedCommandExecutor {
     /// An adapter that submits commands through operation's external API.
     #[must_use]
     pub(crate) fn new(worker: MimeExecutionWorker) -> Self {
-        Self { worker }
+        Self {
+            worker,
+            #[cfg(test)]
+            runner_invocations: None,
+        }
+    }
+
+    /// Creates an executor that records whether the command runner was invoked.
+    #[cfg(test)]
+    pub(crate) fn with_runner_invocations(worker: MimeExecutionWorker, runner_invocations: Arc<AtomicUsize>) -> Self {
+        Self {
+            worker,
+            runner_invocations: Some(runner_invocations),
+        }
     }
 }
 
@@ -69,6 +87,19 @@ impl AsyncMimeCommandExecutor for ManagedCommandExecutor {
         input: ResourceRef<StagedMimeInput>,
     ) -> MimeFuture<'a, MimeCommandOutput> {
         Box::pin(async move {
+            #[cfg(test)]
+            let prepared = Arc::new(if let Some(runner_invocations) = &self.runner_invocations {
+                PreparedCommand::new_with_runner_invocations(
+                    self.worker.clone(),
+                    request.runner,
+                    request.command,
+                    input,
+                    Arc::clone(runner_invocations),
+                )
+            } else {
+                PreparedCommand::new(self.worker.clone(), request.runner, request.command, input)
+            });
+            #[cfg(not(test))]
             let prepared = Arc::new(PreparedCommand::new(
                 self.worker.clone(),
                 request.runner,

@@ -86,6 +86,8 @@ pub struct FileCommandMimeDetector<'a> {
     max_staging_bytes: u64,
     #[cfg(test)]
     test_command_executor: Option<Arc<dyn AsyncMimeCommandExecutor>>,
+    #[cfg(test)]
+    test_runner_invocations: Option<Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 impl std::fmt::Debug for FileCommandMimeDetector<'_> {
@@ -194,6 +196,8 @@ impl<'a> FileCommandMimeDetector<'a> {
             max_staging_bytes,
             #[cfg(test)]
             test_command_executor: None,
+            #[cfg(test)]
+            test_runner_invocations: None,
         }
     }
 
@@ -373,6 +377,15 @@ impl<'a> FileCommandMimeDetector<'a> {
     #[cfg(test)]
     fn with_test_command_executor(mut self, executor: Arc<dyn AsyncMimeCommandExecutor>) -> Self {
         self.test_command_executor = Some(executor);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_test_runner_invocations(
+        mut self,
+        runner_invocations: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> Self {
+        self.test_runner_invocations = Some(runner_invocations);
         self
     }
 
@@ -629,7 +642,12 @@ impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
             let output = if let Some(executor) = &self.test_command_executor {
                 executor.run_in(scope, command, staged).await?
             } else {
-                ManagedCommandExecutor::new(worker)
+                let executor = if let Some(runner_invocations) = &self.test_runner_invocations {
+                    ManagedCommandExecutor::with_runner_invocations(worker, Arc::clone(runner_invocations))
+                } else {
+                    ManagedCommandExecutor::new(worker)
+                };
+                executor
                     .run_in(scope, command, staged)
                     .await?
             };
@@ -1588,8 +1606,10 @@ mod file_operation_tests {
         let port = Arc::new(StageThenRejectPort::default());
         let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap();
         services.prepare().unwrap();
+        let runner_invocations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let detector = FileCommandMimeDetector::new()
-            .with_execution_services(services.clone());
+            .with_execution_services(services.clone())
+            .with_test_runner_invocations(Arc::clone(&runner_invocations));
         let input: Arc<[u8]> = Arc::from(b"staged file input".as_slice());
         let mut operation = group.as_async().try_submit(Default::default(), move |scope| async move {
             detector.guess_content_in(
@@ -1603,6 +1623,7 @@ mod file_operation_tests {
         assert_eq!("staging_create", port.events.lock().unwrap()[0]);
         assert_eq!("staging_write", port.events.lock().unwrap()[1]);
         assert_eq!("command_submit_rejected", port.events.lock().unwrap()[2]);
+        assert_eq!(0, runner_invocations.load(Ordering::SeqCst), "managed runner must not be invoked");
         let settlement = block_on(operation.wait_settlement());
         assert!(settlement.all_released(), "staged file cleanup must settle: {settlement:?}");
         assert_eq!(3, port.calls.load(Ordering::SeqCst), "staging and rejected command dispatches");

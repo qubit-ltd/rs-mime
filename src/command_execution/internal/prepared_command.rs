@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::task::Context;
 use std::task::Poll;
 
@@ -72,6 +74,9 @@ pub(in crate::command_execution) struct PreparedCommand {
     stop_reason: Mutex<Option<StopReason>>,
     /// Cancellation signal observed by the command runner.
     cancellation: CommandCancellation,
+    /// Counter incremented immediately before the managed runner is invoked.
+    #[cfg(test)]
+    runner_invocations: Option<Arc<AtomicUsize>>,
 }
 
 impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedCommand {
@@ -138,6 +143,10 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
                 return;
             }
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                #[cfg(test)]
+                if let Some(runner_invocations) = &task.runner_invocations {
+                    runner_invocations.fetch_add(1, Ordering::SeqCst);
+                }
                 SystemMimeCommandExecutor.run_cancellable(&runner, command, cancellation)
             }));
             drop(input); // only the worker's real return confirms release
@@ -307,6 +316,35 @@ impl PreparedCommand {
         command: Command,
         input: ResourceRef<StagedMimeInput>,
     ) -> Self {
+        Self::new_internal(
+            worker,
+            runner,
+            command,
+            input,
+            #[cfg(test)]
+            None,
+        )
+    }
+
+    /// Creates a command whose actual managed runner invocation is observable.
+    #[cfg(test)]
+    pub(crate) fn new_with_runner_invocations(
+        worker: MimeExecutionWorker,
+        runner: CommandRunner,
+        command: Command,
+        input: ResourceRef<StagedMimeInput>,
+        runner_invocations: Arc<AtomicUsize>,
+    ) -> Self {
+        Self::new_internal(worker, runner, command, input, Some(runner_invocations))
+    }
+
+    fn new_internal(
+        worker: MimeExecutionWorker,
+        runner: CommandRunner,
+        command: Command,
+        input: ResourceRef<StagedMimeInput>,
+        #[cfg(test)] runner_invocations: Option<Arc<AtomicUsize>>,
+    ) -> Self {
         Self {
             worker,
             id: Mutex::new(None),
@@ -319,6 +357,8 @@ impl PreparedCommand {
             released: AtomicBool::new(false),
             stop_reason: Mutex::new(None),
             cancellation: CommandCancellation::new(),
+            #[cfg(test)]
+            runner_invocations,
         }
     }
 
