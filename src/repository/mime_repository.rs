@@ -71,9 +71,9 @@ pub struct MimeRepository {
 impl MimeRepository {
     /// Returns the process-wide repository parsed from bundled MIME data.
     ///
-    /// The embedded XML is validated when first used and shared by all
-    /// repository-backed integrations, avoiding independent copies of the
-    /// same indexes in each detector.
+    /// The embedded XML is validated lazily on the first call. Its parsed
+    /// repository and indexes are then shared by repository-backed
+    /// integrations instead of being rebuilt by each detector.
     ///
     /// # Returns
     /// A reference to the process-wide parsed repository.
@@ -95,9 +95,11 @@ impl MimeRepository {
     ///
     /// # Errors
     /// Returns [`MimeError`](crate::MimeError) when XML is malformed or a rule
-    /// contains an unsupported value. Elements in the shared MIME-info
-    /// namespace are parsed; child elements from other namespaces are ignored
-    /// as extensions.
+    /// contains an unsupported value. A supported `DOCTYPE` is masked before
+    /// parsing so XML parser error positions still refer to the original text;
+    /// an XML declaration after a `DOCTYPE` is rejected. Elements in the
+    /// shared MIME-info namespace are parsed; child elements from other
+    /// namespaces are ignored as extensions.
     pub fn from_xml(xml: &str) -> MimeResult<Self> {
         let xml = strip_doctype(xml);
         let document = Document::parse(&xml)?;
@@ -212,6 +214,23 @@ impl MimeRepository {
             .collect()
     }
 
+    /// Detects MIME types from an already extracted native basename.
+    ///
+    /// Path separators in `basename` are treated as filename characters.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename to match.
+    ///
+    /// # Returns
+    /// Matching MIME types ordered by best glob weight and pattern length.
+    pub(crate) fn detect_by_filename_basename(&self, basename: &str) -> Vec<&MimeType> {
+        self.glob_index
+            .matches_basename(basename)
+            .into_iter()
+            .filter_map(|entry| self.mime_types.get(entry.mime_index))
+            .collect()
+    }
+
     /// Detects MIME types from content bytes.
     ///
     /// # Parameters
@@ -223,7 +242,7 @@ impl MimeRepository {
     #[must_use]
     pub fn detect_by_content(&self, bytes: &[u8]) -> Vec<&MimeType> {
         self.magic_index
-            .matches(bytes)
+            .matches(&self.mime_types, bytes)
             .into_iter()
             .filter_map(|index| self.mime_types.get(index))
             .collect()
@@ -330,9 +349,27 @@ impl MimeRepository {
     /// - `mime_index`: Index assigned to `mime_type` in the repository.
     /// - `mime_type`: MIME type whose magic rules should be inspected.
     fn index_magics(&mut self, mime_index: usize, mime_type: &MimeType) {
-        for magic in mime_type.magics() {
-            self.magic_index.add(mime_index, magic);
+        for (magic_index, magic) in mime_type.magics().iter().enumerate() {
+            self.magic_index.add(mime_index, magic_index, magic);
         }
+    }
+
+    /// Returns the ordered content rule index for asynchronous matching.
+    pub(crate) fn magic_rules(&self) -> &[super::internal::magic_entry::MagicEntry] {
+        &self.magic_index.entries
+    }
+
+    /// Returns the parsed magic rule referenced by an index entry.
+    ///
+    /// # Parameters
+    /// - `entry`: Ordered index entry identifying the MIME type and rule.
+    ///
+    /// # Returns
+    /// The referenced rule, or `None` if the indexes no longer resolve.
+    pub(crate) fn magic_rule(&self, entry: &super::internal::magic_entry::MagicEntry) -> Option<&MimeMagic> {
+        self.mime_types
+            .get(entry.mime_index)
+            .and_then(|mime_type| mime_type.magics().get(entry.magic_index))
     }
 }
 
@@ -431,6 +468,8 @@ fn parse_magic(node: Node<'_, '_>) -> MimeResult<MimeMagic> {
 ///
 /// # Parameters
 /// - `node`: XML element to parse.
+/// - `depth`: One-based nesting depth, where top-level match elements have
+///   depth 1.
 ///
 /// # Returns
 /// Parsed magic matcher.
@@ -455,7 +494,18 @@ fn parse_matcher(node: Node<'_, '_>, depth: usize) -> MimeResult<MimeMagicMatche
     let (offset_begin, offset_end) = parse_offset(required_attr(node, "offset")?)?;
     let value = parse_value(value_type, required_attr(node, "value")?)?;
     let mask = match node.attribute("mask") {
-        Some(mask) => Some(parse_mask(value_type, mask)?),
+        Some(mask_text) => {
+            let mask = parse_mask(value_type, mask_text)?;
+            if mask.len() != value.len() {
+                return Err(MimeError::invalid_attr(
+                    "match",
+                    "mask",
+                    mask_text,
+                    "mask byte length must match value byte length",
+                ));
+            }
+            Some(mask)
+        }
         None => None,
     };
     let sub_matchers: MimeResult<Vec<_>> = node

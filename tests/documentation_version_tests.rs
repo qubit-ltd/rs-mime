@@ -80,7 +80,7 @@ fn test_provider_configuration_examples_match_compilable_consumer() {
     }
 
     let fixture = read(root.join("tests/fixtures/documentation_consumer/src/main.rs"));
-    assert!(fixture.ends_with("fn main() {}\n"));
+    assert!(fixture.contains("fn main() {\n    managed_lifecycle::run_example();\n}"));
     let fixture_code = fixture.replace("#[allow(dead_code)]\n", "");
     assert!(
         fixture_code.contains(examples[0]),
@@ -105,6 +105,31 @@ fn test_precise_detection_examples_match_compilable_consumer() {
     assert!(
         fixture_code.contains(examples[0]),
         "consumer fixture is out of sync with the precise detection example"
+    );
+}
+
+#[test]
+fn test_managed_lifecycle_examples_match_runnable_consumer() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let marker = "<!-- mime-doc-example:managed-lifecycle -->";
+    let guides = ["doc/user_guide.md", "doc/user_guide.zh_CN.md"].map(|path| read(root.join(path)));
+    let examples = guides
+        .iter()
+        .map(|guide| documented_example(guide, marker))
+        .collect::<Vec<_>>();
+
+    assert_eq!(examples[0], examples[1], "managed lifecycle examples drifted");
+
+    let example = read(root.join("examples/managed_lifecycle/mod.rs"));
+    assert!(
+        example.contains(examples[0]),
+        "documented lifecycle function is out of sync with the runnable example"
+    );
+
+    let fixture = read(root.join("tests/fixtures/documentation_consumer/src/main.rs"));
+    assert!(
+        fixture.contains("examples/managed_lifecycle/mod.rs") && fixture.contains("managed_lifecycle::run_example();"),
+        "consumer fixture does not execute the documented lifecycle example"
     );
 }
 

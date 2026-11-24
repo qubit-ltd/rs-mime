@@ -69,6 +69,10 @@ fn test_owned_repository_detector_exercises_stream_and_backend_entry_points() {
         MimeDetector::content_requirement(&detector),
         ContentRequirement::Prefix(n) if n > 0
     ));
+    assert!(
+        !StreamBasedMimeDetector::supports_async_content_detection(&detector),
+        "the repository detector has no asynchronous content hook"
+    );
     assert_eq!(
         RandomAccessCapability::Unsupported,
         AsyncMimeDetectorBackend::random_access_capability(&detector)

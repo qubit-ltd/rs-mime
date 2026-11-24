@@ -7,15 +7,13 @@
 // =============================================================================
 //! Internal content magic index entries.
 
-use super::super::MimeMagic;
-
 /// Stores a parsed content magic rule and its index metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct MagicEntry {
     /// Source priority of the magic rule.
     pub(crate) priority: u16,
     /// Index of the MIME type owning the rule.
     pub(crate) mime_index: usize,
-    /// Parsed magic rule.
-    pub(crate) magic: MimeMagic,
+    /// Position of the rule in the owning MIME type.
+    pub(crate) magic_index: usize,
 }

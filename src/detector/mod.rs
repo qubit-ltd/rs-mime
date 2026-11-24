@@ -15,6 +15,8 @@ pub(crate) mod file_based_mime_detector;
 pub(crate) mod file_command_mime_detector;
 pub(crate) mod file_command_mime_detector_provider;
 mod internal;
+/// Metered same-object reads for managed provider backends.
+pub mod metered_read_session;
 /// Owned results and byte-accounting summaries produced by managed detection.
 pub mod mime_detection_report;
 pub mod mime_execution_services;
@@ -70,8 +72,11 @@ pub use mime_detector_provider::AsyncMimeDetectorProvider;
 pub use mime_detector_provider::MimeDetectorProvider;
 pub use mime_detector_registry::MimeDetectorRegistry;
 pub use mime_detector_spec::MimeDetectorSpec;
+pub use mime_execution_services::MimeExecutionDispatchFailure;
+pub use mime_execution_services::MimeExecutionDispatchFailureKind;
 pub use mime_execution_services::MimeExecutionPort;
 pub use mime_execution_services::MimeExecutionServices;
+pub use mime_execution_services::MimeServiceLifecycle;
 pub use mime_input::BorrowedMimeInput;
 pub use mime_input::InputExtent;
 pub use mime_input::InspectedExtent;

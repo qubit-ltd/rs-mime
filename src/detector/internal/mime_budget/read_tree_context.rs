@@ -369,6 +369,44 @@ mod tests {
     }
 
     #[test]
+    fn test_reservation_rollback_recovers_poisoned_ancestor_and_tree_counters() {
+        let root = ReadTreeContext::new(20);
+        let child = root.child(5);
+        let grandchild = child.child(10);
+
+        assert_eq!(4, child.reserve(4).unwrap().commit(4));
+
+        let tree_counters = Arc::clone(&root.tree);
+        assert!(
+            thread::spawn(move || {
+                let _guard = tree_counters.counters.lock().unwrap();
+                panic!("poison shared tree before ancestor rollback");
+            })
+            .join()
+            .is_err()
+        );
+        for scope in [&child.scope, &grandchild.scope] {
+            let scope = Arc::clone(scope);
+            assert!(
+                thread::spawn(move || {
+                    let _guard = scope.counters.lock().unwrap();
+                    panic!("poison read scope before ancestor rollback");
+                })
+                .join()
+                .is_err()
+            );
+        }
+
+        assert!(grandchild.reserve(2).is_none());
+        assert_eq!(4, root.consumed());
+        assert_eq!(4, child.consumed());
+        assert_eq!(0, grandchild.consumed());
+        assert_eq!(16, root.remaining());
+        assert_eq!(1, child.remaining());
+        assert_eq!(1, grandchild.remaining());
+    }
+
+    #[test]
     fn test_zero_byte_read_does_not_consume_any_scope_capacity() {
         let root = ReadTreeContext::new(4);
         let child = root.child(2);

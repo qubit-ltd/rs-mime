@@ -156,7 +156,7 @@ impl MimeDetectorCore {
                 return Ok(Some(result));
             }
             if matches!(
-                input,
+                &input,
                 BorrowedMimeInput::Bytes {
                     extent: crate::InputExtent::Prefix,
                     ..
@@ -164,11 +164,16 @@ impl MimeDetectorCore {
             ) {
                 return Ok(Some(result));
             }
-            let filename = match input {
-                BorrowedMimeInput::Bytes { filename, .. } => filename,
-                BorrowedMimeInput::Provider { path, .. } => path.file_name(),
+            let mapping = match &input {
+                BorrowedMimeInput::Bytes { filename, .. } => self.precise_detection_mapping(&result, *filename),
+                BorrowedMimeInput::Provider { path, .. } => {
+                    self.precise_detection_mapping_for_basename(&result, path.file_name())
+                }
+                BorrowedMimeInput::ManagedProvider { filename, .. } => {
+                    self.precise_detection_mapping_for_basename(&result, *filename)
+                }
             };
-            let Some([video_type, audio_type]) = self.precise_detection_mapping(&result, filename) else {
+            let Some([video_type, audio_type]) = mapping else {
                 return Ok(Some(result));
             };
             let Some(classifier) = &self.async_media_stream_classifier else {
@@ -226,6 +231,40 @@ impl MimeDetectorCore {
             return Ok(Some(result));
         }
         self.refine_detected_mime_type(&result, filename, source).map(Some)
+    }
+
+    /// Selects and refines a result using a native basename for extension
+    /// mapping.
+    ///
+    /// # Parameters
+    /// - `from_filename`: Candidate MIME names matched from the filename.
+    /// - `from_content`: Candidate MIME names matched from content inspection.
+    /// - `basename`: Optional native basename used for extension mapping.
+    /// - `policy`: Strategy for resolving filename and content results.
+    /// - `source`: Source available for optional media stream refinement.
+    ///
+    /// # Returns
+    /// Selected and optionally refined MIME type name, or `None` if no
+    /// candidate exists.
+    ///
+    /// # Errors
+    /// Propagates errors from media stream classification when refinement runs.
+    pub(crate) fn select_result_for_basename(
+        &self,
+        from_filename: &[String],
+        from_content: &[String],
+        basename: Option<&str>,
+        policy: MimeDetectionPolicy,
+        source: DetectionSource<'_>,
+    ) -> MimeResult<Option<String>> {
+        let Some(result) = self.select_candidates(from_filename, from_content, policy).cloned() else {
+            return Ok(None);
+        };
+        if from_filename.len() == 1 && policy == MimeDetectionPolicy::PreferFilename {
+            return Ok(Some(result));
+        }
+        self.refine_detected_mime_type_for_basename(&result, basename, source)
+            .map(Some)
     }
 
     /// Installs the relations for the repository this core uses.
@@ -356,6 +395,47 @@ impl MimeDetectorCore {
         }
     }
 
+    /// Refines using extension semantics for an already extracted basename.
+    ///
+    /// # Parameters
+    /// - `detected_mime_type`: Initially selected MIME type name.
+    /// - `basename`: Optional native basename used to select an extension
+    ///   mapping.
+    /// - `source`: Content or path available for optional stream
+    ///   classification.
+    ///
+    /// # Returns
+    /// The refined MIME type name, or the original name when no refinement
+    /// applies.
+    ///
+    /// # Errors
+    /// Propagates errors from media stream classification when refinement runs.
+    fn refine_detected_mime_type_for_basename(
+        &self,
+        detected_mime_type: &str,
+        basename: Option<&str>,
+        source: DetectionSource<'_>,
+    ) -> MimeResult<String> {
+        let Some([video_type, audio_type]) = self.precise_detection_mapping_for_basename(detected_mime_type, basename)
+        else {
+            return Ok(detected_mime_type.to_owned());
+        };
+        let Some(classifier) = &self.media_stream_classifier else {
+            return Ok(detected_mime_type.to_owned());
+        };
+        let stream_type = match source {
+            DetectionSource::Content(content) => classifier.classify_content(content),
+            DetectionSource::Prefix(_) => return Ok(detected_mime_type.to_owned()),
+            DetectionSource::Path(path) => classifier.classify_file(path),
+            DetectionSource::None => return Ok(detected_mime_type.to_owned()),
+        };
+        match stream_type? {
+            MediaStreamType::AudioOnly => Ok(audio_type.clone()),
+            MediaStreamType::VideoOnly | MediaStreamType::VideoWithAudio => Ok(video_type.clone()),
+            MediaStreamType::None => Ok(detected_mime_type.to_owned()),
+        }
+    }
+
     /// Refines an ambiguous media MIME type using a seekable reader.
     ///
     /// # Parameters
@@ -418,6 +498,31 @@ impl MimeDetectorCore {
     fn precise_detection_mapping(&self, detected_mime_type: &str, filename: Option<&str>) -> Option<&[String; 2]> {
         let mapping_key = self.precise_detection_mapping_key(detected_mime_type, filename)?;
         self.config.ambiguous_mime_mapping().get(&mapping_key)
+    }
+
+    /// Gets an ambiguous mapping pair from a native basename.
+    ///
+    /// # Parameters
+    /// - `detected_mime_type`: Initially selected MIME type name.
+    /// - `basename`: Optional native basename whose extension selects a
+    ///   mapping.
+    ///
+    /// # Returns
+    /// Video/audio MIME pair when precise detection should run.
+    fn precise_detection_mapping_for_basename(
+        &self,
+        detected_mime_type: &str,
+        basename: Option<&str>,
+    ) -> Option<&[String; 2]> {
+        if !self.config.enable_precise_detection() || detected_mime_type.is_empty() {
+            return None;
+        }
+        if let Some(extension) = basename.and_then(extension_from_basename) {
+            let mapping_key = self.precise_detection_mapping_key_by_filename(detected_mime_type, extension)?;
+            return self.config.ambiguous_mime_mapping().get(&mapping_key);
+        }
+        self.precise_detection_mapping_key_by_mime_type(detected_mime_type)
+            .and_then(|key| self.config.ambiguous_mime_mapping().get(&key))
     }
 
     /// Gets the ambiguous mapping key for a MIME type and optional filename.
@@ -534,4 +639,35 @@ fn extension_from_filename(filename: &str) -> Option<String> {
         .and_then(|basename| basename.rsplit_once('.').map(|(_, extension)| extension))
         .filter(|extension| !extension.is_empty())
         .map(str::to_ascii_lowercase)
+}
+
+/// Extracts the extension from a native basename without interpreting path
+/// separators inside it.
+///
+/// # Parameters
+/// - `basename`: Native basename whose final suffix is examined.
+///
+/// # Returns
+/// Lowercase extension without a leading dot, or `None` when no suffix exists.
+fn extension_from_basename(basename: &str) -> Option<String> {
+    basename
+        .rsplit_once('.')
+        .map(|(_, extension)| extension)
+        .filter(|extension| !extension.is_empty())
+        .map(str::to_ascii_lowercase)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extension_from_basename;
+    use super::extension_from_filename;
+
+    #[test]
+    fn test_native_basename_extension_preserves_backslash_data() {
+        assert_eq!(
+            Some("webm\\part".to_owned()),
+            extension_from_basename(r"clip.webm\part")
+        );
+        assert_eq!(None, extension_from_filename(r"clip.webm\part"));
+    }
 }

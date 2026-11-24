@@ -62,6 +62,18 @@ fn test_builtin_registry_lists_and_resolves_repository_provider() {
 }
 
 #[test]
+fn test_registry_debug_reports_async_provider_trust_metadata() {
+    let registry = MimeDetectorRegistry::builtin();
+
+    let debug = format!("{registry:?}");
+
+    assert!(debug.contains("AsyncProviderEntry"));
+    assert!(debug.contains("id: \"repository\""));
+    assert!(debug.contains("is_builtin: true"));
+    assert!(debug.contains("uses_bundled_repository: true"));
+}
+
+#[test]
 fn test_global_registry_exposes_builtin_defaults_in_this_process() {
     let registry = MimeDetectorRegistry::global();
 
@@ -346,6 +358,37 @@ struct CountedAsyncRegistryProvider {
     creations: Arc<AtomicUsize>,
 }
 
+#[derive(Debug)]
+struct FailingAsyncRegistryProvider {
+    descriptor: ProviderDescriptor,
+    creations: Arc<AtomicUsize>,
+    initialization_failure: bool,
+}
+
+impl ProviderMetadata for FailingAsyncRegistryProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        self.descriptor.clone()
+    }
+}
+
+impl AsyncMimeDetectorProvider for FailingAsyncRegistryProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn qubit_mime::AsyncMimeDetectorBackend>, MimeError> {
+        self.creations.fetch_add(1, Ordering::SeqCst);
+        if self.initialization_failure {
+            Err(MimeError::DetectorBackend {
+                backend: "test".to_owned(),
+                reason: self.descriptor.id().as_str().to_owned(),
+            })
+        } else {
+            Err(MimeError::AsyncUnsupported)
+        }
+    }
+}
+
 impl ProviderMetadata for CountedAsyncRegistryProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         self.descriptor.clone()
@@ -376,6 +419,15 @@ fn test_async_registry_aliases_are_shared_by_clones_and_failed_registration_is_a
     registry
         .register_async_provider(provider)
         .expect("async provider should register");
+    assert_eq!(
+        vec!["async-owner"],
+        registry
+            .async_provider_ids()
+            .iter()
+            .map(|id| id.as_str())
+            .collect::<Vec<_>>(),
+        "async ID listing should omit aliases and deduplicate canonical providers",
+    );
     assert_eq!(
         0,
         creations.load(Ordering::SeqCst),
@@ -417,15 +469,154 @@ fn test_async_registry_aliases_are_shared_by_clones_and_failed_registration_is_a
     );
 
     let partial_id = ProviderSelection::named("partial-registration").unwrap();
-    assert!(matches!(
-        registry.create_async_backend(&partial_id, &MimeConfig::default(), &services),
-        Err(qubit_mime::MimeError::AsyncUnsupported),
-    ));
+    let error = registry
+        .create_async_backend(&partial_id, &MimeConfig::default(), &services)
+        .expect_err("failed async registration must not claim its canonical selector");
+    assert!(error.to_string().contains("partial-registration"));
     assert_eq!(
         1,
         creations.load(Ordering::SeqCst),
         "failed alias collision must not install the attempted provider's canonical ID",
     );
+
+    let duplicate_alias_chain = ProviderSelection::chain(["async-alias", "async-owner"])
+        .unwrap()
+        .with_fallback_policy(FallbackPolicy::OnAnyError);
+    assert!(
+        clone
+            .create_async_backend(&duplicate_alias_chain, &MimeConfig::default(), &services)
+            .is_err()
+    );
+    assert_eq!(
+        2,
+        creations.load(Ordering::SeqCst),
+        "a canonical selector and its alias must not invoke one provider twice",
+    );
+}
+
+#[test]
+fn test_async_detector_absence_fallback_tries_next_registered_factory() {
+    let registry = MimeDetectorRegistry::default();
+    let first_creations = Arc::new(AtomicUsize::new(0));
+    let second_creations = Arc::new(AtomicUsize::new(0));
+    for (id, creations) in [
+        ("async-unsupported-first", Arc::clone(&first_creations)),
+        ("async-unsupported-second", Arc::clone(&second_creations)),
+    ] {
+        registry
+            .register_async_provider(CountedAsyncRegistryProvider {
+                descriptor: ProviderDescriptor::new(ProviderId::new(id).unwrap()),
+                creations,
+            })
+            .expect("async provider should register");
+    }
+
+    let selection = ProviderSelection::chain(["async-unsupported-first", "async-unsupported-second"])
+        .unwrap()
+        .with_fallback_policy(FallbackPolicy::OnAbsence);
+    let result = registry.create_async_backend(&selection, &MimeConfig::default(), &services());
+
+    assert!(matches!(result, Err(MimeError::AsyncUnsupported)));
+    assert_eq!(1, first_creations.load(Ordering::SeqCst));
+    assert_eq!(
+        1,
+        second_creations.load(Ordering::SeqCst),
+        "AsyncUnsupported is absence and should fall through"
+    );
+}
+
+#[test]
+fn test_async_detector_fallback_policies_classify_factory_errors() {
+    let services = services();
+    let config = MimeConfig::default();
+
+    let never_registry = MimeDetectorRegistry::default();
+    let never_first = Arc::new(AtomicUsize::new(0));
+    let never_second = Arc::new(AtomicUsize::new(0));
+    for (id, creations) in [
+        ("never-first", Arc::clone(&never_first)),
+        ("never-second", Arc::clone(&never_second)),
+    ] {
+        never_registry
+            .register_async_provider(FailingAsyncRegistryProvider {
+                descriptor: ProviderDescriptor::new(ProviderId::new(id).unwrap()),
+                creations,
+                initialization_failure: false,
+            })
+            .unwrap();
+    }
+    let never = ProviderSelection::chain(["never-first", "never-second"])
+        .unwrap()
+        .with_fallback_policy(FallbackPolicy::Never);
+    assert!(matches!(
+        never_registry.create_async_backend(&never, &config, &services),
+        Err(MimeError::AsyncUnsupported)
+    ));
+    assert_eq!(1, never_first.load(Ordering::SeqCst));
+    assert_eq!(0, never_second.load(Ordering::SeqCst));
+
+    let absence_registry = MimeDetectorRegistry::default();
+    let absence_first = Arc::new(AtomicUsize::new(0));
+    let absence_second = Arc::new(AtomicUsize::new(0));
+    for (id, creations) in [
+        ("init-failure-first", Arc::clone(&absence_first)),
+        ("init-failure-second", Arc::clone(&absence_second)),
+    ] {
+        absence_registry
+            .register_async_provider(FailingAsyncRegistryProvider {
+                descriptor: ProviderDescriptor::new(ProviderId::new(id).unwrap()),
+                creations,
+                initialization_failure: true,
+            })
+            .unwrap();
+    }
+    let on_absence = ProviderSelection::chain(["init-failure-first", "init-failure-second"])
+        .unwrap()
+        .with_fallback_policy(FallbackPolicy::OnAbsence);
+    let error = absence_registry
+        .create_async_backend(&on_absence, &config, &services)
+        .expect_err("initialization errors are not absence");
+    assert!(error.to_string().contains("init-failure-first"));
+    assert_eq!(1, absence_first.load(Ordering::SeqCst));
+    assert_eq!(0, absence_second.load(Ordering::SeqCst));
+
+    let any_error = ProviderSelection::chain(["init-failure-first", "init-failure-second"])
+        .unwrap()
+        .with_fallback_policy(FallbackPolicy::OnAnyError);
+    let error = absence_registry
+        .create_async_backend(&any_error, &config, &services)
+        .expect_err("OnAnyError should continue after initialization failure");
+    assert!(error.to_string().contains("init-failure-second"));
+    assert_eq!(2, absence_first.load(Ordering::SeqCst));
+    assert_eq!(1, absence_second.load(Ordering::SeqCst));
+}
+
+#[test]
+fn test_async_detector_auto_uses_priority_and_stable_builtin_preference() {
+    let registry = MimeDetectorRegistry::default();
+    let low_priority = Arc::new(AtomicUsize::new(0));
+    let high_priority = Arc::new(AtomicUsize::new(0));
+    registry
+        .register_async_provider(FailingAsyncRegistryProvider {
+            descriptor: ProviderDescriptor::new(ProviderId::new("auto-low").unwrap()).with_priority(-1),
+            creations: Arc::clone(&low_priority),
+            initialization_failure: true,
+        })
+        .unwrap();
+    registry
+        .register_async_provider(FailingAsyncRegistryProvider {
+            descriptor: ProviderDescriptor::new(ProviderId::new("auto-high").unwrap()).with_priority(100),
+            creations: Arc::clone(&high_priority),
+            initialization_failure: true,
+        })
+        .unwrap();
+
+    let error = registry
+        .create_async_backend(&ProviderSelection::auto(), &MimeConfig::default(), &services())
+        .expect_err("the highest priority initialization failure should stop Auto fallback");
+    assert!(error.to_string().contains("auto-high"));
+    assert_eq!(1, high_priority.load(Ordering::SeqCst));
+    assert_eq!(0, low_priority.load(Ordering::SeqCst));
 }
 
 #[test]
@@ -646,11 +837,21 @@ fn test_builtin_async_providers_create_backends_without_spawning_commands() {
     let registry = MimeDetectorRegistry::builtin();
     let services = services();
     let config = MimeConfig::default();
+    let external_creations = Arc::new(AtomicUsize::new(0));
+    registry
+        .register_async_provider(FailingAsyncRegistryProvider {
+            descriptor: ProviderDescriptor::new(ProviderId::new("external-high-priority").unwrap())
+                .with_priority(i32::MAX),
+            creations: Arc::clone(&external_creations),
+            initialization_failure: true,
+        })
+        .unwrap();
 
     let (auto_id, auto_backend) = registry
         .create_async_backend(&ProviderSelection::auto(), &config, &services)
-        .expect("automatic async selection should use the stable repository default");
+        .expect("automatic async selection should keep the built-in repository ahead of externals");
     assert_eq!("repository", auto_id);
+    assert_eq!(0, external_creations.load(Ordering::SeqCst));
     assert!(matches!(
         auto_backend.content_requirement(),
         ContentRequirement::Prefix(_)
@@ -673,14 +874,49 @@ fn test_builtin_async_providers_create_backends_without_spawning_commands() {
 }
 
 #[test]
-fn test_async_provider_chain_skips_unknown_selector_and_uses_first_registered_backend() {
+fn test_async_provider_strict_chain_reports_unknown_selector() {
     let registry = MimeDetectorRegistry::builtin();
-    let selection =
-        ProviderSelection::chain(["not-registered", "file", "repository"]).expect("chain selectors should be valid");
+    let selection = ProviderSelection::chain(["not-registered", "file"]).expect("chain selectors should be valid");
+
+    assert!(
+        registry
+            .create_async_backend(&selection, &MimeConfig::default(), &services())
+            .is_err(),
+        "strict chains should diagnose missing selectors instead of skipping them"
+    );
+}
+
+#[test]
+fn test_async_provider_chain_allowing_missing_uses_first_registered_backend() {
+    let registry = MimeDetectorRegistry::builtin();
+    let selection = ProviderSelection::chain_allowing_missing(["not-registered", "file", "repository"])
+        .expect("chain selectors should be valid");
 
     let (id, backend) = registry
         .create_async_backend(&selection, &MimeConfig::default(), &services())
-        .expect("chain should continue to the first available async provider");
+        .expect("lenient chain should continue to the first available async provider");
+
+    assert_eq!("file", id);
+    assert_eq!(ContentRequirement::Complete, backend.content_requirement());
+}
+
+#[test]
+fn test_async_provider_chain_treats_known_sync_only_selector_as_absence() {
+    let registry = MimeDetectorRegistry::builtin();
+    registry
+        .register(TestMimeDetectorProvider::new(
+            "sync-only",
+            100,
+            TestProviderBehavior::Success("application/x-sync-only"),
+        ))
+        .unwrap();
+    let selection = ProviderSelection::chain(["sync-only", "file"])
+        .unwrap()
+        .with_fallback_policy(FallbackPolicy::OnAbsence);
+
+    let (id, backend) = registry
+        .create_async_backend(&selection, &MimeConfig::default(), &services())
+        .expect("known sync-only selector should allow fallback to the async file backend");
 
     assert_eq!("file", id);
     assert_eq!(ContentRequirement::Complete, backend.content_requirement());
@@ -744,16 +980,16 @@ fn test_duplicate_async_provider_selector_is_rejected_without_replacing_builtin(
 }
 
 #[test]
-fn test_async_resolution_of_unknown_selector_returns_unsupported() {
+fn test_async_resolution_of_unknown_selector_reports_diagnostic() {
     let registry = MimeDetectorRegistry::builtin();
     let services = services();
 
-    assert!(matches!(
-        registry.create_async_backend(
+    let error = registry
+        .create_async_backend(
             &ProviderSelection::named("not-registered").unwrap(),
             &MimeConfig::default(),
-            &services
-        ),
-        Err(MimeError::AsyncUnsupported)
-    ));
+            &services,
+        )
+        .expect_err("unknown selector should have a selection diagnostic");
+    assert!(error.to_string().contains("not-registered"));
 }

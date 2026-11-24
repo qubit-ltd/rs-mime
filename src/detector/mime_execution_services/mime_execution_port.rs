@@ -9,6 +9,8 @@
 
 use std::fmt::Debug;
 
+use super::MimeExecutionDispatchFailure;
+use super::MimeExecutionDispatchFailureKind;
 use crate::MimeError;
 
 /// MIME-specific command and I/O execution boundary. Implementations are
@@ -52,6 +54,28 @@ pub trait MimeExecutionPort: Debug + Send + Sync + 'static {
     #[inline]
     fn try_dispatch(&self, job: Box<dyn FnOnce() + Send + 'static>) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
         Err(job)
+    }
+
+    /// Tries to dispatch one job and preserves whether rejection means queue
+    /// saturation or an unavailable service.
+    ///
+    /// The default adapter keeps existing implementations source-compatible;
+    /// it classifies legacy rejection as `Unavailable` because the old method
+    /// does not report a cause.
+    ///
+    /// # Parameters
+    /// - `job`: Owned job to dispatch.
+    ///
+    /// # Returns
+    /// `Ok(())` after acceptance, or the original job with the rejection
+    /// reason.
+    #[inline]
+    fn try_dispatch_with_status(
+        &self,
+        job: Box<dyn FnOnce() + Send + 'static>,
+    ) -> Result<(), MimeExecutionDispatchFailure> {
+        self.try_dispatch(job)
+            .map_err(|job| MimeExecutionDispatchFailure::new(MimeExecutionDispatchFailureKind::Unavailable, job))
     }
 
     /// Stops accepting new work and observes actual worker exit.

@@ -17,6 +17,7 @@ use qubit_operation::ExecutionFailure;
 use qubit_operation::GroupBindingError;
 use qubit_operation::ObservationError;
 use qubit_operation::PanicSummary;
+use qubit_operation::ResourceManageErrorKind;
 use qubit_operation::StopReport;
 use roxmltree::Error as XmlError;
 use thiserror::Error;
@@ -39,6 +40,12 @@ pub enum MimeError {
     /// A synchronous-only backend was selected for an asynchronous request.
     #[error("selected MIME backend does not support asynchronous execution")]
     AsyncUnsupported,
+    /// An asynchronous provider selection could not be resolved.
+    #[error("{0}")]
+    ProviderSelection(
+        /// Human-readable selection diagnostic retaining unknown selectors.
+        String,
+    ),
     /// Managed asynchronous execution requires explicitly configured services.
     #[error("MIME execution services are required for this operation")]
     ExecutionServicesRequired,
@@ -56,6 +63,9 @@ pub enum MimeError {
         #[source]
         Box<AdmissionError>,
     ),
+    /// A managed command could not enter the configured bounded worker queue.
+    #[error("MIME command worker queue is busy")]
+    CommandQueueBusy,
     /// A MIME command child stopped before producing a result.
     #[error("MIME command operation stopped: {0:?}")]
     OperationStopped(
@@ -73,6 +83,13 @@ pub enum MimeError {
     OperationExecutionFailed(
         /// Execution failure reported by the shared executor.
         Box<ExecutionFailure>,
+    ),
+    /// An admitted MIME child could not commit its reserved parent read-tree
+    /// anchor.
+    #[error("failed to commit parent read-budget binding after admission: {0:?}")]
+    ReadBudgetBinding(
+        /// Resource-scope failure raised when the admitted body commits.
+        ResourceManageErrorKind,
     ),
     /// A required MIME command child failed.
     #[error("required MIME command child failed: {0:?}")]

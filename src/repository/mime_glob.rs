@@ -10,6 +10,7 @@
 use regex::Regex;
 use regex::RegexBuilder;
 
+use super::internal::glob_pattern;
 use crate::MimeError;
 use crate::MimeResult;
 
@@ -137,7 +138,13 @@ fn glob_to_regex(pattern: &str) -> String {
         match chars[index] {
             '*' => regex.push_str(".*"),
             '?' => regex.push('.'),
-            '[' => index = append_character_class(&chars, index, &mut regex),
+            '[' => match glob_pattern::character_class_end(&chars, index) {
+                Some(end) => {
+                    append_character_class(&chars, index, end, &mut regex);
+                    index = end;
+                }
+                None => regex.push_str("\\["),
+            },
             ch => append_escaped_regex_char(ch, &mut regex),
         }
         index += 1;
@@ -151,28 +158,13 @@ fn glob_to_regex(pattern: &str) -> String {
 /// # Parameters
 /// - `chars`: Glob pattern characters.
 /// - `start`: Index of the opening `[` character.
+/// - `end`: Index of the closing `]` character.
 /// - `regex`: Destination regex text.
-///
-/// # Returns
-/// Index of the closing `]` when a class was parsed; otherwise `start`.
-#[must_use]
-fn append_character_class(chars: &[char], start: usize, regex: &mut String) -> usize {
+fn append_character_class(chars: &[char], start: usize, end: usize, regex: &mut String) {
     let mut content_start = start + 1;
     let negated = chars.get(content_start) == Some(&'!');
     if negated {
         content_start += 1;
-    }
-    let mut end = content_start;
-    let empty_group = chars.get(content_start) == Some(&']') && (chars.len() == content_start + 1);
-    if !empty_group && chars.get(end) == Some(&']') {
-        end += 1;
-    }
-    while end < chars.len() && chars[end] != ']' {
-        end += 1;
-    }
-    if end >= chars.len() {
-        regex.push_str("\\[");
-        return start;
     }
     regex.push('[');
     if negated {
@@ -196,7 +188,6 @@ fn append_character_class(chars: &[char], start: usize, regex: &mut String) -> u
         index += 1;
     }
     regex.push(']');
-    end
 }
 
 /// Appends a literal regex character with escaping when needed.

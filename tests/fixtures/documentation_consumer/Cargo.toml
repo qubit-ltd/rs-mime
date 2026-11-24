@@ -6,7 +6,13 @@ rust-version = "1.94"
 
 [dependencies]
 qubit-mime = { version = "^0.22", path = "../../.." }
+qubit-fs = { version = "^0.4", path = "../../../../rs-fs", default-features = false, features = ["async"] }
+qubit-io = "^0.19.6"
+qubit-operation = "^0.3.2"
 qubit-config = { version = "^0.15" }
 qubit-spi = "^0.14"
 
 [workspace]
+
+[patch.crates-io]
+qubit-operation = { path = "../../../../rs-operation" }

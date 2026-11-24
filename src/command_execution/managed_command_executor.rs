@@ -23,6 +23,7 @@ use super::MimeExecutionWorker;
 use super::internal::PreparedCommand;
 use crate::MimeError;
 use crate::MimeFuture;
+use crate::detector::MimeExecutionDispatchFailureKind;
 use crate::managed_temp_staging::StagedMimeInput;
 
 /// Manager-backed command adapter using the caller's parent scope and MIME
@@ -79,7 +80,7 @@ impl AsyncMimeCommandExecutor for ManagedCommandExecutor {
                 .map_err(MimeError::GroupBinding)?
                 .as_async();
             let mut handle: AsyncOperationHandle<MimeCommandOutput, CommandError> = manager
-                .try_submit_external(OperationOptions::default(), Arc::clone(&prepared))
+                .try_submit_external_as_child(OperationOptions::default(), Arc::clone(&prepared))
                 .map_err(|error| {
                     let (reason, rejected) = error.into_parts();
                     drop(rejected); // exact prepared task remains intact through rejection mapping
@@ -95,7 +96,14 @@ impl AsyncMimeCommandExecutor for ManagedCommandExecutor {
                 OperationOutcome::Stopped(report) => Err(MimeError::OperationStopped(Box::new(report))),
                 OperationOutcome::Panicked(summary) => Err(MimeError::OperationPanicked(Box::new(summary))),
                 OperationOutcome::ExecutionFailed(failure) => {
-                    Err(MimeError::OperationExecutionFailed(Box::new(failure)))
+                    if failure.source.as_ref().is_some_and(|source| {
+                        source.downcast_ref::<MimeExecutionDispatchFailureKind>()
+                            == Some(&MimeExecutionDispatchFailureKind::QueueFull)
+                    }) {
+                        Err(MimeError::CommandQueueBusy)
+                    } else {
+                        Err(MimeError::OperationExecutionFailed(Box::new(failure)))
+                    }
                 }
                 OperationOutcome::ChildFailed(failure) => Err(MimeError::ChildOperationFailed(Box::new(failure))),
             }

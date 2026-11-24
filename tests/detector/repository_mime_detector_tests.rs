@@ -110,6 +110,36 @@ fn test_detect_by_filename_uses_default_repository() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn test_typed_path_preserves_backslash_in_posix_basename() {
+    let repository = MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-native-basename">
+    <glob pattern="left\right.mimecase" weight="80"/>
+  </mime-type>
+  <mime-type type="application/x-string-basename">
+    <glob pattern="right.mimecase" weight="50"/>
+  </mime-type>
+</mime-info>"#,
+    )
+    .expect("custom filename repository should parse");
+    let detector = RepositoryMimeDetector::with_repository(&repository);
+
+    assert_eq!(
+        Some("application/x-string-basename".to_owned()),
+        detector
+            .detect_by_filename(r"left\right.mimecase")
+            .expect("ordinary string input should use both separators"),
+    );
+    assert_eq!(
+        Some("application/x-native-basename".to_owned()),
+        detector
+            .detect_file(Path::new(r"left\right.mimecase"), MimeDetectionPolicy::PreferFilename)
+            .expect("typed POSIX path should preserve its basename"),
+    );
+}
+
 #[test]
 fn test_detect_by_content_uses_default_repository_magic() {
     let detector = RepositoryMimeDetector::new().expect("default repository should load");

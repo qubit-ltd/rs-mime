@@ -568,7 +568,7 @@ impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
             if max_bytes == 0 {
                 return Err(MimeError::InvalidOperationBudget);
             }
-            let worker = MimeExecutionWorker::new(Arc::clone(&services.execution));
+            let worker = MimeExecutionWorker::new(Arc::clone(services.execution()));
             let limits = ManagedStagingLimits {
                 max_bytes,
                 budget: services.staging_budget(),
@@ -591,6 +591,11 @@ impl AsyncMimeDetectorBackend for FileCommandMimeDetector<'_> {
                         read_tree,
                     )
                     .await?
+                }
+                BorrowedMimeInput::ManagedProvider { .. } => {
+                    return Err(MimeError::InvalidClassifierInput {
+                        reason: "managed provider sessions are only accepted by the selected backend".into(),
+                    });
                 }
             };
             let staging_bytes = staged.staged_bytes();
@@ -1370,13 +1375,15 @@ mod file_operation_tests {
     #[test]
     fn test_file_operation_runs_managed_command_through_fixed_worker() {
         let manager = OperationManager::new(Default::default()).unwrap();
-        let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
         let port = Arc::new(crate::FixedMimeExecutionPort::new(1, 4));
         let services = MimeExecutionServices::new(manager.clone(), group.clone(), port, 1024).unwrap();
         services.prepare().unwrap();
         let detector = FileCommandMimeDetector::new()
             .with_command_runner(qubit_command::CommandRunner::new(std::time::Duration::from_secs(5)))
             .with_execution_services(services.clone());
+        assert!(services.is_prepared());
+        assert!(detector.execution_services.is_some());
         let content: Arc<[u8]> = Arc::from(&b"hello managed worker\n"[..]);
         let content_len = content.len() as u64;
         let mut operation = group
@@ -1404,6 +1411,109 @@ mod file_operation_tests {
         );
         let settlement = block_on(operation.wait_settlement());
         assert_eq!(settlement.status, SettlementStatus::Released);
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_file_command_child_is_admitted_after_parent_group_drain() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(crate::FixedMimeExecutionPort::new(1, 2));
+        let services = MimeExecutionServices::new(manager.clone(), group.clone(), port, 1024).unwrap();
+        services.prepare().unwrap();
+        let detector = FileCommandMimeDetector::new()
+            .with_command_runner(qubit_command::CommandRunner::new(std::time::Duration::from_secs(5)))
+            .with_execution_services(services.clone());
+        let content: Arc<[u8]> = Arc::from(&b"hello managed drain\n"[..]);
+        let content_len = content.len() as u64;
+        let drain_group = group.clone();
+        let mut operation = group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                drain_group.close_admission();
+                detector
+                    .guess_content_in(
+                        &scope,
+                        BorrowedMimeInput::Bytes {
+                            content: &content,
+                            extent: InputExtent::Complete,
+                            filename: None,
+                        },
+                        &MimeOperationOptions::default(),
+                    )
+                    .await
+            })
+            .unwrap();
+        let outcome = block_on(operation.wait_outcome()).unwrap();
+        assert!(
+            matches!(&outcome, OperationOutcome::Succeeded(result)
+            if result.candidates.iter().any(|candidate| candidate.mime_type == "text/plain")
+                && result.staging_bytes == content_len),
+            "a child with an inherited group permit should survive Drain: {outcome:?}"
+        );
+        assert_eq!(SettlementStatus::Released, block_on(operation.wait_settlement()).status);
+        let shutdown = services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _report = block_on(shutdown.wait_group_shutdown()).unwrap();
+    }
+
+    #[test]
+    fn test_full_command_queue_returns_typed_busy_after_preserving_lifecycle() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let port = Arc::new(crate::FixedMimeExecutionPort::new(1, 1));
+        let services = MimeExecutionServices::new(manager.clone(), group.clone(), port.clone(), 1024).unwrap();
+        services.prepare().unwrap();
+        let detector = FileCommandMimeDetector::new()
+            .with_command_runner(qubit_command::CommandRunner::new(std::time::Duration::from_secs(5)))
+            .with_execution_services(services.clone());
+        assert!(services.is_prepared());
+        assert!(detector.execution_services.is_some());
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        assert!(
+            port.try_dispatch(Box::new(move || {
+                started_tx.send(()).unwrap();
+                let _ = release_rx.recv();
+            }))
+            .is_ok()
+        );
+        started_rx.recv().unwrap();
+        assert!(port.try_dispatch(Box::new(|| {})).is_ok());
+        let full = port
+            .try_dispatch_with_status(Box::new(|| {}))
+            .expect_err("the second job must occupy the only queue slot");
+        assert_eq!(crate::MimeExecutionDispatchFailureKind::QueueFull, full.kind());
+        drop(full.into_job());
+
+        let content: Arc<[u8]> = Arc::from(&b"queue pressure\n"[..]);
+        let mut operation = group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                detector
+                    .guess_content_in(
+                        &scope,
+                        BorrowedMimeInput::Bytes {
+                            content: &content,
+                            extent: InputExtent::Complete,
+                            filename: None,
+                        },
+                        &MimeOperationOptions::default(),
+                    )
+                    .await
+            })
+            .unwrap();
+        let outcome = block_on(operation.wait_outcome()).unwrap();
+        let queue_busy = matches!(outcome, OperationOutcome::Failed(crate::MimeError::CommandQueueBusy));
+        release_tx.send(()).unwrap();
+        let settlement = block_on(operation.wait_settlement());
+        assert_eq!(SettlementStatus::Released, settlement.status);
+        assert!(queue_busy, "unexpected managed command outcome: {outcome:?}");
         let shutdown = services.shutdown();
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
         let _ = shutdown.stop_services().unwrap();
