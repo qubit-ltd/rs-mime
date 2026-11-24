@@ -378,9 +378,7 @@ run the read-only
 [`check-locked-local-path-dependencies.sh`](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/lib/check-locked-local-path-dependencies.sh)
 to verify the pinned commits and clean worktrees. The check reports commit
 mismatches and dirty worktrees; resolve drift in an independent layout that
-matches the pins, rather than changing an existing checkout. See Magika's
-[fixed-source setup instructions](https://github.com/qubit-ltd/rs-magika/blob/main/README.md#fixed-source-consumer)
-for the same preparation and verification contract. For an application whose
+matches the pins, rather than changing an existing checkout. For an application whose
 `Cargo.toml` is directly under `consumer-root/app/`, the relevant manifest
 entries are:
 
