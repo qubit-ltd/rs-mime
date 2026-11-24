@@ -53,6 +53,7 @@ mod staged_mime_input;
 use completion::completion_pair;
 pub(crate) use managed_staging_limits::ManagedStagingLimits;
 use managed_temp_cleanup::ManagedTempCleanup;
+use staged_mime_input::StagedTempOwner;
 pub(crate) use staged_mime_input::StagedMimeInput;
 
 /// Stages owned bytes without performing filesystem work in the caller's
@@ -357,6 +358,24 @@ async fn create_empty_staged(
     reservation: ResourceReservation,
     limits: &ManagedStagingLimits,
 ) -> MimeResult<ResourceRef<StagedMimeInput>> {
+    create_empty_staged_with(scope, reservation, limits, || {
+        LocalFileSystem::host()?.create_temp_file()
+    })
+    .await
+}
+
+/// Creates and registers a staged file using an injected native creation step.
+///
+/// The seam keeps native creation on the execution worker while allowing
+/// deterministic tests of filesystem failures that carry recovery ownership.
+pub(crate) async fn create_empty_staged_with(
+    scope: &OperationScope,
+    reservation: ResourceReservation,
+    limits: &ManagedStagingLimits,
+    create_temp: impl FnOnce() -> Result<qubit_local_files::LocalTempFile, qubit_local_files::LocalFileError>
+        + Send
+        + 'static,
+) -> MimeResult<ResourceRef<StagedMimeInput>> {
     ensure_not_stopped(scope)?;
     let context = scope.context().clone();
     let (sender, receiver) = completion_pair();
@@ -366,16 +385,31 @@ async fn create_empty_staged(
             if let Some(reason) = context.stop_reason() {
                 return Err(stopped_error(reason));
             }
-            let fs = LocalFileSystem::host().map_err(|e| MimeError::Io(e.into_io_error()))?;
-            let temp = fs.create_temp_file().map_err(|e| MimeError::Io(e.into_io_error()))?;
-            let staged = StagedMimeInput {
-                owner: Mutex::new(temp),
-                permits: Mutex::new(Vec::new()),
-                worker: worker.clone(),
-                staged_bytes: std::sync::atomic::AtomicU64::new(0),
-                cleanup_id: Arc::new(Mutex::new(None)),
-            };
-            commit_staged(reservation, staged)
+            match create_temp() {
+                Ok(temp) => {
+                    let staged = StagedMimeInput {
+                        owner: Mutex::new(StagedTempOwner::File(temp)),
+                        permits: Mutex::new(Vec::new()),
+                        worker: worker.clone(),
+                        staged_bytes: std::sync::atomic::AtomicU64::new(0),
+                        cleanup_id: Arc::new(Mutex::new(None)),
+                    };
+                    commit_staged(reservation, staged)
+                }
+                Err(error) => {
+                    let (primary, recovery) = error.into_temp_recovery_parts();
+                    if let Some(recovery) = recovery {
+                        let staged = StagedMimeInput::from_recovery(recovery, worker.clone());
+                        let cleanup_id = Arc::clone(&staged.cleanup_id);
+                        let policy = Arc::new(ManagedTempCleanup {
+                            resource_id: Arc::clone(&cleanup_id),
+                        });
+                        let id = reservation.retain_with_for_cleanup(staged, policy);
+                        *cleanup_id.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(id);
+                    }
+                    Err(MimeError::Io(primary.into_io_error()))
+                }
+            }
         }))
         .unwrap_or_else(|payload| {
             Err(MimeError::detector_backend(

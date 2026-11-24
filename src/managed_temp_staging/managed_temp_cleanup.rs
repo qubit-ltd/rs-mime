@@ -18,6 +18,7 @@ use qubit_operation::CleanupOutcome;
 use qubit_operation::ResourceId;
 
 use super::StagedMimeInput;
+use super::staged_mime_input::StagedTempOwner;
 use super::cleanup_failure;
 use super::completion::completion_pair;
 use super::panic_message;
@@ -126,6 +127,7 @@ mod tests {
     use qubit_operation::OperationOutcome;
 
     use super::ManagedTempCleanup;
+    use super::StagedTempOwner;
     use crate::MimeError;
     use crate::command_execution::FixedMimeExecutionPort;
     use crate::command_execution::MimeExecutionWorker;
@@ -178,7 +180,7 @@ mod tests {
         let worker = MimeExecutionWorker::new(accepting_port.clone());
         let owner = LocalFileSystem::host().unwrap().create_temp_file().unwrap();
         let staged = StagedMimeInput {
-            owner: Mutex::new(owner),
+            owner: Mutex::new(StagedTempOwner::File(owner)),
             permits: Mutex::new(Vec::new()),
             worker,
             staged_bytes: AtomicU64::new(0),
@@ -203,7 +205,7 @@ mod tests {
         rejecting_port.shutdown().unwrap();
         let rejecting_worker = MimeExecutionWorker::new(rejecting_port);
         let rejected_resource = StagedMimeInput {
-            owner: Mutex::new(owner),
+            owner: Mutex::new(StagedTempOwner::File(owner)),
             permits: Mutex::new(Vec::new()),
             worker: rejecting_worker,
             staged_bytes: AtomicU64::new(0),
@@ -252,7 +254,7 @@ mod tests {
         let path = owner.path().to_path_buf();
         fs::write(&path, b"payload").unwrap();
         let resource = StagedMimeInput {
-            owner: Mutex::new(owner),
+            owner: Mutex::new(StagedTempOwner::File(owner)),
             permits: Mutex::new(vec![permit]),
             worker: MimeExecutionWorker::new(port.clone()),
             staged_bytes: AtomicU64::new(0),
@@ -307,7 +309,7 @@ mod tests {
             commit_staged(
                 scope.reserve_resource().unwrap(),
                 StagedMimeInput {
-                    owner: Mutex::new(owner),
+                    owner: Mutex::new(StagedTempOwner::File(owner)),
                     permits: Mutex::new(Vec::new()),
                     worker: registered_worker,
                     staged_bytes: AtomicU64::new(0),
@@ -330,7 +332,7 @@ mod tests {
         fs::write(&path, b"payload").unwrap();
         fs::write(&blocker, b"keep sandbox non-empty").unwrap();
         let resource = StagedMimeInput {
-            owner: Mutex::new(owner),
+            owner: Mutex::new(StagedTempOwner::File(owner)),
             permits: Mutex::new(vec![permit]),
             worker,
             staged_bytes: AtomicU64::new(0),

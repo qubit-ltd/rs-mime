@@ -46,6 +46,9 @@ use qubit_fs::spi::SpiFuture;
 use qubit_fs::spi::StatRequest;
 use qubit_fs::spi::StatResponse;
 use qubit_io::AsyncInput;
+use qubit_local_files::LocalFileSystem;
+use qubit_local_files::options::LocalTempFileOptions;
+use qubit_local_files::policy::LocalPrivacyRequirement;
 
 use crate::InputExtent;
 use crate::MimeError;
@@ -61,6 +64,7 @@ use crate::detector::metered_read_session::MeteredReadSession;
 use crate::managed_temp_staging::ManagedStagingLimits;
 use crate::managed_temp_staging::StagedMimeInput;
 use crate::managed_temp_staging::commit_staged;
+use crate::managed_temp_staging::create_empty_staged_with;
 use crate::managed_temp_staging::sentinel_read_limit;
 use crate::managed_temp_staging::stage_owned_in;
 use crate::managed_temp_staging::within_staging_limit;
@@ -1156,6 +1160,116 @@ fn test_managed_staging_commit_failure_retains_partial_owner_and_permit() {
         services.staging_budget().try_reserve(13).is_some(),
         "cleanup releases the staged-byte permit"
     );
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn test_managed_staging_creation_recovery_is_settled_and_retryable() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+    let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap();
+    services.prepare().unwrap();
+    let worker = MimeExecutionWorker::new(port.clone());
+    let limits = ManagedStagingLimits {
+        max_bytes: 128,
+        budget: services.staging_budget(),
+        worker,
+    };
+    let blocker_path = Arc::new(std::sync::Mutex::new(None));
+    let blocker_path_for_create = Arc::clone(&blocker_path);
+    let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+        let reservation = scope.reserve_resource().unwrap();
+        create_empty_staged_with(&scope, reservation, &limits, move || {
+            let recovery_fault = qubit_local_files::test_support::install_test_fault(
+                "host-temp-file-recovery-clone-cleanup",
+            )
+            .expect("creation and initial cleanup fault should install");
+            let result = LocalFileSystem::host()?.create_temp_file_with_options(
+                &LocalTempFileOptions::new().with_privacy(LocalPrivacyRequirement::PlatformDefault),
+            );
+            if let Err(error) = &result {
+                if let Some(recovery) = error.temp_recovery() {
+                    let blocker = recovery.path().parent().unwrap().join("recovery-blocker");
+                    std::fs::write(&blocker, b"hold recovery owner").unwrap();
+                    *blocker_path_for_create.lock().unwrap() = Some(blocker);
+                }
+            }
+            drop(recovery_fault);
+            result
+        })
+        .await
+    }))
+    .unwrap();
+
+    match block_on(handle.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Failed(MimeError::Io(_)) => {}
+        qubit_operation::OperationOutcome::Succeeded(_) => panic!("creation fault unexpectedly succeeded"),
+        qubit_operation::OperationOutcome::Failed(_) => panic!("creation failure should retain its I/O cause"),
+        _ => panic!("creation fault produced an unexpected operation outcome"),
+    }
+    assert!(
+        format!("{port:?}").contains("prepared: true"),
+        "cleanup remains dispatchable while recovery is unresolved"
+    );
+    let report = block_on(handle.wait_settlement());
+    assert_eq!(report.status, qubit_operation::SettlementStatus::RecoveryRequired);
+    assert_eq!(1, report.recoveries.len(), "settlement retains the creation recovery owner");
+
+    let blocker = blocker_path.lock().unwrap().take().expect("recovery blocker path");
+    std::fs::remove_file(blocker).unwrap();
+    let recovery = report.recoveries[0].clone();
+    let attempt = recovery.try_retry().unwrap();
+    let retry_report = block_on(attempt.wait_async());
+    assert!(retry_report.failures.is_empty(), "retry releases the recovery owner");
+    assert!(
+        format!("{port:?}").contains("prepared: true"),
+        "the execution port stays available until cleanup resolves"
+    );
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+}
+
+#[test]
+fn test_managed_staging_creation_error_without_recovery_keeps_source_and_releases_reservation() {
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+    let services = MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap();
+    services.prepare().unwrap();
+    let limits = ManagedStagingLimits {
+        max_bytes: 128,
+        budget: services.staging_budget(),
+        worker: MimeExecutionWorker::new(port),
+    };
+    let mut handle = block_on(group.try_submit_async(Default::default(), move |scope| async move {
+        let reservation = scope.reserve_resource().unwrap();
+        create_empty_staged_with(&scope, reservation, &limits, || {
+            LocalFileSystem::host()?.create_temp_file_with_options(
+                &LocalTempFileOptions::new()
+                    .with_privacy(LocalPrivacyRequirement::PlatformDefault)
+                    .with_max_attempts(0),
+            )
+        })
+        .await
+    }))
+    .unwrap();
+    match block_on(handle.wait_outcome()).unwrap() {
+        qubit_operation::OperationOutcome::Failed(MimeError::Io(error)) => assert!(
+            error.get_ref().is_some_and(|source| source.is::<qubit_local_files::LocalFileError>()),
+            "the structured local-files error remains the typed I/O source"
+        ),
+        qubit_operation::OperationOutcome::Succeeded(_) => panic!("invalid create options unexpectedly succeeded"),
+        _ => panic!("invalid create options produced an unexpected outcome"),
+    }
+    let report = block_on(handle.wait_settlement());
+    assert_eq!(report.status, qubit_operation::SettlementStatus::Released);
+    assert!(report.recoveries.is_empty(), "ordinary creation failure releases its reservation");
     let shutdown = services.shutdown();
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();
