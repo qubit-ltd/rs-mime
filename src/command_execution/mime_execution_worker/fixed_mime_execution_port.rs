@@ -585,9 +585,11 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(2))
             .expect("one worker should start the blocked job");
 
+        let (allow_drop_tx, allow_drop_rx) = mpsc::channel();
         let (dropped_tx, dropped_rx) = mpsc::channel();
         assert!(
             port.try_dispatch(Box::new(move || {
+                allow_drop_rx.recv().unwrap();
                 drop(worker_owner);
                 dropped_tx.send(()).unwrap();
             }))
@@ -599,8 +601,11 @@ mod tests {
                 .is_ok()
         );
         drop(port);
+        allow_drop_tx
+            .send(())
+            .expect("worker should remain gated until the port owner is dropped");
 
-        let dropped_without_join = dropped_rx.recv_timeout(std::time::Duration::from_millis(100)).is_ok();
+        let dropped_without_join = dropped_rx.recv_timeout(std::time::Duration::from_secs(2)).is_ok();
         release_tx.send(()).unwrap();
         assert!(
             dropped_without_join,
