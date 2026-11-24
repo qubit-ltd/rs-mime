@@ -243,11 +243,19 @@ reader hook requests `content_requirement()`; its `Prefix(n)` is a maximum
 window, EOF may shorten it, and the hook receives the conservative
 `InputExtent::Prefix`; ordinary automatic provider reads use the same extent.
 `OwnedMimeInput::Bytes` preserves the caller's bytes and declared `InputExtent`
-without implicit truncation and does not count as provider I/O. Extension
-backends receive complete or same-object random-access provider input through
-`MeteredReadSession`; ordinary prefix backends may opt into the session. These
-session reads share the operation's read budget. The built-in managed `file`
-provider meters its staging reads internally. The legacy `max_bytes` parameters on `detect_path` and
+without implicit truncation and does not count as provider I/O. By default,
+automatic managed reads from ordinary Provider inputs apply
+`content_requirement()`: `Prefix(n)` supplies at most that window, further
+bounded by service limits and EOF, and describes delivered bytes as
+`InputExtent::Prefix`. Complete reads and same-object random-access reads for
+extension backends always use `MeteredReadSession`. An extension backend may
+also opt ordinary sequential prefix reads into that session; in that case the
+backend sets its own read window, while each session request is constrained by
+the request and ancestor budgets. These session reads share the operation's
+read budget. The built-in managed `file` provider meters its staging reads
+internally. Under `PreferFilename`, a unique filename match can short-circuit
+managed detection before Provider reads are needed. The legacy `max_bytes`
+parameters on `detect_path` and
 `detect_async_path` remain explicit prefix limits for those path calls; they do
 not replace `content_requirement()` for ordinary backend reader hooks.
 
@@ -655,10 +663,15 @@ The built-in `repository` and
 content; its lack of random-access support only rules out inputs that require
 random access. Provider registration itself does not start detection work. A
 runtime without execution services returns a typed
-`ExecutionServicesRequired` submission rejection; an unsupported async backend
-returns `AsyncUnsupported`. Both rejections return the original
-`OwnedMimeInput` in `MimeSubmitFailure`, so the caller can retry or choose another
-path. Once accepted, detection failures are reported by the operation handle.
+`ExecutionServicesRequired` submission rejection. The sync-only-provider
+`AsyncUnsupported` case above is a runtime-configuration error, not a submission
+failure. Separately, `try_submit_detection_sync_in` rejects Provider-backed
+input with a `MimeSubmitFailure` whose reason is
+`MimeSubmitRejection::AsyncUnsupported`, and returns that original input; byte
+input can use this synchronous child entry point. Other pre-admission
+rejections also return the original `OwnedMimeInput` in `MimeSubmitFailure`, so
+the caller can retry or choose another path. Once accepted, detection failures
+are reported by the operation handle.
 The handle reports a detector failure as `OperationOutcome::Failed`; this is
 distinct from `MimeSubmitFailure`, which means the operation was not accepted
 and returns the original input. Observe settlement separately to confirm
@@ -869,6 +882,10 @@ The operation phases have separate error channels:
 - **Execution:** after acceptance, provider, backend, deadline, and cleanup
   errors appear in the operation outcome. A MIME detection failure is
   `OperationOutcome::Failed`; it is not a submission rejection.
+- **Stopped outcome:** an accepted operation may instead finish as
+  `OperationOutcome::Stopped`, for example with `StopReason::Timeout`. This is
+  the operation's terminal business result, and does not mean cleanup has
+  settled.
 - **Settlement:** inspect `wait_settlement()` for released resources and
   recovery handles. A shutdown `OperationShutdownPending` can occur before
   Drain is published; inspect `snapshot().group` to distinguish it from a
