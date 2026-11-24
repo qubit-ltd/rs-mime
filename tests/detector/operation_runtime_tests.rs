@@ -2313,6 +2313,80 @@ fn test_repository_prefer_filename_short_circuits_owned_bytes_and_provider() {
 }
 
 #[test]
+fn test_managed_filename_short_circuit_is_admitted_when_parent_resources_are_full() {
+    use qubit_fs::AsyncFileSystem;
+    use qubit_fs::Path;
+    use qubit_operation::OperationOutcome;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(
+        manager.clone(),
+        group,
+        Arc::new(TestExecution::default()),
+        16,
+    )
+    .unwrap();
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
+    let opens = Arc::new(AtomicUsize::new(0));
+    let runtime_body = runtime.clone();
+    let opens_body = Arc::clone(&opens);
+    let parent_options = qubit_operation::OperationOptions {
+        limits: qubit_operation::ScopeLimits {
+            resources: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut parent = manager
+        .as_async()
+        .try_submit(parent_options, move |scope| async move {
+            let _occupied = scope.manage(Arc::new(())).unwrap();
+            let file_system = Arc::new(
+                AsyncFileSystem::from_spi(CountingFileSystem::new(opens_body)).unwrap(),
+            );
+            let mut child = runtime_body
+                .try_submit_detection_in(
+                    &scope,
+                    OwnedMimeInput::Provider {
+                        file_system,
+                        path: Path::parse("/document.pdf").unwrap(),
+                    },
+                    MimeOperationOptions {
+                        policy: qubit_mime::MimeDetectionPolicy::PreferFilename,
+                        ..Default::default()
+                    },
+                )
+                .unwrap_or_else(|failure| {
+                    panic!("filename short circuit should be admitted: {:?}", failure.reason)
+                });
+            match child.wait_outcome().await.unwrap() {
+                OperationOutcome::Succeeded(report) => Ok::<_, ()>(report),
+                other => panic!("filename short circuit should succeed: {other:?}"),
+            }
+        })
+        .unwrap();
+    let report = match block_on(parent.wait_outcome()).unwrap() {
+        OperationOutcome::Succeeded(report) => report,
+        other => panic!("parent operation should complete: {other:?}"),
+    };
+    block_on(parent.wait_settlement());
+
+    assert_eq!(Some("application/pdf"), report.mime_type.as_deref());
+    assert_eq!(qubit_mime::InspectedExtent::Prefix(0), report.inspected_extent);
+    assert_eq!(0, report.budget.bytes_read);
+    assert_eq!(0, opens.load(Ordering::SeqCst), "provider input must not be opened");
+
+    let shutdown = services.shutdown();
+    let _ = block_on(shutdown.wait_services_settled()).unwrap();
+    let _ = shutdown.stop_services().unwrap();
+    let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
 fn test_filename_short_circuit_rechecks_services_after_shutdown() {
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let services = services(&manager, 1, Arc::new(TestExecution::default()));
