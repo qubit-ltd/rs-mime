@@ -463,3 +463,7 @@ T4 代码提交 [`b5947e8`](https://github.com/qubit-ltd/rs-mime/commit/b5947e8e
 | MIME-085 | T4 runner 观察增量 `6e64f852e2986939f10ade5a0c562c73e0eaeeef` 让两后端观察到 staging 完成后命令派发拒绝，并记录 runner 调用为零。 | 两个后端分别有 queue rejection/cleanup 回归（`file_command_mime_detector`、`ffprobe_command_media_stream_classifier`）；最终 `3b5d962` 完整 CI、真实 FFprobe 直接调用与受管 classifier 运行均通过。 |
 | MIME-086/087 | T5 `5a7abdee4ccea8f03e8c398d4d0c522373924066` 更新双语 README／指南、Rustdoc 与源码 consumer 接入。 | 最终完整 CI 的 strict Rustdoc、README、package 检查通过；documentation consumer fixture 的 locked run 退出码 0，见 `t7-final-consumers-3b5d962/`。 |
 | MIME-088 | T6 保留历史 `e24e5dd` 文档快照与旧 hosted 状态边界；本节绑定最终源码、消费者、registry、ffprobe 与下游 SHA。 | MIME `3b5d962` 本地完整门禁和最终 Magika 精确三仓组合见上文；下游日志在 `magika-delivery/`。当前未推送，因此没有本候选 hosted 结论。 |
+
+### 2026-11-24 Hosted snapshot ownership 修正
+
+- Documentation consumer run `45405682203` 在 SHA `2e64183e4444333c18d3f7adfc2e54102959f725` 上 completed/success。Rust CI run `45405682714` 同 SHA 的 `feature-matrix-plan`、`dependency-baseline`、`verify` 三个 job 均在 snapshot 检查失败，报告仅指 `.infra/ci/cargo-matrix.json`；历史 run `45383443450`（`e24e5dd`）复现了相同失败。英文配置修复 `56f7ead02a29f52aaf11860f299348f4c2ffcb4b` 将定制矩阵改为 project-owned，不改矩阵内容、workflow 或验证门槛。修复后新 SHA 尚未推送／触发 hosted run，其状态仍待验证；日志分别见 `hosted-rust-ci-45405682714.log`、`hosted-rust-ci-45383443450.log` 与 `hosted-infra-check-repair.log`。
