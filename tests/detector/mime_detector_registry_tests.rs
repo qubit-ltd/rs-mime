@@ -62,6 +62,18 @@ fn test_builtin_registry_lists_and_resolves_repository_provider() {
 }
 
 #[test]
+fn test_registry_debug_reports_async_provider_trust_metadata() {
+    let registry = MimeDetectorRegistry::builtin();
+
+    let debug = format!("{registry:?}");
+
+    assert!(debug.contains("AsyncProviderEntry"));
+    assert!(debug.contains("id: \"repository\""));
+    assert!(debug.contains("is_builtin: true"));
+    assert!(debug.contains("uses_bundled_repository: true"));
+}
+
+#[test]
 fn test_global_registry_exposes_builtin_defaults_in_this_process() {
     let registry = MimeDetectorRegistry::global();
 
