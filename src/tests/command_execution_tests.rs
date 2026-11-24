@@ -134,8 +134,10 @@ fn test_executor_preserves_capture_when_total_output_budget_is_exceeded() {
 
 #[cfg(test)]
 mod managed_command_executor_tests {
+    use std::collections::HashMap;
     use std::future::Future;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::sync::mpsc;
     use std::task::Context;
     use std::task::Poll;
@@ -145,15 +147,21 @@ mod managed_command_executor_tests {
 
     use qubit_command::Command;
     use qubit_command::CommandRunner;
+    use qubit_operation::ClockDomainId;
+    use qubit_operation::ClockSource;
+    use qubit_operation::Deadline;
     use qubit_operation::GroupOptions;
+    use qubit_operation::MonotonicTime;
     use qubit_operation::OperationManager;
     use qubit_operation::OperationOptions;
     use qubit_operation::OperationOutcome;
     use qubit_operation::RecoveryPhase;
     use qubit_operation::ShutdownMode;
+    use qubit_operation::TimerRegistration;
 
     use crate::InputExtent;
     use crate::MimeError;
+    use crate::MimeOperationOptions;
     use crate::OwnedMimeInput;
     use crate::command_execution::AsyncMimeCommandExecutor;
     use crate::command_execution::FixedMimeExecutionPort;
@@ -161,10 +169,151 @@ mod managed_command_executor_tests {
     use crate::command_execution::ManagedMimeCommand;
     use crate::command_execution::MimeCommandOutput;
     use crate::command_execution::MimeExecutionWorker;
+    use crate::detector::MimeDetectorRegistry;
+    use crate::detector::MimeRuntime;
     use crate::detector::MimeExecutionPort;
     use crate::detector::MimeExecutionServices;
     use crate::managed_temp_staging::ManagedStagingLimits;
     use crate::managed_temp_staging::stage_owned_in;
+
+    struct ManualClockState {
+        domain: ClockDomainId,
+        ticks: std::sync::atomic::AtomicU64,
+        next_id: std::sync::atomic::AtomicU64,
+        registrations: Mutex<HashMap<u64, (u64, std::task::Waker)>>,
+    }
+
+    struct ManualClock(Arc<ManualClockState>);
+
+    impl ManualClock {
+        fn new() -> Arc<Self> {
+            Arc::new(Self(Arc::new(ManualClockState {
+                domain: ClockDomainId::new_unique(),
+                ticks: std::sync::atomic::AtomicU64::new(0),
+                next_id: std::sync::atomic::AtomicU64::new(1),
+                registrations: Mutex::new(HashMap::new()),
+            })))
+        }
+
+        fn advance_to(&self, ticks: u64) {
+            self.0
+                .ticks
+                .store(ticks, std::sync::atomic::Ordering::SeqCst);
+            let wakes = self
+                .0
+                .registrations
+                .lock()
+                .unwrap()
+                .values()
+                .filter_map(|(at, wake)| (*at <= ticks).then_some(wake.clone()))
+                .collect::<Vec<_>>();
+            for wake in wakes {
+                wake.wake();
+            }
+        }
+    }
+
+    struct ManualTimer {
+        clock: Arc<ManualClockState>,
+        id: u64,
+    }
+    impl TimerRegistration for ManualTimer {
+        fn cancel(self: Box<Self>) {
+            self.clock.registrations.lock().unwrap().remove(&self.id);
+        }
+    }
+    impl ClockSource for ManualClock {
+        fn now(&self) -> MonotonicTime {
+            MonotonicTime::new(
+                self.0.domain,
+                self.0.ticks.load(std::sync::atomic::Ordering::SeqCst),
+            )
+        }
+        fn register_deadline(
+            &self,
+            at: MonotonicTime,
+            wake: std::task::Waker,
+        ) -> Box<dyn TimerRegistration> {
+            let id = self
+                .0
+                .next_id
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.0
+                .registrations
+                .lock()
+                .unwrap()
+                .insert(id, (at.ticks(), wake.clone()));
+            if self.now().ticks() >= at.ticks() {
+                wake.wake();
+            }
+            Box::new(ManualTimer {
+                clock: Arc::clone(&self.0),
+                id,
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct DispatchState {
+        saw_staging: bool,
+        saw_command: bool,
+        held_command: Option<Box<dyn FnOnce() + Send + 'static>>,
+    }
+
+    struct StagingThenHoldCommandPort {
+        state: Mutex<DispatchState>,
+        command_queued: mpsc::Sender<()>,
+    }
+
+    impl std::fmt::Debug for StagingThenHoldCommandPort {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("StagingThenHoldCommandPort")
+        }
+    }
+
+    impl StagingThenHoldCommandPort {
+        fn release_command(&self) {
+            let job = self
+                .state
+                .lock()
+                .unwrap()
+                .held_command
+                .take()
+                .expect("command job is held");
+            job();
+        }
+    }
+
+    impl MimeExecutionPort for StagingThenHoldCommandPort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+        fn try_dispatch(
+            &self,
+            job: Box<dyn FnOnce() + Send + 'static>,
+        ) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+            let mut state = self.state.lock().unwrap();
+            if !state.saw_staging {
+                state.saw_staging = true;
+                drop(state);
+                job();
+                return Ok(());
+            }
+            if state.saw_command {
+                drop(state);
+                job();
+                return Ok(());
+            }
+            state.saw_command = true;
+            state.held_command = Some(job);
+            drop(state);
+            let _ = self.command_queued.send(());
+            Ok(())
+        }
+        fn shutdown(&self) -> Result<(), MimeError> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_timeout_outcome_keeps_accepted_queued_command_owner_until_worker_returns() {
@@ -282,6 +431,107 @@ mod managed_command_executor_tests {
         let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
     }
 
+    #[test]
+    fn test_real_context_deadline_stops_parent_before_queued_command_settles() {
+        use qubit_operation::StopReason;
+
+        let clock = ManualClock::new();
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
+        let (command_queued_tx, command_queued_rx) = mpsc::channel();
+        let worker_port = Arc::new(StagingThenHoldCommandPort {
+            state: Mutex::new(DispatchState::default()),
+            command_queued: command_queued_tx,
+        });
+        let execution_port: Arc<dyn MimeExecutionPort> = worker_port.clone();
+        let services =
+            Arc::new(MimeExecutionServices::new(manager, group, execution_port, 128).unwrap());
+        services.prepare().unwrap();
+
+        let budget = services.staging_budget();
+        let runtime = MimeRuntime::builtin()
+            .unwrap()
+            .with_execution_services((*services).clone())
+            .with_async_provider_selection(
+                &MimeDetectorRegistry::builtin(),
+                &qubit_spi::ProviderSelection::named("file").unwrap(),
+            )
+            .unwrap();
+        let payload: Arc<[u8]> = Arc::from(b"real MIME deadline retains staged input".as_slice());
+        let expected_bytes = payload.len() as u64;
+        let options = MimeOperationOptions {
+            operation: OperationOptions {
+                context: qubit_operation::ContextOptions {
+                    clock: Some(clock.clone()),
+                    deadline: Some(Deadline::at(MonotonicTime::new(clock.0.domain, 10))),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut operation = runtime
+            .try_submit_detection(
+                OwnedMimeInput::Bytes {
+                    content: payload,
+                    extent: InputExtent::Complete,
+                    filename: None,
+                },
+                options,
+            )
+            .unwrap_or_else(|_| {
+                panic!("public MIME runtime accepts the managed file detector operation")
+            });
+        command_queued_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("staging completes and actual command dispatch is held");
+        assert_eq!(
+            expected_bytes,
+            budget.used_bytes(),
+            "command job retains its staged input lease"
+        );
+        assert!(
+            clock.0.registrations.lock().unwrap().len() > 0,
+            "production MIME detect registered its context deadline"
+        );
+
+        clock.advance_to(10);
+        let outcome = block_on_timeout(operation.wait_outcome(), Duration::from_secs(2))
+            .expect("production MIME context deadline wakes parent outcome")
+            .unwrap();
+        assert!(
+            matches!(outcome, OperationOutcome::Stopped(report) if report.reason == StopReason::Timeout)
+        );
+        assert!(
+            clock.0.registrations.lock().unwrap().is_empty(),
+            "production deadline signal cancels its timer registration after firing"
+        );
+
+        let mut settlement = Box::pin(operation.wait_settlement());
+        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        assert!(
+            matches!(settlement.as_mut().poll(&mut context), Poll::Pending),
+            "worker still owns command settlement"
+        );
+        assert!(
+            worker_port.state.lock().unwrap().held_command.is_some(),
+            "command remains queued through outcome publication"
+        );
+        assert_eq!(expected_bytes, budget.used_bytes());
+
+        worker_port.release_command();
+        let settled =
+            block_on_timeout(settlement, Duration::from_secs(2)).expect("released command settles");
+        assert!(settled.all_released());
+        assert_eq!(0, budget.used_bytes());
+
+        let shutdown = services.shutdown();
+        let _ = block_on_timeout(shutdown.wait_services_settled(), Duration::from_secs(2)).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+        let _ = block_on_timeout(shutdown.wait_group_shutdown(), Duration::from_secs(2)).unwrap();
+    }
+
     struct ThreadWake(std::thread::Thread);
     impl Wake for ThreadWake {
         fn wake(self: Arc<Self>) {
@@ -298,6 +548,26 @@ mod managed_command_executor_tests {
                 Poll::Ready(value) => return value,
                 Poll::Pending => std::thread::park(),
             }
+        }
+    }
+
+    fn block_on_timeout<F: Future>(
+        future: F,
+        timeout: Duration,
+    ) -> Result<F::Output, &'static str> {
+        let waker = Waker::from(Arc::new(ThreadWake(std::thread::current())));
+        let mut context = Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if let Poll::Ready(value) = future.as_mut().poll(&mut context) {
+                return Ok(value);
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return Err("future did not complete before test timeout");
+            }
+            std::thread::park_timeout(deadline - now);
         }
     }
 
