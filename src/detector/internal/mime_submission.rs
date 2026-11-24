@@ -7,8 +7,10 @@
 // =============================================================================
 //! Submission helpers that preserve input ownership until admission succeeds.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::task::Poll;
 
 use qubit_fs::read::ReadOptions;
 use qubit_operation::OperationScope;
@@ -256,6 +258,32 @@ pub(in crate::detector) struct MimeSubmission {
 /// # Errors
 /// Propagates backend, input-provider, and configured-limit errors.
 pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<MimeDetectionReport> {
+    let context = request.scope.context();
+    let mut stop = Box::pin(context.stop_requested());
+    let mut deadline = context.deadline_signal().map(Box::pin);
+    let mut detection = Box::pin(detect_inner(request));
+    std::future::poll_fn(move |cx| {
+        if let Some(deadline) = deadline.as_mut()
+            && deadline.as_mut().poll(cx).is_ready()
+        {
+            return Poll::Ready(Err(MimeError::detector_backend(
+                "mime",
+                "operation deadline expired",
+            )));
+        }
+        if let Poll::Ready(reason) = stop.as_mut().poll(cx) {
+            return Poll::Ready(Err(MimeError::detector_backend(
+                "mime",
+                format!("operation stopped: {reason:?}"),
+            )));
+        }
+        detection.as_mut().poll(cx)
+    })
+    .await
+}
+
+/// Executes the detection body after its stop and deadline signals are wired.
+async fn detect_inner(request: MimeSubmission) -> MimeResult<MimeDetectionReport> {
     let MimeSubmission {
         scope,
         input,
@@ -369,12 +397,13 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                         .await?
                     };
                 let candidates = backend
-                    .guess_content_in(
+                    .guess_provider_content_in(
                         &_scope,
                         BorrowedMimeInput::ManagedProvider {
                             session: &mut session,
                             filename: path.file_name(),
                         },
+                        path.file_name(),
                         &options,
                     )
                     .await?;
@@ -393,12 +422,13 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                     || read_plan.random_access == crate::RandomAccessCapability::SamplesSameObject
                 {
                     backend
-                        .guess_content_in(
+                        .guess_provider_content_in(
                             &_scope,
                             BorrowedMimeInput::Provider {
                                 file_system: &file_system,
                                 path: &path,
                             },
+                            path.file_name(),
                             &options,
                         )
                         .await?
@@ -428,13 +458,14 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                     let bytes_read = content.len() as u64;
                     let _read = read_permit.commit(bytes_read);
                     let candidates = backend
-                        .guess_content_in(
+                        .guess_provider_content_in(
                             &_scope,
                             BorrowedMimeInput::Bytes {
                                 content: &content,
                                 extent: InputExtent::Prefix,
                                 filename: path.file_name(),
                             },
+                            path.file_name(),
                             &options,
                         )
                         .await?;
