@@ -418,11 +418,14 @@ backend。`file` 要求完整内容；
 未配置执行服务时，提交会以 `ExecutionServicesRequired` 拒绝；所选 backend
 没有异步能力时会以 `AsyncUnsupported` 拒绝。这些提交前拒绝都通过
 `MimeSubmitFailure` 原样返还 `OwnedMimeInput`，调用方可以重试或改走其他入口。任务接纳后
-发生的检测错误则由 operation handle 报告。
+发生的检测错误则由 operation handle 以 `OperationOutcome::Failed` 报告，不再通过
+`MimeSubmitFailure` 返还输入。资源释放状态需要另行等待 settlement。
 现有 `FileCommandMimeDetector` 同步 API 仍可使用；受管 backend 用于通过 `MimeRuntime` 执行
 operation 管理的任务。
-若为 `file` 选择 async classifier，factory 会在 runtime 配置阶段以 `UnsupportedCapability` 拒绝，
-即使某个输入本身不会触发 classifier 精化也一样。
+若为 `file` 附加任何 async classifier，factory 都会在 runtime 配置阶段以
+`UnsupportedCapability` 拒绝，即使某个输入本身不会触发 classifier 精化也一样。
+受管 `file` backend 在内部 staging 流程中计量 Provider 读取；扩展 backend 的
+`ManagedProvider` session 契约见下文。
 
 受管 `repository` Provider 对标记为 `Prefix` 的输入只执行基础 MIME 匹配；即使精细分类映射命中，
 也不会把此前缀交给异步媒体 classifier。需要媒体流精化时，应以 `Complete` 提交完整字节。
@@ -457,7 +460,7 @@ let count = session.read_at(1024, &mut sample).await?;
 inspect_sample(&sample[..count]);
 ```
 
-每次 session 读取都会受调用方 buffer、payload 上限、请求与读取额度树剩余额度以及 8 KiB 分块上限共同约束。
+每次 session 读取都会受调用方 buffer、payload 上限、请求与服务读取额度以及 8 KiB 分块上限共同约束。
 runtime 在 Provider I/O 前为私有暂存区预留最多 8 KiB，并只把成功返回的字节复制给 backend。Provider
 错误不会暴露暂存区中的部分数据。EOF 返回零；读取额度按实际返回字节计费，重复或重叠的
 `read_at` 采样会重复计费。每次读取的暂存区上限与 backend 保留的输入内存或命令暂存内存是不同预算。
@@ -473,7 +476,8 @@ settlement 诊断。`InputExtent` 说明调用方提供的是前缀还是完整�
 deadline。异步检测会同时等待 deadline、stop signal 和 backend future；即使 provider read 不会自行唤醒，
 deadline 也能使该等待结束，operation 会报告 `Stopped(Timeout)`。若用户取消请求已被接受并与 deadline
 竞争，结果保留 `UserCancelled` 原因。repository matcher 只在协作批次边界检查停止状态，不会在批次中途
-被强制打断。同步子操作也不会被强制中断，只能在自身的协作检查点观察 stop。
+被强制打断。deadline 和 stop 还会在 backend 已就绪、结果提交之前再次裁决，因此已过期的 deadline
+可以使成功或错误结果转为 `Stopped(Timeout)`。同步子操作也不会被强制中断，只能在自身的协作检查点观察 stop。
 
 临时文件创建若在失败前已生成部分文件，文件系统错误可能携带仍需清理的 owner。runtime 会在
 返回创建错误前，把该 owner 作为清理资源登记到同一 operation scope。发生此类错误后仍应观察
@@ -484,12 +488,9 @@ settlement 和 recovery；仅看到失败 outcome 不能确认部分文件已删
 父操作的 manager 视图并绑定 MIME 组。同步子操作入口为
 `try_submit_detection_sync_in`。Provider 能力如下：
 
-同一外部父操作下的所有 MIME 子操作共享一个累计 Provider 读取额度；即使前一个子操作已完成
-settlement 且 handle 已释放，后续子操作也会继续使用父操作原有额度。首次子操作将累计树上限固定为
-请求上限与服务上限中的较小值，后续子操作不能扩大它。MIME 会在父操作资源域中保留一个读取预算锚点，
-因此父操作至少需要一个可用资源条目。资源不足、父操作已停止或已结束时，提交会以
-`ReadBudgetBinding` 及对应资源错误种类拒绝，并通过 failure 原样归还输入。独立根操作和不同父操作
-使用彼此独立的累计额度。
+嵌套 managed operation 的祖先读取额度继承与 Provider 部分读取的计量边界仍在 0.22.0 验收中。
+在这些边界完成验收前，请先查阅[验收记录](acceptance-0.22.0-operation-0.2.zh_CN.md)，不要假定
+具体的父子额度共享或结算行为。
 
 | Provider | 受管异步 backend | 输入与精化限制 |
 | --- | --- | --- |
@@ -497,7 +498,8 @@ settlement 且 handle 已释放，后续子操作也会继续使用父操作原�
 | `file` | 支持，须显式选择 | 要求完整内容，不支持随机访问。附加要求同一对象精化的 classifier 会以 `UnsupportedCapability` 拒绝。 |
 | 仅同步的自定义 Provider | 不支持 | 异步选择返回 `AsyncUnsupported`，不会回退为同步执行。 |
 
-路径输入会先提取 basename，再交给专用文件名匹配入口；完整路径不会被重新当作文件名解析。
+路径输入会按 native path 语义提取 basename，再交给专用文件名匹配入口；完整路径不会被重新当作文件名解析。
+POSIX basename 内的反斜杠仍是文件名内容；非 UTF-8 本地 basename 会以 lossy 字符串进行匹配。
 `OwnedMimeInput::Bytes` 仍使用输入中由调用方提供的 filename。
 
 选择命令 Provider 不保证外部命令可用或运行成功；任务接纳后的运行问题由 operation 报告。

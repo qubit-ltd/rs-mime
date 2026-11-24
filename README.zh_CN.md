@@ -57,8 +57,9 @@ fn main() -> qubit_mime::MimeResult<()> {
 
 对于内置 detector 和通过本 crate blanket `MimeDetector` 实现接入的 backend，
 `detect_prefix` 会匹配文件名和内容候选，不会把前缀交给需要完整媒体内容的
-classifier。直接实现 `MimeDetector` 的类型自行决定其行为。受管异步操作必须显式选择支持
-异步的 backend；仅支持同步的 backend 会返回 `AsyncUnsupported`，不会在异步流程里回退到同步执行。
+classifier。直接实现 `MimeDetector` 的类型自行决定其行为。受管异步操作使用异步 backend：附加
+执行服务后默认采用 crate 内置的 `repository`；改用其他 backend 时需显式选择。仅支持同步的
+backend 会返回 `AsyncUnsupported`，不会在异步流程里回退到同步执行。
 受管操作的生命周期和 Provider 能力限制见用户手册。
 
 旧入口 `detect_async_path` 在 `PreferFilename` 下仍会对唯一文件名候选提前返回。内置
@@ -77,7 +78,9 @@ Provider 路径 hook。若自定义 backend 希望在读取前拒绝，还可覆
 - 通过 `MimeDetectorRegistry` 与 `MimeConfig` 配置内置 Provider、应用自定义 Provider、
   Provider 选择、fallback 和资源限制。
 - `MimeRuntime` 提供受管检测操作：输入所有权明确，提交拒绝带回原输入，业务结果与资源
-  settlement 分开观察。0.22.0 目标接口仍在验收中，当前证据与未完成项见
+  settlement 分开观察。附加执行服务后默认使用内置 `repository`；使用 `file` 时需显式选择。
+  提交被拒绝时，`MimeSubmitFailure` 会带回原输入；任务接纳后的检测错误由 operation outcome
+  报告，资源释放情况则通过 settlement 观察。0.22.0 目标接口仍在验收中，当前证据与未完成项见
   [验收记录](doc/acceptance-0.22.0-operation-0.2.zh_CN.md)。
 - 可选的 `FileCommandMimeDetector` 使用系统命令 `file --mime-type --brief` 检查内容。
 - 可选的 `FfprobeCommandMediaStreamClassifier` 可进一步区分 WebM、Ogg 等媒体流中的
@@ -96,14 +99,16 @@ settlement。创建 runtime 或注册 Provider 不会启动 worker；应用需�
 MIME 对，细化会保留原 MIME；可传入匹配的文件名或消除映射冲突来指定细化对。
 
 组准入关闭后，已接纳到组内的父 operation 仍可派发必要后代；新的外部 scope 必须在关闭前接纳。
-路径输入会先提取 basename 再进行文件名匹配，完整路径不会重新作为文件名解析；
+同步子操作不会被强制打断，只能在自身的协作检查点观察 stop。
+路径输入会按 native path 语义提取 basename 再进行文件名匹配，完整路径不会重新作为文件名解析；
+POSIX basename 中的反斜杠属于文件名数据，非 UTF-8 本地 basename 会以 lossy 字符串匹配。
 `OwnedMimeInput::Bytes` 仍使用调用方提供的 filename。
 临时文件部分创建失败时，清理 owner 会由同一 operation scope 持有；应同时检查 settlement 和 recovery，
 不能只依据失败结果判断清理完成。
 受管异步操作会在 backend future 等待期间观察 scope deadline 和 stop 请求；repository matcher
-在协作检查点响应。
-同步子操作不会被强制打断，只能在自身的协作检查点观察 stop。已经派发给 command 或 staging worker 的工作，
-会一直保留资源 owner，直到 worker job 实际结算。
+在协作检查点响应。deadline/stop 也会在 backend 已就绪、结果提交之前再次裁决；因此即使 backend 已
+返回成功或错误，超时仍可能先结束 operation。若用户取消已被接受，竞争时保留 `UserCancelled` 原因。
+已经派发给 command 或 staging worker 的工作，会一直保留资源 owner，直到 worker job 实际结算。
 
 检测器只负责判断 MIME 类型，不能证明文件可以安全打开或执行。Native command
 Provider 依赖对应的可执行文件，也可能因命令不可用、超时或输出无效而失败。
@@ -113,6 +118,11 @@ Provider 依赖对应的可执行文件，也可能因命令不可用、超时�
 `file` 命令，因此链接和目录的处理取决于平台、命令版本及环境。注入的 executor 则由注入者决定行为。
 需要一致内容语义时，应用应按自己的链接策略打开普通文件，再通过 reader 检测。拒绝链接应由应用控制
 路径打开策略；单独检查 metadata 无法消除竞态。
+
+同步 `FileCommandMimeDetector` 的 reader/path API 与受管 `file` Provider 是两条独立入口；旧同步调用仍可继续使用。
+受管 `file` Provider 在自己的 staging 流程中计量 Provider 读取，不要求扩展 backend 使用公开的
+`MeteredReadSession`。文件 Provider factory 会拒绝任何附加的异步 classifier，错误为
+`UnsupportedCapability`，且发生在 operation 提交前，即使该输入不会触发媒体细化也是如此。
 
 内置 `file` Provider 检测 reader 时，最多暂存 `MimeConfig::max_buffer_size()` 字节，并在 EOF 时停止；
 该预算不由所选文件名仓库中的 magic 偏移决定。字节切片检测检查调用方提供的字节；`file` Provider

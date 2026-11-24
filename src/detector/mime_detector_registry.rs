@@ -161,7 +161,11 @@ impl MimeDetectorRegistry {
     /// The selected provider ID and its async detector backend.
     ///
     /// # Errors
-    /// Returns an error when the provider is unavailable or async unsupported.
+    /// Returns an error when the provider is unavailable, async unsupported, or
+    /// its factory rejects the supplied classifier. The built-in `file`
+    /// provider returns [`crate::MimeError::UnsupportedCapability`] for every
+    /// supplied classifier, regardless of whether an input would require
+    /// refinement.
     pub fn create_async_backend_with_classifier(
         &self,
         selection: &ProviderSelection,

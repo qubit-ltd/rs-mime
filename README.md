@@ -73,9 +73,11 @@ For built-in detectors and backends using the crate's blanket `MimeDetector`
 implementation, `detect_prefix` matches filename and content candidates
 without passing the prefix to a complete-media classifier. Types that implement
 `MimeDetector` directly define their own behavior. Managed async operations use
-an explicitly selected async backend; a sync-only backend returns
-`AsyncUnsupported` instead of falling back to synchronous work. See the user
-guide for the managed operation lifecycle and provider capability limits.
+an async backend: attaching execution services defaults it to the bundled
+`repository`, and another backend must be selected explicitly. A sync-only
+backend returns `AsyncUnsupported` instead of falling back to synchronous work.
+See the user guide for the managed operation lifecycle and provider capability
+limits.
 
 The legacy `detect_async_path` entry also preserves its unique-filename
 short-circuit under `PreferFilename`. The built-in `RepositoryMimeDetector`
@@ -98,8 +100,12 @@ provider-path hook when content inspection is required.
   providers, selection, fallbacks, and resource limits.
 - Managed detection operations through `MimeRuntime`, with owned byte inputs,
   typed submission rejection, and separate outcome and settlement observation.
-  The target 0.22 operation surface is still under acceptance; see the guide
-  and [acceptance record](doc/acceptance-0.22.0-operation-0.2.zh_CN.md).
+  Attaching execution services defaults managed detection to the bundled
+  `repository`; select `file` explicitly. A rejected submission returns the
+  original input in `MimeSubmitFailure`. Detection errors after acceptance are
+  reported by the operation outcome, and resource release is observed through
+  settlement. The target 0.22 operation surface is still under acceptance; see
+  the guide and [acceptance record](doc/acceptance-0.22.0-operation-0.2.zh_CN.md).
 - Optional `FileCommandMimeDetector`, which uses the system
   `file --mime-type --brief` command for content detection.
 - Optional `FfprobeCommandMediaStreamClassifier` for refining ambiguous media
@@ -129,11 +135,22 @@ before closure. A partial temporary-file creation error can retain a cleanup
 owner in the same operation scope, so its error outcome alone does not confirm
 cleanup. Async operations observe scope deadlines and stop requests while
 backend futures are pending; repository matching responds at cooperative
-checkpoints. Synchronous children are not preempted and observe stop only at
-their cooperative checks. Work already dispatched to command or staging workers
-keeps its resource owner tracked until the job settles.
+checkpoints. The deadline is checked again if the backend becomes ready, before
+its result is committed, so a timeout can still stop a ready success or error;
+an accepted user-cancel reason is preserved in a race. Synchronous children are
+not preempted and observe stop only at their cooperative checks. Work already
+dispatched to command or staging workers keeps its resource owner tracked until
+the job settles.
 
-Path-backed filename detection extracts the path basename before matching;
+The legacy synchronous `FileCommandMimeDetector` methods remain available
+alongside the managed `file` provider. The managed provider stages input within
+the operation and accounts provider bytes internally. Its factory rejects any
+attached async classifier with `UnsupportedCapability`, even when an input
+would not invoke refinement; that configuration error occurs before submission.
+
+Path-backed filename detection extracts the native path basename before
+matching; on POSIX, a backslash inside the basename remains filename data.
+Non-UTF-8 local basenames are converted lossily for matching.
 `OwnedMimeInput::Bytes` continues to use its caller-supplied filename.
 
 For the built-in `file` provider, reader detection stages up to
