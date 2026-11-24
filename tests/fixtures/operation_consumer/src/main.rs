@@ -89,7 +89,6 @@ impl AsyncMimeDetectorBackend for ConsumerBackend {
                 panic!("Complete and SamplesSameObject consumers must receive a managed session")
             };
             let mut data = [0_u8; 8];
-            if _options.max_read_bytes.is_some() { /* caller options remain public and usable */ }
             if samples {
                 let first = session.read_at(0, &mut data).await?;
                 assert_eq!(&data[..first], b"consumer");
@@ -314,7 +313,7 @@ fn main() {
         manager,
         group,
         Arc::new(FixedMimeExecutionPort::new(1, 8)),
-        1024 * 1024,
+        16,
     )
     .expect("services");
     services.prepare().expect("prepare services");
@@ -354,6 +353,94 @@ fn main() {
         block_on(execute(&samples_runtime, "/controlled-fail")).is_err(),
         "injected random read failures reach the consumer"
     );
+    let parent_manager = OperationManager::new(Default::default()).expect("parent manager");
+    let parent_group = parent_manager
+        .group(qubit_operation::GroupOptions { capacity: 4 })
+        .expect("parent MIME group");
+    let parent_services = MimeExecutionServices::new(
+        parent_manager.clone(),
+        parent_group,
+        Arc::new(FixedMimeExecutionPort::new(1, 4)),
+        16,
+    )
+    .expect("parent services");
+    parent_services.prepare().expect("prepare parent services");
+    let parent_runtime = MimeRuntime::builtin()
+        .expect("runtime")
+        .with_execution_services(parent_services.clone())
+        .with_async_provider_selection(
+            &registry,
+            &qubit_spi::ProviderSelection::named("complete").unwrap(),
+        )
+        .expect("select Complete consumer for parent siblings");
+    let parent_options = qubit_operation::OperationOptions {
+        child_failure_policy: qubit_operation::ChildFailurePolicy::ContinueSiblings,
+        limits: qubit_operation::ScopeLimits {
+            child_operations: 2,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut parent = parent_manager
+        .as_async()
+        .try_submit(parent_options, move |scope| async move {
+            let child_options = MimeOperationOptions {
+                max_buffer_bytes: Some(8),
+                max_read_bytes: Some(16),
+                operation: qubit_operation::OperationOptions {
+                    requirement: qubit_operation::ChildRequirement::Optional,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut child_results = Vec::new();
+            for child_path in ["/parent-sibling-a", "/parent-sibling-b"] {
+                let mut child = parent_runtime
+                    .try_submit_detection_in(
+                        &scope,
+                        OwnedMimeInput::Provider {
+                            file_system: Arc::new(memory_fs(b"consumer".to_vec(), false)),
+                            path: qubit_fs::Path::parse(child_path).unwrap(),
+                        },
+                        child_options.clone(),
+                    )
+                    .unwrap_or_else(|_| panic!("parent admits both managed children"));
+                let outcome = child.wait_outcome().await.unwrap();
+                let _ = child.wait_settlement().await;
+                child_results.push(outcome);
+            }
+            Ok::<_, ()>(child_results)
+        })
+        .expect("parent operation is admitted");
+    let sibling_outcomes = block_on(parent.wait_outcome()).unwrap();
+    let qubit_operation::OperationOutcome::Succeeded(sibling_outcomes) = sibling_outcomes else {
+        panic!("optional sibling read failure should not fail the parent: {sibling_outcomes:?}");
+    };
+    block_on(parent.wait_settlement());
+    assert_eq!(sibling_outcomes.len(), 2);
+    match &sibling_outcomes[0] {
+        qubit_operation::OperationOutcome::Succeeded(report) => {
+            assert_eq!(
+                report.budget.bytes_read, 8,
+                "first sibling consumes the shared budget"
+            );
+        }
+        other => panic!("first sibling should use the parent budget successfully: {other:?}"),
+    }
+    assert!(
+        matches!(
+            &sibling_outcomes[1],
+            qubit_operation::OperationOutcome::Failed(MimeError::BudgetExceeded {
+                kind: "read",
+                ..
+            })
+        ),
+        "second sibling must observe the first sibling's cumulative parent read: {:?}",
+        sibling_outcomes[1]
+    );
+    let parent_shutdown = parent_services.shutdown();
+    assert!(block_on(parent_shutdown.wait_services_settled()).is_ok());
+    assert!(parent_shutdown.stop_services().is_ok());
     let shutdown = services.shutdown();
     assert!(block_on(shutdown.wait_services_settled()).is_ok());
     assert!(shutdown.stop_services().is_ok());
