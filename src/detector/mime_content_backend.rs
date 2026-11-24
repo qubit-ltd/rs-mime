@@ -51,13 +51,16 @@ use crate::MimeResult;
 /// );
 /// ```
 pub trait MimeContentBackend: Debug + Send + Sync {
-    /// Returns how many bytes this backend needs to inspect.
+    /// Returns the input window this backend requests.
     ///
-    /// A prefix requirement allows callers to bound stream reads; a complete
-    /// requirement asks callers to provide all available content.
+    /// `Prefix(n)` bounds the leading bytes made available; it does not promise
+    /// that `n` bytes exist. Reads stop at EOF, so an implementation that needs
+    /// a minimum length must check the supplied slice and return a typed error.
+    /// `Complete` asks for all available content within the reader buffer
+    /// budget.
     ///
     /// # Returns
-    /// The required prefix length, or `Complete` when all available bytes are
+    /// The maximum prefix length, or `Complete` when all available bytes are
     /// needed.
     #[must_use]
     fn content_requirement(&self) -> ContentRequirement;

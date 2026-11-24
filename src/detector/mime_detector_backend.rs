@@ -49,10 +49,11 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// Describes how much content the backend needs for detection.
     ///
     /// # Returns
-    /// The default reader hook uses the declared [`ContentRequirement::Prefix`]
-    /// length. [`Self::max_test_bytes`] supplies this default requirement when
-    /// an implementation does not override this method; it remains available
-    /// to existing backend and provider-path callers as a legacy limit.
+    /// The default reader hook reads at most the declared
+    /// [`ContentRequirement::Prefix`] window; EOF may yield fewer bytes.
+    /// [`Self::max_test_bytes`] supplies this default window when an
+    /// implementation does not override this method and remains available to
+    /// existing backend and provider-path callers as a legacy limit.
     #[must_use]
     fn content_requirement(&self) -> ContentRequirement {
         ContentRequirement::Prefix(self.max_test_bytes())
@@ -65,7 +66,7 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     #[must_use]
     fn core(&self) -> &MimeDetectorCore;
 
-    /// Gets the default maximum number of bytes needed for content inspection.
+    /// Gets the default maximum prefix window for content inspection.
     ///
     /// This supplies the default `Prefix(n)` returned by
     /// [`Self::content_requirement`]. When that method is overridden, the

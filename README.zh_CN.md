@@ -93,8 +93,8 @@ EOF，并额外探测一个字节以检查是否超限。两者都会恢复起�
 `CompleteContentRequired`，因此完整内容 backend 必须覆盖该 hook。adapter 委托给 backend
 reader hook；自定义随机访问覆盖仍可使用。受管检测通过 owned input、显式 scope 和有限请求预算管理执行过程，并分别观察业务结果与资源
 settlement。创建 runtime 或注册 Provider 不会启动 worker；应用需显式准备和停止 MIME 执行服务。
-不支持受管异步能力的 Provider 会被拒绝，不会在异步操作中同步执行。丢弃进行中的 future
-不能证明已接纳工作停止；释放资源前应观察 settlement。前缀读取期间可能同时保留 Provider
+仅支持同步的 Provider 被选作受管异步 backend 时会返回 `AsyncUnsupported`，不会在异步操作中同步执行；旧的同步
+`FileCommandMimeDetector` API 仍可使用。丢弃进行中的 future 不能证明已接纳工作停止；释放资源前应观察 settlement。前缀读取期间可能同时保留 Provider
 缓冲区和 worker 的 owned 副本；`max_buffer_size` 限制单个缓冲区，不限制两者合计内存。无文件名时，若同一 MIME 对应的多个映射具有不同
 MIME 对，细化会保留原 MIME；可传入匹配的文件名或消除映射冲突来指定细化对。
 
@@ -116,8 +116,10 @@ POSIX basename 中的反斜杠属于文件名数据，非 UTF-8 本地 basename 
 无法提交待处理绑定，则 operation 以 `ReadBudgetBinding` 失败。
 
 读取额度按成功交付的字节计费。Provider 打开失败计零；前缀读取在错误或取消前已交付的字节继续计费，未使用的
-预留额度会退还。普通 `Prefix(n)` 无法预留所需额度时会以 typed budget error 拒绝，不会静默裁切。相较之下，
-`MeteredReadSession` 会按可用额度裁切单次读取，单独预留临时 scratch 内存，并可用剩余额度探测 EOF。
+预留额度会退还。`Prefix(n)` 是最大窗口，不是最小长度：请求或服务的 buffer/read 上限可能缩短窗口，EOF 也可能使实际字节更少。
+若提交时无法预留 owned 前缀缓冲区，会拒绝并返还原输入；若任务接纳后无法预留共享祖先读取额度，operation
+会报告 `MimeError::BudgetExceeded { kind: "read", .. }`。扩展 backend 可选择 `MeteredReadSession`，它按当前额度裁切
+每次读取并单独预留 scratch 内存。内置 `file` Provider 在自身 staging 读取中计量。
 
 检测器只负责判断 MIME 类型，不能证明文件可以安全打开或执行。Native command
 Provider 依赖对应的可执行文件，也可能因命令不可用、超时或输出无效而失败。
@@ -129,9 +131,9 @@ Provider 依赖对应的可执行文件，也可能因命令不可用、超时�
 路径打开策略；单独检查 metadata 无法消除竞态。
 
 同步 `FileCommandMimeDetector` 的 reader/path API 与受管 `file` Provider 是两条独立入口；旧同步调用仍可继续使用。
-受管 `file` Provider 在自己的 staging 流程中计量 Provider 读取，不要求扩展 backend 使用公开的
-`MeteredReadSession`。文件 Provider factory 会拒绝任何附加的异步 classifier，错误为
-`UnsupportedCapability`，且发生在 operation 提交前，即使该输入不会触发媒体细化也是如此。
+受管 `file` Provider 在自己的 staging 流程中计量读取，不要求扩展 backend 使用公开的 `MeteredReadSession`。
+受管 `file` factory 会拒绝任何附加的异步 classifier，错误为 `UnsupportedCapability`，发生在提交前；即使输入不会触发媒体细化也一样。
+这项限制针对受管 factory，不会移除旧同步 API。
 
 内置 `file` Provider 检测 reader 时，最多暂存 `MimeConfig::max_buffer_size()` 字节，并在 EOF 时停止；
 该预算不由所选文件名仓库中的 magic 偏移决定。字节切片检测检查调用方提供的字节；`file` Provider

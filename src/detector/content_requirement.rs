@@ -5,9 +5,9 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Input size requirements for MIME content backends.
+//! Input window declarations for MIME content backends.
 
-/// Amount of input a content backend must inspect.
+/// Maximum input window requested by a content backend.
 ///
 /// # Examples
 ///
@@ -21,9 +21,10 @@
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentRequirement {
-    /// Inspect only the leading prefix of the stream.
+    /// Inspect at most the leading prefix of the stream. This is a read
+    /// window, not a minimum length guarantee; the input may end sooner.
     Prefix(
-        /// Maximum number of leading bytes required by the backend.
+        /// Maximum number of leading bytes to make available to the backend.
         usize,
     ),
     /// Inspect the complete stream.

@@ -65,14 +65,24 @@
 //! `AsyncUnsupported`; synchronous content inspection does not become async
 //! automatically. Backends that need async inspection must implement the async
 //! hook, and managed operations need an async-capable provider with prepared
-//! execution services. The legacy `detect_async_path` entry preserves the
+//! execution services. Attaching execution services to `MimeRuntime` selects
+//! the bundled `repository` async backend by default; a sync-only selection
+//! returns `AsyncUnsupported` before submission. Submission-time rejection
+//! returns the owned input in `MimeSubmitFailure`; errors after acceptance are
+//! reported by the operation outcome, with resource release observed through
+//! settlement. The legacy `detect_async_path` entry preserves the
 //! unique-filename `PreferFilename` shortcut for `RepositoryMimeDetector`;
 //! content-dependent policies return `AsyncUnsupported` before provider IO.
 //! Custom backends retain their existing default behavior and can opt into
 //! asynchronous content inspection through their async hook.
 //! Dropping the future does not guarantee cancellation of started work, and a
 //! prefix may temporarily occupy both the provider buffer and an owned worker
-//! copy; `max_buffer_size` limits each buffer individually.
+//! copy; `max_buffer_size` limits each buffer individually. `Prefix(n)` is a
+//! maximum input window, not a minimum length: static limits and EOF may yield
+//! fewer bytes. A backend that needs a minimum must check the actual input and
+//! return its own typed error. Extension backends may opt into
+//! `MeteredReadSession`; the built-in managed `file` provider meters staging
+//! reads internally.
 //!
 //! Configure a preferred detector and an explicit fallback. This is useful when
 //! `file` should be used on systems where it is available, while still allowing

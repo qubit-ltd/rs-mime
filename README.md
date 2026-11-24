@@ -126,9 +126,11 @@ the mapping conflict to select a pair.
 Managed detection uses owned inputs, explicit scopes, finite request budgets,
 and separate outcome and settlement observation. Construction and provider
 registration do not start workers; applications prepare and stop the MIME
-execution services explicitly. Unsupported providers are rejected rather than
-run synchronously from an async operation. Dropping an in-flight future does
-not prove that accepted work has stopped; observe settlement before releasing
+execution services explicitly. A sync-only provider selected for managed async
+work returns `AsyncUnsupported`; it is not run synchronously from an async
+operation. The legacy synchronous `FileCommandMimeDetector` API remains
+available. Dropping an in-flight future does not prove that accepted work has
+stopped; observe settlement before releasing
 resources. Once group admission closes, already accepted in-group parents can
 still dispatch required descendants; new external scopes must have entered
 before closure. A partial temporary-file creation error can retain a cleanup
@@ -151,20 +153,22 @@ be admitted or the ancestor has ended, submission is rejected with the input
 intact. If the accepted operation cannot commit its pending binding, it fails
 with `ReadBudgetBinding`.
 
-Provider read reservations charge bytes successfully delivered. A failed open
-charges zero. If a prefix read fails or is cancelled after delivering bytes,
-those bytes remain charged and the unused reservation is returned. A regular
-`Prefix(n)` input is rejected with a typed budget error when its required
-reservation cannot be made; it is not silently clipped. `MeteredReadSession`
-instead clips each individual read to available allowances, reserves its
-temporary scratch memory independently, and can use remaining allowance to
-probe EOF.
+Provider reads charge successfully delivered bytes. `Prefix(n)` is a maximum
+window, not a minimum length: request or service buffer/read caps may shorten
+it, and EOF may return fewer bytes. If submission cannot reserve the owned
+prefix buffer, it returns the original input. If an accepted operation later
+cannot reserve shared ancestor read allowance, its outcome reports
+`MimeError::BudgetExceeded { kind: "read", .. }`. Extension backends can opt
+into `MeteredReadSession`, which clips each read to available allowance and
+reserves scratch memory separately. The built-in `file` provider meters its
+staging reads internally.
 
 The legacy synchronous `FileCommandMimeDetector` methods remain available
 alongside the managed `file` provider. The managed provider stages input within
-the operation and accounts provider bytes internally. Its factory rejects any
+the operation and meters provider bytes internally. Its factory rejects any
 attached async classifier with `UnsupportedCapability`, even when an input
 would not invoke refinement; that configuration error occurs before submission.
+This rule applies to the managed factory and does not remove the legacy sync API.
 
 Path-backed filename detection extracts the native path basename before
 matching; on POSIX, a backslash inside the basename remains filename data.

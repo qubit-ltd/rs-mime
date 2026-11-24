@@ -77,12 +77,15 @@ pub type MimeFuture<'a, T> = Pin<Box<dyn Future<Output = MimeResult<T>> + Send +
 /// }
 /// ```
 pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
-    /// Returns the minimum input extent this backend needs to inspect before it
-    /// can produce a useful MIME candidate.
+    /// Returns the content window this backend requests. For `Prefix(n)`, `n`
+    /// is an upper bound on bytes supplied, not a minimum input length. A short
+    /// input, including one that reaches EOF before `n`, is still passed to the
+    /// backend. Implementations that require a minimum length must check the
+    /// actual input length and return an appropriate typed error themselves.
     ///
     /// # Returns
-    /// The minimum extent callers should make available before requesting a
-    /// candidate from this backend.
+    /// The maximum prefix window or `Complete` when the backend needs the full
+    /// available input.
     fn content_requirement(&self) -> ContentRequirement;
 
     /// Returns whether this backend can sample arbitrary positions from the
@@ -101,8 +104,9 @@ pub trait AsyncMimeDetectorBackend: Debug + Send + Sync {
     ///
     /// Complete reads and same-object sampling always use metered sessions,
     /// regardless of this compatibility hook's return value. Prefix backends
-    /// normally receive bounded bytes; a backend that prefers a metered
-    /// sequential session may override this method to return `true`.
+    /// normally receive bytes bounded to their requested window; a backend that
+    /// opts into sequential `MeteredReadSession` access may override this
+    /// method to return `true`. Built-in providers may meter their own reads.
     ///
     /// # Returns
     /// `true` when provider input should be opened once and exposed only

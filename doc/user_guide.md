@@ -540,18 +540,26 @@ binding fails to commit after admission, the accepted operation reports
 Read reservations charge only bytes successfully delivered. A provider open
 failure charges zero. If a prefix read fails or is cancelled after returning
 some bytes, the delivered bytes stay charged and the unused reservation is
-returned. A regular `Prefix(n)` request that cannot reserve the required
-allowance is rejected with a typed budget error rather than clipped. The
-`MeteredReadSession` contract differs: it clips each call to available read
-allowance, uses an independent permit for temporary scratch memory, and keeps
-remaining allowance available for its EOF probe.
+returned. A normal `Prefix(n)` declares a maximum input window, not a minimum length.
+The preflight window is bounded by the request and service buffer/read caps, so
+those static limits may shorten it; provider EOF may also yield fewer bytes. If
+preflight cannot reserve the owned prefix buffer, submission is rejected and
+returns the original input. After admission, a shared ancestor may consume its
+remaining read allowance first; failure to reserve that dynamic allowance is
+reported by the accepted operation as
+`MimeError::BudgetExceeded { kind: "read", .. }`.
+`MeteredReadSession` is opt-in for extension backends: each read is clipped to
+current allowances and temporary scratch memory has a separate reservation.
+The built-in managed `file` provider meters its own staging reads internally.
 
 The existing `FileCommandMimeDetector` synchronous APIs remain available; the
 managed backend is selected through `MimeRuntime` for operation-backed work.
-When `file` is selected with any async classifier, its factory rejects the
-selection with `UnsupportedCapability` during runtime configuration, even if
-the submitted input would not require classifier refinement. The managed
-`file` backend meters provider bytes internally while staging complete input;
+When `file` is selected with any async classifier, its managed factory rejects
+the selection with `UnsupportedCapability` during runtime configuration, even
+if the submitted input would not require classifier refinement. This restriction
+applies to the managed factory; the legacy synchronous `FileCommandMimeDetector`
+API remains available. The managed `file` backend meters provider bytes
+internally while staging complete input;
 extension backends use the exposed `ManagedProvider` session described below.
 
 For the managed `repository` provider, an input marked `Prefix` is used only for
@@ -571,14 +579,17 @@ path or use a raw filesystem handle for a managed input.
 
 Complete backends and backends declaring
 `RandomAccessCapability::SamplesSameObject` always receive this metered
-session. The legacy `uses_managed_provider_reads()` hook remains available for
-`Prefix(n)` backends that explicitly need sequential session access; returning
-`false` cannot disable metering for complete or random-access reads. A regular
-`Prefix(n)` backend reserves its requested prefix against request and ancestor
-read budgets and receives `Bytes` containing at most `n` bytes. If that exact
-reservation cannot be made, submission fails with a typed budget error; a
-successful provider read may return fewer bytes at EOF. No read goes past the
-prefix bound.
+session. The `uses_managed_provider_reads()` hook remains available for `Prefix(n)`
+backends that opt into sequential session access; returning
+`false` cannot disable metering for complete or random-access reads. A regular `Prefix(n)` backend receives a window of at most `n` bytes, not a
+promise that `n` bytes exist. Static request/service limits can shorten the
+window, and EOF can shorten it further. Submission reserves the owned buffer;
+if that reservation fails, it rejects and returns the input. Once accepted, a
+provider read reserves against the shared ancestor tree. If another accepted
+operation has consumed that allowance first, the current operation fails with
+`MimeError::BudgetExceeded { kind: "read", .. }`. No read goes past the effective
+prefix window. A backend that needs a minimum length must check the actual byte
+count and return its own typed error.
 
 Read sequentially until `read()` returns zero to observe EOF; a short read alone
 does not prove EOF. Use `read_at(offset, buffer)` to sample the same opened

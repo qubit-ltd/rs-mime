@@ -425,8 +425,9 @@ backend。`file` 要求完整内容；
 `MimeSubmitFailure` 返还输入。资源释放状态需要另行等待 settlement。
 现有 `FileCommandMimeDetector` 同步 API 仍可使用；受管 backend 用于通过 `MimeRuntime` 执行
 operation 管理的任务。
-若为 `file` 附加任何 async classifier，factory 都会在 runtime 配置阶段以
-`UnsupportedCapability` 拒绝，即使某个输入本身不会触发 classifier 精化也一样。
+若为受管 `file` factory 附加任何 async classifier，runtime 配置阶段会以
+`UnsupportedCapability` 拒绝，即使输入不会触发 classifier 精化也一样。这项限制不移除旧的同步
+`FileCommandMimeDetector` API。
 受管 `file` backend 在内部 staging 流程中计量 Provider 读取；扩展 backend 的
 `ManagedProvider` session 契约见下文。
 
@@ -442,10 +443,11 @@ Provider 对象，并向 backend 借出 `MeteredReadSession`。顺序读取使�
 对象采样偏移时使用 `session.read_at()`。处理受管输入时不要重新打开路径或使用原始 filesystem handle。
 
 声明完整读取或 `RandomAccessCapability::SamplesSameObject` 的 backend 始终会收到该受计量 session。
-旧 `uses_managed_provider_reads()` hook 仍可供明确需要顺序 session 读取的 `Prefix(n)` backend 选择使用；
-返回 `false` 不能关闭完整读取或随机访问的计量。常规 `Prefix(n)` backend 会先针对请求与祖先读取额度预留所需额度，
-再收到最多 n 字节的 `Bytes`。无法预留时提交会以 typed budget error 拒绝，不会静默裁切；若提前遇到 EOF，实际字节会更少，
-读取不会越过前缀上限。
+旧 `uses_managed_provider_reads()` hook 仍可供选择顺序 session 读取的 `Prefix(n)` backend 使用；
+返回 `false` 不能关闭完整读取或随机访问的计量。常规 `Prefix(n)` backend 收到的是最多 n 字节的窗口，不保证输入至少有 n 字节。请求或服务的静态上限可以缩短窗口，
+EOF 也会使实际字节变少。提交阶段会预留 owned 缓冲区；预留失败时拒绝提交并返还原输入。任务接纳后，Provider 读取还需
+从共享祖先树预留额度；若额度已被其他已接纳操作消耗，当前 operation 会以 `MimeError::BudgetExceeded { kind: "read", .. }` 失败。读取不会超过
+最终窗口。若 backend 需要最低字节数，必须检查实际长度并自行返回类型化错误。
 
 顺序读取应持续调用 `read()`，直到返回零以确认 EOF；单次短读不代表 EOF。调用 `read_at(offset, buffer)`
 可从同一个已打开对象采样。每次调用单独计费，重复或重叠的采样也会计费。session 会将单次调用裁切到请求与祖先的
@@ -499,8 +501,11 @@ settlement 和 recovery；仅看到失败 outcome 不能确认部分文件已删
 报告 `ReadBudgetBinding`。
 
 读取额度只按成功交付的字节计费。Provider 打开失败计零；前缀读取若在错误或取消前已返回部分字节，已交付字节
-继续计费，未用额度会退还。普通 `Prefix(n)` 无法预留所需额度时会返回 typed budget error，不会静默裁切。
-`MeteredReadSession` 则会按可用读取额度裁切每次调用，单独许可临时 scratch 内存，并保留剩余额度用于 EOF 探测。
+继续计费，未用额度会退还。普通 `Prefix(n)` 声明的是最大输入窗口，不是最小长度。提交预检会按请求和服务的 buffer/read 上限缩短窗口；
+Provider 遇到 EOF 时，实际返回字节也可能更少。若预检无法预留 owned 前缀缓冲区，提交会被拒绝并返还原输入。
+任务接纳后，其他操作可能先耗尽共享祖先读取额度；此时预留失败会由已接纳 operation 以 `MimeError::BudgetExceeded { kind: "read", .. }` 报告。
+扩展 backend 可选择 `MeteredReadSession`：每次读取按当前可用额度裁切，临时 scratch 内存另行预留。
+内置受管 `file` Provider 则在自己的 staging 读取中计量。
 
 | Provider | 受管异步 backend | 输入与精化限制 |
 | --- | --- | --- |
