@@ -162,6 +162,8 @@ fn test_detect_reader_uses_stream_based_defaults() {
     let detector = PrefixDetector::new();
     let mut reader = Cursor::new(b"hello world".to_vec());
 
+    assert!(StreamBasedMimeDetector::supports_async_content_detection(&detector));
+
     let detected = detector
         .detect_reader(&mut reader, None, MimeDetectionPolicy::VerifyContent)
         .expect("stream-based reader detection should succeed");

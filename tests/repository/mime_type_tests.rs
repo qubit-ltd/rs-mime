@@ -60,6 +60,14 @@ fn test_punctuation_is_allowed_in_simple_extension_metadata() {
         assert_eq!(None, mime_type.preferred_extension(), "{pattern}");
         assert!(mime_type.all_extensions().is_empty(), "{pattern}");
     }
+
+    let unclosed_class = MimeGlob::new("*.d[ab", 80, false).expect("unclosed class is literal");
+    let mime_type = MimeType::builder("application/literal-extension")
+        .glob(unclosed_class)
+        .build()
+        .expect("MIME type should be valid");
+    assert_eq!(Some("d[ab"), mime_type.preferred_extension());
+    assert_eq!(vec!["d[ab"], mime_type.all_extensions());
 }
 
 #[test]

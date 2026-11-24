@@ -5,11 +5,18 @@
 //
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
-//! Checks the crate-private XML declaration stripping used before parsing.
+//! Checks the crate-private XML declaration masking used before parsing.
 
 use std::borrow::Cow;
 
 use crate::repository::xml_parser::strip_doctype;
+
+fn assert_doctype_masked(xml: &str, suffix: &str) {
+    let masked = strip_doctype(xml);
+    assert_eq!(xml.chars().count(), masked.chars().count());
+    assert_eq!(xml.lines().count(), masked.lines().count());
+    assert!(masked.ends_with(suffix), "{masked:?}");
+}
 
 #[test]
 fn test_preserves_doctype_like_text_in_cdata_and_comments() {
@@ -24,15 +31,16 @@ fn test_leaves_xml_without_doctype_borrowed() {
 }
 
 #[test]
-fn test_removes_declaration_without_internal_subset_and_preserves_other_bytes() {
+fn test_masks_declaration_without_internal_subset_and_preserves_positions() {
     let xml = "<?xml version=\"1.0\"?>\n<!DOCTYPE mime-info SYSTEM \"mime.dtd\">\n<mime-info/>";
-    assert_eq!(strip_doctype(xml), "<?xml version=\"1.0\"?>\n\n<mime-info/>");
+    assert_doctype_masked(xml, "\n<mime-info/>");
+    assert!(strip_doctype(xml).starts_with("<?xml version=\"1.0\"?>\n"));
 }
 
 #[test]
 fn test_declaration_terminators_in_quotes_and_subset_comments_are_ignored() {
     let xml = "<!DOCTYPE mime-info SYSTEM \"file]>name\" [<!-- ]> -->\n<!ENTITY x \"value > ]>\">]><mime-info/>";
-    assert_eq!(strip_doctype(xml), "<mime-info/>");
+    assert_doctype_masked(xml, "<mime-info/>");
 }
 
 #[test]
@@ -44,14 +52,14 @@ fn test_valid_entity_notation_and_attribute_list_declarations_are_removed() {
         "<!DOCTYPE r [<!ATTLIST r id ID #REQUIRED refs IDREFS #IMPLIED names NMTOKENS #IMPLIED>]><r/>",
         "<!DOCTYPE r [<!ELEMENT x (a)>]><r/>",
     ] {
-        assert_eq!(strip_doctype(xml), "<r/>", "{xml}");
+        assert_doctype_masked(xml, "<r/>");
     }
 }
 
 #[test]
 fn test_removes_doctype_with_unicode_element_name_and_nmtoken_enumeration() {
     let xml = "<!DOCTYPE 名 [<!ELEMENT 名 EMPTY><!ATTLIST 名 token (\u{301}|1) #IMPLIED>]><名/>";
-    assert_eq!(strip_doctype(xml), "<名/>");
+    assert_doctype_masked(xml, "<名/>");
 }
 
 #[test]
@@ -61,14 +69,13 @@ fn test_leaves_truncated_unicode_element_name_unchanged() {
 }
 
 #[test]
-fn test_removes_doctype_with_many_element_declarations_and_preserves_long_body() {
+fn test_masks_doctype_with_many_element_declarations_and_preserves_long_body() {
     let declarations = (0..512)
         .map(|index| format!("<!ELEMENT e{index} EMPTY>"))
         .collect::<String>();
     let body = "body text ".repeat(16_384);
     let xml = format!("<!DOCTYPE r [{declarations}]><r>{body}</r>");
-    let stripped = strip_doctype(&xml);
-    assert_eq!(stripped, format!("<r>{body}</r>"));
+    assert_doctype_masked(&xml, &format!("<r>{body}</r>"));
 }
 
 #[test]

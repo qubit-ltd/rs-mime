@@ -265,9 +265,11 @@ impl MimeRuntime {
     ///
     /// # Errors
     /// Returns `MimeSubmitFailure` if services or an async backend are
-    /// unavailable, the parent cannot accept a child, preflight, read-budget
-    /// or group binding fails, or admission is rejected. The failure retains
-    /// the input for recovery.
+    /// unavailable, the parent cannot accept a child, preflight, parent
+    /// resource reservation, group binding, or admission fails. These
+    /// failures retain the input for recovery. If committing the parent
+    /// read-budget anchor fails after admission, the operation returns
+    /// [`crate::MimeError::ReadBudgetBinding`].
     pub fn try_submit_detection_in(
         &self,
         parent: &OperationScope,
@@ -290,8 +292,8 @@ impl MimeRuntime {
     /// # Errors
     /// Returns `MimeSubmitFailure` if the parent cannot accept a child, the
     /// provider-backed input is unsupported, detector creation or preflight
-    /// fails, read-budget or group binding fails, or admission is rejected.
-    /// The failure retains the input for recovery.
+    /// fails, group binding, or admission fails. These failures retain the
+    /// input for recovery.
     pub fn try_submit_detection_sync_in(
         &self,
         parent: &OperationScope,
@@ -333,27 +335,25 @@ impl MimeRuntime {
             crate::RandomAccessCapability::Unsupported,
             detector.max_buffer_size(),
             &services,
+            false,
         ) {
             Ok(permit) => permit,
             Err(reason) => return Err(MimeSubmitFailure { reason, input }),
         };
         let tree_limit = options
             .max_read_bytes
-            .unwrap_or(services.max_read_bytes)
-            .min(services.max_read_bytes);
-        let read_tree = match services.read_tree_for_parent(parent, tree_limit, tree_limit) {
-            Ok(tree) => tree,
-            Err(kind) => {
-                return Err(MimeSubmitFailure {
-                    reason: MimeSubmitRejection::ReadBudgetBinding(kind),
-                    input,
-                });
-            }
-        };
+            .unwrap_or(services.max_read_bytes())
+            .min(services.max_read_bytes());
+        // This synchronous path accepts complete byte inputs only, so it does
+        // not create a parent read-tree anchor. It borrows an existing parent
+        // tree when available; otherwise it uses a standalone context.
+        let read_tree = services
+            .existing_read_tree_for_parent(parent, tree_limit)
+            .unwrap_or_else(|| services.new_read_tree(tree_limit));
         let cell = mime_submission::cell(input);
         let body_cell = Arc::clone(&cell);
         let body_services = Arc::clone(&services);
-        let body_tree = Arc::clone(&read_tree);
+        let body_tree = read_tree;
         let repository_max_test_bytes = self.context.repository().max_test_bytes();
         let repository = self.context.repository_arc();
         let body = move |scope: OperationScope| {
@@ -475,16 +475,22 @@ impl MimeRuntime {
                 input,
             });
         };
+        let managed_provider_reads = backend.uses_managed_provider_reads();
         let max_buffer_size = self.context.config().max_buffer_size();
         let repository = self.async_repository.clone();
-        let filename_short_circuit = repository.as_ref().is_some_and(|repository| {
-            let filename = match &input {
-                OwnedMimeInput::Bytes { filename, .. } => filename.as_deref(),
-                OwnedMimeInput::Provider { path, .. } => path.file_name(),
-            };
-            super::internal::async_repository_matcher::preferred_filename(repository, filename, options.policy)
-                .is_some()
+        let filename_winner = repository.as_ref().and_then(|repository| match &input {
+            OwnedMimeInput::Bytes { filename, .. } => super::internal::async_repository_matcher::preferred_filename(
+                repository,
+                filename.as_deref(),
+                options.policy,
+            ),
+            OwnedMimeInput::Provider { path, .. } => super::internal::async_repository_matcher::preferred_basename(
+                repository,
+                path.file_name(),
+                options.policy,
+            ),
         });
+        let filename_short_circuit = filename_winner.is_some();
         let requirement = if filename_short_circuit && matches!(&input, OwnedMimeInput::Provider { .. }) {
             crate::ContentRequirement::Prefix(0)
         } else {
@@ -497,47 +503,67 @@ impl MimeRuntime {
             backend.random_access_capability(),
             max_buffer_size,
             &services,
+            managed_provider_reads,
         ) {
             Ok(permit) => permit,
             Err(reason) => return Err(MimeSubmitFailure { reason, input }),
         };
         let tree_limit = options
             .max_read_bytes
-            .unwrap_or(services.max_read_bytes)
-            .min(services.max_read_bytes);
-        let read_tree = match parent {
-            Some(parent) => match services.read_tree_for_parent(parent, tree_limit, tree_limit) {
-                Ok(tree) => tree,
-                Err(kind) => {
-                    return Err(MimeSubmitFailure {
-                        reason: MimeSubmitRejection::ReadBudgetBinding(kind),
-                        input,
-                    });
+            .unwrap_or(services.max_read_bytes())
+            .min(services.max_read_bytes());
+        let (pending_tree, standalone_tree) = match parent {
+            Some(parent) if matches!(&input, OwnedMimeInput::Provider { .. }) => {
+                match services.prepare_read_tree_for_parent(parent, tree_limit, tree_limit) {
+                    Ok(binding) => (Some(binding), None),
+                    Err(kind) => {
+                        return Err(MimeSubmitFailure {
+                            reason: MimeSubmitRejection::ReadBudgetBinding(kind),
+                            input,
+                        });
+                    }
                 }
-            },
-            None => services.new_read_tree(tree_limit),
+            }
+            Some(parent) => (
+                None,
+                Some(
+                    services
+                        .existing_read_tree_for_parent(parent, tree_limit)
+                        .unwrap_or_else(|| services.new_read_tree(tree_limit)),
+                ),
+            ),
+            None => (None, Some(services.new_read_tree(tree_limit))),
         };
         let cell = mime_submission::cell(input);
         let body_cell = Arc::clone(&cell);
         let body_services = Arc::clone(&services);
         let body_options = options.clone();
-        let body_tree = Arc::clone(&read_tree);
+        let body_pending_tree = pending_tree;
+        let body_standalone_tree = standalone_tree;
         let body_backend_id = backend_id.clone();
         let body_max_buffer_size = max_buffer_size;
-        let body_repository = repository;
-        let body = move |scope: OperationScope| {
+        let body_managed_provider_reads = managed_provider_reads;
+        let body_filename_winner = filename_winner.map(|mime| mime.name().to_owned());
+        let body = move |scope: OperationScope| async move {
+            let read_tree = if let Some(pending_tree) = body_pending_tree {
+                pending_tree.commit().map_err(crate::MimeError::ReadBudgetBinding)?
+            } else {
+                body_standalone_tree.expect("root submissions have a standalone read tree")
+            };
             mime_submission::detect(mime_submission::MimeSubmission {
                 scope,
                 input: mime_submission::take(&body_cell),
                 services: body_services,
                 backend,
+                managed_provider_reads: body_managed_provider_reads,
                 backend_id: body_backend_id,
-                repository: body_repository,
+                filename_winner: body_filename_winner,
                 max_buffer_size: body_max_buffer_size,
                 options: body_options,
                 permit: Some(permit),
-                read_tree: body_tree,
+                read_tree,
             })
+            .await
         };
         let result = if let Some(parent) = parent {
             match parent.manager().with_group(&services.root_group) {

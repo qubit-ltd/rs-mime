@@ -7,6 +7,14 @@
 // =============================================================================
 
 //! Managed temporary-file staging for MIME command inputs.
+//!
+//! `max_buffer_bytes` limits the input payload retained by one request; it
+//! does not size these streaming work buffers. Provider staging uses an 8 KiB
+//! read buffer, while byte-slice staging copies at most 8 KiB per chunk. The
+//! buffer and each live chunk copy reserve owned memory against the shared
+//! service budget. Request staging limits count bytes written to the staged
+//! file, and the provider path may read one additional byte to prove that the
+//! staging limit was not exceeded.
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -30,6 +38,7 @@ use crate::MimeError;
 use crate::MimeFuture;
 use crate::MimeResult;
 use crate::command_execution::MimeExecutionWorker;
+use crate::detector::MimeExecutionDispatchFailureKind;
 use crate::detector::OwnedMemoryPermit;
 use crate::detector::ReadPermit;
 use crate::detector::ReadTreeContext;
@@ -209,6 +218,8 @@ async fn stage_byte_slice_in(
 ///
 /// Reads are charged to the shared tree budget, and a one-byte sentinel is
 /// used when needed to prove the per-request staging limit was not exceeded.
+/// Complete staging requires remaining read allowance for a read that returns
+/// EOF; reaching the byte limit alone does not prove that the object ended.
 ///
 /// # Parameters
 /// - `scope`: Operation scope that owns the staged resource.
@@ -374,9 +385,13 @@ async fn create_empty_staged(
         });
         sender.complete(result);
     });
-    if let Err(job) = limits.worker.try_dispatch(job) {
-        drop(job);
-        return Err(MimeError::ExecutionServicesRequired);
+    if let Err(failure) = limits.worker.try_dispatch_with_status(job) {
+        let reason = failure.kind();
+        drop(failure.into_job());
+        return Err(match reason {
+            MimeExecutionDispatchFailureKind::QueueFull => MimeError::CommandQueueBusy,
+            MimeExecutionDispatchFailureKind::Unavailable => MimeError::ExecutionServicesRequired,
+        });
     }
     receiver.await
 }
@@ -429,9 +444,13 @@ async fn write_chunk_in(
         });
         sender.complete(result);
     });
-    if let Err(job) = worker.try_dispatch(job) {
-        drop(job);
-        return Err(MimeError::ExecutionServicesRequired);
+    if let Err(failure) = worker.try_dispatch_with_status(job) {
+        let reason = failure.kind();
+        drop(failure.into_job());
+        return Err(match reason {
+            MimeExecutionDispatchFailureKind::QueueFull => MimeError::CommandQueueBusy,
+            MimeExecutionDispatchFailureKind::Unavailable => MimeError::ExecutionServicesRequired,
+        });
     }
     receiver.await
 }

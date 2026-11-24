@@ -16,6 +16,8 @@ use super::fixed_queue::FixedQueue;
 use super::queue_state::QueueState;
 use super::running_workers::RunningWorkers;
 use crate::MimeError;
+use crate::detector::MimeExecutionDispatchFailure;
+use crate::detector::MimeExecutionDispatchFailureKind;
 use crate::detector::MimeExecutionPort;
 
 /// MIME-owned bounded worker implementation used by production adapters.
@@ -136,6 +138,35 @@ impl FixedMimeExecutionPort {
     }
 }
 
+impl Drop for FixedMimeExecutionPort {
+    /// Closes the queue when the final port owner disappears. A worker may
+    /// release that owner itself, so its own join handle is detached while
+    /// every other worker is still joined.
+    fn drop(&mut self) {
+        let slot = self.running.get_mut().unwrap_or_else(|e| e.into_inner());
+        let Some(running) = slot.take() else {
+            return;
+        };
+        self.stopped.store(true, Ordering::Release);
+        {
+            let mut state = running.queue.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.closed = true;
+        }
+        running.queue.ready.notify_all();
+        let current = std::thread::current().id();
+        let mut panicked = false;
+        for worker in running.threads {
+            if worker.thread().id() != current {
+                panicked |= worker.join().is_err();
+            }
+        }
+        let result = self.shutdown_failed.get_mut().unwrap_or_else(|e| e.into_inner());
+        if result.is_none() {
+            *result = Some(panicked);
+        }
+    }
+}
+
 impl MimeExecutionPort for FixedMimeExecutionPort {
     /// Starts the fixed worker pool once and is otherwise idempotent.
     ///
@@ -194,16 +225,47 @@ impl MimeExecutionPort for FixedMimeExecutionPort {
     /// # Returns
     /// `Ok(())` when queued, or the unmodified job when rejected.
     fn try_dispatch(&self, job: Box<dyn FnOnce() + Send + 'static>) -> Result<(), Box<dyn FnOnce() + Send + 'static>> {
+        self.try_dispatch_with_status(job)
+            .map_err(MimeExecutionDispatchFailure::into_job)
+    }
+
+    /// Adds a job and reports whether rejection came from queue saturation or
+    /// service unavailability.
+    ///
+    /// # Parameters
+    /// - `job`: Owned job to enqueue without blocking.
+    ///
+    /// # Returns
+    /// `Ok(())` when queued, or the unmodified job and its rejection reason.
+    fn try_dispatch_with_status(
+        &self,
+        job: Box<dyn FnOnce() + Send + 'static>,
+    ) -> Result<(), MimeExecutionDispatchFailure> {
         let running = self.running.lock().unwrap_or_else(|e| e.into_inner());
         if self.stopped.load(Ordering::Acquire) {
-            return Err(job);
+            return Err(MimeExecutionDispatchFailure::new(
+                MimeExecutionDispatchFailureKind::Unavailable,
+                job,
+            ));
         }
         let Some(running) = running.as_ref() else {
-            return Err(job);
+            return Err(MimeExecutionDispatchFailure::new(
+                MimeExecutionDispatchFailureKind::Unavailable,
+                job,
+            ));
         };
         let mut state = running.queue.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.closed || state.jobs.len() >= running.queue.capacity {
-            return Err(job);
+        if state.closed {
+            return Err(MimeExecutionDispatchFailure::new(
+                MimeExecutionDispatchFailureKind::Unavailable,
+                job,
+            ));
+        }
+        if state.jobs.len() >= running.queue.capacity {
+            return Err(MimeExecutionDispatchFailure::new(
+                MimeExecutionDispatchFailureKind::QueueFull,
+                job,
+            ));
         }
         state.jobs.push_back(job);
         drop(state);
@@ -316,6 +378,32 @@ mod tests {
             rejected_ran.load(Ordering::SeqCst),
             "shutdown returns ownership of rejected work"
         );
+    }
+
+    #[test]
+    fn test_last_port_owner_can_be_released_by_its_worker() {
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        port.prepare().unwrap();
+        let weak = Arc::downgrade(&port);
+        let worker_owner = Arc::clone(&port);
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        assert!(
+            port.try_dispatch(Box::new(move || {
+                drop(worker_owner);
+                dropped_tx.send(()).unwrap();
+            }))
+            .is_ok()
+        );
+        drop(port);
+
+        dropped_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("worker-side final drop must not join itself");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while weak.upgrade().is_some() && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(weak.upgrade().is_none(), "last worker owner should be released");
     }
 
     #[test]
@@ -486,6 +574,105 @@ mod tests {
     }
 
     #[test]
+    fn test_dispatch_recovers_poisoned_queue_and_runs_the_returned_work() {
+        let port = FixedMimeExecutionPort::new(1, 1);
+        port.prepare().unwrap();
+        let queue = port.running.lock().unwrap().as_ref().unwrap().queue.clone();
+        let queue_to_poison = Arc::clone(&queue);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = queue_to_poison.state.lock().unwrap();
+                panic!("poison queue before dispatch");
+            })
+            .join()
+            .is_err()
+        );
+
+        let (done_tx, done_rx) = mpsc::channel();
+        assert!(
+            port.try_dispatch_with_status(Box::new(move || done_tx.send(()).unwrap()))
+                .is_ok()
+        );
+        done_rx.recv().unwrap();
+        port.shutdown().unwrap();
+    }
+
+    #[test]
+    fn test_closed_queue_returns_the_unaccepted_job_while_port_is_open() {
+        let port = FixedMimeExecutionPort::new(1, 1);
+        port.prepare().unwrap();
+        let queue = port.running.lock().unwrap().as_ref().unwrap().queue.clone();
+        queue.state.lock().unwrap().closed = true;
+        queue.ready.notify_all();
+
+        let ran = Arc::new(AtomicBool::new(false));
+        let job_ran = Arc::clone(&ran);
+        let rejected = port
+            .try_dispatch_with_status(Box::new(move || job_ran.store(true, Ordering::SeqCst)))
+            .expect_err("a closed queue cannot accept work");
+        assert_eq!(
+            crate::detector::MimeExecutionDispatchFailureKind::Unavailable,
+            rejected.kind()
+        );
+        assert!(!ran.load(Ordering::SeqCst));
+        rejected.into_job()();
+        assert!(ran.load(Ordering::SeqCst));
+        port.shutdown().unwrap();
+    }
+
+    #[test]
+    fn test_drop_recovers_poisoned_pool_queue_and_shutdown_locks() {
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let queue = Arc::new(FixedQueue {
+            state: std::sync::Mutex::new(QueueState {
+                jobs: std::collections::VecDeque::new(),
+                closed: false,
+            }),
+            ready: std::sync::Condvar::new(),
+            capacity: 1,
+        });
+        *port.running.lock().unwrap() = Some(RunningWorkers {
+            queue: Arc::clone(&queue),
+            threads: Vec::new(),
+        });
+
+        let pool_to_poison = Arc::clone(&port);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = pool_to_poison.running.lock().unwrap();
+                panic!("poison pool state before drop");
+            })
+            .join()
+            .is_err()
+        );
+        let result_to_poison = Arc::clone(&port);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = result_to_poison.shutdown_failed.lock().unwrap();
+                panic!("poison shutdown result before drop");
+            })
+            .join()
+            .is_err()
+        );
+        let queue_to_poison = Arc::clone(&queue);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = queue_to_poison.state.lock().unwrap();
+                panic!("poison queue state before drop");
+            })
+            .join()
+            .is_err()
+        );
+
+        drop(port);
+        let state = match queue.state.lock() {
+            Ok(_) => panic!("drop should preserve the queue's poison marker"),
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        assert!(state.closed, "drop closes a queue despite poisoned locks");
+    }
+
+    #[test]
     fn test_shutdown_prevents_reprepare_and_returns_later_work() {
         let port = FixedMimeExecutionPort::new(1, 1);
         port.prepare().unwrap();
@@ -589,10 +776,14 @@ mod tests {
         let rejected_ran = Arc::new(AtomicBool::new(false));
         let rejected_job_ran = Arc::clone(&rejected_ran);
         let rejected = port
-            .try_dispatch(Box::new(move || rejected_job_ran.store(true, Ordering::SeqCst)))
+            .try_dispatch_with_status(Box::new(move || rejected_job_ran.store(true, Ordering::SeqCst)))
             .expect_err("capacity is occupied by the accepted queued job");
+        assert_eq!(
+            crate::detector::MimeExecutionDispatchFailureKind::QueueFull,
+            rejected.kind(),
+        );
         assert!(!rejected_ran.load(Ordering::SeqCst));
-        rejected();
+        rejected.into_job()();
         assert!(rejected_ran.load(Ordering::SeqCst), "rejection preserves job ownership");
         assert!(!accepted_ran.load(Ordering::SeqCst));
 

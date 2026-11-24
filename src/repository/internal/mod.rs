@@ -9,4 +9,5 @@
 
 pub(super) mod glob_entry;
 pub(super) mod glob_pattern;
-pub(super) mod magic_entry;
+pub(crate) mod magic_entry;
+pub(crate) mod magic_match_state;

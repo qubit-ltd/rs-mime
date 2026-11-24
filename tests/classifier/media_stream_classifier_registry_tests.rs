@@ -11,6 +11,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -332,11 +334,19 @@ fn test_async_registry_resolves_auto_alias_chain_and_unknown_selection() {
     let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 32).unwrap();
     let registry = MediaStreamClassifierRegistry::builtin();
     let config = MimeConfig::default();
+    assert_eq!(
+        vec!["ffprobe"],
+        registry
+            .async_provider_ids()
+            .iter()
+            .map(|id| id.as_str())
+            .collect::<Vec<_>>(),
+    );
 
     for selection in [
         ProviderSelection::auto(),
         ProviderSelection::named("ffprobe-command").unwrap(),
-        ProviderSelection::chain(["not-registered", "ffprobe-command"])
+        ProviderSelection::chain_allowing_missing(["not-registered", "ffprobe-command"])
             .expect("the fallback selector chain should be valid"),
     ] {
         let (id, _backend) = registry
@@ -348,13 +358,50 @@ fn test_async_registry_resolves_auto_alias_chain_and_unknown_selection() {
     let error = registry
         .create_async_backend(&ProviderSelection::named("not-registered").unwrap(), &config, &services)
         .expect_err("unknown async selectors have no backend");
-    assert!(matches!(error, MimeError::AsyncUnsupported));
+    assert!(error.to_string().contains("not-registered"));
+
+    let strict_chain = ProviderSelection::chain(["not-registered", "ffprobe-command"])
+        .expect("strict chain selectors should be valid");
+    assert!(
+        registry
+            .create_async_backend(&strict_chain, &config, &services)
+            .is_err(),
+        "strict chains should diagnose missing selectors instead of skipping them"
+    );
 
     let empty = MediaStreamClassifierRegistry::default();
-    assert!(matches!(
-        empty.create_async_backend(&ProviderSelection::auto(), &config, &services),
-        Err(MimeError::AsyncUnsupported)
-    ));
+    assert!(empty.async_provider_ids().is_empty());
+    assert!(
+        empty
+            .create_async_backend(&ProviderSelection::auto(), &config, &services)
+            .expect_err("empty async catalog should have a selection diagnostic")
+            .to_string()
+            .contains("no media stream classifier candidates")
+    );
+}
+
+#[test]
+fn test_async_classifier_chain_treats_known_sync_only_selector_as_absence() {
+    let registry = MediaStreamClassifierRegistry::builtin();
+    registry
+        .register(TestMediaStreamClassifierProvider::new(
+            "sync-only-classifier",
+            100,
+            TestProviderBehavior::Success("unused"),
+        ))
+        .unwrap();
+    let manager = OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+    let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 32).unwrap();
+    let selection = ProviderSelection::chain(["sync-only-classifier", "ffprobe"])
+        .unwrap()
+        .with_fallback_policy(FallbackPolicy::OnAbsence);
+
+    let (id, _) = registry
+        .create_async_backend(&selection, &MimeConfig::default(), &services)
+        .expect("known sync-only selector should allow fallback to FFprobe");
+
+    assert_eq!("ffprobe", id);
 }
 
 #[test]
@@ -405,6 +452,63 @@ fn test_async_classifier_registry_seal_rejects_registration_through_clone_and_ke
             "sealed registry must retain async selector `{selector}`"
         );
     }
+}
+
+#[derive(Debug)]
+struct CountedAsyncClassifierProvider {
+    descriptor: ProviderDescriptor,
+    creations: Arc<AtomicUsize>,
+}
+
+impl ProviderMetadata for CountedAsyncClassifierProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        self.descriptor.clone()
+    }
+}
+
+impl AsyncMediaStreamClassifierProvider for CountedAsyncClassifierProvider {
+    fn create_async_backend(
+        &self,
+        _config: &MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn qubit_mime::AsyncMediaStreamClassifierBackend>, MimeError> {
+        self.creations.fetch_add(1, Ordering::SeqCst);
+        Err(MimeError::AsyncUnsupported)
+    }
+}
+
+#[test]
+fn test_async_classifier_absence_fallback_tries_next_registered_factory() {
+    let registry = MediaStreamClassifierRegistry::default();
+    let first_creations = Arc::new(AtomicUsize::new(0));
+    let second_creations = Arc::new(AtomicUsize::new(0));
+    for (id, creations) in [
+        ("classifier-unsupported-first", Arc::clone(&first_creations)),
+        ("classifier-unsupported-second", Arc::clone(&second_creations)),
+    ] {
+        registry
+            .register_async_provider(CountedAsyncClassifierProvider {
+                descriptor: ProviderDescriptor::new(ProviderId::new(id).unwrap()),
+                creations,
+            })
+            .expect("async classifier should register");
+    }
+
+    let manager = OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+    let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 2)), 32).unwrap();
+    let selection = ProviderSelection::chain(["classifier-unsupported-first", "classifier-unsupported-second"])
+        .unwrap()
+        .with_fallback_policy(FallbackPolicy::OnAbsence);
+    let result = registry.create_async_backend(&selection, &MimeConfig::default(), &services);
+
+    assert!(matches!(result, Err(MimeError::AsyncUnsupported)));
+    assert_eq!(1, first_creations.load(Ordering::SeqCst));
+    assert_eq!(
+        1,
+        second_creations.load(Ordering::SeqCst),
+        "AsyncUnsupported is absence and should fall through"
+    );
 }
 
 #[derive(Debug)]

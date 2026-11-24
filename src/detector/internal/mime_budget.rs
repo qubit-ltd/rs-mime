@@ -53,6 +53,7 @@ mod registration;
 pub(crate) use read_permit::ReadPermit;
 #[path = "mime_budget/read_tree_registry.rs"]
 mod read_tree_registry;
+pub(in crate::detector) use read_tree_registry::PendingReadTreeBinding;
 pub(in crate::detector) use read_tree_registry::ReadTreeRegistry;
 #[path = "mime_budget/limits.rs"]
 mod limits;

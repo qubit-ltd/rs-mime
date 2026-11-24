@@ -7,6 +7,9 @@ publish = false
 
 [dependencies]
 qubit-mime = { path = "../../.." }
-qubit-operation = "^0.3"
+qubit-operation = { version = "^0.3.2", path = "../../../../rs-operation" }
 
 [workspace]
+
+[patch.crates-io]
+qubit-operation = { path = "../../../../rs-operation" }

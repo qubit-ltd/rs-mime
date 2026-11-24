@@ -9,6 +9,8 @@
 
 mod magic_index_tests;
 mod managed_staging_tests;
+mod mime_config_selection_tests;
+mod mime_detector_core_basename_tests;
 mod mime_type_tests;
 mod owned_repository_mime_detector_tests;
 mod temp_staging_tests;

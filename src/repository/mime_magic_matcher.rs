@@ -7,9 +7,15 @@
 // =============================================================================
 //! MIME content magic matcher.
 
+use qubit_operation::OperationScope;
+use qubit_operation::StopReason;
+
 use crate::MagicValueType;
 use crate::MimeError;
 use crate::MimeResult;
+
+/// Maximum number of matcher work units evaluated before yielding.
+pub(crate) const MATCH_WORK_PER_BATCH: usize = 4096;
 
 /// Maximum number of nested magic matchers, counting each root as level one.
 pub(super) const MAX_MAGIC_DEPTH: usize = 128;
@@ -197,6 +203,176 @@ impl MimeMagicMatcher {
         self.sub_matchers.is_empty() || self.sub_matchers.iter().any(|sub_matcher| sub_matcher.matches(bytes))
     }
 
+    /// Tests this matcher with bounded cooperative work and cancellation
+    /// checks.
+    ///
+    /// The explicit stack preserves the parser's maximum-depth guarantee and
+    /// evaluates nested alternatives in their original depth-first order.
+    ///
+    /// # Parameters
+    /// - `bytes`: Content prefix tested against this matcher tree.
+    /// - `scope`: Operation scope checked between bounded work batches.
+    ///
+    /// # Returns
+    /// `true` when the parent and one complete nested branch match.
+    ///
+    /// # Errors
+    /// Returns the accepted stop reason when the operation is cancelled.
+    pub(crate) async fn matches_cooperatively(&self, bytes: &[u8], scope: &OperationScope) -> Result<bool, StopReason> {
+        let mut pending = vec![self];
+        while let Some(matcher) = pending.pop() {
+            if let Some(reason) = scope.context().stop_reason() {
+                return Err(reason);
+            }
+            if matcher.matches_parent_cooperatively(bytes, scope).await? {
+                if matcher.sub_matchers.is_empty() {
+                    return Ok(true);
+                }
+                pending.extend(matcher.sub_matchers.iter().rev());
+            }
+        }
+        Ok(false)
+    }
+
+    /// Tests the current node's own value without visiting its children.
+    ///
+    /// # Parameters
+    /// - `bytes`: Content prefix tested against the node value.
+    /// - `scope`: Operation scope used for bounded yields and cancellation.
+    ///
+    /// # Returns
+    /// `true` when one allowed offset matches the node value.
+    ///
+    /// # Errors
+    /// Returns the accepted stop reason when the operation is cancelled.
+    async fn matches_parent_cooperatively(&self, bytes: &[u8], scope: &OperationScope) -> Result<bool, StopReason> {
+        match self.value_type {
+            MagicValueType::String | MagicValueType::Byte => self.matches_bytes_cooperatively(bytes, scope).await,
+            MagicValueType::Host16
+            | MagicValueType::Host32
+            | MagicValueType::Big16
+            | MagicValueType::Big32
+            | MagicValueType::Little16
+            | MagicValueType::Little32 => self.matches_numeric_cooperatively(bytes, scope).await,
+        }
+    }
+
+    /// Scans raw value offsets and yields after bounded work.
+    ///
+    /// # Parameters
+    /// - `bytes`: Content prefix tested by the raw matcher.
+    /// - `scope`: Operation scope checked while scanning offsets.
+    ///
+    /// # Returns
+    /// `true` when the value matches at an allowed offset.
+    ///
+    /// # Errors
+    /// Returns the accepted stop reason when the operation is cancelled.
+    async fn matches_bytes_cooperatively(&self, bytes: &[u8], scope: &OperationScope) -> Result<bool, StopReason> {
+        if self.value.is_empty() || bytes.len() < self.value.len() || self.offset_begin >= bytes.len() {
+            return Ok(false);
+        }
+        let end = self.offset_end.min(bytes.len() - self.value.len());
+        if self.offset_begin > end {
+            return Ok(false);
+        }
+        for (count, offset) in (self.offset_begin..=end).enumerate() {
+            if self.value_matches_cooperatively(bytes, offset, scope).await? {
+                return Ok(true);
+            }
+            if count % MATCH_WORK_PER_BATCH == MATCH_WORK_PER_BATCH - 1 {
+                yield_to_executor().await;
+                if let Some(reason) = scope.context().stop_reason() {
+                    return Err(reason);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Compares one value while yielding if its byte width is unusually large.
+    ///
+    /// # Parameters
+    /// - `bytes`: Content prefix containing the candidate value.
+    /// - `offset`: Starting byte offset for this comparison.
+    /// - `scope`: Operation scope checked during unusually wide comparisons.
+    ///
+    /// # Returns
+    /// `true` when every value byte matches at the candidate offset.
+    ///
+    /// # Errors
+    /// Returns the accepted stop reason when the operation is cancelled.
+    async fn value_matches_cooperatively(
+        &self,
+        bytes: &[u8],
+        offset: usize,
+        scope: &OperationScope,
+    ) -> Result<bool, StopReason> {
+        for (count, (value_byte, index)) in self.value.iter().zip(0..).enumerate() {
+            let input = bytes[offset + index];
+            let matches = match self.mask.as_deref() {
+                Some(mask) => (input & mask[index]) == (*value_byte & mask[index]),
+                None => input == *value_byte,
+            };
+            if !matches {
+                return Ok(false);
+            }
+            if count % MATCH_WORK_PER_BATCH == MATCH_WORK_PER_BATCH - 1 {
+                yield_to_executor().await;
+                if let Some(reason) = scope.context().stop_reason() {
+                    return Err(reason);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// Scans numeric value offsets and yields after bounded work.
+    ///
+    /// # Parameters
+    /// - `bytes`: Content prefix tested by the numeric matcher.
+    /// - `scope`: Operation scope checked while scanning offsets.
+    ///
+    /// # Returns
+    /// `true` when a numeric value matches at an allowed offset.
+    ///
+    /// # Errors
+    /// Returns the accepted stop reason when the operation is cancelled.
+    async fn matches_numeric_cooperatively(&self, bytes: &[u8], scope: &OperationScope) -> Result<bool, StopReason> {
+        if bytes.len() < self.value.len() || self.offset_begin >= bytes.len() {
+            return Ok(false);
+        }
+        let end = self.offset_end.min(bytes.len() - self.value.len());
+        if self.offset_begin > end {
+            return Ok(false);
+        }
+        let little_endian = self.value_type.uses_little_endian_order();
+        for (count, offset) in (self.offset_begin..=end).enumerate() {
+            let matches = self.value.iter().enumerate().all(|(index, value_byte)| {
+                let input_index = if little_endian {
+                    self.value.len() - index - 1
+                } else {
+                    index
+                };
+                let actual = bytes[offset + input_index];
+                match self.mask.as_deref() {
+                    Some(mask) => (actual & mask[index]) == (*value_byte & mask[index]),
+                    None => actual == *value_byte,
+                }
+            });
+            if matches {
+                return Ok(true);
+            }
+            if count % MATCH_WORK_PER_BATCH == MATCH_WORK_PER_BATCH - 1 {
+                yield_to_executor().await;
+                if let Some(reason) = scope.context().stop_reason() {
+                    return Err(reason);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// Tests raw value bytes over this matcher's offset range.
     ///
     /// # Parameters
@@ -253,6 +429,24 @@ impl MimeMagicMatcher {
             })
         })
     }
+}
+
+/// Gives the current executor an opportunity to poll other tasks.
+async fn yield_to_executor() {
+    use std::future::poll_fn;
+    use std::task::Poll;
+
+    let mut yielded = false;
+    poll_fn(|cx| {
+        if yielded {
+            Poll::Ready(())
+        } else {
+            yielded = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    })
+    .await;
 }
 
 /// Validates matcher offsets.

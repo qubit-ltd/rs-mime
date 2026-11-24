@@ -77,6 +77,12 @@ impl StreamBasedMimeDetector for OwnedRepositoryMimeDetector {
         self.repository.max_test_bytes()
     }
 
+    /// Reports that repository content matching has no asynchronous hook.
+    #[inline]
+    fn supports_async_content_detection(&self) -> bool {
+        false
+    }
+
     /// Returns repository candidate names matched against a filename.
     ///
     /// # Parameters
@@ -87,6 +93,21 @@ impl StreamBasedMimeDetector for OwnedRepositoryMimeDetector {
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         self.repository
             .detect_by_filename(filename)
+            .into_iter()
+            .map(|mime| mime.name().to_owned())
+            .collect()
+    }
+
+    /// Returns repository candidate names matched against a native basename.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename matched against repository glob rules.
+    ///
+    /// # Returns
+    /// Candidate MIME names in repository detection order.
+    fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
+        self.repository
+            .detect_by_filename_basename(basename)
             .into_iter()
             .map(|mime| mime.name().to_owned())
             .collect()
@@ -162,6 +183,12 @@ impl AsyncMimeDetectorBackend for OwnedRepositoryMimeDetector {
                     return Err(MimeError::detector_backend(
                         "repository",
                         "provider-backed input must be resolved by the managed execution service",
+                    ));
+                }
+                BorrowedMimeInput::ManagedProvider { .. } => {
+                    return Err(MimeError::detector_backend(
+                        "repository",
+                        "managed provider input must be resolved by the selected third-party backend",
                     ));
                 }
             };

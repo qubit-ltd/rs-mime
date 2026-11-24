@@ -137,6 +137,12 @@ The `file` provider requires the system `file` executable when content must be
 inspected. The `repository` fallback remains usable when that provider is not
 available and the selection policy permits fallback.
 
+Provider selection chains are strict by default: if a selected provider ID is
+not registered, resolution returns a diagnostic instead of silently skipping
+that entry. When a chain intentionally includes optional providers that may be
+absent, use `ProviderSelection::chain_allowing_missing`; malformed selectors
+and an empty chain still fail validation.
+
 ## Environment Configuration and Fallback
 
 `MimeConfig::load()` reads environment values and returns a configuration. The process-wide default's
@@ -383,6 +389,84 @@ While `prepare()` is running, root and child submissions are rejected; readiness
 is published only after the execution port returns success. Wait for
 `prepare()` to return `Ok(())` before submitting work.
 
+The following function is copied from the runnable
+[`managed_lifecycle` example](../examples/managed_lifecycle.rs). The example's
+in-memory provider keeps the run deterministic; an application passes its own
+`AsyncFileSystem` facade and retains its recovery store and retry queue.
+
+<!-- mime-doc-example:managed-lifecycle -->
+```rust
+fn managed_lifecycle(
+    file_system: Arc<AsyncFileSystem>,
+    recovery_store: &RecoveryStore,
+    retry_queue: &mut Vec<OwnedMimeInput>,
+) {
+    let manager = OperationManager::new(ManagerOptions::default()).expect("operation manager");
+    let group = manager
+        .group(GroupOptions { capacity: 8 })
+        .expect("MIME operation group");
+    let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 8)), 1024 * 1024)
+        .expect("execution services");
+    services.prepare().expect("prepare MIME services");
+
+    let runtime = MimeRuntime::builtin()
+        .expect("built-in repository")
+        .with_execution_services(services.clone());
+    let input = OwnedMimeInput::Provider {
+        file_system,
+        path: Path::parse("/upload/report.pdf").expect("provider path"),
+    };
+    let mut operation = match runtime.try_submit_detection(input, MimeOperationOptions::default()) {
+        Ok(operation) => operation,
+        Err(failure) => {
+            eprintln!("submission rejected: {:?}", failure.reason);
+            retry_queue.push(failure.input);
+            let shutdown = services.shutdown();
+            let settled = block_on(shutdown.wait_services_settled()).expect("settle service operations");
+            assert!(settled.operations_settled);
+            let stopped = shutdown.stop_services().expect("stop MIME services");
+            assert!(stopped.services_stopped);
+            let report = block_on(shutdown.wait_group_shutdown()).expect("drain MIME group");
+            assert_eq!(report.snapshot.active_operations, 0);
+            return;
+        }
+    };
+
+    let outcome = block_on(operation.wait_outcome()).expect("observe MIME outcome");
+    if let OperationOutcome::Succeeded(report) = outcome {
+        println!(
+            "{}: {:?} ({:?}, {} bytes read)",
+            report.backend_id, report.mime_type, report.inspected_extent, report.budget.bytes_read,
+        );
+    }
+
+    let settlement = block_on(operation.wait_settlement());
+    assert!(settlement.all_released(), "operation resources should be settled");
+    drop(operation);
+
+    let shutdown = services.shutdown();
+    let settled = block_on(shutdown.wait_services_settled()).expect("settle tracked operations");
+    assert!(settled.operations_settled);
+    for recovery in shutdown.recovery_handles_snapshot() {
+        recovery
+            .transfer_to(recovery_store)
+            .expect("transfer unresolved cleanup to the application recovery store");
+    }
+    let stopped = shutdown
+        .stop_services()
+        .expect("stop MIME services from this sync context");
+    assert!(stopped.services_stopped && stopped.unresolved_recoveries == 0);
+    let report = block_on(shutdown.wait_group_shutdown()).expect("wait for MIME group Drain");
+    assert_eq!(report.snapshot.active_operations, 0);
+}
+```
+
+The submission branch returns rejected input to the caller's retry queue. For
+accepted work, the example observes the MIME report and operation settlement
+separately, then drops the typed handle before waiting for group Drain. Recovery
+handles are transferred to the application's long-lived store before workers
+stop. Run the complete example with `cargo run --example managed_lifecycle`.
+
 Select an async-capable provider with `MimeRuntime::with_async_provider_selection`
 when the runtime needs an async implementation. The built-in `repository` and
 `file` providers both expose managed async backends. `file` requires complete
@@ -399,6 +483,35 @@ base MIME matching. It is not passed to an async media classifier, even when a
 precise-detection mapping matches. Submit the complete bytes with extent
 `Complete` when the result needs media-stream refinement; classifier errors for
 complete inputs continue to be reported by the operation.
+
+### Metered provider reads for extension backends
+
+Update async extension backends that match `BorrowedMimeInput` exhaustively:
+the enum now includes `ManagedProvider` and is no longer `Copy` or `Clone`. For
+this variant, the runtime opens the provider object once and lends the backend a
+`MeteredReadSession`. Use `session.read()` for sequential reads and
+`session.read_at()` for samples from that same opened object. Do not reopen the
+path or use a raw filesystem handle for a managed input.
+
+`uses_managed_provider_reads()` opts a backend into this session. It defaults to
+`true` when `random_access_capability()` returns
+`RandomAccessCapability::SamplesSameObject`. A backend that needs complete
+sequential provider input can override it to return `true` while declaring
+`RandomAccessCapability::Unsupported`. A `Prefix(n)` backend on the regular
+bounded-prefix route receives `Bytes` containing at most `n` bytes, further
+limited by request and service buffer/read budgets; the provider may return
+fewer bytes at EOF. No read goes past the prefix bound. A backend that opts into
+managed reads controls its own reads and should keep them within its declared
+extent.
+
+Each session read is clipped to the caller's buffer, the payload limit, the
+remaining request and ancestor read allowances, and an 8 KiB chunk. The runtime
+reserves an 8 KiB maximum private scratch buffer before provider I/O and copies
+only successfully returned bytes into the backend buffer. Provider errors do
+not expose partial scratch data. EOF returns zero, and read accounting charges
+actual returned bytes; repeated or overlapping `read_at` samples are charged
+again. This per-read scratch bound is distinct from a backend's retained input
+or command staging memory.
 
 The handle exposes two independent observations. `wait_outcome()` returns the
 MIME detection result (including `MimeDetectionReport` on success);
@@ -440,14 +553,16 @@ the accepted operation. A classifier also needs explicit async selection and a
 compatible same-object capability; do not assume `ffprobe` is available
 through every detector selection.
 
-`MimeExecutionServices::shutdown()` closes new root submissions and returns an
-observer. Observe operation settlements, stop MIME execution services from an
-external synchronous context with `stop_services()`, then observe group shutdown
-with `wait_group_shutdown()`. A pending settlement is unresolved work, not a
-release confirmation. If a settlement reports `RecoveryRequired`, resolve or
-transfer its recovery handles before stopping services; `stop_services()`
-returns `OperationShutdownPending` while recovery is unresolved and does not
-retry it automatically. The 0.22.0 target remains under acceptance; see the
+`MimeExecutionServices::shutdown()` closes new root submissions and returns a
+repeatable observer. Call `wait_services_settled()` to observe tracked
+operations. If recovery is required, use `recovery_handles_snapshot()` to
+retrieve the unresolved group handles, then resolve or transfer them before
+stopping services. Call `stop_services()` from an external synchronous context,
+then observe group shutdown with `wait_group_shutdown()`. A pending settlement
+is unresolved work, not a release confirmation; group Drain can remain pending
+while callers retain typed handles. `stop_services()` returns
+`OperationShutdownPending` while operations or recovery remain unresolved and
+does not retry recovery automatically. The 0.22.0 target remains under acceptance; see the
 [acceptance record](acceptance-0.22.0-operation-0.2.zh_CN.md) for tested behavior
 and outstanding lifecycle checks.
 
@@ -463,6 +578,7 @@ Important `MimeError` cases include:
 - `BufferLimitExceeded` when a path prefix request exceeds
   `MimeConfig::max_buffer_size()`;
 - `CompleteContentRequired` when a backend requires the complete resource;
+- `AsyncUnsupported` when a backend has no asynchronous content hook;
 - `Command`, `DetectorUnavailable`, or `DetectorBackend` for native provider
   availability and execution failures;
 - `Config` or `InvalidConfigurationValue` for invalid settings.
@@ -488,8 +604,14 @@ input limit available to a backend. For built-in detectors and backends using
 the crate's blanket `MimeDetector` implementation, prefix detection does not
 pass that prefix to a complete-media classifier; direct `MimeDetector`
 implementations define their own behavior. The async path entry point reads up
-to the requested prefix by default. A prefix backend can inspect large resources
-without loading the entire resource. A backend whose
+to the requested prefix by default. The legacy `RepositoryMimeDetector` path
+is an exception: a unique filename candidate still short-circuits under
+`PreferFilename`, while content-dependent policies return `AsyncUnsupported`
+before opening the provider path. Custom `MimeDetectorBackend` implementations
+retain their existing behavior by default. Override
+`supports_async_content_detection` to reject before IO, or provide an
+asynchronous content hook when they need to inspect content. A prefix backend can inspect large
+resources without loading the entire resource. A backend whose
 `ContentRequirement` is `Complete` cannot use a prefix entry point and must
 override `guess_from_async_provider_path` when it supports complete-resource
 inspection through an asynchronous provider path. Native command detection may stage

@@ -17,7 +17,6 @@ use qubit_spi::ProviderDefinition;
 use qubit_spi::ProviderId;
 use qubit_spi::ProviderRegistry;
 use qubit_spi::ProviderSelection;
-use qubit_spi::ProviderSelectionTargetRef;
 use qubit_spi::ResolvingServiceProvider;
 use qubit_spi::error::ProviderResolutionError;
 use qubit_spi::error::RegistryMutationError;
@@ -29,12 +28,28 @@ use super::MimeDetectorSpec;
 use super::RepositoryMimeDetectorProvider;
 use super::internal::async_provider_entry::AsyncBackendSelection;
 use super::internal::async_provider_entry::AsyncProviderEntry;
+use crate::async_selection::AsyncProviderCandidate;
 
 /// Process-wide MIME detector Registry initialized with built-in providers.
 static GLOBAL_MIME_DETECTOR_REGISTRY: LazyLock<MimeDetectorRegistry> = LazyLock::new(MimeDetectorRegistry::builtin);
 
 /// Async factories indexed by selector with their registration-time identity.
 type AsyncProviderMap = HashMap<String, AsyncProviderEntry>;
+
+/// Returns the stable built-in order used by automatic MIME selection.
+///
+/// # Parameters
+/// - `id`: Canonical built-in detector ID.
+///
+/// # Returns
+/// A lower rank for built-ins that Auto selection must try earlier.
+fn builtin_auto_rank(id: &str) -> usize {
+    match id {
+        "repository" => 0,
+        "file" => 1,
+        _ => 2,
+    }
+}
 
 /// Shared runtime Registry for MIME detector provider definitions.
 ///
@@ -110,8 +125,10 @@ impl MimeDetectorRegistry {
     /// The selected provider ID and its async detector backend.
     ///
     /// # Errors
-    /// Returns an error when the provider is unavailable or async unsupported.
-    /// The selected provider is snapshotted before its factory runs, so factory
+    /// Returns [`crate::MimeError::ProviderSelection`] when selectors cannot
+    /// resolve, [`crate::MimeError::AsyncUnsupported`] for a selected sync-only
+    /// provider, or the final factory error after applying the selection's
+    /// fallback policy. Candidates are snapshotted before factories run, so
     /// callbacks run without holding the async catalog lock.
     pub fn create_async_backend(
         &self,
@@ -170,31 +187,83 @@ impl MimeDetectorRegistry {
         services: &crate::MimeExecutionServices,
         classifier: Option<Arc<dyn crate::AsyncMediaStreamClassifierBackend>>,
     ) -> Result<AsyncBackendSelection, crate::MimeError> {
-        let selectors: Vec<&str> = match selection.target() {
-            ProviderSelectionTargetRef::Auto => vec!["repository"],
-            ProviderSelectionTargetRef::Named(selector) => vec![selector.as_str()],
-            ProviderSelectionTargetRef::Chain { selectors, .. } => {
-                selectors.iter().map(|selector| selector.as_str()).collect()
-            }
-            _ => return Err(crate::MimeError::AsyncUnsupported),
-        };
-        let selected = {
+        let async_catalog = {
             let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
-            selectors.iter().find_map(|selector| providers.get(*selector).cloned())
+            providers
+                .iter()
+                .map(|(selector, entry)| (selector.clone(), (entry.id.clone(), entry.priority, entry.clone())))
+                .collect::<HashMap<_, _>>()
         };
-        if let Some(entry) = selected {
-            let backend = entry
-                .provider
-                .create_async_backend_with_classifier(config, services, classifier)?;
-            let repository = entry
-                .uses_bundled_repository
-                .then(crate::MimeRepository::bundled_shared);
-            return Ok((entry.id, backend, repository));
+        let mut builtin_ids = async_catalog
+            .values()
+            .filter(|(_, _, entry)| entry.is_builtin)
+            .map(|(id, priority, _)| (id.clone(), *priority))
+            .collect::<Vec<_>>();
+        builtin_ids.sort_by(|(left_id, left_priority), (right_id, right_priority)| {
+            builtin_auto_rank(left_id)
+                .cmp(&builtin_auto_rank(right_id))
+                .then_with(|| right_priority.cmp(left_priority))
+                .then_with(|| left_id.cmp(right_id))
+        });
+        let auto_builtin_ids = builtin_ids.into_iter().map(|(id, _)| id).collect();
+        let mut auto_priority_ids = self
+            .resolve_selected(&ProviderSelection::auto())
+            .map(|resolved| {
+                resolved
+                    .candidate_descriptors()
+                    .map(|descriptor| (descriptor.id().as_str().to_owned(), descriptor.priority()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        auto_priority_ids.extend(async_catalog.values().map(|(id, priority, _)| (id.clone(), *priority)));
+        let candidates = crate::async_selection::resolve(
+            selection,
+            &async_catalog,
+            |selector| {
+                let selection = ProviderSelection::named(selector).ok()?;
+                self.resolve_selected(&selection)
+                    .ok()?
+                    .candidate_descriptors()
+                    .next()
+                    .map(|descriptor| descriptor.id().as_str().to_owned())
+            },
+            auto_builtin_ids,
+            auto_priority_ids,
+            "MIME detector",
+        )?;
+
+        let mut last_error = None;
+        for candidate in candidates {
+            let (id, provider) = match candidate {
+                AsyncProviderCandidate::Async { id, provider } => (id, Some(provider)),
+                AsyncProviderCandidate::SyncOnly { id } => (id, None),
+            };
+            let result = if let Some(entry) = provider {
+                entry
+                    .provider
+                    .create_async_backend_with_classifier(config, services, classifier.clone())
+                    .map(|backend| {
+                        let repository = entry
+                            .uses_bundled_repository
+                            .then(crate::MimeRepository::bundled_shared);
+                        (id, backend, repository)
+                    })
+            } else {
+                Err(crate::MimeError::AsyncUnsupported)
+            };
+            match result {
+                Ok(selection) => return Ok(selection),
+                Err(error) => {
+                    if !crate::async_selection::should_fallback(selection.fallback_policy(), &error) {
+                        return Err(error);
+                    }
+                    last_error = Some(error);
+                }
+            }
         }
-        // Confirm a known synchronous selector is an unsupported capability,
-        // while keeping unknown-selection diagnosis on the existing resolver.
-        let _ = self.resolve_selected(selection);
-        Err(crate::MimeError::AsyncUnsupported)
+        Err(last_error.unwrap_or_else(|| {
+            crate::MimeError::ProviderSelection("no MIME detector candidates match the selection".to_owned())
+        }))
     }
 
     /// Returns the process-wide MIME detector Registry.
@@ -240,6 +309,19 @@ impl MimeDetectorRegistry {
         self.providers.provider_ids()
     }
 
+    /// Lists canonical IDs with registered asynchronous MIME detector
+    /// factories.
+    ///
+    /// Alias selectors are omitted and every ID is returned once.
+    #[must_use]
+    pub fn async_provider_ids(&self) -> Vec<ProviderId> {
+        let providers = self.async_providers.read().unwrap_or_else(|e| e.into_inner());
+        let mut ids = providers.values().map(|entry| entry.id.clone()).collect::<Vec<_>>();
+        ids.sort();
+        ids.dedup();
+        ids.into_iter().filter_map(|id| ProviderId::new(&id).ok()).collect()
+    }
+
     /// Registers explicit async construction for a provider already available
     /// through the synchronous catalog. This registration performs no service
     /// creation, I/O, or executor startup.
@@ -263,6 +345,8 @@ impl MimeDetectorRegistry {
         let descriptor = provider.descriptor();
         let id = descriptor.id().as_str().to_owned();
         let uses_bundled_repository = TypeId::of::<P>() == TypeId::of::<RepositoryMimeDetectorProvider>();
+        let is_builtin =
+            uses_bundled_repository || TypeId::of::<P>() == TypeId::of::<FileCommandMimeDetectorProvider>();
         let provider: Arc<dyn AsyncMimeDetectorProvider> = Arc::new(provider);
         let mut providers = self.async_providers.write().unwrap_or_else(|e| e.into_inner());
         if self.providers.is_sealed() {
@@ -286,6 +370,8 @@ impl MimeDetectorRegistry {
                 selector,
                 AsyncProviderEntry {
                     id: id.clone(),
+                    priority: descriptor.priority(),
+                    is_builtin,
                     provider: Arc::clone(&provider),
                     uses_bundled_repository,
                 },
@@ -426,5 +512,59 @@ impl Default for MimeDetectorRegistry {
             providers: ProviderRegistry::default(),
             async_providers: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+}
+
+#[cfg(test)]
+mod async_catalog_recovery_tests {
+    use std::panic::AssertUnwindSafe;
+    use std::panic::catch_unwind;
+    use std::sync::Arc;
+
+    use qubit_operation::GroupOptions;
+    use qubit_operation::OperationManager;
+    use qubit_spi::ProviderSelection;
+
+    use super::MimeDetectorRegistry;
+    use super::RepositoryMimeDetectorProvider;
+    use crate::FixedMimeExecutionPort;
+    use crate::MimeConfig;
+    use crate::MimeExecutionServices;
+
+    #[test]
+    fn test_poisoned_async_catalog_recovers_for_selection_registration_and_sealing() {
+        let registry = MimeDetectorRegistry::default();
+        let poisoned = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = registry.async_providers.write().expect("catalog should be unpoisoned");
+            panic!("poison detector async catalog");
+        }));
+        assert!(poisoned.is_err());
+
+        let manager = OperationManager::new(Default::default()).expect("operation manager should be created");
+        let group = manager
+            .group(GroupOptions { capacity: 1 })
+            .expect("operation group should be created");
+        let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 32)
+            .expect("execution services should be created");
+        let selection = ProviderSelection::auto();
+        let error = registry
+            .create_async_backend(&selection, &MimeConfig::default(), &services)
+            .expect_err("empty automatic selection should fail");
+        assert!(error.to_string().contains("no MIME detector candidates"));
+
+        assert!(registry.async_provider_ids().is_empty());
+        registry
+            .register_async_provider(RepositoryMimeDetectorProvider)
+            .expect("catalog should accept a provider after poison recovery");
+        registry.seal();
+        assert!(registry.is_sealed());
+        assert_eq!(
+            vec!["repository"],
+            registry
+                .async_provider_ids()
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>()
+        );
     }
 }
