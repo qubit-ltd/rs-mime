@@ -17,9 +17,10 @@ use std::process::Command;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-const DOCUMENTS: [&str; 4] = [
+const DOCUMENTS: [&str; 5] = [
     "README.md",
     "README.zh_CN.md",
+    "doc/acceptance-0.22.0-operation-0.2.zh_CN.md",
     "doc/user_guide.md",
     "doc/user_guide.zh_CN.md",
 ];
