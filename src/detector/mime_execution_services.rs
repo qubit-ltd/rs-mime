@@ -1613,6 +1613,44 @@ mod tests {
     }
 
     #[test]
+    fn test_failed_prepare_recovers_poisoned_lifecycle_and_releases_claim() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let port = GatedPreparePort {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+            fail_first: true,
+            calls: AtomicUsize::new(0),
+        };
+        let services = MimeExecutionServices::new(manager, group, Arc::new(port), 32).unwrap();
+        let preparing = services.clone();
+        let prepare_thread = std::thread::spawn(move || preparing.prepare());
+
+        entered.wait();
+        let _shutdown = services.shutdown();
+        let lifecycle = Arc::clone(&services.lifecycle_lock);
+        assert!(
+            std::thread::spawn(move || {
+                let _guard = lifecycle.lock().unwrap();
+                panic!("poison lifecycle mutex during failed prepare");
+            })
+            .join()
+            .is_err()
+        );
+        release.wait();
+
+        assert!(matches!(
+            prepare_thread.join().unwrap(),
+            Err(MimeError::ExecutionServicesRequired)
+        ));
+        assert!(!services.preparing.load(Ordering::Acquire));
+        assert_eq!(MimeServiceLifecycle::ClosedWithoutStart, services.lifecycle());
+        assert!(matches!(services.prepare(), Err(MimeError::ExecutionServicesRequired)));
+    }
+
+    #[test]
     fn test_service_tracking_and_shutdown_recover_poisoned_tracking_locks() {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
