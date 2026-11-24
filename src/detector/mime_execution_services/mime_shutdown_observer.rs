@@ -181,6 +181,8 @@ mod tests {
     use std::fs;
     use std::future::Future;
     use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::sync::atomic::AtomicBool;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::sync::mpsc;
@@ -191,6 +193,7 @@ mod tests {
     use std::thread;
     use std::thread::Thread;
 
+    use qubit_operation::AdmissionError;
     use qubit_operation::GroupOptions;
     use qubit_operation::OperationManager;
     use qubit_operation::OperationOutcome;
@@ -213,6 +216,46 @@ mod tests {
     struct CountingExecutionPort {
         worker_port: Arc<FixedMimeExecutionPort>,
         shutdown_calls: Arc<AtomicUsize>,
+    }
+
+    /// Runs a deterministic submission attempt just before stopping the worker.
+    struct LateSubmissionExecutionPort {
+        worker_port: Arc<FixedMimeExecutionPort>,
+        shutdown_calls: Arc<AtomicUsize>,
+        before_shutdown: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    }
+
+    struct ReleaseOnDrop(mpsc::Sender<()>);
+
+    impl Drop for ReleaseOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.send(());
+        }
+    }
+
+    impl Debug for LateSubmissionExecutionPort {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+            formatter.debug_struct("LateSubmissionExecutionPort").finish_non_exhaustive()
+        }
+    }
+
+    impl MimeExecutionPort for LateSubmissionExecutionPort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            self.worker_port.prepare()
+        }
+
+        fn shutdown(&self) -> Result<(), MimeError> {
+            if let Some(before_shutdown) = self
+                .before_shutdown
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take()
+            {
+                before_shutdown();
+            }
+            self.shutdown_calls.fetch_add(1, Ordering::SeqCst);
+            self.worker_port.shutdown()
+        }
     }
 
     impl Debug for CountingExecutionPort {
@@ -672,14 +715,58 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn test_shutdown_waits_for_explicit_recovery_before_stopping_workers() {
+    fn test_shutdown_rejects_late_external_submission_and_preserves_recovery_and_held_outcome() {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
+        let external_parent_group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let (external_parent_manager_tx, external_parent_manager_rx) = mpsc::channel();
+        let (release_external_parent_tx, release_external_parent_rx) = mpsc::channel();
+        let mut external_parent = block_on(external_parent_group.try_submit_async(
+            Default::default(),
+            move |scope| async move {
+                external_parent_manager_tx.send(scope.manager()).unwrap();
+                release_external_parent_rx.recv().unwrap();
+                Ok::<_, ()>(())
+            },
+        ))
+        .unwrap();
+        let external_parent_manager = external_parent_manager_rx.recv().unwrap();
+        let _release_external_parent = ReleaseOnDrop(release_external_parent_tx.clone());
+        let external_group_view = external_parent_manager.with_group(&group).unwrap();
+
         let worker_port = Arc::new(FixedMimeExecutionPort::new(1, 4));
         let shutdown_calls = Arc::new(AtomicUsize::new(0));
-        let execution = Arc::new(CountingExecutionPort {
+        let late_submission_rejected = Arc::new(AtomicBool::new(false));
+        let worker_available_before_shutdown = Arc::new(AtomicBool::new(false));
+        let late_group_view = external_group_view.clone();
+        let late_worker_port = Arc::clone(&worker_port);
+        let late_submission_rejected_in_hook = Arc::clone(&late_submission_rejected);
+        let worker_available_in_hook = Arc::clone(&worker_available_before_shutdown);
+        let execution = Arc::new(LateSubmissionExecutionPort {
             worker_port: Arc::clone(&worker_port),
             shutdown_calls: Arc::clone(&shutdown_calls),
+            before_shutdown: Mutex::new(Some(Box::new(move || {
+                let error = match late_group_view
+                    .as_async()
+                    .try_submit(Default::default(), |_| async { Ok::<_, ()>(()) })
+                {
+                    Ok(_) => {
+                        panic!("late external admission must fail after stop closes the group")
+                    }
+                    Err(error) => error,
+                };
+                assert_eq!(AdmissionError::Closed, error.reason());
+                late_submission_rejected_in_hook.store(true, Ordering::SeqCst);
+
+                let (job_done_tx, job_done_rx) = mpsc::channel();
+                assert!(late_worker_port
+                    .try_dispatch(Box::new(move || job_done_tx.send(()).unwrap()))
+                    .is_ok());
+                job_done_rx
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .expect("worker must still run until after late admission is rejected");
+                worker_available_in_hook.store(true, Ordering::SeqCst);
+            }))),
         });
         let services = MimeExecutionServices::new(manager, group.clone(), execution, 1024).unwrap();
         services.prepare().unwrap();
@@ -714,10 +801,6 @@ mod tests {
         let mut later_operation =
             block_on(group.try_submit_async(Default::default(), |_| async { Ok::<_, ()>(1) })).unwrap();
         services.track_observer(later_operation.observer());
-        assert!(matches!(
-            block_on(later_operation.wait_outcome()).unwrap(),
-            OperationOutcome::Succeeded(1)
-        ));
         block_on(later_operation.wait_settlement());
 
         let shutdown = services.shutdown();
@@ -740,6 +823,7 @@ mod tests {
             "MIME workers must stay available while cleanup recovery is unresolved"
         );
         assert_eq!(shutdown_calls.load(Ordering::SeqCst), 0);
+        assert!(!late_submission_rejected.load(Ordering::SeqCst));
 
         fs::remove_file(blocker).unwrap();
         let recovery = settlement.recoveries[0].clone();
@@ -752,5 +836,17 @@ mod tests {
 
         let _ = shutdown.stop_services().unwrap();
         assert_eq!(shutdown_calls.load(Ordering::SeqCst), 1);
+        assert!(late_submission_rejected.load(Ordering::SeqCst));
+        assert!(worker_available_before_shutdown.load(Ordering::SeqCst));
+        assert!(matches!(
+            block_on(later_operation.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(1)
+        ));
+        release_external_parent_tx.send(()).unwrap();
+        assert!(matches!(
+            block_on(external_parent.wait_outcome()).unwrap(),
+            OperationOutcome::Succeeded(())
+        ));
+        block_on(external_parent.wait_settlement());
     }
 }
