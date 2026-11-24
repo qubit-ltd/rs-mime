@@ -359,7 +359,9 @@ available, use the fixed-source consumer below.
 
 The consumer fixture and a new application use two independent source
 layouts. The pinned revision table below reproduces the fixture's tested source
-graph. Put these repositories under a separate `fixture-root/` directory:
+graph. For the application layout, check out Magika at
+`d1f213ec3a5fa35a0aa15ad6ee9a7ee233e0b48f` before preparing its pinned sibling
+dependencies. Put the fixture repositories under a separate `fixture-root/` directory:
 
 ```text
 fixture-root/
@@ -376,7 +378,7 @@ fixture-root/
 | Repository | Fixture revision |
 | --- | --- |
 | `rs-mime` | `c05273cb8ac7ff8bb22d96c4385e38fb12b99d63` |
-| `rs-magika` | `d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b` |
+| `rs-magika` | `d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b` (fixture only) |
 | `rs-operation` | `2821f739c996250fa9cfe33a86efc54c2fab6373` |
 | `rs-fs` | `c7ea1d035498aa633f4f3c04d90fdb5d4b73de97` |
 | `rs-fs-local` | `3bf4275ed601e39fdbf8532f9d80d563d9cc7182` |
@@ -403,13 +405,13 @@ cd fixture-root/rs-mime
 
 For a new application's fixed-source integration, create a separate
 `consumer-root/` layout. Follow Magika's
-[pinned dependency table](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/ci/local-path-dependencies.tsv)
+[pinned dependency table](https://github.com/qubit-ltd/rs-magika/blob/d1f213ec3a5fa35a0aa15ad6ee9a7ee233e0b48f/.infra/ci/local-path-dependencies.tsv)
 for that layout; the fixture revisions above reproduce the fixture and are not
 the app's Magika pins. From `consumer-root/rs-magika`, first run Magika's
-[preparation script](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/bin/prepare-local-path-dependencies.sh)
+[preparation script](https://github.com/qubit-ltd/rs-magika/blob/d1f213ec3a5fa35a0aa15ad6ee9a7ee233e0b48f/.infra/bin/prepare-local-path-dependencies.sh)
 to fill missing sibling checkouts. Then, still from the Magika repository root,
 run the read-only
-[`check-locked-local-path-dependencies.sh`](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/lib/check-locked-local-path-dependencies.sh)
+[`check-locked-local-path-dependencies.sh`](https://github.com/qubit-ltd/rs-magika/blob/d1f213ec3a5fa35a0aa15ad6ee9a7ee233e0b48f/.infra/lib/check-locked-local-path-dependencies.sh)
 to verify pinned commits and clean worktrees. It reports commit mismatches and
 dirty worktrees; resolve drift in an independent layout matching Magika's pins.
 The following app manifest assumes `consumer-root/app/Cargo.toml` and sibling

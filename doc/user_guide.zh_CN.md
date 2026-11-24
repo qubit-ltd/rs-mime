@@ -278,7 +278,9 @@ crate 通过 `qubit_spi::submit_sync_provider!` 向
 ### 固定源码接入 Magika
 
 consumer fixture 与新应用使用两个相互独立的源码布局。下表中的固定版本用于复现
-fixture 已验证的源码组合。将这些仓库放在单独的 `fixture-root/` 目录下：
+fixture 已验证的源码组合。应用布局应先将 Magika 检出到
+`d1f213ec3a5fa35a0aa15ad6ee9a7ee233e0b48f`，再准备其固定的兄弟依赖。
+将 fixture 仓库放在单独的 `fixture-root/` 目录下：
 
 ```text
 fixture-root/
@@ -295,7 +297,7 @@ fixture-root/
 | 仓库 | Fixture revision |
 | --- | --- |
 | `rs-mime` | `c05273cb8ac7ff8bb22d96c4385e38fb12b99d63` |
-| `rs-magika` | `d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b` |
+| `rs-magika` | `d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b`（仅用于 fixture）|
 | `rs-operation` | `2821f739c996250fa9cfe33a86efc54c2fab6373` |
 | `rs-fs` | `c7ea1d035498aa633f4f3c04d90fdb5d4b73de97` |
 | `rs-fs-local` | `3bf4275ed601e39fdbf8532f9d80d563d9cc7182` |
@@ -321,11 +323,11 @@ cd fixture-root/rs-mime
 ```
 
 新应用接入固定源码时，应另建 `consumer-root/` 布局，并按 Magika 的
-[固定依赖清单](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/ci/local-path-dependencies.tsv)
+[固定依赖清单](https://github.com/qubit-ltd/rs-magika/blob/d1f213ec3a5fa35a0aa15ad6ee9a7ee233e0b48f/.infra/ci/local-path-dependencies.tsv)
 检出版本；上面的 fixture revisions 仅用于复现 fixture，并不是应用使用的 Magika pins。
-在 `consumer-root/rs-magika` 中，先运行 Magika 的[依赖准备脚本](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/bin/prepare-local-path-dependencies.sh)，
+在 `consumer-root/rs-magika` 中，先运行 Magika 的[依赖准备脚本](https://github.com/qubit-ltd/rs-magika/blob/d1f213ec3a5fa35a0aa15ad6ee9a7ee233e0b48f/.infra/bin/prepare-local-path-dependencies.sh)，
 补齐缺少的兄弟 checkout。然后仍从 Magika 仓库根目录运行只读的
-[`check-locked-local-path-dependencies.sh`](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/lib/check-locked-local-path-dependencies.sh)，
+[`check-locked-local-path-dependencies.sh`](https://github.com/qubit-ltd/rs-magika/blob/d1f213ec3a5fa35a0aa15ad6ee9a7ee233e0b48f/.infra/lib/check-locked-local-path-dependencies.sh)，
 核验固定提交和工作区干净状态。脚本会报告提交不符或工作区有未提交改动；请在符合 Magika pins 的独立布局中处理漂移。
 下方应用清单假设位于 `consumer-root/app/Cargo.toml`，兄弟 checkout 按该 Magika 固定依赖清单准备：
 
