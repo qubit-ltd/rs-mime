@@ -571,4 +571,10 @@ round-6 基线 `rs-mime@6b7855b7c6083ede357c3eb01f3b798f9bcaf4e3` 的原始本�
 
 ### Hosted 状态与证据范围
 
-查询时间为 2026-11-24 18:37 UTC 的历史 hosted snapshot 对应旧源码 SHA `61db4a3e6fd974cd7c9b52377de7e17d13ce0818`：Docs run `45458725986`、Magika run `45458726004`、Rust CI run `45458726443` 均 completed/success；这些不是本轮候选的 hosted 结果。本轮未推送，也未为最终候选创建 hosted run，因此不声称 hosted 验收通过。精确 registry 查询也仍无 `0.22.0` 发布版本。完整交付 SHA 由本节文档提交后的 `git rev-parse HEAD` 确认；该提交只记录证据，不改变已测试的源码与测试内容。
+查询时间为 2026-11-24 18:37 UTC 的历史 hosted snapshot 对应旧源码 SHA `61db4a3e6fd974cd7c9b52377de7e17d13ce0818`：[Docs run 45458725986](https://github.com/qubit-ltd/rs-mime/actions/runs/45458725986)、[Magika run 45458726004](https://github.com/qubit-ltd/rs-mime/actions/runs/45458726004)、[Rust CI run 45458726443](https://github.com/qubit-ltd/rs-mime/actions/runs/45458726443) 均 completed/success；三者创建于 2026-11-24 18:21:55 UTC，head 均为 `61db4a3e6fd974cd7c9b52377de7e17d13ce0818`。这些不是本轮候选的 hosted 结果。
+
+历史 Magika consumer 的 MIME 源码基线是 `a5e48d2fa35204183c2bd37a96782ba78327067f`；`c05273cb8ac7ff8bb22d96c4385e38fb12b99d63` 是其直接子提交，新增 Magika inventory fixture、Cargo 锁文件及 consumer workflow。后续 `61db4a3` 是包含该 fixture 提交的后代。该关系解释了历史 consumer 报告为何以 `a5e48d2` 标注基线、而实际 fixture 内容来自 `c05273c`；它不证明 hosted Magika run 执行了本工作区的精确动态 loader 组合。该组合的本地 metadata/tree 与真实动态加载运行另见本节前述边界记录。
+
+旧候选 `eba06f4d62c3d70fc1b17db79c7921720c089860` 的 `ci-check.sh` 原始日志路径为 `/tmp/rs-mime-round7-ci-check.log`，后来被原工作区 runner 复用同一路径覆盖；不得将该路径当前内容归属于旧候选。会话观察摘要位于 `/tmp/rs-mime-round7-evidence/candidate-ci-summary.md`，其中记录结果来自当时可见终端输出，不是完整日志替代品；完整命令交错顺序和精确完成时间无法恢复。此前 round-7 记录中的 hosted 历史查询文件也只存在于临时 evidence 目录，未纳入仓库，故本页只引用可直接复核的 GitHub run 页面，不把临时文件路径当稳定制品。
+
+本轮未推送，也未为最终候选创建 hosted run，因此不声称 hosted 验收通过。精确 registry 查询也仍无 `0.22.0` 发布版本。完整交付 SHA 由本节文档提交后的 `git rev-parse HEAD` 确认；该提交只记录证据，不改变已测试的源码与测试内容。
