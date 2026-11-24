@@ -10,9 +10,13 @@
 
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::Weak;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU8;
 use std::sync::atomic::Ordering;
+use std::task::Context;
+use std::task::Poll;
+use std::task::Waker;
 
 use qubit_operation::AsyncOperationGroup;
 use qubit_operation::AsyncOperationManager;
@@ -49,6 +53,51 @@ pub use mime_service_lifecycle::MimeServiceLifecycle;
 pub use mime_shutdown_observer::MimeShutdownObserver;
 pub use mime_shutdown_snapshot::MimeShutdownSnapshot;
 use prepare_permit::PreparePermit;
+
+#[derive(Default)]
+struct AdmissionTracker {
+    state: Mutex<AdmissionState>,
+}
+#[derive(Default)]
+struct AdmissionState {
+    active: usize,
+    waiters: Vec<Waker>,
+}
+struct AdmissionPermit(Arc<AdmissionTracker>);
+impl Drop for AdmissionPermit {
+    fn drop(&mut self) {
+        let waiters = {
+            let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.active -= 1;
+            if state.active == 0 {
+                std::mem::take(&mut state.waiters)
+            } else {
+                Vec::new()
+            }
+        };
+        for waiter in waiters {
+            waiter.wake();
+        }
+    }
+}
+struct AdmissionsSettled(Weak<AdmissionTracker>);
+impl std::future::Future for AdmissionsSettled {
+    type Output = ();
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let Some(tracker) = self.0.upgrade() else {
+            return Poll::Ready(());
+        };
+        let mut state = tracker.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.active == 0 {
+            Poll::Ready(())
+        } else {
+            if !state.waiters.iter().any(|waiter| waiter.will_wake(cx.waker())) {
+                state.waiters.push(cx.waker().clone());
+            }
+            Poll::Pending
+        }
+    }
+}
 
 /// Services shared by MIME requests. Runtime construction is explicit so a
 /// closed service cannot silently create replacement workers.
@@ -123,6 +172,8 @@ pub struct MimeExecutionServices {
     group_shutdown: Arc<Mutex<Option<AsyncShutdownHandle>>>,
     /// Whether all tracked operations have published settlement.
     operations_settled: Arc<AtomicBool>,
+    /// Admissions still executing outside MIME locks.
+    admissions: Arc<AdmissionTracker>,
 }
 
 impl MimeExecutionServices {
@@ -205,6 +256,7 @@ impl MimeExecutionServices {
             recoveries: Arc::new(Mutex::new(Vec::new())),
             group_shutdown: Arc::new(Mutex::new(None)),
             operations_settled: Arc::new(AtomicBool::new(false)),
+            admissions: Arc::new(AdmissionTracker::default()),
         })
     }
 
@@ -226,14 +278,19 @@ impl MimeExecutionServices {
             completed: false,
         };
         self.execution.prepare()?;
-        let _guard = self.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
-        if self.lifecycle() == MimeServiceLifecycle::NotStarted {
-            self.lifecycle
-                .store(MimeServiceLifecycle::Running as u8, Ordering::Release);
-        } else if self.lifecycle() == MimeServiceLifecycle::Draining {
-            self.admission_frozen.store(true, Ordering::Release);
-            self.root_group.close_admission();
-        }
+        let close_admission = {
+            let _guard = self.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
+            if self.lifecycle() == MimeServiceLifecycle::NotStarted {
+                self.lifecycle.store(MimeServiceLifecycle::Running as u8, Ordering::Release);
+                false
+            } else if self.lifecycle() == MimeServiceLifecycle::Draining {
+                self.admission_frozen.store(true, Ordering::Release);
+                true
+            } else {
+                false
+            }
+        };
+        if close_admission { self.root_group.close_admission(); }
         prepare.completed = true;
         Ok(())
     }
@@ -242,24 +299,26 @@ impl MimeExecutionServices {
     /// Await operation settlements, call `stop_services` from an external
     /// synchronous context, then observe group Drain separately.
     pub fn shutdown(&self) -> MimeShutdownObserver {
-        let _guard = self.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
-        if !matches!(
-            self.lifecycle(),
-            MimeServiceLifecycle::Stopped | MimeServiceLifecycle::ClosedWithoutStart
-        ) {
-            self.top_closed.store(true, Ordering::Release);
-            if self.preparing.load(Ordering::Acquire) {
-                self.admission_frozen.store(true, Ordering::Release);
-                self.root_group.close_admission();
-            }
-            let next =
-                if self.lifecycle() == MimeServiceLifecycle::NotStarted && !self.preparing.load(Ordering::Acquire) {
+        let close_admission = {
+            let _guard = self.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
+            if !matches!(self.lifecycle(), MimeServiceLifecycle::Stopped | MimeServiceLifecycle::ClosedWithoutStart) {
+                self.top_closed.store(true, Ordering::Release);
+                let freeze = self.preparing.load(Ordering::Acquire);
+                if freeze {
+                    self.admission_frozen.store(true, Ordering::Release);
+                }
+                let next = if self.lifecycle() == MimeServiceLifecycle::NotStarted && !self.preparing.load(Ordering::Acquire) {
                     MimeServiceLifecycle::ClosedWithoutStart
                 } else {
                     MimeServiceLifecycle::Draining
                 };
-            self.lifecycle.store(next as u8, Ordering::Release);
-        }
+                self.lifecycle.store(next as u8, Ordering::Release);
+                freeze
+            } else {
+                false
+            }
+        };
+        if close_admission { self.root_group.close_admission(); }
         MimeShutdownObserver { services: self.clone() }
     }
 
@@ -269,6 +328,29 @@ impl MimeExecutionServices {
     /// A guard that unlocks submissions when dropped.
     pub(in crate::detector) fn submission_guard(&self) -> std::sync::MutexGuard<'_, ()> {
         self.submission_lock.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub(in crate::detector) fn begin_admission(&self, child: bool) -> Option<impl Drop> {
+        let _submission = self.submission_guard();
+        if !(if child {
+            self.accepts_children()
+        } else {
+            self.is_prepared()
+        }) {
+            return None;
+        }
+        let mut state = self.admissions.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.active += 1;
+        self.operations_settled.store(false, Ordering::Release);
+        Some(AdmissionPermit(Arc::clone(&self.admissions)))
+    }
+
+    pub(super) fn admissions_settled(&self) -> impl std::future::Future<Output = ()> {
+        AdmissionsSettled(Arc::downgrade(&self.admissions))
+    }
+
+    pub(super) fn has_admissions(&self) -> bool {
+        self.admissions.state.lock().unwrap_or_else(|e| e.into_inner()).active != 0
     }
 
     /// Retains an observer and harvests recovery handles from older settled
@@ -591,6 +673,26 @@ mod tests {
                 Poll::Pending => std::thread::park(),
             }
         }
+    }
+
+    #[test]
+    fn test_reentrant_admission_is_tracked_until_shutdown_settlement() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 2 }).unwrap();
+        let services = MimeExecutionServices::new(manager, group, Arc::new(NoopPort), 32).unwrap();
+        services.prepare().unwrap();
+        let outer = services.begin_admission(false).expect("root admission should be open");
+        let nested = services.begin_admission(true).expect("nested callback must not deadlock");
+        drop(nested);
+        let shutdown = services.shutdown();
+        let (tx, rx) = mpsc::sync_channel(1);
+        let waiter = std::thread::spawn(move || {
+            tx.send(block_on(shutdown.wait_services_settled()).unwrap()).unwrap();
+        });
+        assert!(rx.recv_timeout(std::time::Duration::from_millis(20)).is_err());
+        drop(outer);
+        assert!(rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap().operations_settled);
+        waiter.join().unwrap();
     }
 
     #[derive(Debug)]
