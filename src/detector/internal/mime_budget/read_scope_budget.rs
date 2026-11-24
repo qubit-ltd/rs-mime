@@ -20,7 +20,7 @@ pub(super) struct ReadScopeBudget {
     /// Committed and in-flight byte totals for this scope.
     pub(super) counters: Mutex<ScopeCounters>,
     /// Bytes committed by reads initiated in this exact operation scope.
-    pub(super) local_consumed: Arc<AtomicU64>,
+    pub(super) local_consumed: AtomicU64,
     /// Parent scope charged for reads performed by this scope.
     pub(super) parent: Option<Arc<ReadScopeBudget>>,
 }

@@ -172,6 +172,161 @@ struct CompleteBackend {
     observed: Arc<AtomicUsize>,
 }
 
+struct ParentChildAccountingProvider {
+    managed_reads: bool,
+    submit_children: bool,
+    child_runtime: Arc<Mutex<Option<MimeRuntime>>>,
+    file_system: Arc<qubit_fs::AsyncFileSystem>,
+    child_report_bytes: Arc<Mutex<Vec<u64>>>,
+}
+
+impl std::fmt::Debug for ParentChildAccountingProvider {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ParentChildAccountingProvider")
+            .field("managed_reads", &self.managed_reads)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ProviderMetadata for ParentChildAccountingProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor::new(
+            ProviderId::new("parent-child-accounting-test").expect("provider ID"),
+        )
+    }
+}
+
+impl AsyncMimeDetectorProvider for ParentChildAccountingProvider {
+    fn create_async_backend(
+        &self,
+        _config: &qubit_mime::MimeConfig,
+        _services: &MimeExecutionServices,
+    ) -> Result<Arc<dyn AsyncMimeDetectorBackend>, MimeError> {
+        Ok(Arc::new(ParentChildAccountingBackend {
+            managed_reads: self.managed_reads,
+            submit_children: self.submit_children,
+            child_runtime: Arc::clone(&self.child_runtime),
+            file_system: Arc::clone(&self.file_system),
+            child_report_bytes: Arc::clone(&self.child_report_bytes),
+        }))
+    }
+}
+
+struct ParentChildAccountingBackend {
+    managed_reads: bool,
+    submit_children: bool,
+    child_runtime: Arc<Mutex<Option<MimeRuntime>>>,
+    file_system: Arc<qubit_fs::AsyncFileSystem>,
+    child_report_bytes: Arc<Mutex<Vec<u64>>>,
+}
+
+impl std::fmt::Debug for ParentChildAccountingBackend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ParentChildAccountingBackend")
+            .field("managed_reads", &self.managed_reads)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AsyncMimeDetectorBackend for ParentChildAccountingBackend {
+    fn content_requirement(&self) -> ContentRequirement {
+        ContentRequirement::Prefix(4)
+    }
+
+    fn random_access_capability(&self) -> RandomAccessCapability {
+        RandomAccessCapability::Unsupported
+    }
+
+    fn uses_managed_provider_reads(&self) -> bool {
+        self.managed_reads
+    }
+
+    fn guess_content_in<'a>(
+        &'a self,
+        scope: &'a qubit_operation::OperationScope,
+        input: BorrowedMimeInput<'a>,
+        _options: &'a MimeOperationOptions,
+    ) -> MimeFuture<'a, MimeCandidates> {
+        Box::pin(async move {
+            let parent = match input {
+                BorrowedMimeInput::Bytes { filename, .. } => filename == Some("parent"),
+                BorrowedMimeInput::ManagedProvider { filename, session } => {
+                    if filename == Some("parent") {
+                        for _ in 0..2 {
+                            let mut bytes = [0; 4];
+                            session.read(&mut bytes).await?;
+                        }
+                        true
+                    } else {
+                        let reads = if filename == Some("child-a") { 2 } else { 1 };
+                        for _ in 0..reads {
+                            let mut bytes = [0; 4];
+                            session.read(&mut bytes).await?;
+                        }
+                        false
+                    }
+                }
+                BorrowedMimeInput::Provider { .. } => {
+                    panic!("the test backend should only see bytes or managed provider input")
+                }
+            };
+
+            if parent && self.submit_children {
+                let runtime = self
+                    .child_runtime
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .expect("test runtime installed before parent submission");
+                for name in ["child-a", "child-b"] {
+                    let mut child = runtime
+                        .try_submit_detection_in(
+                            scope,
+                            OwnedMimeInput::Provider {
+                                file_system: Arc::clone(&self.file_system),
+                                path: qubit_fs::Path::parse(&format!("/{name}")).unwrap(),
+                            },
+                            MimeOperationOptions {
+                                max_buffer_bytes: Some(4),
+                                max_read_bytes: Some(32),
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap_or_else(|failure| {
+                            panic!("{name} child rejected: {:?}", failure.reason)
+                        });
+                    let report = match child.wait_outcome().await.unwrap_or_else(|error| {
+                        panic!("{name} child outcome unavailable: {error:?}")
+                    }) {
+                        qubit_operation::OperationOutcome::Succeeded(report) => report,
+                        other => panic!("{name} child should succeed: {other:?}"),
+                    };
+                    self.child_report_bytes
+                        .lock()
+                        .unwrap()
+                        .push(report.budget.bytes_read);
+                }
+            }
+
+            Ok(MimeCandidates {
+                candidates: Vec::new(),
+                inspected_extent: InspectedExtent::Prefix(4),
+                retained_prefix: Vec::new(),
+                staging_bytes: 0,
+            })
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ParentInputRoute {
+    Bytes,
+    AutomaticPrefix,
+    ManagedProvider,
+}
+
 impl AsyncMimeDetectorBackend for CompleteBackend {
     fn content_requirement(&self) -> ContentRequirement {
         ContentRequirement::Complete
@@ -444,6 +599,116 @@ fn test_complete_managed_provider_reports_repeated_same_object_reads() {
             .operations_settled
     );
     assert!(shutdown.stop_services().unwrap().services_stopped);
+}
+
+#[test]
+fn test_parent_and_child_reports_count_local_bytes_across_input_routes() {
+    for (route, parent_bytes, root_limit, managed_reads) in [
+        (ParentInputRoute::Bytes, 0u64, 12u64, false),
+        (ParentInputRoute::AutomaticPrefix, 4, 16, false),
+        (ParentInputRoute::ManagedProvider, 8, 20, true),
+    ] {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager
+            .group(qubit_operation::GroupOptions { capacity: 4 })
+            .unwrap();
+        let services = MimeExecutionServices::new(
+            manager,
+            group,
+            Arc::new(FixedMimeExecutionPort::new(1, 2)),
+            32,
+        )
+        .unwrap();
+        services.prepare().unwrap();
+        let file_system = Arc::new(
+            qubit_fs::AsyncFileSystem::from_spi(PrefixFileSystem::new(b"abcdefgh".to_vec()))
+                .unwrap(),
+        );
+        let child_runtime = Arc::new(Mutex::new(None));
+        let child_report_bytes = Arc::new(Mutex::new(Vec::new()));
+        let child_registry = MimeDetectorRegistry::default();
+        child_registry
+            .register_async_provider(ParentChildAccountingProvider {
+                managed_reads: true,
+                submit_children: false,
+                child_runtime: Arc::new(Mutex::new(None)),
+                file_system: Arc::clone(&file_system),
+                child_report_bytes: Arc::clone(&child_report_bytes),
+            })
+            .unwrap();
+        let child_runtime_instance = MimeRuntime::builtin()
+            .unwrap()
+            .with_execution_services(services.clone())
+            .with_async_provider_selection(
+                &child_registry,
+                &qubit_spi::ProviderSelection::named("parent-child-accounting-test").unwrap(),
+            )
+            .unwrap();
+        *child_runtime.lock().unwrap() = Some(child_runtime_instance);
+        let registry = MimeDetectorRegistry::default();
+        registry
+            .register_async_provider(ParentChildAccountingProvider {
+                managed_reads,
+                submit_children: true,
+                child_runtime: Arc::clone(&child_runtime),
+                file_system: Arc::clone(&file_system),
+                child_report_bytes: Arc::clone(&child_report_bytes),
+            })
+            .unwrap();
+        let runtime = MimeRuntime::builtin()
+            .unwrap()
+            .with_execution_services(services.clone())
+            .with_async_provider_selection(
+                &registry,
+                &qubit_spi::ProviderSelection::named("parent-child-accounting-test").unwrap(),
+            )
+            .unwrap();
+
+        let input = match route {
+            ParentInputRoute::Bytes => {
+                OwnedMimeInput::bytes(Arc::from(&b"abcd"[..]), InputExtent::Complete)
+                    .with_filename("parent")
+            }
+            ParentInputRoute::AutomaticPrefix | ParentInputRoute::ManagedProvider => {
+                OwnedMimeInput::Provider {
+                    file_system: Arc::clone(&file_system),
+                    path: qubit_fs::Path::parse("/parent").unwrap(),
+                }
+            }
+        };
+        let mut parent = runtime
+            .try_submit_detection(
+                input,
+                MimeOperationOptions {
+                    max_buffer_bytes: Some(4),
+                    max_read_bytes: Some(root_limit),
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_else(|failure| panic!("parent route rejected: {:?}", failure.reason));
+        let report = match block_on(parent.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(report) => report,
+            other => panic!("parent route should succeed: {other:?}"),
+        };
+
+        assert_eq!(
+            parent_bytes, report.budget.bytes_read,
+            "parent own bytes for {route:?}"
+        );
+        assert_eq!(
+            vec![8, 4],
+            *child_report_bytes.lock().unwrap(),
+            "child reports must count their own repeated reads and share the parent's remaining quota"
+        );
+        *child_runtime.lock().unwrap() = None;
+        let shutdown = services.shutdown();
+        assert!(
+            block_on(shutdown.wait_services_settled())
+                .unwrap()
+                .operations_settled
+        );
+        assert!(shutdown.stop_services().unwrap().services_stopped);
+    }
 }
 
 #[test]
