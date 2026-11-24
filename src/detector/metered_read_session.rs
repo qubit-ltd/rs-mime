@@ -48,6 +48,7 @@ pub struct MeteredReadSession {
     read_tree: Arc<ReadTreeContext>,
     /// The remaining cumulative allowance for this provider request.
     request_remaining: u64,
+    /// The operation state checked before each provider I/O operation.
     operation_context: OperationContext,
     /// The maximum number of bytes any individual read may deliver.
     payload_limit: usize,
@@ -298,6 +299,11 @@ impl MeteredReadSession {
     }
 }
 
+/// Rejects provider I/O after the operation has stopped or expired.
+///
+/// # Parameters
+///
+/// - `context` is the operation state to check before provider I/O.
 fn ensure_active(context: &OperationContext) -> MimeResult<()> {
     if let Some(reason) = context.stop_reason() {
         return Err(MimeError::DetectorBackend {
@@ -348,8 +354,8 @@ mod tests {
     use qubit_fs::spi::StatResponse;
     use qubit_io::AsyncInput;
     use qubit_operation::GroupOptions;
-    use qubit_operation::OperationManager;
     use qubit_operation::OperationContext;
+    use qubit_operation::OperationManager;
     use qubit_operation::StopReason;
 
     use super::MeteredReadSession;
@@ -645,8 +651,15 @@ mod tests {
         let file_system = AsyncFileSystem::from_spi(MemoryFileSystem::new(b"abcdef", false)).unwrap();
         let path = qubit_fs::Path::parse("/input").unwrap();
         let mut session = block_on(MeteredReadSession::open_sequential(
-            &file_system, &path, Arc::clone(&services), Arc::clone(&root), context.clone(), 8, 8,
-        )).unwrap();
+            &file_system,
+            &path,
+            Arc::clone(&services),
+            Arc::clone(&root),
+            context.clone(),
+            8,
+            8,
+        ))
+        .unwrap();
         let mut output = [0; 2];
         assert_eq!(2, block_on(session.read(&mut output)).unwrap());
         assert!(context.request_stop(StopReason::UserCancelled));
