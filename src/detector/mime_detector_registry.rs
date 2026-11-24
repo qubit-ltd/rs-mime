@@ -576,21 +576,49 @@ mod async_catalog_recovery_tests {
     use qubit_operation::GroupOptions;
     use qubit_operation::OperationManager;
     use qubit_spi::ProviderSelection;
+    use qubit_spi::ProviderDescriptor;
+    use qubit_spi::ProviderId;
+    use qubit_spi::ProviderMetadata;
 
+    use super::AsyncMimeDetectorProvider;
+    use super::FileCommandMimeDetectorProvider;
     use super::MimeDetectorRegistry;
-    use super::RepositoryMimeDetectorProvider;
     use crate::FixedMimeExecutionPort;
     use crate::MimeConfig;
     use crate::MimeExecutionServices;
 
+    #[derive(Debug)]
+    struct CatalogRecoveryProvider;
+
+    impl ProviderMetadata for CatalogRecoveryProvider {
+        fn descriptor(&self) -> ProviderDescriptor {
+            ProviderDescriptor::new(ProviderId::new("catalog-recovery").expect("valid provider ID"))
+        }
+    }
+
+    impl AsyncMimeDetectorProvider for CatalogRecoveryProvider {
+        fn create_async_backend(
+            &self,
+            _config: &MimeConfig,
+            _services: &MimeExecutionServices,
+        ) -> Result<Arc<dyn crate::AsyncMimeDetectorBackend>, crate::MimeError> {
+            Err(crate::MimeError::AsyncUnsupported)
+        }
+    }
+
     #[test]
     fn test_poisoned_async_catalog_recovers_for_selection_registration_and_sealing() {
-        let registry = MimeDetectorRegistry::default();
-        let poisoned = catch_unwind(AssertUnwindSafe(|| {
+        let registry = MimeDetectorRegistry::builtin();
+        let catalog_poisoned = catch_unwind(AssertUnwindSafe(|| {
             let _guard = registry.async_providers.write().expect("catalog should be unpoisoned");
             panic!("poison detector async catalog");
         }));
-        assert!(poisoned.is_err());
+        assert!(catalog_poisoned.is_err());
+        let selector_index_poisoned = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = registry.selector_ids.write().expect("selector index should be unpoisoned");
+            panic!("poison detector selector index");
+        }));
+        assert!(selector_index_poisoned.is_err());
 
         let manager = OperationManager::new(Default::default()).expect("operation manager should be created");
         let group = manager
@@ -598,25 +626,19 @@ mod async_catalog_recovery_tests {
             .expect("operation group should be created");
         let services = MimeExecutionServices::new(manager, group, Arc::new(FixedMimeExecutionPort::new(1, 1)), 32)
             .expect("execution services should be created");
-        let selection = ProviderSelection::auto();
-        let error = registry
+        let selection = ProviderSelection::named("repository").expect("built-in selector should be valid");
+        let (id, _) = registry
             .create_async_backend(&selection, &MimeConfig::default(), &services)
-            .expect_err("empty automatic selection should fail");
-        assert!(error.to_string().contains("no MIME detector candidates"));
-
-        assert!(registry.async_provider_ids().is_empty());
+            .expect("selection should recover the poisoned selector index");
+        assert_eq!("repository", id);
         registry
-            .register_async_provider(RepositoryMimeDetectorProvider)
+            .register_async_provider(CatalogRecoveryProvider)
             .expect("catalog should accept a provider after poison recovery");
         registry.seal();
         assert!(registry.is_sealed());
-        assert_eq!(
-            vec!["repository"],
-            registry
-                .async_provider_ids()
-                .iter()
-                .map(|id| id.as_str())
-                .collect::<Vec<_>>()
-        );
+        let async_ids = registry.async_provider_ids();
+        assert!(async_ids.iter().any(|id| id.as_str() == "repository"));
+        assert!(async_ids.iter().any(|id| id.as_str() == "catalog-recovery"));
+        assert!(registry.register_async_provider(FileCommandMimeDetectorProvider).is_err());
     }
 }
