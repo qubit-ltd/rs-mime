@@ -7,7 +7,6 @@
 // =============================================================================
 
 use std::sync::Arc;
-use std::sync::Weak;
 
 use qubit_operation::ResourceManageErrorKind;
 
@@ -16,6 +15,7 @@ use crate::detector::internal::mime_budget::parent_read_budget_anchor::ParentRea
 use crate::detector::internal::mime_budget::read_tree_registry::pending_binding::PendingBinding;
 use crate::detector::internal::mime_budget::read_tree_registry::pending_read_tree_root::unregister_pending;
 use crate::detector::internal::mime_budget::read_tree_registry::pending_read_tree_root_state::PendingReadTreeRootState;
+use crate::detector::internal::mime_budget::registration::IndexEntry;
 use crate::detector::internal::mime_budget::registration::Registration;
 
 /// Holds a parent read-tree binding until child admission is known.
@@ -62,7 +62,7 @@ impl PendingReadTreeBinding {
             } => {
                 let _registration = registrations.lock().unwrap_or_else(|e| e.into_inner());
                 let mut roots_map = roots.lock().unwrap_or_else(|e| e.into_inner());
-                let existing = roots_map.get(&operation).and_then(Weak::upgrade);
+                let existing = roots_map.get(&operation).and_then(IndexEntry::upgrade_target);
                 if let Some(existing) = existing.as_ref().filter(|root| root.is_anchored()) {
                     debug_assert!(Arc::ptr_eq(&existing.tree, &self.scope_parent.tree));
                     let mut pending_state = pending_root.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -122,19 +122,23 @@ impl PendingReadTreeBinding {
                     }
                 }
 
-                roots_map.insert(operation, Arc::downgrade(&root));
+                roots_map.insert(operation, IndexEntry::new(&root, &root));
                 ancestors
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .insert(operation, Arc::downgrade(&root));
+                    .insert(operation, IndexEntry::new(&root, &root));
                 unregister_pending(&pending_roots, operation, &pending_root);
                 root.register(Registration {
                     roots: Arc::downgrade(&roots),
                     operation,
+                    owner: Arc::downgrade(&root),
+                    target: Arc::downgrade(&root),
                 });
                 root.register(Registration {
                     roots: Arc::downgrade(&ancestors),
                     operation,
+                    owner: Arc::downgrade(&root),
+                    target: Arc::downgrade(&root),
                 });
                 Ok(self.scope_parent.child(self.scope_limit))
             }
