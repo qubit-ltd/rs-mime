@@ -1193,7 +1193,7 @@ mod async_operation_tests {
     }
 
     #[test]
-    fn test_refinement_operation_ffprobe_stages_and_cleans_input() {
+    fn test_refinement_operation_stages_input_for_fake_ffprobe_and_cleans_on_settlement() {
         let manager = OperationManager::new(Default::default()).unwrap();
         let group = manager.group(GroupOptions { capacity: 4 }).unwrap();
         let services = Arc::new(MimeExecutionServices::new(manager.clone(), group, Arc::new(InlinePort), 64).unwrap());

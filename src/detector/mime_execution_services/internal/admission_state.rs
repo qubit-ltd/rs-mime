@@ -7,7 +7,7 @@
 // =============================================================================
 //! Mutable count and wake queue shared by in-flight admission guards.
 
-use std::task::Waker;
+use super::WaiterRegistration;
 
 /// State protected by the admission tracker mutex.
 ///
@@ -18,5 +18,5 @@ pub(in crate::detector::mime_execution_services) struct AdmissionState {
     /// Number of admission callbacks that still hold their in-flight guards.
     pub(in crate::detector::mime_execution_services) active: usize,
     /// Tasks waiting for the active admission count to reach zero.
-    pub(in crate::detector::mime_execution_services) waiters: Vec<Waker>,
+    pub(in crate::detector::mime_execution_services) waiters: Vec<WaiterRegistration>,
 }

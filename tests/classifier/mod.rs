@@ -15,4 +15,5 @@ mod media_stream_classifier_registry_tests;
 mod media_stream_classifier_spec_tests;
 mod media_stream_classifier_tests;
 mod media_stream_type_tests;
+mod real_ffprobe_integration_tests;
 mod refinement_operation_tests;

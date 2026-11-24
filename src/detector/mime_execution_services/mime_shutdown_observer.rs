@@ -122,18 +122,23 @@ impl MimeShutdownObserver {
         }
     }
 
-    /// Stops the MIME execution port after settlement and explicit resolution
-    /// or transfer of every recovery handle. Call from outside MIME operation
-    /// bodies and async polls because the adapter may block waiting for its
-    /// fixed workers to exit. This is idempotent.
+    /// Starts group Drain after tracked operation settlement, then stops the
+    /// MIME execution port after service-resource cleanup and explicit
+    /// resolution or transfer of every recovery handle. Call from outside MIME
+    /// operation bodies and async polls because the adapter may block waiting
+    /// for its fixed workers to exit. This is idempotent and can be retried
+    /// while group resources or recovery remain unsettled.
     ///
     /// # Returns
     /// A snapshot of service and operation-group shutdown progress.
     ///
     /// # Errors
-    /// Returns [`crate::MimeError::OperationShutdownPending`] while the group
-    /// has unsettled operation scopes or any recovery is unresolved, or
-    /// propagates an execution shutdown error.
+    /// Returns [`crate::MimeError::OperationShutdownPending`] while tracked
+    /// operations have not settled, a service resource scope remains
+    /// registered, or any recovery is unresolved. The group Drain handle is
+    /// published before resource and recovery checks, so callers can
+    /// observe progress and retry this method. Propagates an execution
+    /// shutdown error.
     pub fn stop_services(&self) -> Result<MimeShutdownSnapshot, crate::MimeError> {
         let _stop;
         {
@@ -170,34 +175,51 @@ impl MimeShutdownObserver {
             if self.services.has_unsettled_operations() {
                 return Err(crate::MimeError::OperationShutdownPending);
             }
-            if self.services.unresolved_recovery_count() != 0 {
-                return Err(crate::MimeError::OperationShutdownPending);
-            }
         }
-        self.services.execution.shutdown()?;
-        let shutdown = self
+
+        // Start group cleanup before stopping the execution port: service
+        // resource destructors may dispatch their final cleanup through it.
+        // The stop permit makes this check/create/publish sequence exclusive
+        // across retries, and no MIME lock is held across request_shutdown.
+        let has_group_shutdown = self
             .services
-            .root_group
-            .request_shutdown(ShutdownMode::Drain)
-            .as_async();
+            .group_shutdown
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        if !has_group_shutdown {
+            let shutdown = self
+                .services
+                .root_group
+                .request_shutdown(ShutdownMode::Drain)
+                .as_async();
+            *self.services.group_shutdown.lock().unwrap_or_else(|e| e.into_inner()) = Some(shutdown);
+        }
+
+        let group_snapshot = self.services.root_group.snapshot();
+        if group_snapshot.service_resource_scopes != 0 || self.services.unresolved_recovery_count() != 0 {
+            return Err(crate::MimeError::OperationShutdownPending);
+        }
+
+        self.services.execution.shutdown()?;
         let _lifecycle = self.services.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
-        *self.services.group_shutdown.lock().unwrap_or_else(|e| e.into_inner()) = Some(shutdown);
         self.services
             .lifecycle
             .store(MimeServiceLifecycle::Stopped as u8, Ordering::Release);
         Ok(self.snapshot())
     }
 
-    /// Waits for group shutdown after workers and tracked operation settlements
-    /// are complete. This may remain pending while callers retain typed
-    /// handles.
+    /// Waits for group shutdown after Drain has started. The handle is
+    /// published after tracked operation settlement, even if service-resource
+    /// cleanup or recovery still keeps `stop_services` pending. This may remain
+    /// pending while callers retain typed handles.
     ///
     /// # Returns
     /// The shutdown report after the operation group has drained.
     ///
     /// # Errors
-    /// Returns [`crate::MimeError::OperationShutdownPending`] if services have
-    /// not been stopped, or propagates an operation-group shutdown error.
+    /// Returns [`crate::MimeError::OperationShutdownPending`] if group Drain
+    /// has not started, or propagates an operation-group shutdown error.
     pub async fn wait_group_shutdown(&self) -> Result<ShutdownReport, crate::MimeError> {
         let handle = self
             .services
@@ -1320,6 +1342,10 @@ mod tests {
             shutdown.stop_services(),
             Err(MimeError::OperationShutdownPending)
         ));
+        assert!(
+            shutdown.snapshot().group.is_some(),
+            "the Drain handle must be published before unresolved recovery returns pending"
+        );
         assert_eq!(0, shutdown_calls.load(Ordering::SeqCst));
 
         let blocker = blocker_path.lock().unwrap().take().expect("recovery blocker path");

@@ -189,8 +189,9 @@ classifier 错误也可能向调用方传播；若名称含有扩展名但该扩
 
 顶层 `MimeDetector::detect_reader` 将 reader 视为整份资源：即使调用者当前游标不在开头，检测也从
 逻辑字节零开始，结束后恢复原始位置。默认的 `MimeContentBackend::detect_reader` 契约不同，只从
-当前位置读取。`Prefix(n)` 最多读取 n 字节，提前遇到 EOF 时停止；`Complete` 在默认 16 MiB
-缓冲预算（或覆盖后的预算）内读到 EOF，并额外探测一个字节以检查超限。内容 backend 的两种模式
+当前位置读取，再把读到的字节传给 `detect_bytes`，不会调用 reader 专用 hook。`Prefix(n)` 最多读取 n 字节，
+遇到 EOF 时提前停止。`Complete` 会在默认 16 MiB 缓冲预算（或覆盖后的预算）内读到 EOF，
+并额外探测一个字节以检查超限。内容 backend 的两种模式
 都会恢复各自的起始位置；读取和恢复都失败时，恢复错误优先。
 
 这几种输入路径的约定不同。普通 `MimeDetectorBackend` reader hook 按
@@ -271,16 +272,16 @@ crate 通过 `qubit_spi::submit_sync_provider!` 向
 重复的 selector 会导致 inventory 构建失败。未启用该 feature 时，仍按上文显式注册。
 
 通过 registry 使用 Magika inventory，要求 `qubit-mime` 0.22 和 `qubit-magika` 0.18
-均已发布。版本未齐前，请按下方[固定源码接入 Magika](#固定源码接入-magika)操作。
+均已发布。2026-11-24 的独立 registry manifest 检查确认 `qubit-mime` 0.22.0
+尚未发布，因此当时还不满足该前提。版本发布齐全前，请使用下方固定源码组合。
 
 ### 固定源码接入 Magika
 
-在 `qubit-magika` 0.18 和 `qubit-mime` 0.22 尚未发布到 crates.io 时，可使用源码 checkout。
-将以下仓库放在同一个父目录下，并按 Magika 的[固定依赖清单](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/ci/local-path-dependencies.tsv)
-检出对应版本：
+consumer fixture 与新应用使用两个相互独立的源码布局。下表中的固定版本用于复现
+fixture 已验证的源码组合。将这些仓库放在单独的 `fixture-root/` 目录下：
 
 ```text
-consumer-root/
+fixture-root/
 ├── rs-magika/
 ├── rs-mime/
 ├── rs-operation/
@@ -291,11 +292,42 @@ consumer-root/
 └── rs-local-files/
 ```
 
-在 Magika checkout 中分两步操作。首先运行[依赖准备脚本](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/bin/prepare-local-path-dependencies.sh)，
-补齐缺少的兄弟 checkout。然后从 Magika 仓库根目录运行只读的
+| 仓库 | Fixture revision |
+| --- | --- |
+| `rs-mime` | `c05273cb8ac7ff8bb22d96c4385e38fb12b99d63` |
+| `rs-magika` | `d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b` |
+| `rs-operation` | `2821f739c996250fa9cfe33a86efc54c2fab6373` |
+| `rs-fs` | `c7ea1d035498aa633f4f3c04d90fdb5d4b73de97` |
+| `rs-fs-local` | `3bf4275ed601e39fdbf8532f9d80d563d9cc7182` |
+| `rs-fs-registry` | `df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c` |
+| `rs-fs-testkit` | `28bf195b8eef9c03d9cb1c5428186758b76aaacd` |
+| `rs-local-files` | `5b52230e0af2997fadc45b5ff48be65b0ca5a70d` |
+
+逐个 clone 仓库并检出对应的 fixture revision。例如：
+
+```bash
+git clone https://github.com/qubit-ltd/rs-mime.git
+git -C rs-mime checkout --detach c05273cb8ac7ff8bb22d96c4385e38fb12b99d63
+git clone https://github.com/qubit-ltd/rs-magika.git
+git -C rs-magika checkout --detach d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b
+```
+
+其余仓库按表中 revision 检出。要核对 fixture 布局的 MIME 锁定数据，请在
+`fixture-root/rs-mime` 中运行 MIME 准备检查：
+
+```bash
+cd fixture-root/rs-mime
+./.infra/bin/prepare-local-path-dependencies.sh --check-locked
+```
+
+新应用接入固定源码时，应另建 `consumer-root/` 布局，并按 Magika 的
+[固定依赖清单](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/ci/local-path-dependencies.tsv)
+检出版本；上面的 fixture revisions 仅用于复现 fixture，并不是应用使用的 Magika pins。
+在 `consumer-root/rs-magika` 中，先运行 Magika 的[依赖准备脚本](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/bin/prepare-local-path-dependencies.sh)，
+补齐缺少的兄弟 checkout。然后仍从 Magika 仓库根目录运行只读的
 [`check-locked-local-path-dependencies.sh`](https://github.com/qubit-ltd/rs-magika/blob/main/.infra/lib/check-locked-local-path-dependencies.sh)，
-核验固定提交和工作区干净状态。核验会报告提交不符或工作区有未提交改动；请在符合 pins 的独立布局中处理漂移，
-不要改动现有 checkout。假设应用清单位于 `consumer-root/app/Cargo.toml`，添加：
+核验固定提交和工作区干净状态。脚本会报告提交不符或工作区有未提交改动；请在符合 Magika pins 的独立布局中处理漂移。
+下方应用清单假设位于 `consumer-root/app/Cargo.toml`，兄弟 checkout 按该 Magika 固定依赖清单准备：
 
 ```toml
 [dependencies]
@@ -307,43 +339,52 @@ ort = { version = ">=2.0.0-rc.12,<2.1", default-features = false, features = ["s
 
 [patch.crates-io]
 qubit-operation = { path = "../rs-operation" }
-```
 
-相对路径以应用的 `Cargo.toml` 所在目录为基准。patch 会让传递依赖中的 crates.io
-`qubit-operation` 也解析到同一份 checkout。普通模式需显式注册
-`MagikaMimeDetectorProvider`；启用 inventory 时，在 `qubit-magika` 上打开 `inventory` feature，
-并在应用中引用 `qubit_magika`，让链接器保留其 inventory 提交项。Magika 的该 feature 会传递启用
-MIME inventory。inventory 只改变发现方式，默认 Provider 仍是
-`repository`，应用还要显式选择 `magika`。
-
-应用可用下面的 feature 同时打开两侧的 inventory，再用 `--features inventory` 检查：
-
-```toml
 [features]
 inventory = ["qubit-magika/inventory"]
 ```
 
+相对路径以应用的 `Cargo.toml` 所在目录为基准。patch 会让传递依赖中的 crates.io
+`qubit-operation` 也解析到同一份 checkout。普通模式会创建 `ManagedInferenceRuntime` 并显式注册
+`MagikaMimeDetectorProvider`。fixture 直接引用 `qubit_magika` 类型，因此 inventory 模式能链接到其提交项；
+自建应用若没有其它符号引用，也可用 `use qubit_magika as _;` 保留该 crate。随后
+`MimeDetectorRegistry::builtin()` 能发现 `magika`。两种模式的默认选择都仍是 `repository`，应用必须显式选择
+`magika`。完整、可复制的入口见[固定版本中的 consumer fixture](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/src/main.rs)。
+
 此 consumer 使用动态加载 ONNX Runtime。安装 1.24.2 共享库，并将 `ORT_LIBRARY_PATH` 指向库文件；
-Linux 还需把库所在目录加入 `LD_LIBRARY_PATH`。Magika CI 使用经过校验的 1.24.2 Python wheel
-并设置这两个变量。从 Magika 源码目录执行 fixture：
+Linux 还需把库所在目录加入 `LD_LIBRARY_PATH`。
+[固定版本的 consumer workflow](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/.github/workflows/magika-consumer.yml)
+记录了经过校验的 wheel 下载地址和 SHA-256。在 `fixture-root/` 中，用 fixture 自带的锁文件运行：
 
 ```bash
-cargo +1.94.0 run --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml
-cargo +1.94.0 run --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml --features inventory
+cargo +1.94.0 check --locked --manifest-path rs-mime/tests/fixtures/magika_inventory_consumer/Cargo.toml
+cargo +1.94.0 run --locked --manifest-path rs-mime/tests/fixtures/magika_inventory_consumer/Cargo.toml
+cargo +1.94.0 check --locked --manifest-path rs-mime/tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
+cargo +1.94.0 run --locked --manifest-path rs-mime/tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
 ```
 
-fixture 自带 `Cargo.lock`。新建应用通常没有锁文件，应先从 `consumer-root/` 为应用生成，
-再分别检查普通和 inventory 配置中的 Operation 包身份；两棵依赖树都应只显示同一份
-`../rs-operation` checkout 和版本。随后构建并运行两种配置：
+不启用 inventory 的命令走显式注册；启用时走 registry 发现并显式选择 Magika。两条路径都会检查默认 Provider
+仍为 `repository`，并断言 Python 内容识别和 PDF 文件名识别结果。
+
+fixture 自带 `Cargo.lock`。在独立的 `consumer-root/app` 布局中，新建应用通常没有锁文件，
+应先为应用生成；随后以 `app/Cargo.toml` 为 manifest path，分别运行普通和 inventory 配置的
+`check` 与 `run`。也要用同一 manifest 对两种配置运行 `cargo tree -i qubit-operation`；
+每棵树都应只显示一份由 Magika 固定清单指定的 `rs-operation` checkout 中的 `qubit-operation`。
 
 ```bash
 cargo +1.94.0 generate-lockfile --manifest-path app/Cargo.toml
 cargo +1.94.0 tree --locked --manifest-path app/Cargo.toml -i qubit-operation
 cargo +1.94.0 tree --locked --manifest-path app/Cargo.toml --features inventory -i qubit-operation
 cargo +1.94.0 check --locked --manifest-path app/Cargo.toml
+cargo +1.94.0 check --locked --manifest-path app/Cargo.toml --features inventory
 cargo +1.94.0 run --locked --manifest-path app/Cargo.toml
 cargo +1.94.0 run --locked --manifest-path app/Cargo.toml --features inventory
 ```
+
+两条 `cargo tree` 都应只显示固定 `rs-operation` checkout 中的一份 `qubit-operation`。
+fixture 的 [manifest](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.toml)
+和[锁文件](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.lock)
+可在固定版本中查看，但不会进入 crate package；`.github` 工作流也不打包。
 
 Inventory 只改变发现方式：Magika 仍是同步 Registry Provider；它的
 `detect_async_path` 便捷方法不会把任务关联到父级 `OperationScope`。带 scope 的
@@ -503,11 +544,10 @@ backend。`file` 要求完整内容；
 `MimeSubmitFailure` 原样返还 `OwnedMimeInput`，调用方可以重试或改走其他入口。任务接纳后
 发生的检测错误则由 operation handle 以 `OperationOutcome::Failed` 报告，不再通过
 `MimeSubmitFailure` 返还输入。资源释放状态需要另行等待 settlement。
-现有 `FileCommandMimeDetector` 同步 API 仍可使用；受管 backend 用于通过 `MimeRuntime` 执行
+现有 `FileCommandMimeDetector` 同步 API 仍可使用；受管 backend 通过 `MimeRuntime` 执行
 operation 管理的任务。
 若为受管 `file` factory 附加任何 async classifier，runtime 配置阶段会以
-`UnsupportedCapability` 拒绝，即使输入不会触发 classifier 精化也一样。这项限制不移除旧的同步
-`FileCommandMimeDetector` API。
+`UnsupportedCapability` 拒绝，即使输入不会触发 classifier 精化也一样。
 受管 `file` backend 在内部 staging 流程中计量 Provider 读取；扩展 backend 的
 `ManagedProvider` session 契约见下文。
 旧版异步内容 hook 返回 `AsyncUnsupported`；若需让 operation 跟踪 staging、worker 执行和清理，
@@ -597,7 +637,7 @@ Provider 遇到 EOF 时，实际返回字节也可能更少。若预检无法预
 | Provider | 受管异步 backend | 输入与精化限制 |
 | --- | --- | --- |
 | `repository` | 支持 | 根据提供的字节匹配仓库规则；不支持随机访问输入。 |
-| `file` | 支持，须显式选择 | 要求完整内容，不支持随机访问。附加要求同一对象精化的 classifier 会以 `UnsupportedCapability` 拒绝。 |
+| `file` | 支持，须显式选择 | 要求完整内容，不支持随机访问。任何附加的异步 classifier 都会在 factory 创建时以 `UnsupportedCapability` 拒绝。 |
 | 仅同步的自定义 Provider | 不支持 | 异步选择返回 `AsyncUnsupported`，不会回退为同步执行。 |
 
 路径输入会按 native path 语义提取 basename，再交给专用文件名匹配入口；完整路径不会被重新当作文件名解析。
@@ -608,15 +648,12 @@ POSIX basename 内的反斜杠仍是文件名内容；非 UTF-8 本地 basename 
 Classifier 也需要单独显式选择异步实现并满足同一对象能力要求；不能假定每种 detector 选择都能
 使用 `ffprobe`。
 
-调用 `MimeExecutionServices::shutdown()` 会关闭新的根提交并返回可重复观察的 observer。先用
-`wait_services_settled()` 等待已跟踪操作完成 settlement。若需要恢复，通过
-`recovery_handles_snapshot()` 获取 operation group 中仍未解决的 handle，并在停止服务前完成恢复或转交。
-新的外部操作应在组准入关闭前完成接纳；也可以从已接纳到 MIME 组中的父 operation scope
-派发必要后代。
-组准入关闭后，新的外部 scope 不能首次加入，但已接纳的组内父 scope 仍可继续派发其后代。
-随后在外部同步上下文调用 `stop_services()`，再用 `wait_group_shutdown()` 等待组 Drain。
-Pending 表示工作仍未解决，不是资源已释放的确认；调用方仍持有 typed handle 时，组关闭也可能继续等待。
-操作或 recovery 未解决时，`stop_services()` 会返回 `OperationShutdownPending`，且不会自动重试恢复。
+关闭与重试顺序请参照可运行的
+[`managed_lifecycle` 示例](../examples/managed_lifecycle.rs)：关闭新的根提交，观察 outcome 和 settlement，
+释放 operation handle，处理或转交 recovery，再从 worker pool 外停止服务，最后等待组 Drain。
+组准入关闭前应先让所需的外部 scope 进入；关闭后，已接纳的父 scope 仍可派发后代。
+Pending 表示工作尚未解决，不能据此确认资源已释放。操作或 recovery 未解决时，
+`stop_services()` 会返回 `OperationShutdownPending`，且不会自动重试 recovery。
 `FixedMimeExecutionPort::shutdown()` 必须从 worker pool 之外的同步上下文调用。并发关闭调用会等待同一批
 worker 实际退出，并观察相同的最终结果。
 0.22.0 目标仍处于验收阶段；已验证行为和未完成的生命周期检查见[验收记录](acceptance-0.22.0-operation-0.2.zh_CN.md)。

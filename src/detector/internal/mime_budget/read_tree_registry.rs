@@ -25,9 +25,10 @@ use qubit_operation::ResourceCapacityError;
 use qubit_operation::ResourceManageErrorKind;
 
 use super::ReadTreeContext;
+use super::index_entry::IndexEntry;
+use super::index_entry::Roots;
 use super::parent_read_budget_anchor::ParentReadBudgetAnchor;
 use super::registration::Registration;
-use super::registration::Roots;
 
 #[path = "read_tree_registry/pending_binding.rs"]
 mod pending_binding;
@@ -84,7 +85,7 @@ impl ReadTreeRegistry {
         let operation = parent.id();
         {
             let mut roots = self.roots.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(root) = roots.get(&operation).and_then(Weak::upgrade) {
+            if let Some(root) = roots.get(&operation).and_then(IndexEntry::upgrade_target) {
                 return Ok(root.child(scope_limit));
             }
             roots.remove(&operation);
@@ -98,10 +99,12 @@ impl ReadTreeRegistry {
         self.roots
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(operation, Arc::downgrade(&root));
+            .insert(operation, IndexEntry::new(&root, &root));
         root.register(Registration {
             roots: Arc::downgrade(&self.roots),
             operation,
+            owner: Arc::downgrade(&root),
+            target: Arc::downgrade(&root),
         });
         Ok(root.child(scope_limit))
     }
@@ -125,7 +128,7 @@ impl ReadTreeRegistry {
         let operation = parent.id();
         {
             let mut roots = self.roots.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(root) = roots.get(&operation).and_then(Weak::upgrade) {
+            if let Some(root) = roots.get(&operation).and_then(IndexEntry::upgrade_target) {
                 return Some(root.child(scope_limit));
             }
             roots.remove(&operation);
@@ -146,7 +149,7 @@ impl ReadTreeRegistry {
             }
         }
         let mut ancestors = self.ancestors.lock().unwrap_or_else(|e| e.into_inner());
-        let root = ancestors.get(&operation).and_then(Weak::upgrade);
+        let root = ancestors.get(&operation).and_then(IndexEntry::upgrade_target);
         if root.is_none() {
             ancestors.remove(&operation);
         }
@@ -177,7 +180,7 @@ impl ReadTreeRegistry {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(&operation)
-            .and_then(Weak::upgrade)
+            .and_then(IndexEntry::upgrade_target)
         {
             return root.child(scope_limit);
         }
@@ -192,26 +195,33 @@ impl ReadTreeRegistry {
             let state = root.state.lock().unwrap_or_else(|e| e.into_inner());
             if matches!(&*state, PendingReadTreeRootState::Reserved(_)) {
                 let mut ancestors = self.ancestors.lock().unwrap_or_else(|e| e.into_inner());
-                ancestors.insert(operation, Arc::downgrade(&root.root));
+                ancestors.insert(operation, IndexEntry::new(&root.root, &root.root));
                 root.root.register(Registration {
                     roots: Arc::downgrade(&self.ancestors),
                     operation,
+                    owner: Arc::downgrade(&root.root),
+                    target: Arc::downgrade(&root.root),
                 });
                 return root.root.child(scope_limit);
             }
         }
         let mut ancestors = self.ancestors.lock().unwrap_or_else(|e| e.into_inner());
-        let root = ancestors.get(&operation).and_then(Weak::upgrade).unwrap_or_else(|| {
-            ancestors.remove(&operation);
-            // An association does not represent a provider read and must not
-            // choose the cumulative tree cap. The first committed read ticket
-            // selects it while holding the tree binding lock.
-            ReadTreeContext::new_for_operation(u64::MAX, parent.resource_authority(), operation)
-        });
-        ancestors.insert(operation, Arc::downgrade(&root));
+        let root = ancestors
+            .get(&operation)
+            .and_then(IndexEntry::upgrade_target)
+            .unwrap_or_else(|| {
+                ancestors.remove(&operation);
+                // An association does not represent a provider read and must not
+                // choose the cumulative tree cap. The first committed read ticket
+                // selects it while holding the tree binding lock.
+                ReadTreeContext::new_for_operation(u64::MAX, parent.resource_authority(), operation)
+            });
+        ancestors.insert(operation, IndexEntry::new(&root, &root));
         root.register(Registration {
             roots: Arc::downgrade(&self.ancestors),
             operation,
+            owner: Arc::downgrade(&root),
+            target: Arc::downgrade(&root),
         });
         root.child(scope_limit)
     }
@@ -239,7 +249,7 @@ impl ReadTreeRegistry {
         let operation = parent.id();
         let indexed_root = {
             let mut roots = self.roots.lock().unwrap_or_else(|e| e.into_inner());
-            let root = roots.get(&operation).and_then(Weak::upgrade);
+            let root = roots.get(&operation).and_then(IndexEntry::upgrade_target);
             if root.is_none() {
                 roots.remove(&operation);
             }
@@ -248,7 +258,7 @@ impl ReadTreeRegistry {
 
         let associated_root = {
             let mut ancestors = self.ancestors.lock().unwrap_or_else(|e| e.into_inner());
-            let root = ancestors.get(&operation).and_then(Weak::upgrade);
+            let root = ancestors.get(&operation).and_then(IndexEntry::upgrade_target);
             if root.is_none() {
                 ancestors.remove(&operation);
             }
@@ -274,7 +284,7 @@ impl ReadTreeRegistry {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .get(&anchor_operation)
-                .and_then(Weak::upgrade);
+                .and_then(IndexEntry::upgrade_target);
             if let Some(root) = anchored_root.filter(|root| root.is_anchored()) {
                 return Ok(PendingReadTreeBinding {
                     binding: PendingBinding::Existing(Arc::clone(&root)),
@@ -355,7 +365,7 @@ impl ReadTreeRegistry {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(&id)
-            .and_then(Weak::upgrade)
+            .and_then(IndexEntry::upgrade_target)
     }
 
     /// Poisons the registration mutex so coverage can exercise recovery.
@@ -376,19 +386,23 @@ impl ReadTreeRegistry {
         self.roots
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(id, Arc::downgrade(tree));
+            .insert(id, IndexEntry::new(tree, tree));
         tree.register(Registration {
             roots: Arc::downgrade(&self.roots),
             operation: id,
+            owner: Arc::downgrade(tree),
+            target: Arc::downgrade(tree),
         });
         let canonical_root = tree.canonical_root();
         self.ancestors
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(id, Arc::downgrade(&canonical_root));
-        canonical_root.register(Registration {
+            .insert(id, IndexEntry::new(tree, &canonical_root));
+        tree.register(Registration {
             roots: Arc::downgrade(&self.ancestors),
             operation: id,
+            owner: Arc::downgrade(tree),
+            target: Arc::downgrade(&canonical_root),
         });
     }
 }
@@ -416,6 +430,7 @@ mod tests {
     use qubit_operation::ResourceManageErrorKind;
     use qubit_operation::StopReason;
 
+    use super::IndexEntry;
     use super::PendingBinding;
     use super::ReadTreeContext;
     use super::ReadTreeRegistry;
@@ -619,11 +634,13 @@ mod tests {
             let stale_root = ReadTreeContext::new(3);
             let stale_weak = Arc::downgrade(&stale_root);
             drop(stale_root);
-            registry_body
-                .roots
-                .lock()
-                .unwrap()
-                .insert(operation, stale_weak.clone());
+            registry_body.roots.lock().unwrap().insert(
+                operation,
+                IndexEntry {
+                    owner: stale_weak.clone(),
+                    target: stale_weak.clone(),
+                },
+            );
 
             let child = registry_body.child_for_parent(scope, 12, 8).unwrap();
             assert!(stale_weak.upgrade().is_none());
@@ -632,7 +649,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .get(&operation)
-                .and_then(Weak::upgrade)
+                .and_then(IndexEntry::upgrade_target)
                 .expect("expired root should be replaced by a live parent tree");
             assert!(Arc::ptr_eq(&child.tree, &rebound.tree));
             assert_eq!(12, rebound.tree.limit());
@@ -968,6 +985,52 @@ mod tests {
             scope.id()
         });
         assert!(registry.for_operation(operation).is_none());
+    }
+
+    #[test]
+    fn test_sequential_child_bindings_release_indexes_without_losing_parent_budget() {
+        let registry = Arc::new(ReadTreeRegistry::default());
+        let registry_body = Arc::clone(&registry);
+        with_parent_scope(move |scope| {
+            let parent = registry_body.child_for_parent(scope, 16, 16).unwrap();
+            let canonical = Arc::clone(&parent.canonical_root());
+            assert_eq!(1, registry_body.roots.lock().unwrap().len());
+
+            for consumed in 1..=8 {
+                let id = operation_id();
+                let child = registry_body.existing_child_for_parent(scope, 16).unwrap();
+                registry_body.bind(id, &child);
+                assert_eq!(2, registry_body.roots.lock().unwrap().len());
+                assert_eq!(1, registry_body.ancestors.lock().unwrap().len());
+                assert_eq!(1, child.reserve(1).unwrap().commit(1));
+                drop(child);
+
+                assert!(registry_body.for_operation(id).is_none());
+                assert_eq!(1, registry_body.roots.lock().unwrap().len());
+                assert!(registry_body.ancestors.lock().unwrap().is_empty());
+                assert_eq!(consumed as u64, canonical.consumed());
+            }
+
+            let reused_id = operation_id();
+            let old_owner = registry_body.existing_child_for_parent(scope, 16).unwrap();
+            let new_owner = registry_body.existing_child_for_parent(scope, 16).unwrap();
+            registry_body.bind(reused_id, &old_owner);
+            registry_body.bind(reused_id, &new_owner);
+            drop(old_owner);
+
+            assert!(Arc::ptr_eq(
+                &new_owner,
+                &registry_body
+                    .for_operation(reused_id)
+                    .expect("replacement binding remains")
+            ));
+            assert_eq!(2, registry_body.roots.lock().unwrap().len());
+            assert_eq!(1, registry_body.ancestors.lock().unwrap().len());
+            drop(new_owner);
+            assert_eq!(1, registry_body.roots.lock().unwrap().len());
+            assert!(registry_body.ancestors.lock().unwrap().is_empty());
+            assert_eq!(8, canonical.consumed());
+        });
     }
 
     #[test]
@@ -1596,7 +1659,7 @@ mod tests {
                 .roots
                 .lock()
                 .unwrap()
-                .insert(scope.id(), Arc::downgrade(&old_root));
+                .insert(scope.id(), IndexEntry::new(&old_root, &old_root));
             drop(old_root);
 
             let child = bind_child(&registry_body, scope, 8, 4);

@@ -11,11 +11,11 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::task::Context;
 use std::task::Poll;
-use std::task::Waker;
 
 use super::AdmissionPermit;
 use super::AdmissionState;
 use super::AdmissionsSettled;
+use super::WaiterRegistration;
 
 /// Tracks callbacks that may still publish an operation observer.
 ///
@@ -92,8 +92,25 @@ impl AdmissionTracker {
             }
         };
         for waiter in waiters {
-            waiter.wake();
+            waiter.waker.wake();
         }
+    }
+
+    /// Removes a future's waiter registration after it is dropped.
+    ///
+    /// # Parameters
+    /// - `self`: Tracker whose waiter queue is updated.
+    /// - `identity`: Stable identity of the dropped future.
+    pub(in crate::detector::mime_execution_services) fn unregister_waiter(&self, identity: &Arc<()>) {
+        let removed = {
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            state
+                .waiters
+                .iter()
+                .position(|waiter| Arc::ptr_eq(&waiter.identity, identity))
+                .map(|index| state.waiters.swap_remove(index))
+        };
+        drop(removed);
     }
 
     /// Polls the zero-count condition and registers a task waker when needed.
@@ -103,24 +120,42 @@ impl AdmissionTracker {
     ///
     /// # Parameters
     /// - `self`: Tracker whose count is checked.
+    /// - `identity`: Stable identity of the future registering its waiter.
     /// - `context`: Poll context supplying the waiter waker.
     ///
     /// # Returns
     /// `Ready(())` when there are no active admissions; otherwise `Pending`.
-    pub(in crate::detector::mime_execution_services) fn poll_settled(&self, context: &Context<'_>) -> Poll<()> {
+    pub(in crate::detector::mime_execution_services) fn poll_settled(
+        &self,
+        identity: &Arc<()>,
+        context: &Context<'_>,
+    ) -> Poll<()> {
         let candidate = context.waker().clone();
-        let (ready, unused) = {
+        let (ready, unused, replaced) = {
             let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
             if state.active == 0 {
-                (true, Some(candidate))
-            } else if state.waiters.iter().any(|waiter: &Waker| waiter.will_wake(&candidate)) {
-                (false, Some(candidate))
+                let registered = state
+                    .waiters
+                    .iter()
+                    .position(|waiter| Arc::ptr_eq(&waiter.identity, identity))
+                    .map(|index| state.waiters.swap_remove(index));
+                (true, Some(candidate), registered.map(|waiter| waiter.waker))
+            } else if let Some(waiter) = state
+                .waiters
+                .iter_mut()
+                .find(|waiter| Arc::ptr_eq(&waiter.identity, identity))
+            {
+                (false, None, Some(std::mem::replace(&mut waiter.waker, candidate)))
             } else {
-                state.waiters.push(candidate);
-                (false, None)
+                state.waiters.push(WaiterRegistration {
+                    identity: Arc::clone(identity),
+                    waker: candidate,
+                });
+                (false, None, None)
             }
         };
         drop(unused);
+        drop(replaced);
         if ready { Poll::Ready(()) } else { Poll::Pending }
     }
 }
@@ -186,5 +221,61 @@ mod tests {
         assert!(!tracker.has_active());
         assert_eq!(1, wake.0.load(Ordering::SeqCst));
         assert_eq!(Poll::Ready(()), settled.as_mut().poll(&mut context));
+    }
+
+    #[test]
+    fn test_cancelled_settlement_waiters_unregister_their_wakers() {
+        let tracker = Arc::new(AdmissionTracker::default());
+        let _permit = tracker.register();
+        let wake = Arc::new(CountingWake(AtomicUsize::new(0)));
+        let waker = Waker::from(Arc::clone(&wake));
+        let mut context = Context::from_waker(&waker);
+
+        for _ in 0..16 {
+            let mut settled = Box::pin(tracker.settled());
+            assert_eq!(Poll::Pending, settled.as_mut().poll(&mut context));
+            assert_eq!(3, Arc::strong_count(&wake));
+            drop(settled);
+            assert_eq!(2, Arc::strong_count(&wake));
+            assert!(
+                tracker
+                    .state
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .waiters
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn test_settlement_waiter_replaces_waker_and_wakes_concurrent_waiters() {
+        let tracker = Arc::new(AdmissionTracker::default());
+        let first_permit = tracker.register();
+        let second_permit = tracker.register();
+        let first_wake = Arc::new(CountingWake(AtomicUsize::new(0)));
+        let second_wake = Arc::new(CountingWake(AtomicUsize::new(0)));
+        let first_waker = Waker::from(Arc::clone(&first_wake));
+        let second_waker = Waker::from(Arc::clone(&second_wake));
+        let mut first_context = Context::from_waker(&first_waker);
+        let mut second_context = Context::from_waker(&second_waker);
+        let mut first = Box::pin(tracker.settled());
+        let mut second = Box::pin(tracker.settled());
+
+        assert_eq!(Poll::Pending, first.as_mut().poll(&mut first_context));
+        assert_eq!(Poll::Pending, first.as_mut().poll(&mut second_context));
+        assert_eq!(2, Arc::strong_count(&first_wake));
+        assert_eq!(3, Arc::strong_count(&second_wake));
+        assert_eq!(Poll::Pending, second.as_mut().poll(&mut first_context));
+        assert_eq!(Poll::Pending, second.as_mut().poll(&mut second_context));
+        assert_eq!(2, tracker.state.lock().unwrap().waiters.len());
+
+        drop(first_permit);
+        assert_eq!(0, first_wake.0.load(Ordering::SeqCst));
+        drop(second_permit);
+        assert_eq!(2, second_wake.0.load(Ordering::SeqCst));
+        assert_eq!(0, first_wake.0.load(Ordering::SeqCst));
+        assert_eq!(Poll::Ready(()), first.as_mut().poll(&mut second_context));
+        assert_eq!(Poll::Ready(()), second.as_mut().poll(&mut second_context));
     }
 }

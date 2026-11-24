@@ -292,10 +292,12 @@ impl ReadTreeContext {
     /// - `registration`: Weak roots map and operation ID to remove on drop.
     pub(super) fn register(&self, registration: Registration) {
         let mut registrations = self.registrations.lock().unwrap_or_else(|e| e.into_inner());
-        if !registrations
-            .iter()
-            .any(|item| item.operation == registration.operation && Weak::ptr_eq(&item.roots, &registration.roots))
-        {
+        if !registrations.iter().any(|item| {
+            item.operation == registration.operation
+                && Weak::ptr_eq(&item.roots, &registration.roots)
+                && Weak::ptr_eq(&item.owner, &registration.owner)
+                && Weak::ptr_eq(&item.target, &registration.target)
+        }) {
             registrations.push(registration);
         }
     }
@@ -312,9 +314,11 @@ impl Drop for ReadTreeContext {
                 continue;
             };
             let mut roots = roots.lock().unwrap_or_else(|e| e.into_inner());
-            let matches = roots
-                .get(&registration.operation)
-                .is_some_and(|registered| eq(registered.as_ptr(), context));
+            let matches = roots.get(&registration.operation).is_some_and(|registered| {
+                eq(registered.owner.as_ptr(), context)
+                    && Weak::ptr_eq(&registered.owner, &registration.owner)
+                    && Weak::ptr_eq(&registered.target, &registration.target)
+            });
             if matches {
                 roots.remove(&registration.operation);
             }
@@ -340,6 +344,7 @@ mod tests {
     use qubit_operation::OperationManager;
     use qubit_operation::OperationOutcome;
 
+    use super::super::index_entry::IndexEntry;
     use super::super::registration::Registration;
     use super::ReadTreeContext;
 
@@ -566,6 +571,8 @@ mod tests {
         context.register(Registration {
             roots: Arc::downgrade(&roots),
             operation,
+            owner: Arc::downgrade(&context),
+            target: Arc::downgrade(&context),
         });
 
         drop(roots);
@@ -580,6 +587,8 @@ mod tests {
         let registration = || Registration {
             roots: Arc::downgrade(&roots),
             operation,
+            owner: Arc::downgrade(&context),
+            target: Arc::downgrade(&context),
         };
 
         context.register(registration());
@@ -600,17 +609,22 @@ mod tests {
         let roots = Arc::new(Mutex::new(HashMap::new()));
         let old = ReadTreeContext::new(8);
         let replacement = ReadTreeContext::new(16);
-        roots.lock().unwrap().insert(operation, Arc::downgrade(&replacement));
+        roots
+            .lock()
+            .unwrap()
+            .insert(operation, IndexEntry::new(&replacement, &replacement));
         old.register(Registration {
             roots: Arc::downgrade(&roots),
             operation,
+            owner: Arc::downgrade(&old),
+            target: Arc::downgrade(&replacement),
         });
 
         drop(old);
 
         assert!(Arc::ptr_eq(
             &replacement,
-            &roots.lock().unwrap().get(&operation).unwrap().upgrade().unwrap()
+            &roots.lock().unwrap().get(&operation).unwrap().upgrade_target().unwrap()
         ));
     }
 
@@ -632,6 +646,8 @@ mod tests {
         context.register(Registration {
             roots: Arc::downgrade(&roots),
             operation,
+            owner: Arc::downgrade(&context),
+            target: Arc::downgrade(&context),
         });
         assert_eq!(
             1,

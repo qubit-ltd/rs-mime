@@ -212,7 +212,10 @@ Registry。
 默认选择。重复 selector 会使 inventory 构建失败；未启用此 feature 时仍需显式注册。
 
 通过 registry 使用 Magika inventory，要求 `qubit-mime` 0.22 和 `qubit-magika` 0.18
-均已发布。版本未齐时，可按[用户手册中的固定源码接入步骤](doc/user_guide.zh_CN.md#固定源码接入-magika)准备同级 checkout，并查看应用 manifest、动态 ONNX Runtime 前置条件，以及普通/inventory 两种检查方式。fixture 自带锁文件；新应用先生成自己的 `Cargo.lock` 再使用 `--locked`。手册列出了 fixture 两种运行命令和应用的 `cargo tree -i qubit-operation` 包身份检查。
+均已发布。2026-11-24 的 registry manifest 检查发现 `qubit-mime` 0.22.0 尚未发布。
+[固定源码接入指南](doc/user_guide.zh_CN.md#固定源码接入-magika)列出同级仓库的确切 revision、应用配置、`cargo check` 与 `--locked` 命令，以及动态 ONNX Runtime 前置条件。
+[T4 固定版本中的 consumer fixture](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/src/main.rs)在普通模式显式注册 Magika，启用 inventory 时由 registry 发现后再显式选择。
+[固定版本的 workflow](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/.github/workflows/magika-consumer.yml)记录了经过校验的运行库下载方式；[fixture manifest](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.toml) 和 [锁文件](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.lock)也固定在同一版本。fixture 源码、锁文件和 workflow 都可在源码仓库查看，但不会进入已发布的 crate package。
 
 常用配置键包括 `mime.detector.default`、`mime.detector.fallbacks`、
 `mime.max.buffer.size`、`mime.command.timeout` 和 `mime.command.output.max.bytes`。

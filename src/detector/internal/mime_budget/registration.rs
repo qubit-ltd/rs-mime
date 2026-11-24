@@ -6,16 +6,12 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
-use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::Weak;
 
 use qubit_operation::OperationId;
 
-use super::ReadTreeContext;
-
-/// Weak registry entries keyed by operation identity.
-pub(super) type Roots = Mutex<HashMap<OperationId, Weak<ReadTreeContext>>>;
+use super::index_entry::Roots;
+use super::read_tree_context::ReadTreeContext;
 
 /// Weak information needed to remove one context's operation index on drop.
 #[derive(Debug)]
@@ -24,4 +20,8 @@ pub(super) struct Registration {
     pub(super) roots: Weak<Roots>,
     /// Operation ID associated with the weak context entry.
     pub(super) operation: OperationId,
+    /// Context whose drop is responsible for removing this entry.
+    pub(super) owner: Weak<ReadTreeContext>,
+    /// Context returned when this operation identity is looked up.
+    pub(super) target: Weak<ReadTreeContext>,
 }
