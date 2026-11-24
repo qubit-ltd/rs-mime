@@ -123,6 +123,16 @@ multiple no-filename mappings associate one MIME type with different pairs,
 refinement preserves the original MIME type; pass a matching filename or remove
 the mapping conflict to select a pair.
 
+These input routes keep separate contracts: an ordinary backend's
+`ContentRequirement::Prefix(n)` is the maximum window requested from a reader,
+and ordinary automatic provider reads pass it as `InputExtent::Prefix` even
+when EOF shortens it. `OwnedMimeInput::Bytes` keeps the bytes and `InputExtent`
+supplied by the caller and is not charged as Provider I/O. Managed provider
+input is read through `MeteredReadSession` against the operation's shared read
+budget. The legacy `max_bytes` arguments on
+`detect_path` and `detect_async_path` remain explicit prefix limits for those
+entry points.
+
 Managed detection uses owned inputs, explicit scopes, finite request budgets,
 and separate outcome and settlement observation. Construction and provider
 registration do not start workers; applications prepare and stop the MIME
@@ -161,13 +171,17 @@ cannot reserve shared ancestor read allowance, its outcome reports
 `MimeError::BudgetExceeded { kind: "read", .. }`. Extension backends can opt
 into `MeteredReadSession`, which clips each read to available allowance and
 reserves scratch memory separately. The built-in `file` provider meters its
-staging reads internally.
+staging reads internally. `MimeBudgetSummary.bytes_read` counts bytes delivered
+by reads initiated by that request, including repeats; descendants have their
+own reports, while ancestor caps still constrain combined usage.
 
 The legacy synchronous `FileCommandMimeDetector` methods remain available
 alongside the managed `file` provider. The managed provider stages input within
 the operation and meters provider bytes internally. Its factory rejects any
 attached async classifier with `UnsupportedCapability`, even when an input
 would not invoke refinement; that configuration error occurs before submission.
+The legacy asynchronous content hook returns `AsyncUnsupported`; use the
+managed provider when staging, worker execution, and cleanup must be tracked.
 This rule applies to the managed factory and does not remove the legacy sync API.
 
 Path-backed filename detection extracts the native path basename before
@@ -265,7 +279,7 @@ providers continue to require explicit registration.
 
 Registry-based Magika inventory consumption requires published `qubit-mime`
 0.22 and `qubit-magika` 0.18 releases. Until both are available, use the
-[fixed-source setup documented in the Magika user guide](https://github.com/qubit-ltd/rs-magika/blob/main/doc/user_guide.md#conceptual-model).
+[fixed-source consumer setup in the user guide](doc/user_guide.md#fixed-source-magika-consumer) gives the sibling checkout layout, application manifest, dynamic ONNX Runtime prerequisite, and normal/inventory checks. The fixture has its own lock file; an application creates one before using `--locked`. The guide lists both fixture commands and the separate application `cargo tree -i qubit-operation` checks.
 
 Important configuration keys include `mime.detector.default`,
 `mime.detector.fallbacks`, `mime.max.buffer.size`,
