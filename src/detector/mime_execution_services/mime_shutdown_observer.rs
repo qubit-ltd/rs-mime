@@ -120,8 +120,14 @@ impl MimeShutdownObserver {
     /// has unsettled operation scopes or any recovery is unresolved, or
     /// propagates an execution shutdown error.
     pub fn stop_services(&self) -> Result<MimeShutdownSnapshot, crate::MimeError> {
-        let _lifecycle = self.services.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
-        if self.services.lifecycle() != MimeServiceLifecycle::Stopped {
+        {
+            let _lifecycle = self.services.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
+            if self.services.lifecycle() == MimeServiceLifecycle::Stopped {
+                return Ok(self.snapshot());
+            }
+            if self.services.stopping.swap(true, Ordering::AcqRel) {
+                return Err(crate::MimeError::OperationShutdownPending);
+            }
             let _submissions = self.services.submission_guard();
             // Freeze MIME-mediated submissions only once. Accepted direct
             // scope descendants remain covered by the group settlement gate.
@@ -129,25 +135,32 @@ impl MimeShutdownObserver {
                 self.services.root_group.close_admission();
             }
             if !self.services.operations_settled.load(Ordering::Acquire) {
+                self.services.stopping.store(false, Ordering::Release);
                 return Err(crate::MimeError::OperationShutdownPending);
             }
             if self.services.has_unsettled_operations() {
+                self.services.stopping.store(false, Ordering::Release);
                 return Err(crate::MimeError::OperationShutdownPending);
             }
             if self.services.unresolved_recovery_count() != 0 {
+                self.services.stopping.store(false, Ordering::Release);
                 return Err(crate::MimeError::OperationShutdownPending);
             }
-            self.services.execution.shutdown()?;
-            let shutdown = self
-                .services
-                .root_group
-                .request_shutdown(ShutdownMode::Drain)
-                .as_async();
-            *self.services.group_shutdown.lock().unwrap_or_else(|e| e.into_inner()) = Some(shutdown);
-            self.services
-                .lifecycle
-                .store(MimeServiceLifecycle::Stopped as u8, Ordering::Release);
         }
+        if let Err(error) = self.services.execution.shutdown() {
+            self.services.stopping.store(false, Ordering::Release);
+            return Err(error);
+        }
+        let _lifecycle = self.services.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let shutdown = self
+            .services
+            .root_group
+            .request_shutdown(ShutdownMode::Drain)
+            .as_async();
+        *self.services.group_shutdown.lock().unwrap_or_else(|e| e.into_inner()) = Some(shutdown);
+        self.services
+            .lifecycle
+            .store(MimeServiceLifecycle::Stopped as u8, Ordering::Release);
         Ok(self.snapshot())
     }
 
@@ -229,6 +242,11 @@ mod tests {
         before_shutdown: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     }
 
+    struct SignalShutdownExecutionPort {
+        worker_port: Arc<FixedMimeExecutionPort>,
+        shutdown_started: Mutex<Option<mpsc::Sender<()>>>,
+    }
+
     struct ReleaseOnDrop(mpsc::Sender<()>);
 
     impl Drop for ReleaseOnDrop {
@@ -260,6 +278,27 @@ mod tests {
                 before_shutdown();
             }
             self.shutdown_calls.fetch_add(1, Ordering::SeqCst);
+            self.worker_port.shutdown()
+        }
+    }
+
+    impl Debug for SignalShutdownExecutionPort {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+            formatter
+                .debug_struct("SignalShutdownExecutionPort")
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl MimeExecutionPort for SignalShutdownExecutionPort {
+        fn prepare(&self) -> Result<(), MimeError> {
+            self.worker_port.prepare()
+        }
+
+        fn shutdown(&self) -> Result<(), MimeError> {
+            if let Some(sender) = self.shutdown_started.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                sender.send(()).unwrap();
+            }
             self.worker_port.shutdown()
         }
     }
@@ -306,6 +345,121 @@ mod tests {
             self.shutdown_calls.fetch_add(1, Ordering::SeqCst);
             self.worker_port.shutdown()
         }
+    }
+
+    #[test]
+    fn test_reentrant_stop_during_execution_shutdown_returns_pending() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let worker_port = Arc::new(FixedMimeExecutionPort::new(1, 1));
+        let shutdown_calls = Arc::new(AtomicUsize::new(0));
+        let execution = Arc::new(LateSubmissionExecutionPort {
+            worker_port,
+            shutdown_calls: Arc::clone(&shutdown_calls),
+            before_shutdown: Mutex::new(None),
+        });
+        let services = MimeExecutionServices::new(manager, group, execution.clone(), 16).unwrap();
+        services.prepare().unwrap();
+        let observer = services.shutdown();
+        let _ = block_on(observer.wait_services_settled()).unwrap();
+        let runtime = crate::detector::MimeRuntime::builtin()
+            .unwrap()
+            .with_execution_services(services.clone());
+        let original: Arc<[u8]> = Arc::from(b"shutdown callback input".as_slice());
+        let callback_original = Arc::clone(&original);
+        let (result_tx, result_rx) = mpsc::channel();
+        let reentrant_observer = observer.clone();
+        let callback_runtime = runtime.clone();
+        *execution.before_shutdown.lock().unwrap() = Some(Box::new(move || {
+            let failure = match callback_runtime.try_submit_detection(
+                OwnedMimeInput::bytes(Arc::clone(&callback_original), crate::detector::InputExtent::Complete),
+                Default::default(),
+            ) {
+                Err(failure) => failure,
+                Ok(_) => panic!("shutdown callback reentry must return its request"),
+            };
+            let input_returned = match failure.input {
+                crate::OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(&content, &callback_original),
+                crate::OwnedMimeInput::Provider { .. } => false,
+            };
+            let reentrant_stop = reentrant_observer.stop_services();
+            result_tx
+                .send((failure.reason, input_returned, reentrant_stop))
+                .unwrap();
+        }));
+
+        let stopping_observer = observer.clone();
+        let (stop_tx, stop_rx) = mpsc::channel();
+        thread::spawn(move || stop_tx.send(stopping_observer.stop_services()).unwrap());
+        assert!(
+            stop_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .expect("shutdown must return after a reentrant request is rejected")
+                .unwrap()
+                .services_stopped
+        );
+        let (reason, input_returned, reentrant_stop) =
+            result_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            reason,
+            crate::detector::MimeSubmitRejection::ExecutionServicesRequired
+                | crate::detector::MimeSubmitRejection::Admission(_)
+        ));
+        assert!(input_returned);
+        assert!(matches!(reentrant_stop, Err(MimeError::OperationShutdownPending)));
+        assert_eq!(1, shutdown_calls.load(Ordering::SeqCst));
+        assert_eq!(original.as_ref(), b"shutdown callback input");
+    }
+
+    #[test]
+    fn test_accepted_worker_job_reentrant_mime_submit_returns_original_input() {
+        let manager = OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(GroupOptions { capacity: 1 }).unwrap();
+        let worker_port = Arc::new(FixedMimeExecutionPort::new(1, 2));
+        let (shutdown_started_tx, shutdown_started_rx) = mpsc::channel();
+        let execution = Arc::new(SignalShutdownExecutionPort {
+            worker_port: Arc::clone(&worker_port),
+            shutdown_started: Mutex::new(Some(shutdown_started_tx)),
+        });
+        let services = MimeExecutionServices::new(manager, group, execution, 1024).unwrap();
+        services.prepare().unwrap();
+        let runtime = crate::detector::MimeRuntime::builtin()
+            .unwrap()
+            .with_execution_services(services.clone());
+        let (result_tx, result_rx) = mpsc::channel();
+        let original: Arc<[u8]> = Arc::from(b"accepted worker job".as_slice());
+        let job_runtime = runtime.clone();
+        let job_original = Arc::clone(&original);
+        let accepted = worker_port.try_dispatch(Box::new(move || {
+            shutdown_started_rx.recv().unwrap();
+            let failure = match job_runtime.try_submit_detection(
+                OwnedMimeInput::bytes(Arc::clone(&job_original), InputExtent::Complete),
+                Default::default(),
+            ) {
+                Err(failure) => failure,
+                Ok(_) => panic!("shutdown must reject MIME reentry from an accepted worker job"),
+            };
+            let returned = match failure.input {
+                crate::OwnedMimeInput::Bytes { content, .. } => Arc::ptr_eq(&content, &job_original),
+                crate::OwnedMimeInput::Provider { .. } => false,
+            };
+            result_tx.send((failure.reason, returned)).unwrap();
+        }));
+        assert!(accepted.is_ok(), "worker job should be accepted before shutdown");
+        let observer = services.shutdown();
+        let _ = block_on(observer.wait_services_settled()).unwrap();
+
+        let stopping = observer.clone();
+        let stop_thread = thread::spawn(move || stopping.stop_services());
+        let (reason, returned) = result_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            reason,
+            crate::detector::MimeSubmitRejection::ExecutionServicesRequired
+                | crate::detector::MimeSubmitRejection::Admission(_)
+        ));
+        assert!(returned, "the rejected request must return the same Arc input");
+        assert!(stop_thread.join().unwrap().unwrap().services_stopped);
+        assert_eq!(original.as_ref(), b"accepted worker job");
     }
 
     #[test]

@@ -54,6 +54,23 @@ pub trait FileBasedMimeDetector: Debug + Send + Sync {
     #[must_use]
     fn guess_from_filename(&self, filename: &str) -> Vec<String>;
 
+    /// Guesses MIME type names from an already extracted native basename.
+    ///
+    /// The default keeps existing implementations compatible by forwarding
+    /// to the filename hook. Implementations backed by path-aware filename
+    /// rules can override this method to preserve separator characters that
+    /// are part of a native basename.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename with path separators already removed.
+    ///
+    /// # Returns
+    /// Candidate MIME type names ordered by backend confidence.
+    #[must_use]
+    fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
+        self.guess_from_filename(basename)
+    }
+
     /// Guesses MIME type names from one local file.
     ///
     /// # Parameters
@@ -90,6 +107,15 @@ where
     #[inline]
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         FileBasedMimeDetector::guess_from_filename(self, filename)
+    }
+
+    /// Forwards native basename matching to the file-based detector.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename with path separators already removed.
+    #[inline]
+    fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
+        FileBasedMimeDetector::guess_from_filename_basename(self, basename)
     }
 
     /// Stages content to a temporary local file before inspection.

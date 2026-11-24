@@ -391,6 +391,21 @@ impl<'a> FileCommandMimeDetector<'a> {
             .collect()
     }
 
+    /// Gets filename candidates from an already extracted native basename.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename whose filename rules are matched.
+    ///
+    /// # Returns
+    /// Candidate MIME type names in repository order.
+    fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
+        self.repository
+            .detect_by_filename_basename(basename)
+            .into_iter()
+            .map(|mime_type| mime_type.name().to_owned())
+            .collect()
+    }
+
     /// Gets content candidates from `file`.
     ///
     /// # Parameters
@@ -714,6 +729,17 @@ impl<'a> FileBasedMimeDetector for FileCommandMimeDetector<'a> {
     /// Matching MIME type names in repository order.
     fn guess_from_filename(&self, filename: &str) -> Vec<String> {
         FileCommandMimeDetector::guess_from_filename(self, filename)
+    }
+
+    /// Guesses filename candidates from an already extracted native basename.
+    ///
+    /// # Parameters
+    /// - `basename`: Native basename whose filename rules are matched.
+    ///
+    /// # Returns
+    /// Candidate MIME type names in repository order.
+    fn guess_from_filename_basename(&self, basename: &str) -> Vec<String> {
+        FileCommandMimeDetector::guess_from_filename_basename(self, basename)
     }
 
     /// Guesses MIME type names from a local file using the file command.

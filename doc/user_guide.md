@@ -518,11 +518,17 @@ runtime without execution services returns a typed
 returns `AsyncUnsupported`. Both rejections return the original
 `OwnedMimeInput` in `MimeSubmitFailure`, so the caller can retry or choose another
 path. Once accepted, detection failures are reported by the operation handle.
+The handle reports a detector failure as `OperationOutcome::Failed`; this is
+distinct from `MimeSubmitFailure`, which means the operation was not accepted
+and returns the original input. Observe settlement separately to confirm
+resource release.
 The existing `FileCommandMimeDetector` synchronous APIs remain available; the
 managed backend is selected through `MimeRuntime` for operation-backed work.
-When `file` is selected with an async classifier, its factory rejects the
+When `file` is selected with any async classifier, its factory rejects the
 selection with `UnsupportedCapability` during runtime configuration, even if
-the submitted input would not require classifier refinement.
+the submitted input would not require classifier refinement. The managed
+`file` backend meters provider bytes internally while staging complete input;
+extension backends use the exposed `ManagedProvider` session described below.
 
 For the managed `repository` provider, an input marked `Prefix` is used only for
 base MIME matching. It is not passed to an async media classifier, even when a
@@ -551,7 +557,7 @@ fewer bytes at EOF. No read goes past the prefix bound.
 Read sequentially until `read()` returns zero to observe EOF; a short read alone
 does not prove EOF. Use `read_at(offset, buffer)` to sample the same opened
 object. Each call is charged independently, including repeated or overlapping
-samples. If a call exceeds the remaining request or ancestor allowance, it
+samples. If a call exceeds the remaining request or service allowance, it
 returns a read-budget error; handle that error as a failed inspection rather
 than reopening the path or retrying through an unmetered handle.
 
@@ -569,7 +575,7 @@ inspect_sample(&sample[..count]);
 ```
 
 Each session read is clipped to the caller's buffer, the payload limit, the
-remaining request and ancestor read allowances, and an 8 KiB chunk. The runtime
+remaining request and service read allowances, and an 8 KiB chunk. The runtime
 reserves an 8 KiB maximum private scratch buffer before provider I/O and copies
 only successfully returned bytes into the backend buffer. Provider errors do
 not expose partial scratch data. EOF returns zero, and read accounting charges
@@ -594,10 +600,12 @@ a scope deadline. Async detection polls the deadline and stop signal alongside
 the backend future, so a deadline can wake a provider read that would not wake
 on its own. The operation reports `Stopped(Timeout)`; an accepted user-cancel
 request keeps its `UserCancelled` reason when it races the deadline. Repository
-matching checks for stop at cooperative batch boundaries, so CPU work is not
-preempted in the middle of a batch. Synchronous child detection is likewise
-not forcibly interrupted and can observe stop only at its own cooperative
-checks.
+matching checks for stop at cooperative batch boundaries. Deadline and stop are
+also checked after the backend becomes ready and before its result is committed,
+so an expired deadline can stop a ready success or error. CPU work is not
+preempted in the middle of a matcher batch. Synchronous child detection is
+likewise not forcibly interrupted and can observe stop only at its own
+cooperative checks.
 
 If temporary-file creation fails after creating a partial file, the filesystem
 error may carry an owner that still needs cleanup. The runtime registers that
@@ -612,16 +620,10 @@ Use `try_submit_detection_in` to submit beneath an existing
 MIME group binding. The synchronous child entry point is
 `try_submit_detection_sync_in`. Provider capabilities are:
 
-All MIME children submitted beneath the same external parent share one
-cumulative provider-read budget for that parent's lifetime, including
-sequential children after earlier handles have settled and been dropped. The
-first child fixes the tree limit to the smaller of its request limit and the
-service limit; later children cannot enlarge it. MIME retains one read-budget
-anchor in the parent resource scope, so the parent needs one available resource
-entry. If that registration fails because the scope is full, stopped, or ended,
-submission returns `ReadBudgetBinding` with the resource error kind and the
-original input. Independent root operations and distinct parents have separate
-budgets.
+The exact ancestor read-budget inheritance and partial provider-read accounting
+for nested managed operations remain under 0.22.0 acceptance. See the
+[acceptance record](acceptance-0.22.0-operation-0.2.zh_CN.md) before relying on
+specific parent/child sharing or settlement boundaries.
 
 | Provider | Managed async backend | Input and refinement limits |
 | --- | --- | --- |
@@ -629,9 +631,11 @@ budgets.
 | `file` | Yes, after explicit selection | Requires complete content and does not support random-access input. Attaching a classifier that needs same-object refinement is rejected with `UnsupportedCapability`. |
 | Sync-only custom provider | No | Async selection returns `AsyncUnsupported`; it is not run synchronously as a fallback. |
 
-For path-backed inputs, filename rules receive the extracted basename through
+For path-backed inputs, filename rules receive the native path basename through
 the basename matching entry point; the full path is not reinterpreted as a
-filename. `OwnedMimeInput::Bytes` continues to use its caller-supplied filename.
+filename. On POSIX, a backslash within that basename remains filename data;
+non-UTF-8 local basenames are converted lossily for matching.
+`OwnedMimeInput::Bytes` continues to use its caller-supplied filename.
 
 Selecting a command provider does not guarantee the external command is
 available or will run successfully. Those are runtime conditions reported by

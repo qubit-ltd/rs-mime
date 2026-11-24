@@ -658,6 +658,7 @@ fn parse_offset(value: &str) -> MimeResult<(usize, usize)> {
 ///
 /// # Parameters
 /// - `value`: Number text.
+/// - `attribute`: XML attribute name used in diagnostics.
 /// - `attribute`: Attribute name used in error messages.
 ///
 /// # Returns

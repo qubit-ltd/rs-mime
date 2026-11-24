@@ -234,7 +234,21 @@ pub(in crate::detector) async fn detect(request: MimeSubmission) -> MimeResult<M
                 format!("operation stopped: {reason:?}"),
             )));
         }
-        detection.as_mut().poll(cx)
+        let result = detection.as_mut().poll(cx);
+        if result.is_ready() {
+            if let Some(reason) = context.stop_reason() {
+                return Poll::Ready(Err(MimeError::detector_backend(
+                    "mime",
+                    format!("operation stopped: {reason:?}"),
+                )));
+            }
+            if let Some(deadline) = deadline.as_mut()
+                && deadline.as_mut().poll(cx).is_ready()
+            {
+                return Poll::Ready(Err(MimeError::detector_backend("mime", "operation deadline expired")));
+            }
+        }
+        result
     })
     .await
 }

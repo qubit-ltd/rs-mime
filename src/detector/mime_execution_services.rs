@@ -106,6 +106,9 @@ pub struct MimeExecutionServices {
     admission_frozen: Arc<AtomicBool>,
     /// Serializes lifecycle transitions.
     lifecycle_lock: Arc<Mutex<()>>,
+    /// Claims the one blocking execution shutdown call without holding locks
+    /// that a shutdown callback can re-enter.
+    stopping: Arc<AtomicBool>,
     /// Prevents submissions racing with settlement and shutdown.
     submission_lock: Arc<Mutex<()>>,
     /// Observers for operations that have not yet been harvested.
@@ -191,6 +194,7 @@ impl MimeExecutionServices {
             top_closed: Arc::new(AtomicBool::new(false)),
             admission_frozen: Arc::new(AtomicBool::new(false)),
             lifecycle_lock: Arc::new(Mutex::new(())),
+            stopping: Arc::new(AtomicBool::new(false)),
             submission_lock: Arc::new(Mutex::new(())),
             observers: Arc::new(Mutex::new(Vec::new())),
             recoveries: Arc::new(Mutex::new(Vec::new())),

@@ -6,7 +6,9 @@
 //    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
+use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::fs;
 use std::path::Component;
 use std::path::Path;
@@ -48,17 +50,10 @@ fn test_packaged_markdown_links_resolve_inside_package_file_set() {
         .collect::<HashSet<_>>();
     assert!(!packaged.is_empty(), "cargo package returned an empty file list");
 
-    for document in DOCUMENTS {
-        let markdown =
-            fs::read_to_string(package_root.join(document)).unwrap_or_else(|error| panic!("read {document}: {error}"));
-        for target in local_markdown_links(&markdown) {
-            let resolved = resolve_link(document, &target);
-            assert!(
-                packaged.contains(&resolved),
-                "{document} links to {target:?}, which resolves to {resolved:?} but is absent from cargo package --list"
-            );
-        }
-    }
+    verify_reachable_markdown(&DOCUMENTS.map(str::to_owned), &packaged, |document| {
+        fs::read_to_string(package_root.join(document)).map_err(|error| format!("read {document}: {error}"))
+    })
+    .unwrap_or_else(|error| panic!("packaged Markdown links are invalid: {error}"));
 
     assert!(
         !packaged
@@ -68,7 +63,7 @@ fn test_packaged_markdown_links_resolve_inside_package_file_set() {
     );
 }
 
-fn local_markdown_links(markdown: &str) -> Vec<String> {
+fn local_markdown_links_with_fragments(markdown: &str) -> Vec<(String, Option<String>)> {
     let mut visible = String::with_capacity(markdown.len());
     let mut fenced = false;
     for line in markdown.lines() {
@@ -96,13 +91,99 @@ fn local_markdown_links(markdown: &str) -> Vec<String> {
         } else if let Some(space) = target.find(char::is_whitespace) {
             target = &target[..space];
         }
-        let path = target.split(['#', '?']).next().unwrap_or_default();
-        if path.ends_with(".md") && !path.contains("://") && !path.starts_with("mailto:") {
-            links.push(path.to_owned());
+        if target.starts_with("//") || target.contains("://") || target.starts_with("mailto:") {
+            cursor = end + 1;
+            continue;
+        }
+        let (path, fragment) = target.split_once('#').unwrap_or((target, ""));
+        let path = path.split('?').next().unwrap_or_default();
+        if path.ends_with(".md") || (path.is_empty() && !fragment.is_empty()) {
+            links.push((path.to_owned(), (!fragment.is_empty()).then(|| fragment.to_owned())));
         }
         cursor = end + 1;
     }
     links
+}
+
+fn verify_reachable_markdown<F>(
+    roots: &[String],
+    packaged: &HashSet<String>,
+    mut read_document: F,
+) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<String, String>,
+{
+    let mut pending = VecDeque::from(roots.to_vec());
+    let mut visited = HashSet::new();
+    let mut documents: HashMap<String, String> = HashMap::new();
+    while let Some(document) = pending.pop_front() {
+        if !visited.insert(document.clone()) {
+            continue;
+        }
+        if !packaged.contains(&document) {
+            return Err(format!(
+                "reachable Markdown document {document:?} is absent from cargo package --list"
+            ));
+        }
+        let markdown = read_document(&document)?;
+        for (target, fragment) in local_markdown_links_with_fragments(&markdown) {
+            let resolved = if target.is_empty() {
+                document.clone()
+            } else {
+                resolve_link(&document, &target)
+            };
+            if !packaged.contains(&resolved) {
+                return Err(format!(
+                    "{document} links to {target:?}, which resolves to {resolved:?} but is absent from cargo package --list"
+                ));
+            }
+            if let Some(fragment) = fragment {
+                let target_markdown = if resolved == document {
+                    markdown.as_str()
+                } else if let Some(cached) = documents.get(&resolved) {
+                    cached.as_str()
+                } else {
+                    let content = read_document(&resolved)?;
+                    documents.insert(resolved.clone(), content);
+                    documents.get(&resolved).expect("document was inserted").as_str()
+                };
+                if !markdown_anchors(target_markdown).contains(&fragment) {
+                    return Err(format!("{document} links to missing anchor #{fragment} in {resolved}"));
+                }
+            }
+            pending.push_back(resolved);
+        }
+        documents.insert(document, markdown);
+    }
+    Ok(())
+}
+
+fn markdown_anchors(markdown: &str) -> HashSet<String> {
+    markdown
+        .lines()
+        .filter_map(|line| {
+            let heading = line.trim_start().trim_start_matches('#');
+            if heading.len() == line.trim_start().len() || !line.trim_start().starts_with('#') {
+                return None;
+            }
+            let heading = heading.trim().trim_matches('#').trim();
+            let mut slug = String::new();
+            let mut previous_dash = false;
+            for character in heading.chars().flat_map(char::to_lowercase) {
+                if character.is_alphanumeric() {
+                    slug.push(character);
+                    previous_dash = false;
+                } else if (character.is_whitespace() || character == '-') && !slug.is_empty() && !previous_dash {
+                    slug.push('-');
+                    previous_dash = true;
+                }
+            }
+            while slug.ends_with('-') {
+                slug.pop();
+            }
+            Some(slug)
+        })
+        .collect()
 }
 
 fn resolve_link(document: &str, target: &str) -> String {
@@ -157,13 +238,23 @@ impl Drop for TargetCleanup {
 
 #[cfg(test)]
 mod tests {
-    use super::local_markdown_links;
+    use std::collections::HashMap;
+    use std::collections::HashSet;
+
+    use super::local_markdown_links_with_fragments;
     use super::resolve_link;
+    use super::verify_reachable_markdown;
 
     #[test]
     fn test_link_extraction_skips_external_anchors_and_fenced_examples() {
         let markdown = "[local](../guide.md#part) [external](https://example.test/a.md) [anchor](#part)\n```md\n[example](missing.md)\n```\n";
-        assert_eq!(vec!["../guide.md".to_owned()], local_markdown_links(markdown));
+        assert_eq!(
+            vec![
+                ("../guide.md".to_owned(), Some("part".to_owned())),
+                (String::new(), Some("part".to_owned())),
+            ],
+            local_markdown_links_with_fragments(markdown)
+        );
         assert_eq!("guide.md", resolve_link("doc/page.md", "../guide.md"));
     }
 
@@ -173,5 +264,24 @@ mod tests {
             "doc/other.md",
             resolve_link("doc/section/page.md", ".././other.md#heading")
         );
+    }
+
+    #[test]
+    fn test_two_hop_missing_markdown_link_is_rejected() {
+        let documents = HashMap::from([
+            ("README.md", "[guide](doc/guide.md)"),
+            ("doc/guide.md", "[missing](details.md)"),
+        ]);
+        let packaged = HashSet::from(["README.md".to_owned(), "doc/guide.md".to_owned()]);
+
+        let error = verify_reachable_markdown(&["README.md".to_owned()], &packaged, |path| {
+            documents
+                .get(path)
+                .map(|markdown| (*markdown).to_owned())
+                .ok_or_else(|| format!("missing document {path}"))
+        })
+        .unwrap_err();
+
+        assert!(error.contains("doc/details.md"), "{error}");
     }
 }
