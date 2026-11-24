@@ -213,7 +213,9 @@ impl MimeRuntime {
     /// # Errors
     /// Returns an error when services are absent or either provider selection
     /// fails. A selected detector factory can reject an unsupported classifier
-    /// during this configuration call, before any operation is submitted.
+    /// during this configuration call, before any operation is submitted. The
+    /// built-in `file` provider rejects every supplied async classifier with
+    /// [`crate::MimeError::UnsupportedCapability`].
     pub fn with_async_provider_selection_and_classifier(
         mut self,
         detector_registry: &MimeDetectorRegistry,
@@ -251,6 +253,15 @@ impl MimeRuntime {
     /// Returns `MimeSubmitFailure` if services or an async backend are
     /// unavailable, request preflight fails, or root-group admission is
     /// rejected. The failure retains the input for recovery.
+    ///
+    /// # Behavior
+    /// An error means the operation was not accepted and returns its input.
+    /// After acceptance, detection errors are observed through the operation
+    /// outcome as `OperationOutcome::Failed`; resource release is observed
+    /// separately through settlement. The async path checks deadline and stop
+    /// again when the backend becomes ready, before committing its result, so
+    /// an expired deadline can stop a ready success or error. A stop reason
+    /// accepted before the deadline, such as `UserCancelled`, is retained.
     pub fn try_submit_detection(
         &self,
         input: OwnedMimeInput,
