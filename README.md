@@ -123,7 +123,18 @@ registration do not start workers; applications prepare and stop the MIME
 execution services explicitly. Unsupported providers are rejected rather than
 run synchronously from an async operation. Dropping an in-flight future does
 not prove that accepted work has stopped; observe settlement before releasing
-resources.
+resources. Once group admission closes, already accepted in-group parents can
+still dispatch required descendants; new external scopes must have entered
+before closure. A partial temporary-file creation error can retain a cleanup
+owner in the same operation scope, so its error outcome alone does not confirm
+cleanup. Async operations observe scope deadlines and stop requests while
+backend futures are pending; repository matching responds at cooperative
+checkpoints. Synchronous children are not preempted and observe stop only at
+their cooperative checks. Work already dispatched to command or staging workers
+keeps its resource owner tracked until the job settles.
+
+Path-backed filename detection extracts the path basename before matching;
+`OwnedMimeInput::Bytes` continues to use its caller-supplied filename.
 
 For the built-in `file` provider, reader detection stages up to
 `MimeConfig::max_buffer_size()` bytes and stops at EOF. Its budget does not
