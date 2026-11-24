@@ -1,6 +1,26 @@
 name: Magika inventory consumer
 
 on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.infra/ci/local-path-dependencies.tsv'
+      - 'tests/fixtures/magika_inventory_consumer/**'
+      - '.github/workflows/magika-consumer.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.infra/ci/local-path-dependencies.tsv'
+      - 'tests/fixtures/magika_inventory_consumer/**'
+      - '.github/workflows/magika-consumer.yml'
   workflow_dispatch:
 
 permissions:
@@ -23,7 +43,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: qubit-ltd/rs-operation
-          ref: 2821f739c996250fa9cfe33a86efc54c2fab6373
+          ref: a728e95b6c3f217ad2fd59a09246dbe30a733e38
           path: rs-operation
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
