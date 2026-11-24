@@ -13,6 +13,7 @@ use std::task::Context;
 use std::task::Poll;
 
 use super::SignalState;
+use crate::safe_wake::wake_safely;
 
 /// Readiness and its waiter share one lock, so a publisher cannot slip
 /// between a poll's readiness check and waker registration.
@@ -56,13 +57,13 @@ impl<T> PollSignal<T> {
     /// # Parameters
     /// - `value`: Lifecycle fact made available to pollers.
     pub(in crate::command_execution) fn publish(&self, value: T) {
-        let waker = {
+        let (old_value, waker) = {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-            state.value = Some(value);
-            state.waker.take()
+            (state.value.replace(value), state.waker.take())
         };
+        drop(old_value);
         if let Some(waker) = waker {
-            waker.wake();
+            wake_safely(waker);
         }
     }
 
@@ -74,14 +75,20 @@ impl<T> PollSignal<T> {
     /// # Returns
     /// `Ready` with the single value, or `Pending` after registering the waker.
     pub(in crate::command_execution) fn poll_take(&self, cx: &mut Context<'_>) -> Poll<T> {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(value) = state.value.take() {
-            state.waker = None;
-            Poll::Ready(value)
-        } else {
-            state.waker = Some(cx.waker().clone());
-            Poll::Pending
+        let mut candidate = Some(cx.waker().clone());
+        let (result, old_waker) = {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(value) = state.value.take() {
+                (Poll::Ready(value), state.waker.take())
+            } else {
+                (Poll::Pending, state.waker.replace(candidate.take().expect("candidate waker is present")))
+            }
+        };
+        drop(old_waker);
+        if matches!(result, Poll::Ready(_)) {
+            drop(candidate);
         }
+        result
     }
 
     /// Clones a published value or registers the current task for a wakeup.
@@ -95,23 +102,47 @@ impl<T> PollSignal<T> {
     where
         T: Clone,
     {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(value) = state.value.as_ref() {
-            Poll::Ready(value.clone())
-        } else {
-            state.waker = Some(cx.waker().clone());
-            Poll::Pending
+        let mut candidate = Some(cx.waker().clone());
+        let (result, old_waker) = {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(value) = state.value.as_ref() {
+                (Poll::Ready(value.clone()), None)
+            } else {
+                (Poll::Pending, state.waker.replace(candidate.take().expect("candidate waker is present")))
+            }
+        };
+        drop(old_waker);
+        if matches!(result, Poll::Ready(_)) {
+            drop(candidate);
         }
+        result
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::Weak;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
     use std::task::Context;
     use std::task::Poll;
+    use std::task::Wake;
     use std::task::Waker;
 
     use super::PollSignal;
+
+    struct ReenterSignalWake {
+        signal: Weak<PollSignal<u8>>,
+        lock_was_free: Arc<AtomicBool>,
+    }
+
+    impl Wake for ReenterSignalWake {
+        fn wake(self: Arc<Self>) {
+            let signal = self.signal.upgrade().expect("signal remains alive");
+            self.lock_was_free.store(signal.state.try_lock().is_ok(), Ordering::SeqCst);
+        }
+    }
 
     #[test]
     fn test_cloned_observation_does_not_consume_the_published_value() {
@@ -147,5 +178,41 @@ mod tests {
         assert_eq!(Some(7), signal.value());
         assert!(matches!(signal.poll_take(&mut context), Poll::Ready(7)));
         assert_eq!(None, signal.value());
+    }
+
+    #[test]
+    fn test_wake_can_reenter_signal_after_publication() {
+        let signal = Arc::new(PollSignal::new());
+        let lock_was_free = Arc::new(AtomicBool::new(false));
+        let waker = Waker::from(Arc::new(ReenterSignalWake {
+            signal: Arc::downgrade(&signal),
+            lock_was_free: Arc::clone(&lock_was_free),
+        }));
+        let mut context = Context::from_waker(&waker);
+        assert!(matches!(signal.poll_clone(&mut context), Poll::Pending));
+
+        signal.publish(9);
+
+        assert!(lock_was_free.load(Ordering::SeqCst));
+        assert_eq!(Some(9), signal.value());
+    }
+
+    struct PanicWake;
+    impl Wake for PanicWake {
+        fn wake(self: Arc<Self>) {
+            panic!("observer wake failed");
+        }
+    }
+
+    #[test]
+    fn test_panicking_wake_does_not_interrupt_published_value() {
+        let signal = PollSignal::new();
+        let waker = Waker::from(Arc::new(PanicWake));
+        let mut context = Context::from_waker(&waker);
+        assert!(matches!(signal.poll_clone(&mut context), Poll::Pending));
+
+        signal.publish(11);
+
+        assert_eq!(Some(11), signal.value());
     }
 }

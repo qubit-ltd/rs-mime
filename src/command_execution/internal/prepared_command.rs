@@ -15,6 +15,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::task::Context;
 use std::task::Poll;
+use std::task::Waker;
 
 use qubit_command::Command;
 use qubit_command::CommandCancellation;
@@ -33,6 +34,7 @@ use qubit_operation::ExternalBindError;
 use qubit_operation::OperationControl;
 use qubit_operation::OperationId;
 use qubit_operation::OperationOutcome;
+use qubit_operation::OperationContext;
 use qubit_operation::OperationScope;
 use qubit_operation::PanicSummary;
 use qubit_operation::PreparedExternalOperation;
@@ -111,15 +113,12 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
     /// # Errors
     /// Returns an execution failure when the fixed worker cannot accept the
     /// command job.
-    fn activate(self: Arc<Self>, _scope: OperationScope) -> Result<(), ExecutionFailure> {
-        if let Some(reason) = *self.stop_reason.lock().unwrap_or_else(|e| e.into_inner()) {
-            self.request.lock().unwrap_or_else(|e| e.into_inner()).take();
-            self.publish(OperationOutcome::Stopped(StopReport {
-                reason,
-                accepted_at: None,
-            }));
-            self.released.store(true, Ordering::Release);
-            self.publish_release();
+    fn activate(self: Arc<Self>, scope: OperationScope) -> Result<(), ExecutionFailure> {
+        let context = scope.context();
+        if let Some(reason) = self.current_stop_reason(&context) {
+            let request = self.request.lock().unwrap_or_else(|e| e.into_inner()).take();
+            drop(request);
+            self.publish_stopped(reason);
             return Ok(());
         }
         let (runner, command, input) = self
@@ -132,14 +131,9 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
         let cancellation = self.cancellation.clone();
         let job = Box::new(move || {
             task.started.store(true, Ordering::Release);
-            if let Some(reason) = *task.stop_reason.lock().unwrap_or_else(|e| e.into_inner()) {
+            if let Some(reason) = task.current_stop_reason(&context) {
                 drop(input);
-                task.publish(OperationOutcome::Stopped(StopReport {
-                    reason,
-                    accepted_at: None,
-                }));
-                task.released.store(true, Ordering::Release);
-                task.publish_release();
+                task.publish_stopped(reason);
                 return;
             }
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -159,11 +153,7 @@ impl PreparedExternalOperation<MimeCommandOutput, CommandError> for PreparedComm
                     ) && error.cleanup_failures().is_empty() =>
                 {
                     let reason = task
-                        .stop_reason
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .as_ref()
-                        .copied()
+                        .accepted_stop_reason(&context)
                         .unwrap_or(StopReason::UserCancelled);
                     OperationOutcome::Stopped(StopReport {
                         reason,
@@ -299,6 +289,49 @@ impl OperationControl for PreparedCommand {
 }
 
 impl PreparedCommand {
+    /// Returns a stop accepted by the operation context or this command.
+    /// Polling the deadline signal once records an already elapsed deadline
+    /// before the command can enter the runner.
+    fn current_stop_reason(&self, context: &OperationContext) -> Option<StopReason> {
+        if let Some(reason) = self.accepted_stop_reason(context) {
+            self.remember_stop_reason(reason);
+            return Some(reason);
+        }
+        if let Some(mut deadline) = context.deadline_signal() {
+            let waker = Waker::noop();
+            let mut cx = Context::from_waker(waker);
+            let _ = std::pin::Pin::new(&mut deadline).poll(&mut cx);
+        }
+        let reason = self.accepted_stop_reason(context);
+        if let Some(reason) = reason {
+            self.remember_stop_reason(reason);
+        }
+        reason
+    }
+
+    fn remember_stop_reason(&self, reason: StopReason) {
+        let mut cached = self.stop_reason.lock().unwrap_or_else(|e| e.into_inner());
+        if cached.is_none() {
+            *cached = Some(reason);
+        }
+    }
+
+    /// Reads an already accepted reason without advancing a deadline signal.
+    fn accepted_stop_reason(&self, context: &OperationContext) -> Option<StopReason> {
+        let cached = *self.stop_reason.lock().unwrap_or_else(|e| e.into_inner());
+        context.stop_reason().or(cached)
+    }
+
+    /// Publishes terminal stop facts after the request/input owner is dropped.
+    fn publish_stopped(&self, reason: StopReason) {
+        self.publish(OperationOutcome::Stopped(StopReport {
+            reason,
+            accepted_at: None,
+        }));
+        self.released.store(true, Ordering::Release);
+        self.publish_release();
+    }
+
     /// Creates prepared child state before external submission is attempted.
     ///
     /// # Parameters
@@ -450,6 +483,8 @@ impl PreparedCommand {
 mod tests {
     use std::future::Future;
     use std::sync::Arc;
+    use std::sync::Weak;
+    use std::sync::atomic::AtomicBool;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use std::task::Context;
@@ -463,11 +498,18 @@ mod tests {
     use qubit_command::CommandRunner;
     use qubit_operation::ChildOutcomeKind;
     use qubit_operation::ChildSnapshot;
+    use qubit_operation::ClockDomainId;
+    use qubit_operation::ClockSource;
+    use qubit_operation::ContextOptions;
+    use qubit_operation::Deadline;
     use qubit_operation::ExecutionFailure;
+    use qubit_operation::MonotonicTime;
     use qubit_operation::OperationControl;
+    use qubit_operation::OperationOptions;
     use qubit_operation::OperationOutcome;
     use qubit_operation::PreparedExternalOperation;
     use qubit_operation::StopReason;
+    use qubit_operation::TimerRegistration;
 
     use super::PreparedCommand;
     use crate::InputExtent;
@@ -480,6 +522,43 @@ mod tests {
     use crate::detector::MimeExecutionServices;
     use crate::managed_temp_staging::ManagedStagingLimits;
     use crate::managed_temp_staging::stage_owned_in;
+
+    struct HeldTimer;
+    impl TimerRegistration for HeldTimer {
+        fn cancel(self: Box<Self>) {}
+    }
+
+    struct HeldClock {
+        domain: ClockDomainId,
+        ticks: std::sync::atomic::AtomicU64,
+    }
+
+    impl ClockSource for HeldClock {
+        fn now(&self) -> MonotonicTime {
+            MonotonicTime::new(self.domain, self.ticks.load(Ordering::SeqCst))
+        }
+
+        fn register_deadline(&self, _at: MonotonicTime, _wake: Waker) -> Box<dyn TimerRegistration> {
+            Box::new(HeldTimer)
+        }
+    }
+
+    struct StopLockWake {
+        command: Weak<PreparedCommand>,
+        lock_was_free: Arc<AtomicBool>,
+    }
+
+    impl Wake for StopLockWake {
+        fn wake(self: Arc<Self>) {
+            let command = self.command.upgrade().expect("command remains alive");
+            let lock_was_free = !matches!(
+                command.stop_reason.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            );
+            self.lock_was_free.store(lock_was_free, Ordering::SeqCst);
+            panic!("observer wake failed after reentering stop state");
+        }
+    }
 
     struct ThreadWake(std::thread::Thread);
     impl Wake for ThreadWake {
@@ -1112,18 +1191,31 @@ mod tests {
             );
             started_rx.recv().unwrap();
 
-            let command = Arc::new(PreparedCommand::new(
+            let runner_invocations = Arc::new(AtomicUsize::new(0));
+            let command = Arc::new(PreparedCommand::new_with_runner_invocations(
                 MimeExecutionWorker::new(port),
                 CommandRunner::new(std::time::Duration::from_secs(1)).disable_logging(true),
                 Command::new("must-not-start-after-queued-stop"),
                 staged,
+                Arc::clone(&runner_invocations),
             ));
             poison_prepared_command_lock(Arc::clone(&command), PreparedCommandLock::StopReason);
             command.bind(scope.id()).unwrap();
             let operation_id = scope.id();
+            let stop_lock_was_free = Arc::new(AtomicBool::new(false));
+            {
+                let wake = Waker::from(Arc::new(StopLockWake {
+                    command: Arc::downgrade(&command),
+                    lock_was_free: Arc::clone(&stop_lock_was_free),
+                }));
+                let mut observer_context = Context::from_waker(&wake);
+                assert!(matches!(command.poll_outcome(&mut observer_context), Poll::Pending));
+            }
+            let operation_context = scope.context();
             Arc::clone(&command).activate(scope).unwrap();
-            command.request_stop(StopReason::ParentStopped);
-            command.request_stop(StopReason::Timeout);
+            // The shared context accepts the stop while the adapter-local
+            // cache is still empty; releasing the queue must not invoke runner.
+            assert!(operation_context.request_stop(StopReason::ParentStopped));
             release_tx.send(()).unwrap();
 
             let outcome = std::future::poll_fn(|cx| command.poll_take_outcome(cx)).await;
@@ -1138,16 +1230,121 @@ mod tests {
             assert_eq!(qubit_operation::ExecutionPhase::Finished, snapshot.execution);
             assert!(matches!(snapshot.stop, Some(report) if report.reason == StopReason::ParentStopped));
             assert!(snapshot.input_released);
+            assert_eq!(0, runner_invocations.load(Ordering::SeqCst));
+            assert!(stop_lock_was_free.load(Ordering::SeqCst));
             Ok::<_, MimeError>(())
         }))
         .unwrap();
 
         assert!(matches!(
             block_on(operation.wait_outcome()).unwrap(),
-            OperationOutcome::Succeeded(())
+            OperationOutcome::Stopped(report) if report.reason == StopReason::ParentStopped
         ));
         assert!(block_on(operation.wait_settlement()).all_released());
         let shutdown = body_services.shutdown();
+        let _ = block_on(shutdown.wait_services_settled()).unwrap();
+        let _ = shutdown.stop_services().unwrap();
+    }
+
+    #[test]
+    fn test_expired_inherited_deadline_before_worker_start_skips_runner_and_releases_input() {
+        run_queued_deadline_stop(false);
+    }
+
+    #[test]
+    fn test_cached_stop_reason_precedes_deadline_expiry_before_worker_start() {
+        run_queued_deadline_stop(true);
+    }
+
+    fn run_queued_deadline_stop(cache_stop_before_expiry: bool) {
+        let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+        let group = manager.group(qubit_operation::GroupOptions { capacity: 4 }).unwrap();
+        let port = Arc::new(FixedMimeExecutionPort::new(1, 4));
+        let services = Arc::new(MimeExecutionServices::new(manager, group.clone(), port.clone(), 1024).unwrap());
+        services.prepare().unwrap();
+        let limits = ManagedStagingLimits {
+            max_bytes: 64,
+            budget: services.staging_budget(),
+            worker: MimeExecutionWorker::new(port.clone()),
+        };
+        let read_tree = services.new_read_tree(64);
+        let clock = Arc::new(HeldClock {
+            domain: ClockDomainId::new_unique(),
+            ticks: std::sync::atomic::AtomicU64::new(0),
+        });
+        let operation_options = OperationOptions {
+            context: ContextOptions {
+                clock: Some(clock.clone()),
+                deadline: Some(Deadline::at(MonotonicTime::new(clock.domain, 10))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut operation = block_on(group.try_submit_async(operation_options, move |scope| async move {
+            let staged = stage_owned_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::from(b"deadline queued input".as_slice()), InputExtent::Complete),
+                limits,
+                read_tree,
+            )
+            .await?;
+            let (blocker_started_tx, blocker_started_rx) = std::sync::mpsc::channel();
+            let (release_blocker_tx, release_blocker_rx) = std::sync::mpsc::channel();
+            assert!(
+                port.try_dispatch(Box::new(move || {
+                    blocker_started_tx.send(()).unwrap();
+                    release_blocker_rx.recv().unwrap();
+                }))
+                .is_ok()
+            );
+            blocker_started_rx.recv().unwrap();
+
+            let runner_invocations = Arc::new(AtomicUsize::new(0));
+            let command = Arc::new(PreparedCommand::new_with_runner_invocations(
+                MimeExecutionWorker::new(port),
+                CommandRunner::new(std::time::Duration::from_secs(1)).disable_logging(true),
+                Command::new("must-not-run-after-inherited-deadline"),
+                staged,
+                Arc::clone(&runner_invocations),
+            ));
+            let operation_id = scope.id();
+            command.bind(operation_id).unwrap();
+            Arc::clone(&command).activate(scope).unwrap();
+
+            // Advance the same clock inherited by the operation context, but
+            // do not wake its parent timer. The queued job observes expiry.
+            if cache_stop_before_expiry {
+                command.request_stop(StopReason::ParentStopped);
+            }
+            clock.ticks.store(10, Ordering::SeqCst);
+            release_blocker_tx.send(()).unwrap();
+            let outcome = std::future::poll_fn(|cx| command.poll_take_outcome(cx)).await;
+            let expected_reason = if cache_stop_before_expiry {
+                StopReason::ParentStopped
+            } else {
+                StopReason::Timeout
+            };
+            assert!(matches!(outcome, OperationOutcome::Stopped(report) if report.reason == expected_reason));
+            let release = std::future::poll_fn(|cx| command.poll_release(cx)).await;
+            assert_eq!(operation_id, release.operation_id);
+            let settlement = std::future::poll_fn(|cx| command.poll_settlement(cx)).await;
+            assert_eq!(qubit_operation::SettlementStatus::Released, settlement.status);
+            assert_eq!(0, runner_invocations.load(Ordering::SeqCst));
+            assert!(command.snapshot().input_released);
+            Ok::<_, MimeError>(())
+        }))
+        .unwrap();
+
+        if cache_stop_before_expiry {
+            assert!(matches!(block_on(operation.wait_outcome()).unwrap(), OperationOutcome::Succeeded(())));
+        } else {
+            assert!(matches!(
+                block_on(operation.wait_outcome()).unwrap(),
+                OperationOutcome::Stopped(report) if report.reason == StopReason::Timeout
+            ));
+        }
+        assert!(block_on(operation.wait_settlement()).all_released());
+        let shutdown = services.shutdown();
         let _ = block_on(shutdown.wait_services_settled()).unwrap();
         let _ = shutdown.stop_services().unwrap();
     }
