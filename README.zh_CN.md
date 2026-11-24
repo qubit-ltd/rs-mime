@@ -200,6 +200,9 @@ Registry。
 两个 `builtin()` Registry 会发现这些 Provider，同时保留 `repository` 和 `ffprobe`
 默认选择。重复 selector 会使 inventory 构建失败；未启用此 feature 时仍需显式注册。
 
+通过 registry 使用 Magika inventory，要求 `qubit-mime` 0.22 和 `qubit-magika` 0.18
+均已发布。在两者发布前，请按 [Magika 用户指南中的固定源码步骤](https://github.com/qubit-ltd/rs-magika/blob/main/doc/user_guide.zh_CN.md#概念模型)使用。
+
 常用配置键包括 `mime.detector.default`、`mime.detector.fallbacks`、
 `mime.max.buffer.size`、`mime.command.timeout` 和 `mime.command.output.max.bytes`。
 完整配置项请参阅 `MimeConfig` 和用户手册。

@@ -259,6 +259,10 @@ those providers while keeping `repository` and `ffprobe` as their defaults.
 Duplicate submitted selectors fail inventory construction. Without this feature,
 providers continue to require explicit registration.
 
+Registry-based Magika inventory consumption requires published `qubit-mime`
+0.22 and `qubit-magika` 0.18 releases. Until both are available, use the
+[fixed-source setup documented in the Magika user guide](https://github.com/qubit-ltd/rs-magika/blob/main/doc/user_guide.md#conceptual-model).
+
 Important configuration keys include `mime.detector.default`,
 `mime.detector.fallbacks`, `mime.max.buffer.size`,
 `mime.command.timeout`, and `mime.command.output.max.bytes`. See

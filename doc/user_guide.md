@@ -336,6 +336,11 @@ classifier registry likewise discovers linked submissions and retains
 selectors cause inventory construction to fail. With the feature disabled,
 register providers explicitly as shown above.
 
+Registry-based Magika inventory consumption requires published `qubit-mime`
+0.22 and `qubit-magika` 0.18 releases. Until both are available, follow the
+[fixed-source setup in the Magika user guide](https://github.com/qubit-ltd/rs-magika/blob/main/doc/user_guide.md#conceptual-model),
+which links to the preparation helper and fixed revision table.
+
 Inventory changes discovery only: Magika remains a synchronous registry
 provider, and its `detect_async_path` convenience method does not attach work
 to a parent `OperationScope`. The scope-aware `MimeRuntime` path uses the
