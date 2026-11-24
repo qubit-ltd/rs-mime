@@ -333,13 +333,12 @@ impl MimeRuntime {
                 input,
             });
         };
-        let _submission = services.submission_guard();
-        if !services.accepts_children() {
+        let Some(_admission) = services.begin_admission(true) else {
             return Err(MimeSubmitFailure {
                 reason: MimeSubmitRejection::ExecutionServicesRequired,
                 input,
             });
-        }
+        };
         if matches!(&input, OwnedMimeInput::Provider { .. }) {
             return Err(MimeSubmitFailure {
                 reason: MimeSubmitRejection::AsyncUnsupported,
@@ -490,8 +489,11 @@ impl MimeRuntime {
                 input,
             });
         };
-        // Extension hooks may be reentrant. Capture capabilities once before
-        // taking the shared submission lock.
+        let Some(_admission) = services.begin_admission(parent.is_some()) else {
+            return Err(MimeSubmitFailure { reason: MimeSubmitRejection::ExecutionServicesRequired, input });
+        };
+        // Extension hooks may be reentrant; an in-flight ticket keeps this
+        // admission visible to shutdown without holding the submission lock.
         let read_plan = mime_submission::ProviderReadPlan::capture(backend.as_ref(), self_metered_provider_reads);
         let repository = self.async_repository.clone();
         let filename_winner = repository.as_ref().and_then(|repository| match &input {
@@ -506,18 +508,6 @@ impl MimeRuntime {
                 options.policy,
             ),
         });
-        let _submission = services.submission_guard();
-        let can_submit = if parent.is_some() {
-            services.accepts_children()
-        } else {
-            services.is_prepared()
-        };
-        if !can_submit {
-            return Err(MimeSubmitFailure {
-                reason: MimeSubmitRejection::ExecutionServicesRequired,
-                input,
-            });
-        }
         let max_buffer_size = self.context.config().max_buffer_size();
         let filename_short_circuit = filename_winner.is_some();
         let requirement =

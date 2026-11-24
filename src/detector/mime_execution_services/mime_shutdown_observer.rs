@@ -81,6 +81,7 @@ impl MimeShutdownObserver {
     /// Returns an error if waiting for an operation settlement fails.
     pub async fn wait_services_settled(&self) -> Result<MimeShutdownSnapshot, crate::MimeError> {
         loop {
+            self.services.admissions_settled().await;
             let pending = self
                 .services
                 .observers
@@ -93,6 +94,10 @@ impl MimeShutdownObserver {
             }
 
             let submissions = self.services.submission_guard();
+            if self.services.has_admissions() {
+                drop(submissions);
+                continue;
+            }
             let unsettled = self
                 .services
                 .observers
@@ -138,13 +143,21 @@ impl MimeShutdownObserver {
             if self.services.preparing.load(Ordering::Acquire) {
                 return Err(crate::MimeError::OperationShutdownPending);
             }
-            let _submissions = self.services.submission_guard();
-            // Freeze MIME-mediated submissions only once. Accepted direct
-            // scope descendants remain covered by the group settlement gate.
-            if !self.services.admission_frozen.swap(true, Ordering::AcqRel) {
-                self.services.root_group.close_admission();
-            }
+            let submissions = self.services.submission_guard();
+            // Freeze MIME-mediated submissions before running any group action.
+            self.services.admission_frozen.store(true, Ordering::Release);
+            drop(submissions);
+        }
+        // close_admission can wake arbitrary waiters. Repeat it on every retry
+        // so another stop call cannot mistake a published freeze for a
+        // completed group close.
+        self.services.root_group.close_admission();
+        {
+            let _lifecycle = self.services.lifecycle_lock.lock().unwrap_or_else(|e| e.into_inner());
             if !self.services.operations_settled.load(Ordering::Acquire) {
+                return Err(crate::MimeError::OperationShutdownPending);
+            }
+            if self.services.has_admissions() {
                 return Err(crate::MimeError::OperationShutdownPending);
             }
             if self.services.has_unsettled_operations() {

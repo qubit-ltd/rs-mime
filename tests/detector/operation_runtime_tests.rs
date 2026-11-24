@@ -327,6 +327,86 @@ impl qubit_operation::TimerRegistration for DeadlineClockRegistration {
     }
 }
 
+struct ReentrantClock {
+    domain: qubit_operation::ClockDomainId,
+    callback: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl ReentrantClock {
+    fn new(callback: impl FnOnce() + Send + 'static) -> Self {
+        Self {
+            domain: qubit_operation::ClockDomainId::new_unique(),
+            callback: std::sync::Mutex::new(Some(Box::new(callback))),
+        }
+    }
+}
+
+fn reentrant_root_clock(
+    runtime: MimeRuntime,
+    callback_calls: Arc<AtomicUsize>,
+) -> Arc<ReentrantClock> {
+    Arc::new(ReentrantClock::new(move || {
+        callback_calls.fetch_add(1, Ordering::SeqCst);
+        let mut nested = runtime
+            .try_submit_detection(
+                OwnedMimeInput::bytes(Arc::from(b"nested".as_slice()), InputExtent::Complete),
+                MimeOperationOptions::default(),
+            )
+            .unwrap_or_else(|failure| panic!("reentrant root admission failed: {:?}", failure.reason));
+        match block_on(nested.wait_outcome()).unwrap() {
+            qubit_operation::OperationOutcome::Succeeded(report) => {
+                assert_eq!(6, report.budget.owned_bytes);
+            }
+            other => panic!("reentrant root should succeed: {other:?}"),
+        }
+        assert!(block_on(nested.wait_settlement()).all_released());
+    }))
+}
+
+fn options_with_deadline(clock: Arc<ReentrantClock>) -> MimeOperationOptions {
+    use qubit_operation::ClockSource;
+    use qubit_operation::ContextOptions;
+    use qubit_operation::Deadline;
+    use qubit_operation::MonotonicTime;
+    use qubit_operation::OperationOptions;
+
+    let clock_source: Arc<dyn ClockSource> = clock.clone();
+    MimeOperationOptions {
+        operation: OperationOptions {
+            context: ContextOptions {
+                clock: Some(clock_source),
+                deadline: Some(Deadline::at(MonotonicTime::new(clock.domain, 10))),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+impl qubit_operation::ClockSource for ReentrantClock {
+    fn now(&self) -> qubit_operation::MonotonicTime {
+        if let Some(callback) = self.callback.lock().unwrap().take() {
+            callback();
+        }
+        qubit_operation::MonotonicTime::new(self.domain, 0)
+    }
+
+    fn register_deadline(
+        &self,
+        _at: qubit_operation::MonotonicTime,
+        _wake: Waker,
+    ) -> Box<dyn qubit_operation::TimerRegistration> {
+        Box::new(NoopTimerRegistration)
+    }
+}
+
+struct NoopTimerRegistration;
+
+impl qubit_operation::TimerRegistration for NoopTimerRegistration {
+    fn cancel(self: Box<Self>) {}
+}
+
 #[derive(Debug)]
 struct DeadlineYieldRepositoryProvider {
     repository: Arc<MimeRepository>,
@@ -644,6 +724,171 @@ fn test_managed_deadline_wakes_never_waking_provider_read_and_releases_reader() 
     let _ = block_on(shutdown.wait_services_settled()).unwrap();
     let _ = shutdown.stop_services().unwrap();
     let _ = block_on(shutdown.wait_group_shutdown()).unwrap();
+}
+
+#[test]
+fn test_operation_runtime_async_root_clock_callback_reenters_same_services() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use qubit_operation::OperationOutcome;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let port = Arc::new(TestExecution::default());
+    let services = services(&manager, 4, port);
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
+
+    let callback_calls = Arc::new(AtomicUsize::new(0));
+    let clock = reentrant_root_clock(runtime.clone(), Arc::clone(&callback_calls));
+    let options = options_with_deadline(clock);
+
+    let (done_tx, done_rx) = mpsc::sync_channel(1);
+    let submit_runtime = runtime.clone();
+    let worker = std::thread::spawn(move || {
+        let result = submit_runtime.try_submit_detection(
+            OwnedMimeInput::bytes(Arc::from(b"outer".as_slice()), InputExtent::Complete),
+            options,
+        );
+        let completed = match result {
+            Ok(mut operation) => {
+                let outcome = match block_on(operation.wait_outcome()).unwrap() {
+                    OperationOutcome::Succeeded(report) => report.budget.owned_bytes == 5,
+                    _ => false,
+                };
+                let settled = block_on(operation.wait_settlement()).all_released();
+                outcome && settled
+            }
+            Err(_) => false,
+        };
+        let _ = done_tx.send(completed);
+    });
+
+    assert!(
+        done_rx.recv_timeout(Duration::from_secs(2)).unwrap_or(false),
+        "outer root and its clock-callback root must both execute and settle"
+    );
+    worker.join().expect("root submission worker should finish");
+    assert_eq!(1, callback_calls.load(Ordering::SeqCst));
+
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+    assert!(shutdown.stop_services().is_ok());
+    assert!(block_on(shutdown.wait_group_shutdown()).is_ok());
+}
+
+#[test]
+fn test_operation_runtime_async_child_clock_callback_reenters_same_services() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use qubit_operation::OperationOutcome;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let port = Arc::new(TestExecution::default());
+    let services = services(&manager, 4, port);
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
+    let callback_calls = Arc::new(AtomicUsize::new(0));
+    let clock = reentrant_root_clock(runtime.clone(), Arc::clone(&callback_calls));
+    let child_options = options_with_deadline(clock);
+    let (done_tx, done_rx) = mpsc::sync_channel(1);
+    let child_runtime = runtime.clone();
+    let mut parent = manager
+        .try_submit(Default::default(), move |scope| {
+            let child = child_runtime.try_submit_detection_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::from(b"child".as_slice()), InputExtent::Complete),
+                child_options,
+            );
+            let succeeded = match child {
+                Ok(mut child) => {
+                    let outcome = match block_on(child.wait_outcome()).unwrap() {
+                        OperationOutcome::Succeeded(report) => report.budget.owned_bytes == 5,
+                        _ => false,
+                    };
+                    let settled = block_on(child.wait_settlement()).all_released();
+                    outcome && settled
+                }
+                Err(failure) => panic!("async child admission failed: {:?}", failure.reason),
+            };
+            let _ = done_tx.send(succeeded);
+            Ok::<_, ()>(succeeded)
+        })
+        .unwrap();
+
+    assert!(done_rx.recv_timeout(Duration::from_secs(2)).unwrap_or(false));
+    assert!(matches!(
+        parent.wait_outcome().unwrap(),
+        OperationOutcome::Succeeded(true)
+    ));
+    assert!(parent.wait_settlement().unwrap().all_released());
+    assert_eq!(1, callback_calls.load(Ordering::SeqCst));
+
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+    assert!(shutdown.stop_services().is_ok());
+    assert!(block_on(shutdown.wait_group_shutdown()).is_ok());
+}
+
+#[test]
+fn test_operation_runtime_sync_child_clock_callback_reenters_same_services() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use qubit_operation::OperationOutcome;
+
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let port = Arc::new(TestExecution::default());
+    let services = services(&manager, 4, port);
+    services.prepare().unwrap();
+    let runtime = MimeRuntime::builtin()
+        .unwrap()
+        .with_execution_services(services.clone());
+    let callback_calls = Arc::new(AtomicUsize::new(0));
+    let clock = reentrant_root_clock(runtime.clone(), Arc::clone(&callback_calls));
+    let child_options = options_with_deadline(clock);
+    let (done_tx, done_rx) = mpsc::sync_channel(1);
+    let child_runtime = runtime.clone();
+    let mut parent = manager
+        .try_submit(Default::default(), move |scope| {
+            let child = child_runtime.try_submit_detection_sync_in(
+                &scope,
+                OwnedMimeInput::bytes(Arc::from(b"child".as_slice()), InputExtent::Complete),
+                child_options,
+            );
+            let succeeded = match child {
+                Ok(mut child) => {
+                    let outcome = match child.wait_outcome().unwrap() {
+                        OperationOutcome::Succeeded(report) => report.budget.owned_bytes == 5,
+                        _ => false,
+                    };
+                    let settled = child.wait_settlement().unwrap().all_released();
+                    outcome && settled
+                }
+                Err(failure) => panic!("sync child admission failed: {:?}", failure.reason),
+            };
+            let _ = done_tx.send(succeeded);
+            Ok::<_, ()>(succeeded)
+        })
+        .unwrap();
+
+    assert!(done_rx.recv_timeout(Duration::from_secs(2)).unwrap_or(false));
+    assert!(matches!(
+        parent.wait_outcome().unwrap(),
+        OperationOutcome::Succeeded(true)
+    ));
+    assert!(parent.wait_settlement().unwrap().all_released());
+    assert_eq!(1, callback_calls.load(Ordering::SeqCst));
+
+    let shutdown = services.shutdown();
+    assert!(block_on(shutdown.wait_services_settled()).unwrap().operations_settled);
+    assert!(shutdown.stop_services().is_ok());
+    assert!(block_on(shutdown.wait_group_shutdown()).is_ok());
 }
 
 #[test]
