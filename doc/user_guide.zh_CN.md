@@ -284,8 +284,8 @@ crate 通过 `qubit_spi::submit_sync_provider!` 向
 
 ### 固定源码接入 Magika
 
-consumer fixture 与新应用使用两个相互独立的源码布局。下表中的固定版本用于复现
-fixture 已验证的源码组合。应用布局应先将 Magika 检出到
+consumer fixture 与新应用使用两个相互独立的源码布局。下表记录的是早期验收所用的
+历史 fixture 源码组合，不代表当前 CI 源码图。历史应用布局应先将 Magika 检出到
 `d1f213ec3a5fa35a0aa15ad6ee9a7ee233e0b48f`，再准备其固定的兄弟依赖。
 将 fixture 仓库放在单独的 `fixture-root/` 目录下：
 
@@ -301,7 +301,7 @@ fixture-root/
 └── rs-local-files/
 ```
 
-| 仓库 | Fixture revision |
+| 仓库 | 历史 Fixture revision |
 | --- | --- |
 | `rs-mime` | `c05273cb8ac7ff8bb22d96c4385e38fb12b99d63` |
 | `rs-magika` | `d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b`（仅用于 fixture）|
@@ -328,6 +328,55 @@ git -C rs-magika checkout --detach d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b
 cd fixture-root/rs-mime
 ./.infra/bin/prepare-local-path-dependencies.sh --check-locked
 ```
+
+#### 当前 CI fixture
+
+当前 workflow 使用触发 CI 的这份 `rs-mime` checkout，并将
+[`rs-magika` 固定到远端可检出的提交 `432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12`](https://github.com/qubit-ltd/rs-magika/commit/432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12)。
+其余兄弟仓库仍使用[workflow](../.github/workflows/magika-consumer.yml)中固定的版本。
+运行下方命令前，请准备独立的 `current-fixture-root/` sibling 布局：将包含本指南的当前
+`rs-mime` checkout 放在 `current-fixture-root/rs-mime`，并把兄弟仓库检出到 workflow
+指定的固定提交。不要复用上方用于历史复现的 `fixture-root/`。例如，在
+`current-fixture-root/` 中执行：
+
+```bash
+git clone https://github.com/qubit-ltd/rs-magika.git
+git -C rs-magika checkout --detach 432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12
+```
+
+其余兄弟仓库使用 workflow 中的固定提交：`rs-operation`
+`893bcf6c7efb397cc8fac2f7fe18fb5e87017e63`、`rs-fs`
+`c7ea1d035498aa633f4f3c04d90fdb5d4b73de97`、`rs-fs-registry`
+`df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c`、`rs-local-files`
+`5b52230e0af2997fadc45b5ff48be65b0ca5a70d`、`rs-fs-local`
+`3bf4275ed601e39fdbf8532f9d80d563d9cc7182`、`rs-fs-testkit`
+`28bf195b8eef9c03d9cb1c5428186758b76aaacd`。此源码图中的 `rs-mime` 使用当前
+checkout，不绑定固定 SHA。
+
+当前 MIME checkout 中的 fixture [manifest](../tests/fixtures/magika_inventory_consumer/Cargo.toml)
+和[锁文件](../tests/fixtures/magika_inventory_consumer/Cargo.lock)通过相对路径引用源码：
+`qubit-mime` 指向当前 checkout，`qubit-magika` 和 `qubit-operation` 分别指向同级的
+`rs-magika` 和 `rs-operation`。本指南不固定 MIME 提交；CI 使用触发 workflow 的当前
+checkout，因此不会依赖尚未产生的未来提交。从 `current-fixture-root/rs-mime` 根目录运行下方命令。
+
+workflow 会在两种 feature 模式下检查 `qubit-operation` 只有一个包，并运行显式注册和
+inventory 发现两条消费路径。从 `rs-mime` 根目录可用以下命令检查当前源码图：
+
+```bash
+cargo +1.94.0 metadata --locked --format-version 1 --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
+cargo +1.94.0 tree --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml -i qubit-operation
+cargo +1.94.0 check --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
+cargo +1.94.0 run --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
+cargo +1.94.0 metadata --locked --format-version 1 --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
+cargo +1.94.0 tree --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory -i qubit-operation
+cargo +1.94.0 check --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
+cargo +1.94.0 run --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
+```
+
+运行 fixture 还需动态加载 ONNX Runtime 1.24.2。将 `ORT_LIBRARY_PATH` 指向共享库；Linux
+用户还需按 workflow 的设置，将库目录加入 `LD_LIBRARY_PATH`。
+
+#### 历史固定源码应用图
 
 新应用接入固定源码时，应另建 `consumer-root/` 布局，并按 Magika 的
 [固定依赖清单](https://github.com/qubit-ltd/rs-magika/blob/d1f213ec3a5fa35a0aa15ad6ee9a7ee233e0b48f/.infra/ci/local-path-dependencies.tsv)
@@ -360,10 +409,11 @@ inventory = ["qubit-magika/inventory"]
 `MimeDetectorRegistry::builtin()` 能发现 `magika`。两种模式的默认选择都仍是 `repository`，应用必须显式选择
 `magika`。完整、可复制的入口见[固定版本中的 consumer fixture](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/src/main.rs)。
 
-此 consumer 使用动态加载 ONNX Runtime。安装 1.24.2 共享库，并将 `ORT_LIBRARY_PATH` 指向库文件；
+历史 fixture 使用动态加载 ONNX Runtime。安装 1.24.2 共享库，并将 `ORT_LIBRARY_PATH` 指向库文件；
 Linux 还需把库所在目录加入 `LD_LIBRARY_PATH`。
 [固定版本的 consumer workflow](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/.github/workflows/magika-consumer.yml)
-记录了经过校验的 wheel 下载地址和 SHA-256。在 `fixture-root/` 中，用 fixture 自带的锁文件运行：
+记录了经过校验的 wheel 下载地址和 SHA-256。以下命令用于复现历史固定图；在 `fixture-root/` 中，
+使用该 fixture 自带的锁文件运行：
 
 ```bash
 cargo +1.94.0 check --locked --manifest-path rs-mime/tests/fixtures/magika_inventory_consumer/Cargo.toml

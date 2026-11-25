@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: qubit-ltd/rs-magika
-          ref: d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b
+          ref: 432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12
           path: rs-magika
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:

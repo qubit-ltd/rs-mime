@@ -372,8 +372,9 @@ available, use the fixed-source consumer below.
 ### Fixed-source Magika consumer
 
 The consumer fixture and a new application use two independent source
-layouts. The pinned revision table below reproduces the fixture's tested source
-graph. For the application layout, check out Magika at
+layouts. The pinned revision table below records the historical fixture graph
+used by the earlier acceptance run; it is not the current CI source graph. For
+the historical application layout, check out Magika at
 `d1f213ec3a5fa35a0aa15ad6ee9a7ee233e0b48f` before preparing its pinned sibling
 dependencies. Put the fixture repositories under a separate `fixture-root/` directory:
 
@@ -389,7 +390,7 @@ fixture-root/
 └── rs-local-files/
 ```
 
-| Repository | Fixture revision |
+| Repository | Historical fixture revision |
 | --- | --- |
 | `rs-mime` | `c05273cb8ac7ff8bb22d96c4385e38fb12b99d63` |
 | `rs-magika` | `d78dd23a1b849ff8a3e3cbfcdd97def889ce0a7b` (fixture only) |
@@ -416,6 +417,61 @@ run the MIME preparation check from `fixture-root/rs-mime`:
 cd fixture-root/rs-mime
 ./.infra/bin/prepare-local-path-dependencies.sh --check-locked
 ```
+
+#### Current CI fixture
+
+The current workflow checks out this `rs-mime` revision and checks out
+[`rs-magika` at the reachable commit `432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12`](https://github.com/qubit-ltd/rs-magika/commit/432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12).
+It keeps the other sibling revisions pinned in the [workflow](../.github/workflows/magika-consumer.yml).
+Before running the commands below, prepare an independent sibling layout named
+`current-fixture-root/`: put the current `rs-mime` checkout in
+`current-fixture-root/rs-mime` and check out each sibling repository at the
+revision in that workflow. Do not reuse the historical `fixture-root/` above.
+For example, from `current-fixture-root/`:
+
+```bash
+git clone https://github.com/qubit-ltd/rs-magika.git
+git -C rs-magika checkout --detach 432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12
+```
+
+Use these workflow revisions for the other siblings: `rs-operation`
+`893bcf6c7efb397cc8fac2f7fe18fb5e87017e63`, `rs-fs`
+`c7ea1d035498aa633f4f3c04d90fdb5d4b73de97`, `rs-fs-registry`
+`df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c`, `rs-local-files`
+`5b52230e0af2997fadc45b5ff48be65b0ca5a70d`, `rs-fs-local`
+`3bf4275ed601e39fdbf8532f9d80d563d9cc7182`, and `rs-fs-testkit`
+`28bf195b8eef9c03d9cb1c5428186758b76aaacd`. Keep `rs-mime` at the current
+checkout that contains this guide; it has no fixed SHA in this source graph.
+
+The fixture [manifest](../tests/fixtures/magika_inventory_consumer/Cargo.toml)
+and [lock file](../tests/fixtures/magika_inventory_consumer/Cargo.lock) are
+inside the current MIME checkout. Their relative path dependencies resolve
+`qubit-mime` to that checkout and `qubit-magika` and `qubit-operation` to the
+sibling `rs-magika` and `rs-operation` checkouts. No fixed MIME commit is needed
+in this guide: the fixture files and the workflow are read from the current
+checkout that triggered CI. Run the commands below from
+`current-fixture-root/rs-mime`.
+
+The workflow verifies one `qubit-operation` package in each feature mode and
+runs the explicitly registered and inventory-discovered consumers. To inspect
+the same current graph from the `rs-mime` root, run:
+
+```bash
+cargo +1.94.0 metadata --locked --format-version 1 --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
+cargo +1.94.0 tree --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml -i qubit-operation
+cargo +1.94.0 check --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
+cargo +1.94.0 run --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
+cargo +1.94.0 metadata --locked --format-version 1 --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
+cargo +1.94.0 tree --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory -i qubit-operation
+cargo +1.94.0 check --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
+cargo +1.94.0 run --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
+```
+
+The run commands dynamically load ONNX Runtime 1.24.2. Set `ORT_LIBRARY_PATH`
+to the shared library and, on Linux, add its directory to `LD_LIBRARY_PATH`, as
+the workflow does.
+
+#### Historical fixed-source application graph
 
 For a new application's fixed-source integration, create a separate
 `consumer-root/` layout. Follow Magika's
@@ -455,11 +511,11 @@ reference to the crate. Inventory discovers `magika` through
 select `magika` explicitly. The complete copyable entry point is the
 [consumer fixture at the tested revision](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/src/main.rs).
 
-The fixture dynamically loads ONNX Runtime 1.24.2. Set `ORT_LIBRARY_PATH` to
+The historical fixture dynamically loads ONNX Runtime 1.24.2. Set `ORT_LIBRARY_PATH` to
 the shared library and, on Linux, add its directory to `LD_LIBRARY_PATH`. The
 [fixed-revision workflow](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/.github/workflows/magika-consumer.yml)
-records the verified wheel URL and SHA-256. From `fixture-root/`, run the
-fixture commands with its checked-in lock file:
+records the verified wheel URL and SHA-256. To replay the historical fixture
+graph from `fixture-root/`, run its commands with the checked-in lock file:
 
 ```bash
 cargo +1.94.0 check --locked --manifest-path rs-mime/tests/fixtures/magika_inventory_consumer/Cargo.toml
