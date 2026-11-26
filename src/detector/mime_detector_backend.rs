@@ -130,9 +130,12 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
 
     /// Guesses MIME candidates from content asynchronously.
     ///
-    /// The default rejects asynchronous use. A backend must opt into async
-    /// execution explicitly by overriding this hook; synchronous inspection
-    /// is never run inline on an async executor. Built-in file detection owns
+    /// The default [`Self::guess_from_async_provider_path`] hook calls this
+    /// after its asynchronous-content capability check. A backend must opt
+    /// into async execution explicitly by overriding this hook; synchronous
+    /// inspection is never run inline on an async executor. Managed operations
+    /// use [`AsyncMimeDetectorBackend::guess_content_in`](crate::AsyncMimeDetectorBackend::guess_content_in)
+    /// instead. Built-in file detection owns
     /// its input and runs staging and command execution on the blocking
     /// pool. Dropping its future does not guarantee cancellation after the
     /// worker starts. The worker copy and provider prefix may coexist, each
@@ -235,8 +238,16 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
 
     /// Guesses MIME candidates through an asynchronous provider-neutral path.
     ///
-    /// Complete-content backends must override this hook when they can inspect
-    /// a provider resource without materializing an unbounded buffer.
+    /// This legacy hook is separate from the synchronous
+    /// [`Self::guess_from_provider_path`] hook and managed
+    /// [`AsyncMimeDetectorBackend::guess_content_in`](crate::AsyncMimeDetectorBackend::guess_content_in)
+    /// path. The default first rejects backends that require complete input,
+    /// then rejects backends that do not support asynchronous content
+    /// inspection, before opening the provider resource. Complete-content
+    /// backends that can inspect a resource without materializing an unbounded
+    /// buffer must override this hook. Prefix backends opting into the default
+    /// must also retain the default `true` result from
+    /// [`Self::supports_async_content_detection`].
     ///
     /// # Parameters
     /// - `file_system`: Asynchronous filesystem facade that owns `path`.
@@ -254,9 +265,11 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
     /// # Errors
     /// The default implementation returns
     /// [`MimeError::CompleteContentRequired`](crate::MimeError::CompleteContentRequired)
-    /// when the backend requires complete content. It also propagates errors
-    /// from reading the prefix and inspecting it with
-    /// [`Self::guess_from_content`].
+    /// when the backend requires complete content, then returns
+    /// [`MimeError::AsyncUnsupported`](crate::MimeError::AsyncUnsupported)
+    /// when asynchronous content detection is unsupported. Both checks happen
+    /// before provider IO. It also propagates errors from reading the prefix
+    /// and inspecting it with [`Self::guess_from_content_async`].
     fn guess_from_async_provider_path<'a>(
         &'a self,
         file_system: &'a AsyncFileSystem,
@@ -266,6 +279,9 @@ pub trait MimeDetectorBackend: Debug + Send + Sync {
         Box::pin(async move {
             if matches!(self.content_requirement(), ContentRequirement::Complete) {
                 return Err(crate::MimeError::CompleteContentRequired);
+            }
+            if !self.supports_async_content_detection() {
+                return Err(crate::MimeError::AsyncUnsupported);
             }
             let content = file_system
                 .read_prefix(path, ReadOptions::default(), max_bytes)
@@ -571,7 +587,9 @@ where
     ///
     /// # Errors
     /// Returns an error when the buffer limit is exceeded or asynchronous path
-    /// inspection fails.
+    /// inspection fails. The buffer-limit check precedes the unique-filename
+    /// `PreferFilename` shortcut; otherwise, the shortcut precedes the
+    /// asynchronous capability check and provider hook.
     fn detect_async_path<'a>(
         &'a self,
         file_system: &'a AsyncFileSystem,

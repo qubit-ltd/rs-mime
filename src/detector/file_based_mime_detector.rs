@@ -88,6 +88,15 @@ impl<T> StreamBasedMimeDetector for T
 where
     T: FileBasedMimeDetector,
 {
+    /// File-backed detectors expose synchronous local-file hooks only.
+    ///
+    /// # Returns
+    /// `false`, because this blanket implementation has no async content hook.
+    #[inline]
+    fn supports_async_content_detection(&self) -> bool {
+        false
+    }
+
     /// Gets the shared detector core.
     #[inline]
     fn core(&self) -> &MimeDetectorCore {

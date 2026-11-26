@@ -71,11 +71,19 @@
 //! configuring the runtime, before submission. Submission-time rejection
 //! returns the owned input in `MimeSubmitFailure`; errors after acceptance are
 //! reported by the operation outcome, with resource release observed through
-//! settlement. The legacy `detect_async_path` entry preserves the
-//! unique-filename `PreferFilename` shortcut for `RepositoryMimeDetector`;
-//! content-dependent policies return `AsyncUnsupported` before provider IO.
-//! Custom backends retain their existing default behavior and can opt into
-//! asynchronous content inspection through their async hook.
+//! settlement. The synchronous [`MimeDetector::detect_path`] entry calls the
+//! backend's synchronous provider hook. The legacy
+//! [`MimeDetector::detect_async_path`] entry is separate from managed
+//! operations: it checks `max_buffer_size`, preserves the unique-filename
+//! `PreferFilename` shortcut, then uses
+//! [`MimeDetectorBackend::guess_from_async_provider_path`]. The built-in
+//! repository and `file` backends reject unsupported legacy content detection
+//! before provider IO; `file` remains available through its managed async
+//! provider. Custom backends retain the default async-capable declaration and
+//! provider-hook behavior, and can opt into content inspection by implementing
+//! [`MimeDetectorBackend::guess_from_content_async`] or overriding the provider
+//! hook. Managed detection uses [`AsyncMimeDetectorBackend::guess_content_in`]
+//! through an async-capable provider with prepared execution services.
 //! Dropping the future does not guarantee cancellation of started work, and a
 //! prefix may temporarily occupy both the provider buffer and an owned worker
 //! copy; `max_buffer_size` limits each buffer individually. `Prefix(n)` is a
