@@ -421,7 +421,7 @@ cd fixture-root/rs-mime
 #### Current CI fixture
 
 The current workflow checks out this `rs-mime` revision and checks out
-[`rs-magika` at the reachable commit `432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12`](https://github.com/qubit-ltd/rs-magika/commit/432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12).
+[`rs-magika` at the reachable commit `47c174a44de8b48a7fee995f6df03a7d26f51db3`](https://github.com/qubit-ltd/rs-magika/commit/47c174a44de8b48a7fee995f6df03a7d26f51db3).
 It keeps the other sibling revisions pinned in the [workflow](../.github/workflows/magika-consumer.yml).
 Before running the commands below, prepare an independent sibling layout named
 `current-fixture-root/`: put the current `rs-mime` checkout in
@@ -431,14 +431,14 @@ For example, from `current-fixture-root/`:
 
 ```bash
 git clone https://github.com/qubit-ltd/rs-magika.git
-git -C rs-magika checkout --detach 432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12
+git -C rs-magika checkout --detach 47c174a44de8b48a7fee995f6df03a7d26f51db3
 ```
 
 Use these workflow revisions for the other siblings: `rs-operation`
 `893bcf6c7efb397cc8fac2f7fe18fb5e87017e63`, `rs-fs`
 `c7ea1d035498aa633f4f3c04d90fdb5d4b73de97`, `rs-fs-registry`
 `df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c`, `rs-local-files`
-`5b52230e0af2997fadc45b5ff48be65b0ca5a70d`, `rs-fs-local`
+`80d4357b354f572e695f0c17ac1182f0aaad22c0`, `rs-fs-local`
 `3bf4275ed601e39fdbf8532f9d80d563d9cc7182`, and `rs-fs-testkit`
 `28bf195b8eef9c03d9cb1c5428186758b76aaacd`. Keep `rs-mime` at the current
 checkout that contains this guide; it has no fixed SHA in this source graph.

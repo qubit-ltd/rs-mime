@@ -201,6 +201,8 @@ name = "magika-inventory-consumer"
 version = "0.0.0"
 dependencies = [
  "ort",
+ "qubit-fs",
+ "qubit-io",
  "qubit-magika",
  "qubit-mime",
  "qubit-operation",

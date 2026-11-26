@@ -332,7 +332,7 @@ cd fixture-root/rs-mime
 #### 当前 CI fixture
 
 当前 workflow 使用触发 CI 的这份 `rs-mime` checkout，并将
-[`rs-magika` 固定到远端可检出的提交 `432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12`](https://github.com/qubit-ltd/rs-magika/commit/432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12)。
+[`rs-magika` 固定到远端可检出的提交 `47c174a44de8b48a7fee995f6df03a7d26f51db3`](https://github.com/qubit-ltd/rs-magika/commit/47c174a44de8b48a7fee995f6df03a7d26f51db3)。
 其余兄弟仓库仍使用[workflow](../.github/workflows/magika-consumer.yml)中固定的版本。
 运行下方命令前，请准备独立的 `current-fixture-root/` sibling 布局：将包含本指南的当前
 `rs-mime` checkout 放在 `current-fixture-root/rs-mime`，并把兄弟仓库检出到 workflow
@@ -341,14 +341,14 @@ cd fixture-root/rs-mime
 
 ```bash
 git clone https://github.com/qubit-ltd/rs-magika.git
-git -C rs-magika checkout --detach 432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12
+git -C rs-magika checkout --detach 47c174a44de8b48a7fee995f6df03a7d26f51db3
 ```
 
 其余兄弟仓库使用 workflow 中的固定提交：`rs-operation`
 `893bcf6c7efb397cc8fac2f7fe18fb5e87017e63`、`rs-fs`
 `c7ea1d035498aa633f4f3c04d90fdb5d4b73de97`、`rs-fs-registry`
 `df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c`、`rs-local-files`
-`5b52230e0af2997fadc45b5ff48be65b0ca5a70d`、`rs-fs-local`
+`80d4357b354f572e695f0c17ac1182f0aaad22c0`、`rs-fs-local`
 `3bf4275ed601e39fdbf8532f9d80d563d9cc7182`、`rs-fs-testkit`
 `28bf195b8eef9c03d9cb1c5428186758b76aaacd`。此源码图中的 `rs-mime` 使用当前
 checkout，不绑定固定 SHA。
