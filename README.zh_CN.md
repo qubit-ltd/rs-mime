@@ -58,14 +58,17 @@ fn main() -> qubit_mime::MimeResult<()> {
 对于内置 detector 和通过本 crate blanket `MimeDetector` 实现接入的 backend，
 `detect_prefix` 会匹配文件名和内容候选，不会把前缀交给需要完整媒体内容的
 classifier。直接实现 `MimeDetector` 的类型自行决定其行为。受管异步操作使用异步 backend：附加
-执行服务后默认采用 crate 内置的 `repository`；改用其他 backend 时需显式选择。为受管异步
+执行服务后会使用 runtime 保留的 repository（`MimeRuntime::builtin()` 使用内置数据，
+`MimeRuntime::new` 保留调用方传入的数据）；改用其他 backend 时需显式选择。为受管异步
 backend 解析仅支持同步的 Provider 工厂时，会在 runtime 配置阶段以 `AsyncUnsupported` 失败，
 早于任何操作提交；不会回退到同步执行。
 受管操作的生命周期和 Provider 能力限制见用户手册。
 
 旧入口 `detect_async_path` 在 `PreferFilename` 下仍会对唯一文件名候选提前返回。内置
 `RepositoryMimeDetector` 没有异步内容 hook，因此按内容检测时会在打开 Provider 路径前返回
-`AsyncUnsupported`。自定义 backend 保留原有异步 hook 行为；需要读取内容时，应实现异步内容或
+`AsyncUnsupported`。旧的 `FileBasedMimeDetector` 在需要内容的异步调用中也会先返回
+`AsyncUnsupported`，不会访问 Provider。若调用方依赖此前的 I/O 错误时序或副作用，请改用同步文件入口或受管
+`file` Provider。自定义 backend 保留原有异步 hook 行为；需要读取内容时，应实现异步内容或
 Provider 路径 hook。若自定义 backend 希望在读取前拒绝，还可覆盖
 `supports_async_content_detection` 并返回 `false`。
 
@@ -79,7 +82,8 @@ Provider 路径 hook。若自定义 backend 希望在读取前拒绝，还可覆
 - 通过 `MimeDetectorRegistry` 与 `MimeConfig` 配置内置 Provider、应用自定义 Provider、
   Provider 选择、fallback 和资源限制。
 - `MimeRuntime` 提供受管检测操作：输入所有权明确，提交拒绝带回原输入，业务结果与资源
-  settlement 分开观察。附加执行服务后默认使用内置 `repository`；使用 `file` 时需显式选择。
+  settlement 分开观察。附加执行服务后默认使用 runtime 保留的 repository：`MimeRuntime::builtin()` 使用内置数据，
+  `MimeRuntime::new` 保留调用方传入的数据；使用 `file` 时需显式选择。
   提交被拒绝时，`MimeSubmitFailure` 会带回原输入；任务接纳后的检测错误由 operation outcome
   报告，资源释放情况则通过 settlement 观察。关闭时，Pending 且 `snapshot.group` 尚无值，说明组 Drain
   还未发布；服务准备、操作结算或准入可能仍在进行，也可能有另一个关闭尝试正在执行。操作结算后，
@@ -222,11 +226,7 @@ Registry。
 两个 `builtin()` Registry 会发现这些 Provider，同时保留 `repository` 和 `ffprobe`
 默认选择。重复 selector 会使 inventory 构建失败；未启用此 feature 时仍需显式注册。
 
-通过 registry 使用 Magika inventory，要求 `qubit-mime` 0.22 和 `qubit-magika` 0.18
-均已发布。2026-11-24 的 registry manifest 检查发现 `qubit-mime` 0.22.0 尚未发布。
-[固定源码接入指南](doc/user_guide.zh_CN.md#固定源码接入-magika)列出同级仓库的确切 revision、应用配置、`cargo check` 与 `--locked` 命令，以及动态 ONNX Runtime 前置条件。
-[T4 固定版本中的 consumer fixture](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/src/main.rs)在普通模式显式注册 Magika，启用 inventory 时由 registry 发现后再显式选择。
-[固定版本的 workflow](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/.github/workflows/magika-consumer.yml)记录了经过校验的运行库下载方式；[fixture manifest](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.toml) 和 [锁文件](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.lock)也固定在同一版本。fixture 源码、锁文件和 workflow 都可在源码仓库查看，但不会进入已发布的 crate package。
+Magika 当前消费者及两种 Provider 注册方式由其 [T5 CI fixture](https://github.com/qubit-ltd/rs-magika/tree/9616c553ec9d8369b9a85de605b42bf780de7a2e/tests/fixtures/readme_consumer)维护。[Magika 接入指南](doc/user_guide.zh_CN.md#固定源码接入-magika)说明 manifest、锁文件、完整命令、预期检测结果和动态 ONNX Runtime 配置。指南仍保留固定 SHA 的旧版回放步骤，供复现历史组合时使用。
 
 常用配置键包括 `mime.detector.default`、`mime.detector.fallbacks`、
 `mime.max.buffer.size`、`mime.command.timeout` 和 `mime.command.output.max.bytes`。

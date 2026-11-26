@@ -418,58 +418,20 @@ cd fixture-root/rs-mime
 ./.infra/bin/prepare-local-path-dependencies.sh --check-locked
 ```
 
-#### Current CI fixture
+#### Current Magika CI consumer
 
-The current workflow checks out this `rs-mime` revision and checks out
-[`rs-magika` at the reachable commit `432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12`](https://github.com/qubit-ltd/rs-magika/commit/432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12).
-It keeps the other sibling revisions pinned in the [workflow](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/.github/workflows/magika-consumer.yml).
-Before running the commands below, prepare an independent sibling layout named
-`current-fixture-root/`: put the current `rs-mime` checkout in
-`current-fixture-root/rs-mime` and check out each sibling repository at the
-revision in that workflow. Do not reuse the historical `fixture-root/` above.
-For example, from `current-fixture-root/`:
+The current consumer lives in the Magika T5 change at [`9616c553ec9d8369b9a85de605b42bf780de7a2e`](https://github.com/qubit-ltd/rs-magika/commit/9616c553ec9d8369b9a85de605b42bf780de7a2e), in `tests/fixtures/readme_consumer`. Its [manifest](https://github.com/qubit-ltd/rs-magika/blob/9616c553ec9d8369b9a85de605b42bf780de7a2e/tests/fixtures/readme_consumer/Cargo.toml) and [lock file](https://github.com/qubit-ltd/rs-magika/blob/9616c553ec9d8369b9a85de605b42bf780de7a2e/tests/fixtures/readme_consumer/Cargo.lock) define the consumer, while the [Magika CI workflow](https://github.com/qubit-ltd/rs-magika/blob/9616c553ec9d8369b9a85de605b42bf780de7a2e/.github/workflows/ci.yml) prepares pinned sibling checkouts and dynamic ONNX Runtime 1.24.2. The `magika-inventory-consumer` binary exercises MIME integration while the fixture's default binary continues to cover the README example. Run these commands from the `rs-magika` repository root:
 
 ```bash
-git clone https://github.com/qubit-ltd/rs-magika.git
-git -C rs-magika checkout --detach 432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12
+cargo +1.94.0 metadata --locked --format-version 1 --manifest-path tests/fixtures/readme_consumer/Cargo.toml
+cargo +1.94.0 check --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml --bin magika-inventory-consumer
+cargo +1.94.0 run --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml --bin magika-inventory-consumer
+cargo +1.94.0 metadata --locked --format-version 1 --manifest-path tests/fixtures/readme_consumer/Cargo.toml --features inventory
+cargo +1.94.0 check --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml --bin magika-inventory-consumer --features inventory
+cargo +1.94.0 run --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml --bin magika-inventory-consumer --features inventory
 ```
 
-Use these workflow revisions for the other siblings: `rs-operation`
-`893bcf6c7efb397cc8fac2f7fe18fb5e87017e63`, `rs-fs`
-`c7ea1d035498aa633f4f3c04d90fdb5d4b73de97`, `rs-fs-registry`
-`df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c`, `rs-local-files`
-`5b52230e0af2997fadc45b5ff48be65b0ca5a70d`, `rs-fs-local`
-`3bf4275ed601e39fdbf8532f9d80d563d9cc7182`, and `rs-fs-testkit`
-`28bf195b8eef9c03d9cb1c5428186758b76aaacd`. Keep `rs-mime` at the current
-checkout that contains this guide; it has no fixed SHA in this source graph.
-
-The fixture [manifest](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.toml)
-and [lock file](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.lock) are
-inside the current MIME checkout. Their relative path dependencies resolve
-`qubit-mime` to that checkout and `qubit-magika` and `qubit-operation` to the
-sibling `rs-magika` and `rs-operation` checkouts. No fixed MIME commit is needed
-in this guide: the fixture files and the workflow are read from the current
-checkout that triggered CI. Run the commands below from
-`current-fixture-root/rs-mime`.
-
-The workflow verifies one `qubit-operation` package in each feature mode and
-runs the explicitly registered and inventory-discovered consumers. To inspect
-the same current graph from the `rs-mime` root, run:
-
-```bash
-cargo +1.94.0 metadata --locked --format-version 1 --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
-cargo +1.94.0 tree --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml -i qubit-operation
-cargo +1.94.0 check --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
-cargo +1.94.0 run --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
-cargo +1.94.0 metadata --locked --format-version 1 --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
-cargo +1.94.0 tree --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory -i qubit-operation
-cargo +1.94.0 check --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
-cargo +1.94.0 run --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
-```
-
-The run commands dynamically load ONNX Runtime 1.24.2. Set `ORT_LIBRARY_PATH`
-to the shared library and, on Linux, add its directory to `LD_LIBRARY_PATH`, as
-the workflow does.
+The fixture's `inventory` feature enables `qubit-magika/inventory`. Without it, the binary explicitly registers Magika; with it, `MimeDetectorRegistry::builtin()` discovers Magika. Both modes keep `repository` as the default, explicitly select `magika`, and assert Python content as `text/x-python` and a PDF filename as `application/pdf`. Successful runs print `Magika consumer mode: explicit registration` or `Magika consumer mode: inventory auto-discovery` to stderr; detection assertions and explicit-mode runtime shutdown must also pass. For dynamic loading, set `ORT_LIBRARY_PATH` to the ONNX Runtime shared library; on Linux, add its directory to `LD_LIBRARY_PATH`, as the workflow does. The workflow also checks the resolved package identities and source paths, including a single `qubit-operation` from its pinned sibling checkout.
 
 #### Historical fixed-source application graph
 
@@ -709,12 +671,16 @@ own. Run the example with
 `cargo run --example managed_lifecycle`; the CI consumer fixture invokes the
 same entry point.
 
-`MimeRuntime::builtin()` starts with the bundled repository. Attaching execution
-services with `with_execution_services` also installs a repository-backed async
-backend by default; `with_async_provider_selection` replaces it when another
-async implementation is needed. Resolving a sync-only provider factory fails
-with `AsyncUnsupported` during this runtime configuration call, before
-submission.
+`MimeRuntime::new(config, repository)` retains the supplied repository;
+`MimeRuntime::builtin()` explicitly starts with bundled data. Attaching execution
+services with `with_execution_services` installs a repository-backed async
+backend using the runtime's retained repository. `with_async_provider_selection`
+(and its classifier variant) replaces that managed backend; a provider factory
+that declares bundled repository data as its candidate source uses those rules.
+Attaching services again resets the managed selection to the runtime repository.
+These operations do not change the synchronous detector facade. Resolving a
+sync-only provider factory fails with `AsyncUnsupported` during provider
+selection, before submission.
 The built-in `repository` and
 `file` providers both expose managed async backends. `file` requires complete
 content; its lack of random-access support only rules out inputs that require
@@ -884,7 +850,7 @@ capabilities are:
 | Provider | Managed async backend | Input and refinement limits |
 | --- | --- | --- |
 | `repository` | Yes | Matches supplied bytes against repository rules; does not support random-access input. |
-| `file` | Yes, after explicit selection | Requires complete content and does not support random-access input. Attaching any async classifier is rejected with `UnsupportedCapability` during factory creation. |
+| `file` | Yes, after explicit selection | Consumes complete staged content and uses the system command result; filename candidates and `MimeDetectionPolicy` do not participate. It does not support random-access input. Attaching any async classifier is rejected with `UnsupportedCapability` during factory creation. |
 | Sync-only custom provider | No | Resolving its factory for async selection fails with `AsyncUnsupported` during runtime configuration; it is not run synchronously as a fallback. |
 
 For path-backed inputs, filename rules receive the native path basename through
@@ -1007,8 +973,12 @@ implementations define their own behavior. The async path entry point reads up
 to the requested prefix by default. The legacy `RepositoryMimeDetector` path
 is an exception: a unique filename candidate still short-circuits under
 `PreferFilename`, while content-dependent policies return `AsyncUnsupported`
-before opening the provider path. Custom `MimeDetectorBackend` implementations
-retain their existing behavior by default. Override
+before opening the provider path. `FileBasedMimeDetector` also rejects
+content-required async calls with `AsyncUnsupported` before opening or reading
+its provider; callers relying on the former I/O error timing or side effect
+should use its synchronous file entry or the managed `file` provider. Callers
+that need bytes in advance must read them explicitly. Custom
+`MimeDetectorBackend` implementations retain their existing behavior by default. Override
 `supports_async_content_detection` to reject before IO, or provide an
 asynchronous content hook when they need to inspect content. A prefix backend can inspect large
 resources without loading the entire resource. A backend whose

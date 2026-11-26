@@ -73,8 +73,10 @@ For built-in detectors and backends using the crate's blanket `MimeDetector`
 implementation, `detect_prefix` matches filename and content candidates
 without passing the prefix to a complete-media classifier. Types that implement
 `MimeDetector` directly define their own behavior. Managed async operations use
-an async backend: attaching execution services defaults it to the bundled
-`repository`, and another backend must be selected explicitly. Resolving a
+an async backend: attaching execution services uses the runtime's retained
+repository (`MimeRuntime::builtin()` selects bundled data, while
+`MimeRuntime::new` keeps the supplied repository). Another backend must be
+selected explicitly. Resolving a
 sync-only provider factory for managed async work fails with `AsyncUnsupported`
 while configuring the runtime, before any operation is submitted; it never
 falls back to synchronous work.
@@ -87,7 +89,10 @@ has no asynchronous content hook, so content-based calls return
 `AsyncUnsupported` before opening the provider path. Custom backends keep their
 existing async hook behavior; override `supports_async_content_detection`
 when they want an early rejection, or implement an async content or
-provider-path hook when content inspection is required.
+provider-path hook when content inspection is required. The built-in
+`FileBasedMimeDetector` returns `AsyncUnsupported` before provider I/O for a
+content-required legacy call; use its synchronous file entry or managed `file`
+if the old call's I/O error timing or side effect mattered.
 
 ## What It Provides
 
@@ -102,9 +107,10 @@ provider-path hook when content inspection is required.
   providers, selection, fallbacks, and resource limits.
 - Managed detection operations through `MimeRuntime`, with owned byte inputs,
   typed submission rejection, and separate outcome and settlement observation.
-  Attaching execution services defaults managed detection to the bundled
-  `repository`; select `file` explicitly. A rejected submission returns the
-  original input in `MimeSubmitFailure`. Detection errors after acceptance are
+  Attaching execution services defaults managed detection to the repository
+  retained by the runtime; `MimeRuntime::builtin()` uses bundled data, while
+  `MimeRuntime::new` keeps the caller's repository. Select `file` explicitly.
+  A rejected submission returns the original input in `MimeSubmitFailure`. Detection errors after acceptance are
   reported by the operation outcome, and resource release is observed through
   settlement. During shutdown, a Pending result with no `snapshot.group` means
   Drain is not published yet; preparation, operation settlement, or admissions
@@ -298,18 +304,7 @@ those providers while keeping `repository` and `ffprobe` as their defaults.
 Duplicate submitted selectors fail inventory construction. Without this feature,
 providers continue to require explicit registration.
 
-Registry-based Magika inventory consumption requires published `qubit-mime`
-0.22 and `qubit-magika` 0.18 releases. The registry manifest check on
-2026-11-24 found `qubit-mime` 0.22.0 unpublished, so the prerequisite was not
-met then. The [fixed-source consumer guide](doc/user_guide.md#fixed-source-magika-consumer)
-records exact sibling revisions, application setup, `cargo check` and `--locked`
-commands, and the dynamic ONNX Runtime requirement. The [consumer fixture at the tested revision](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/src/main.rs)
-uses explicit registration without `inventory`, and registry discovery plus
-explicit selection with `inventory`. The [workflow at the tested revision](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/.github/workflows/magika-consumer.yml)
-records the verified runtime download. The fixture [manifest](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.toml)
-and [lock file](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.lock),
-its source, and the workflow are available in the source repository; none are
-included in the published crate package.
+The current Magika consumer and both registration modes are maintained by Magika's [T5 CI fixture](https://github.com/qubit-ltd/rs-magika/tree/9616c553ec9d8369b9a85de605b42bf780de7a2e/tests/fixtures/readme_consumer). The [Magika integration guide](doc/user_guide.md#fixed-source-magika-consumer) explains its manifest, lock file, exact commands, expected detections, and dynamic ONNX Runtime setup. Earlier fixed-SHA replay instructions remain in the guide for historical reproduction.
 
 Important configuration keys include `mime.detector.default`,
 `mime.detector.fallbacks`, `mime.max.buffer.size`,

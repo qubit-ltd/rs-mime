@@ -329,52 +329,20 @@ cd fixture-root/rs-mime
 ./.infra/bin/prepare-local-path-dependencies.sh --check-locked
 ```
 
-#### 当前 CI fixture
+#### Magika 当前 CI 消费者
 
-当前 workflow 使用触发 CI 的这份 `rs-mime` checkout，并将
-[`rs-magika` 固定到远端可检出的提交 `432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12`](https://github.com/qubit-ltd/rs-magika/commit/432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12)。
-其余兄弟仓库仍使用[workflow](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/.github/workflows/magika-consumer.yml)中固定的版本。
-运行下方命令前，请准备独立的 `current-fixture-root/` sibling 布局：将包含本指南的当前
-`rs-mime` checkout 放在 `current-fixture-root/rs-mime`，并把兄弟仓库检出到 workflow
-指定的固定提交。不要复用上方用于历史复现的 `fixture-root/`。例如，在
-`current-fixture-root/` 中执行：
+当前消费者位于 Magika T5 改动 [`9616c553ec9d8369b9a85de605b42bf780de7a2e`](https://github.com/qubit-ltd/rs-magika/commit/9616c553ec9d8369b9a85de605b42bf780de7a2e) 的 `tests/fixtures/readme_consumer`。[manifest](https://github.com/qubit-ltd/rs-magika/blob/9616c553ec9d8369b9a85de605b42bf780de7a2e/tests/fixtures/readme_consumer/Cargo.toml) 和[锁文件](https://github.com/qubit-ltd/rs-magika/blob/9616c553ec9d8369b9a85de605b42bf780de7a2e/tests/fixtures/readme_consumer/Cargo.lock)定义了该消费者；[Magika CI workflow](https://github.com/qubit-ltd/rs-magika/blob/9616c553ec9d8369b9a85de605b42bf780de7a2e/.github/workflows/ci.yml)负责准备固定的兄弟仓库和动态加载的 ONNX Runtime 1.24.2。`magika-inventory-consumer` bin 专门验证 MIME 集成，fixture 默认 bin 则继续覆盖 README 示例。以下命令从 `rs-magika` 仓库根目录运行：
 
 ```bash
-git clone https://github.com/qubit-ltd/rs-magika.git
-git -C rs-magika checkout --detach 432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12
+cargo +1.94.0 metadata --locked --format-version 1 --manifest-path tests/fixtures/readme_consumer/Cargo.toml
+cargo +1.94.0 check --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml --bin magika-inventory-consumer
+cargo +1.94.0 run --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml --bin magika-inventory-consumer
+cargo +1.94.0 metadata --locked --format-version 1 --manifest-path tests/fixtures/readme_consumer/Cargo.toml --features inventory
+cargo +1.94.0 check --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml --bin magika-inventory-consumer --features inventory
+cargo +1.94.0 run --locked --manifest-path tests/fixtures/readme_consumer/Cargo.toml --bin magika-inventory-consumer --features inventory
 ```
 
-其余兄弟仓库使用 workflow 中的固定提交：`rs-operation`
-`893bcf6c7efb397cc8fac2f7fe18fb5e87017e63`、`rs-fs`
-`c7ea1d035498aa633f4f3c04d90fdb5d4b73de97`、`rs-fs-registry`
-`df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c`、`rs-local-files`
-`5b52230e0af2997fadc45b5ff48be65b0ca5a70d`、`rs-fs-local`
-`3bf4275ed601e39fdbf8532f9d80d563d9cc7182`、`rs-fs-testkit`
-`28bf195b8eef9c03d9cb1c5428186758b76aaacd`。此源码图中的 `rs-mime` 使用当前
-checkout，不绑定固定 SHA。
-
-当前 MIME checkout 中的 fixture [manifest](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.toml)
-和[锁文件](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.lock)通过相对路径引用源码：
-`qubit-mime` 指向当前 checkout，`qubit-magika` 和 `qubit-operation` 分别指向同级的
-`rs-magika` 和 `rs-operation`。本指南不固定 MIME 提交；CI 使用触发 workflow 的当前
-checkout，因此不会依赖尚未产生的未来提交。从 `current-fixture-root/rs-mime` 根目录运行下方命令。
-
-workflow 会在两种 feature 模式下检查 `qubit-operation` 只有一个包，并运行显式注册和
-inventory 发现两条消费路径。从 `rs-mime` 根目录可用以下命令检查当前源码图：
-
-```bash
-cargo +1.94.0 metadata --locked --format-version 1 --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
-cargo +1.94.0 tree --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml -i qubit-operation
-cargo +1.94.0 check --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
-cargo +1.94.0 run --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml
-cargo +1.94.0 metadata --locked --format-version 1 --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
-cargo +1.94.0 tree --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory -i qubit-operation
-cargo +1.94.0 check --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
-cargo +1.94.0 run --locked --manifest-path tests/fixtures/magika_inventory_consumer/Cargo.toml --features inventory
-```
-
-运行 fixture 还需动态加载 ONNX Runtime 1.24.2。将 `ORT_LIBRARY_PATH` 指向共享库；Linux
-用户还需按 workflow 的设置，将库目录加入 `LD_LIBRARY_PATH`。
+fixture 的 `inventory` feature 会启用 `qubit-magika/inventory`。关闭该 feature 时，程序显式注册 Magika；启用后，`MimeDetectorRegistry::builtin()` 会自动发现 Magika。两种模式都保留 `repository` 作为默认 Provider，并显式选择 `magika`；程序断言 Python 内容识别为 `text/x-python`，PDF 文件名识别为 `application/pdf`。成功运行时，stderr 会输出 `Magika consumer mode: explicit registration` 或 `Magika consumer mode: inventory auto-discovery`；内容断言和显式注册模式下的 runtime 关闭检查也必须通过。动态加载时，将 `ORT_LIBRARY_PATH` 指向 ONNX Runtime 共享库；Linux 还需按 workflow 配置 `LD_LIBRARY_PATH`。workflow 也会检查解析后的包身份和源码路径，确保 `qubit-operation` 只来自固定的兄弟 checkout。
 
 #### 历史固定源码应用图
 
@@ -596,10 +564,12 @@ settlement，再释放 typed handle，最后等待组 Drain。若存在未解决
 自定义清理应在服务停止前完成，或自行保留可继续工作的依赖。
 完整样例可通过 `cargo run --locked --example managed_lifecycle` 运行，CI 的 consumer fixture 也运行同一入口。
 
-`MimeRuntime::builtin()` 默认使用内置 repository。调用 `with_execution_services` 附加执行服务时，
-也会默认安装 repository 受管异步 backend；如需其他异步实现，可再用
-`with_async_provider_selection` 替换它。为异步 backend 解析仅支持同步的 Provider 工厂时，会在
-runtime 配置阶段以 `AsyncUnsupported` 失败，早于任务提交。内置 `repository` 和 `file` Provider 都提供受管异步
+`MimeRuntime::new(config, repository)` 会保留调用方传入的 repository；`MimeRuntime::builtin()` 则明确使用
+内置数据。调用 `with_execution_services` 附加执行服务时，会安装一个使用该 runtime repository 的
+repository 受管异步 backend。需要切换时，可调用 `with_async_provider_selection` 或带 classifier 的变体；
+若所选 Provider 工厂声明使用内置 repository 作为候选来源，就会采用内置规则。再次附加执行服务会把受管
+backend 重置为 runtime repository；这些调用不会改变同步 detector facade。为异步 backend 解析仅支持同步的
+Provider 工厂时，会在 Provider 选择阶段以 `AsyncUnsupported` 失败，早于任务提交。内置 `repository` 和 `file` Provider 都提供受管异步
 backend。`file` 要求完整内容；
 它不支持随机访问，只表示不能处理要求随机访问的输入。注册 Provider 不会启动检测任务。
 未配置执行服务时，提交会以 `ExecutionServicesRequired` 拒绝。上文仅支持同步的 Provider 所致
@@ -707,7 +677,7 @@ Provider 遇到 EOF 时，实际返回字节也可能更少。若预检无法预
 | Provider | 受管异步 backend | 输入与精化限制 |
 | --- | --- | --- |
 | `repository` | 支持 | 根据提供的字节匹配仓库规则；不支持随机访问输入。 |
-| `file` | 支持，须显式选择 | 要求完整内容，不支持随机访问。任何附加的异步 classifier 都会在 factory 创建时以 `UnsupportedCapability` 拒绝。 |
+| `file` | 支持，须显式选择 | 只消费完整暂存内容，并以系统命令结果作为候选；文件名候选和 `MimeDetectionPolicy` 不参与。它不支持随机访问。附加异步 classifier 会在 factory 创建时以 `UnsupportedCapability` 拒绝。 |
 | 仅同步的自定义 Provider | 不支持 | 为异步选择解析其工厂时，会在 runtime 配置阶段以 `AsyncUnsupported` 失败；不会回退为同步执行。 |
 
 路径输入会按 native path 语义提取 basename，再交给专用文件名匹配入口；完整路径不会被重新当作文件名解析。
@@ -786,8 +756,10 @@ worker 实际退出，并观察相同的最终结果。
 和通过本 crate blanket `MimeDetector` 实现接入的 backend，前缀检测不会将该前缀传给完整媒体
 classifier；直接实现 `MimeDetector` 的类型自行决定其行为。异步路径入口默认读取请求的内容
 前缀。内置旧 `RepositoryMimeDetector` 是例外：在 `PreferFilename` 下，唯一文件名候选仍会直接返回；
-依赖内容的策略则会在打开 Provider 路径前返回 `AsyncUnsupported`。自定义
-`MimeDetectorBackend` 默认保留原有行为。覆盖 `supports_async_content_detection` 并返回 `false` 可在读取前拒绝；
+依赖内容的策略则会在打开 Provider 路径前返回 `AsyncUnsupported`。旧的
+`FileBasedMimeDetector` 在异步调用需要内容时也会先返回 `AsyncUnsupported`，不会打开或读取 Provider。
+如果调用方依赖此前的 I/O 错误时序或副作用，应改用同步文件入口或受管 `file` Provider；需要提前读取内容时，
+由应用代码自行读取。自定义 `MimeDetectorBackend` 默认保留原有行为。覆盖 `supports_async_content_detection` 并返回 `false` 可在读取前拒绝；
 需要检查内容时则提供异步内容 hook。前缀后端可以在不加载完整资源的情况下检查大文件；声明
 `ContentRequirement::Complete` 后端不能使用前缀入口。自定义完整内容后端可以通过覆盖独立的
 `guess_from_async_provider_path` hook 检查异步 Provider 路径。受管异步操作使用 runtime 配置的 backend；

@@ -105,6 +105,27 @@
 //! remain explicit prefix limits for callers of those APIs; they do not
 //! redefine the ordinary backend window.
 //!
+//! `MimeRuntime::new` keeps the repository supplied by the caller, while
+//! `MimeRuntime::builtin` explicitly uses bundled data. Attaching execution
+//! services with `with_execution_services` installs a managed `repository`
+//! backend based on the runtime's retained repository. Calling
+//! `with_async_provider_selection` (or its classifier variant) replaces that
+//! managed backend; a selected provider that declares the bundled repository
+//! as its candidate source uses bundled rules, while a provider without that
+//! source does not. Attaching execution services again resets the managed
+//! backend to the runtime's repository-backed default. These managed choices do
+//! not change the synchronous detector created by the runtime.
+//!
+//! The managed `file` provider consumes complete staged content and bases its
+//! candidate on the system command result; filename policy and repository
+//! filename candidates do not participate. The legacy `detect_async_path`
+//! entry instead preserves its unique-filename `PreferFilename` short circuit.
+//! For a content-required legacy call, the built-in `FileBasedMimeDetector`
+//! reports `AsyncUnsupported` before opening or reading the provider. Callers
+//! that relied on the former provider open/read error or side effect should use
+//! the synchronous file entry or managed `file`; callers that need to inspect
+//! bytes first must read them explicitly in application code.
+//!
 //! Configure a preferred detector and an explicit fallback. This is useful when
 //! `file` should be used on systems where it is available, while still allowing
 //! deterministic repository detection on minimal CI images:
