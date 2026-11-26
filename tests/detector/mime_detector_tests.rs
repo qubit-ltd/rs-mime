@@ -115,16 +115,16 @@ impl AsyncFileSystemSpi for EmptyAsyncFileSystemSpi {
 }
 
 #[derive(Debug)]
-struct PrefixAsyncFileSystemSpi {
+pub(super) struct PrefixAsyncFileSystemSpi {
     properties: ProviderProperties,
     content: Vec<u8>,
-    opens: Arc<AtomicUsize>,
-    reads: Arc<AtomicUsize>,
+    pub(super) opens: Arc<AtomicUsize>,
+    pub(super) reads: Arc<AtomicUsize>,
     fail_open: bool,
 }
 
 impl PrefixAsyncFileSystemSpi {
-    fn new(content: &[u8]) -> Self {
+    pub(super) fn new(content: &[u8]) -> Self {
         Self {
             properties: ProviderProperties::new(
                 FileSystemInfo::new(
@@ -146,7 +146,7 @@ impl PrefixAsyncFileSystemSpi {
         }
     }
 
-    fn failing_open(mut self) -> Self {
+    pub(super) fn failing_open(mut self) -> Self {
         self.fail_open = true;
         self
     }
