@@ -36,9 +36,6 @@ use qubit_mime::MimeDetector;
 use qubit_mime::MimeError;
 use qubit_mime::MimeRepository;
 
-#[cfg(unix)]
-use crate::support::PathEnvGuard;
-
 #[test]
 fn test_custom_repository_relations() {
     let repository = MimeRepository::from_xml(
@@ -156,7 +153,13 @@ fn test_public_prefer_filename_uses_native_basename_without_provider_or_command_
         .permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&executable, permissions).expect("fake file command should be executable");
-    let _path_guard = PathEnvGuard::prepend(&executable_dir);
+    if crate::support::run_test_in_path_child(
+        "detector::file_command_mime_detector_tests::test_public_prefer_filename_uses_native_basename_without_provider_or_command_io",
+        &executable_dir,
+        false,
+    ) {
+        return;
+    }
 
     assert_eq!(
         Some("application/x-native-basename".to_owned()),
@@ -194,8 +197,7 @@ fn test_public_prefer_filename_uses_native_basename_without_provider_or_command_
 
 #[test]
 fn test_is_available_can_be_called_without_panicking() {
-    #[cfg(unix)]
-    let _path_guard = PathEnvGuard::preserve();
+
     let _ = FileCommandMimeDetector::is_available();
 }
 
@@ -203,7 +205,13 @@ fn test_is_available_can_be_called_without_panicking() {
 #[test]
 fn test_is_available_is_false_when_command_cannot_be_resolved() {
     let empty_path = std::env::temp_dir().join(format!("qubit-mime-empty-command-path-{}", std::process::id()));
-    let _path_guard = PathEnvGuard::set(&empty_path);
+    if crate::support::run_test_in_path_child(
+        "detector::file_command_mime_detector_tests::test_is_available_is_false_when_command_cannot_be_resolved",
+        &empty_path,
+        true,
+    ) {
+        return;
+    }
 
     assert!(!FileCommandMimeDetector::is_available());
 }
@@ -288,7 +296,13 @@ fn test_detect_file_by_content_propagates_runner_timeout() {
         .permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
-    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    if crate::support::run_test_in_path_child(
+        "detector::file_command_mime_detector_tests::test_detect_file_by_content_propagates_runner_timeout",
+        temp_dir.path(),
+        false,
+    ) {
+        return;
+    }
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
@@ -320,7 +334,13 @@ fn test_detect_file_by_content_reads_file_command_stdout() {
         .permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
-    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    if crate::support::run_test_in_path_child(
+        "detector::file_command_mime_detector_tests::test_detect_file_by_content_reads_file_command_stdout",
+        temp_dir.path(),
+        false,
+    ) {
+        return;
+    }
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
@@ -375,7 +395,13 @@ fn test_detect_file_by_content_ends_file_option_parsing_before_path() {
         .permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
-    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    if crate::support::run_test_in_path_child(
+        "detector::file_command_mime_detector_tests::test_detect_file_by_content_ends_file_option_parsing_before_path",
+        temp_dir.path(),
+        false,
+    ) {
+        return;
+    }
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
@@ -413,7 +439,13 @@ fn test_detect_file_preserves_native_link_semantics_and_accepts_inode_mimes() {
     let directory_input = directory.path().join("directory-input");
     std::os::unix::fs::symlink(&target, &link).expect("valid symlink should be created");
     std::fs::create_dir(&directory_input).expect("directory input should be created");
-    let _path_guard = PathEnvGuard::prepend(directory.path());
+    if crate::support::run_test_in_path_child(
+        "detector::file_command_mime_detector_tests::test_detect_file_preserves_native_link_semantics_and_accepts_inode_mimes",
+        directory.path(),
+        false,
+    ) {
+        return;
+    }
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
@@ -448,7 +480,13 @@ fn test_detect_file_by_content_returns_none_for_empty_stdout() {
         .permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
-    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    if crate::support::run_test_in_path_child(
+        "detector::file_command_mime_detector_tests::test_detect_file_by_content_returns_none_for_empty_stdout",
+        temp_dir.path(),
+        false,
+    ) {
+        return;
+    }
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
@@ -477,7 +515,13 @@ fn test_detect_file_by_content_rejects_invalid_utf8_stdout() {
         .permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake file command should be executable");
-    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    if crate::support::run_test_in_path_child(
+        "detector::file_command_mime_detector_tests::test_detect_file_by_content_rejects_invalid_utf8_stdout",
+        temp_dir.path(),
+        false,
+    ) {
+        return;
+    }
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository_and_runner(
         &repository,
@@ -502,7 +546,13 @@ fn test_file_command_error_redacts_input_path() {
         .expect("Host filesystem should open")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
-    let _path_guard = PathEnvGuard::set(temp_dir.path());
+    if crate::support::run_test_in_path_child(
+        "detector::file_command_mime_detector_tests::test_file_command_error_redacts_input_path",
+        temp_dir.path(),
+        true,
+    ) {
+        return;
+    }
     let repository = MimeRepository::empty();
     let detector = FileCommandMimeDetector::with_repository(&repository);
     let private_path = std::path::Path::new("/private/customer/source-document.bin");
@@ -574,7 +624,13 @@ fn test_file_reader_staging_budget_from_config() {
         .expect("fake file command written");
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
             .expect("fake file command executable");
-        let _path_guard = PathEnvGuard::prepend(directory.path());
+        if crate::support::run_test_in_path_child(
+            "detector::file_command_mime_detector_tests::test_file_reader_staging_budget_from_config",
+            directory.path(),
+            false,
+        ) {
+            return;
+        }
 
         let input = b"%PDF-1.7TAIL";
         for repository_xml in [
@@ -756,7 +812,13 @@ fn test_file_command_contract_checks_truncation_and_actual_exit_status() {
     let script = directory.path().join("file");
     std::fs::write(&script, "#!/bin/sh\nprintf text/plain\n").expect("script written");
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("script executable");
-    let _guard = PathEnvGuard::prepend(directory.path());
+    if crate::support::run_test_in_path_child(
+        "detector::file_command_mime_detector_tests::test_file_command_contract_checks_truncation_and_actual_exit_status",
+        directory.path(),
+        false,
+    ) {
+        return;
+    }
     let runner = CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true);
     let detector = FileCommandMimeDetector::default()
         .with_command_runner(runner.clone().max_stdout_bytes(4).fail_on_output_truncation(false));
@@ -794,7 +856,13 @@ fn test_detect_file_rejects_successful_command_error_text() {
     std::fs::write(&script, "#!/bin/sh\nprintf 'cannot open private-media\\n'\nexit 0\n")
         .expect("fake utility written");
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("script executable");
-    let _guard = PathEnvGuard::prepend(directory.path());
+    if crate::support::run_test_in_path_child(
+        "detector::file_command_mime_detector_tests::test_detect_file_rejects_successful_command_error_text",
+        directory.path(),
+        false,
+    ) {
+        return;
+    }
     let detector = FileCommandMimeDetector::new()
         .with_command_runner(CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true));
     let error = detector
@@ -812,8 +880,7 @@ fn test_detect_file_rejects_successful_command_error_text() {
 #[cfg(unix)]
 #[test]
 fn test_detect_file_reports_missing_input_with_host_file_utility() {
-    #[cfg(unix)]
-    let _path_guard = PathEnvGuard::preserve();
+
     if !FileCommandMimeDetector::is_available() {
         eprintln!("skipping: host file utility is unavailable");
         return;
@@ -829,16 +896,13 @@ fn test_detect_file_reports_missing_input_with_host_file_utility() {
 }
 
 #[test]
-fn test_public_sync_file_reader_and_file_based_entry_points() {
+#[ignore = "requires an explicitly prepared file binary"]
+fn test_real_file_command_sync_entry_points() {
     use std::io::Cursor;
 
     use qubit_mime::MimeDetectionPolicy;
 
-    #[cfg(unix)]
-    let _path_guard = PathEnvGuard::preserve();
-    if !FileCommandMimeDetector::is_available() {
-        return;
-    }
+    assert!(FileCommandMimeDetector::is_available(), "real file command smoke requires file on PATH");
     let path = std::env::temp_dir().join(format!("mime-file-command-api-{}.pdf", std::process::id()));
     std::fs::write(&path, b"%PDF-1.7\n").expect("test PDF should be created");
     let detector = FileCommandMimeDetector::new();

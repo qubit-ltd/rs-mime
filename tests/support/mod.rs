@@ -9,7 +9,7 @@
 
 mod direct_backend_detector;
 #[cfg(unix)]
-mod path_env_guard;
+mod path_isolation;
 mod prefix_file_system_spi;
 mod static_entry_point_mime_detector;
 mod static_media_stream_classifier;
@@ -20,7 +20,7 @@ mod test_provider_behavior;
 
 pub(crate) use direct_backend_detector::DirectBackendDetector;
 #[cfg(unix)]
-pub(crate) use path_env_guard::PathEnvGuard;
+pub(crate) use path_isolation::run_test_in_path_child;
 pub(crate) use prefix_file_system_spi::PrefixFileSystemSpi;
 pub(crate) use static_entry_point_mime_detector::StaticEntryPointMimeDetector;
 pub(crate) use static_media_stream_classifier::StaticMediaStreamClassifier;

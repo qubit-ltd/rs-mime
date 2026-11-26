@@ -35,9 +35,6 @@ use qubit_spi::ServiceProvider;
 #[cfg(unix)]
 use qubit_spi::error::ProviderFailureKind;
 
-#[cfg(unix)]
-use crate::support::PathEnvGuard;
-
 fn services() -> MimeExecutionServices {
     let manager = OperationManager::new(Default::default()).expect("provider test manager should be created");
     let group = manager
@@ -66,8 +63,7 @@ fn test_provider_builds_complete_async_backend_without_command_probe() {
 
 #[test]
 fn test_file_command_mime_detector_provider_metadata_and_availability() {
-    #[cfg(unix)]
-    let _path_guard = PathEnvGuard::preserve();
+
     let provider = FileCommandMimeDetectorProvider;
     let descriptor = provider.descriptor();
     let creation = provider.create_configured(&MimeConfig::default());
@@ -105,7 +101,13 @@ fn test_file_provider_applies_probe_output_and_timeout_budgets() {
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let executable = directory.path().join("file");
-    let _path_guard = PathEnvGuard::prepend(directory.path());
+    if crate::support::run_test_in_path_child(
+        "detector::file_command_mime_detector_provider_tests::test_file_provider_applies_probe_output_and_timeout_budgets",
+        directory.path(),
+        false,
+    ) {
+        return;
+    }
     let write_command = |body: &str| {
         std::fs::write(&executable, body).expect("fake file command should be written");
         let mut permissions = std::fs::metadata(&executable)
@@ -158,15 +160,21 @@ fn test_file_command_provider_reports_unavailable_command() {
         return;
     }
 
+    let original_path = std::env::var_os("PATH");
+    let missing_path = std::env::join_paths([std::path::PathBuf::from(
+        "/qubit-mime-test-missing-command",
+    )])
+    .expect("missing command path should be representable natively");
     let current_test = std::env::current_exe().expect("current integration test executable should be available");
     let test_name =
         "detector::file_command_mime_detector_provider_tests::test_file_command_provider_reports_unavailable_command";
     let status = Command::new(current_test)
         .args(["--exact", test_name, "--nocapture"])
         .env(CHILD_MARKER, "1")
-        .env("PATH", "/qubit-mime-test-missing-command")
+        .env("PATH", missing_path)
         .status()
         .expect("isolated provider test should start");
 
     assert!(status.success(), "isolated provider test should pass");
+    assert_eq!(original_path, std::env::var_os("PATH"), "parent PATH must remain unchanged");
 }

@@ -41,8 +41,6 @@ use qubit_spi::ServiceProvider;
 use qubit_spi::error::ProviderFailure;
 use qubit_spi::error::ProviderFailureKind;
 
-#[cfg(unix)]
-use crate::support::PathEnvGuard;
 use crate::support::TestMediaStreamClassifierProvider;
 use crate::support::TestProviderBehavior;
 
@@ -96,7 +94,13 @@ fn test_ffprobe_provider_creates_classifier_when_command_is_available() {
         .permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake FFprobe should be executable");
-    let _path_guard = PathEnvGuard::set(temp_dir.path());
+    if crate::support::run_test_in_path_child(
+        "classifier::media_stream_classifier_registry_tests::test_ffprobe_provider_creates_classifier_when_command_is_available",
+        temp_dir.path(),
+        true,
+    ) {
+        return;
+    }
 
     let selection = ProviderSelection::named("ffprobe").expect("FFprobe provider ID should be valid");
     MediaStreamClassifierRegistry::builtin()
@@ -108,8 +112,7 @@ fn test_ffprobe_provider_creates_classifier_when_command_is_available() {
 
 #[test]
 fn test_builtin_registry_lists_and_resolves_ffprobe_provider() {
-    #[cfg(unix)]
-    let _path_guard = PathEnvGuard::preserve();
+
     let registry = MediaStreamClassifierRegistry::builtin();
     let expected_default = ProviderSelection::named("ffprobe").expect("FFprobe provider ID should be valid");
     let selection = ProviderSelection::named("ffprobe-command").expect("FFprobe alias should be valid");

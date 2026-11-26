@@ -34,8 +34,6 @@ use qubit_mime::MimeConfig;
 use qubit_mime::MimeError;
 
 use crate::api::mime_config_tests::mime_config_test_lock;
-#[cfg(unix)]
-use crate::support::PathEnvGuard;
 
 #[test]
 fn test_classify_stream_listing_maps_ffprobe_output() {
@@ -204,7 +202,13 @@ fn test_classify_file_uses_ffprobe_stdout_and_working_directory() {
         .permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
-    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    if crate::support::run_test_in_path_child(
+        "classifier::ffprobe_command_media_stream_classifier_tests::test_classify_file_uses_ffprobe_stdout_and_working_directory",
+        temp_dir.path(),
+        false,
+    ) {
+        return;
+    }
 
     let classifier = FfprobeCommandMediaStreamClassifier::new()
         .with_command_runner(CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true));
@@ -242,7 +246,13 @@ fn test_classify_file_propagates_ffprobe_start_error() {
         .expect("Host filesystem should open")
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
-    let _path_guard = PathEnvGuard::set(temp_dir.path());
+    if crate::support::run_test_in_path_child(
+        "classifier::ffprobe_command_media_stream_classifier_tests::test_classify_file_propagates_ffprobe_start_error",
+        temp_dir.path(),
+        true,
+    ) {
+        return;
+    }
     let classifier = FfprobeCommandMediaStreamClassifier::new()
         .with_command_runner(CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true));
 
@@ -271,7 +281,13 @@ fn test_classify_file_maps_unexpected_ffprobe_exit_to_none() {
         .permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
-    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    if crate::support::run_test_in_path_child(
+        "classifier::ffprobe_command_media_stream_classifier_tests::test_classify_file_maps_unexpected_ffprobe_exit_to_none",
+        temp_dir.path(),
+        false,
+    ) {
+        return;
+    }
 
     let classifier = FfprobeCommandMediaStreamClassifier::new()
         .with_command_runner(CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true));
@@ -311,7 +327,13 @@ printf 'video\n'
         .permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
-    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    if crate::support::run_test_in_path_child(
+        "classifier::ffprobe_command_media_stream_classifier_tests::test_classify_file_passes_path_through_ffprobe_input_option",
+        temp_dir.path(),
+        false,
+    ) {
+        return;
+    }
     let relative_path = format!("--qubit-ffprobe-leading-dash-{}", std::process::id(),);
     std::fs::write(&relative_path, b"media").expect("leading-dash media fixture should be written");
 
@@ -340,7 +362,13 @@ fn test_classify_file_rejects_invalid_utf8_stdout() {
         .permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&script_path, permissions).expect("fake ffprobe should be executable");
-    let _path_guard = PathEnvGuard::prepend(temp_dir.path());
+    if crate::support::run_test_in_path_child(
+        "classifier::ffprobe_command_media_stream_classifier_tests::test_classify_file_rejects_invalid_utf8_stdout",
+        temp_dir.path(),
+        false,
+    ) {
+        return;
+    }
     let media_path = temp_dir.path().join("media.bin");
     std::fs::write(&media_path, b"media").expect("media fixture should be written");
 
@@ -367,7 +395,13 @@ fn test_command_contract_rejects_truncation_and_uses_actual_exit_status() {
     let script = directory.path().join("ffprobe");
     std::fs::write(&script, "#!/bin/sh\nprintf 'video\\naudio\\n'\n").expect("script written");
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("script executable");
-    let _guard = PathEnvGuard::prepend(directory.path());
+    if crate::support::run_test_in_path_child(
+        "classifier::ffprobe_command_media_stream_classifier_tests::test_command_contract_rejects_truncation_and_uses_actual_exit_status",
+        directory.path(),
+        false,
+    ) {
+        return;
+    }
     let runner = CommandRunner::new(DEFAULT_COMMAND_TIMEOUT).disable_logging(true);
     let classifier = FfprobeCommandMediaStreamClassifier::new()
         .with_command_runner(runner.clone().max_stdout_bytes(6).fail_on_output_truncation(false));
