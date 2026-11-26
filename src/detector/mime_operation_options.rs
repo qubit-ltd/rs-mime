@@ -28,7 +28,10 @@ use super::mime_detection_policy::MimeDetectionPolicy;
 #[must_use = "pass these options to a MIME operation submission"]
 #[derive(Clone)]
 pub struct MimeOperationOptions {
-    /// Candidate resolution policy.
+    /// Candidate resolution policy for backends that combine filename and
+    /// content detection. Managed `file` detection requires complete content
+    /// and uses the command result; its filename and this policy do not affect
+    /// the managed result.
     pub policy: MimeDetectionPolicy,
     /// Maximum input-payload bytes this request may hold, if further
     /// restricted. This does not set the size of the staging read buffer or

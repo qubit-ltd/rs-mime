@@ -171,3 +171,54 @@ fn test_runtime_detector_uses_only_its_custom_repository_relations() {
             .expect("runtime detection should succeed")
     );
 }
+
+#[test]
+fn test_runtime_provider_selection_keeps_custom_repository_in_sync_facade() {
+    #[derive(Debug)]
+    struct NoopExecution;
+    impl qubit_mime::MimeExecutionPort for NoopExecution {
+        fn prepare(&self) -> Result<(), qubit_mime::MimeError> {
+            Ok(())
+        }
+        fn shutdown(&self) -> Result<(), qubit_mime::MimeError> {
+            Ok(())
+        }
+    }
+
+    let repository = Arc::new(MimeRepository::from_xml(
+        r#"<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+        <mime-type type="application/x-runtime-only"><glob pattern="*.runtime-only"/><magic priority="80"><match type="string" value="RUNTIME-ONLY" offset="0"/></magic></mime-type>
+        </mime-info>"#,
+    )
+    .unwrap());
+    let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
+    let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
+    let services =
+        qubit_mime::MimeExecutionServices::new(manager, group, Arc::new(NoopExecution), 1024).unwrap();
+    let runtime = MimeRuntime::new(MimeConfig::default(), repository)
+        .with_execution_services(services.clone())
+        .with_async_provider_selection_and_classifier(
+            &qubit_mime::MimeDetectorRegistry::builtin(),
+            &qubit_spi::ProviderSelection::named("repository").unwrap(),
+            &qubit_mime::MediaStreamClassifierRegistry::builtin(),
+            &qubit_spi::ProviderSelection::named("ffprobe").unwrap(),
+        )
+        .expect("explicit async detector and classifier selection");
+
+    let detector = runtime.create_detector().expect("synchronous facade after classifier selection");
+    let runtime = runtime.with_execution_services(services);
+    let detector_after_reattach = runtime.create_detector().expect("synchronous facade after reattaching services");
+    assert_eq!(
+        detector.detect_by_filename("report.runtime-only").unwrap(),
+        Some("application/x-runtime-only".to_owned())
+    );
+    assert_eq!(
+        detector_after_reattach.detect_by_filename("report.runtime-only").unwrap(),
+        Some("application/x-runtime-only".to_owned())
+    );
+    assert_eq!(
+        detector.detect_by_content(b"RUNTIME-ONLY body").unwrap(),
+        Some("application/x-runtime-only".to_owned())
+    );
+    assert_eq!(detector.detect_by_filename("report.pdf").unwrap(), None);
+}
