@@ -118,10 +118,8 @@ pub struct MimeExecutionServices {
     preparing: Arc<AtomicBool>,
     /// Prevents submissions racing with settlement and shutdown.
     submission_lock: Arc<Mutex<()>>,
-    /// Observers for operations that have not yet been harvested.
+    /// Observers for operations that have not yet settled.
     observers: Arc<Mutex<Vec<AsyncOperationObserver>>>,
-    /// Recovery handles retained until explicitly resolved or transferred.
-    recoveries: Arc<Mutex<Vec<RecoveryHandle>>>,
     /// Handle for draining the MIME operation group after workers stop.
     group_shutdown: Arc<Mutex<Option<AsyncShutdownHandle>>>,
     /// Whether all tracked operations have published settlement.
@@ -214,7 +212,6 @@ impl MimeExecutionServices {
             preparing: Arc::new(AtomicBool::new(false)),
             submission_lock: Arc::new(Mutex::new(())),
             observers: Arc::new(Mutex::new(Vec::new())),
-            recoveries: Arc::new(Mutex::new(Vec::new())),
             group_shutdown: Arc::new(Mutex::new(None)),
             operations_settled: Arc::new(AtomicBool::new(false)),
             settlement_generation: Arc::new(AtomicU64::new(0)),
@@ -353,8 +350,7 @@ impl MimeExecutionServices {
         self.admissions.has_active()
     }
 
-    /// Retains an observer and harvests recovery handles from older settled
-    /// observers.
+    /// Retains a new observer and prunes older observers that have settled.
     ///
     /// # Parameters
     /// - `observer`: Observer for a newly submitted operation.
@@ -362,30 +358,11 @@ impl MimeExecutionServices {
         let mut observers = self.observers.lock().unwrap_or_else(|e| e.into_inner());
         observers.retain(|item| {
             let snapshot = item.snapshot();
-            if let Some(report) = snapshot.settlement {
-                self.track_recoveries(&report.recoveries);
-                false
-            } else {
-                true
-            }
+            snapshot.settlement.is_none()
         });
         observers.push(observer);
         self.settlement_generation.fetch_add(1, Ordering::AcqRel);
         self.operations_settled.store(false, Ordering::Release);
-    }
-
-    /// Adds unique recovery handles that still require caller action.
-    ///
-    /// # Parameters
-    /// - `recoveries`: Recovery handles published by an operation settlement.
-    pub(crate) fn track_recoveries(&self, recoveries: &[RecoveryHandle]) {
-        let mut tracked = self.recoveries.lock().unwrap_or_else(|e| e.into_inner());
-        tracked.retain(is_unresolved_recovery);
-        for recovery in recoveries {
-            if !tracked.iter().any(|item| item.id() == recovery.id()) {
-                tracked.push(recovery.clone());
-            }
-        }
     }
 
     /// Counts recoveries that are neither resolved nor transferred.
@@ -1865,16 +1842,6 @@ mod tests {
             .join()
             .is_err()
         );
-        let recoveries = Arc::clone(&services.recoveries);
-        assert!(
-            std::thread::spawn(move || {
-                let _guard = recoveries.lock().unwrap();
-                panic!("poison MIME execution recovery lock");
-            })
-            .join()
-            .is_err()
-        );
-
         let mut operation = block_on(group.try_submit_async(Default::default(), |_| async { Ok::<_, MimeError>(()) }))
             .expect("a no-op operation should be accepted");
         assert!(matches!(
@@ -1883,8 +1850,6 @@ mod tests {
         ));
         assert!(block_on(operation.wait_settlement()).all_released());
         services.track_observer(operation.observer());
-        services.track_recoveries(&[]);
-        assert_eq!(0, services.unresolved_recovery_count());
 
         let shutdown = services.shutdown();
         assert!(
@@ -1892,8 +1857,8 @@ mod tests {
                 .expect("shutdown should recover poisoned tracking locks")
                 .operations_settled
         );
+        assert!(shutdown.recovery_handles_snapshot().is_empty());
         assert!(shutdown.stop_services().unwrap().services_stopped);
-        assert_eq!(0, services.unresolved_recovery_count());
     }
 
     #[test]

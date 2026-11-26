@@ -82,10 +82,12 @@ impl MimeShutdownObserver {
     }
 
     /// Waits asynchronously until every tracked operation publishes a
-    /// settlement report. Any recovery handles in those reports are retained
-    /// for shutdown gating; callers must explicitly resolve or transfer them
-    /// before [`Self::stop_services`] can stop the workers. This does not wait
-    /// for caller-owned typed handles to consume or discard their outcomes.
+    /// settlement report. Shutdown recovery checks read the operation group's
+    /// authoritative recovery ledger, including recoveries created by child
+    /// scopes after a stop attempt. Callers must explicitly resolve or transfer
+    /// unresolved handles before [`Self::stop_services`] can stop the workers.
+    /// This does not wait for caller-owned typed handles to consume or discard
+    /// their outcomes.
     ///
     /// # Returns
     /// A snapshot showing operation settlement and any unresolved recoveries.
@@ -109,8 +111,7 @@ impl MimeShutdownObserver {
                 (generation, pending)
             };
             for observer in pending {
-                let report = observer.wait_settlement().await;
-                self.services.track_recoveries(&report.recoveries);
+                let _ = observer.wait_settlement().await;
             }
 
             let submissions = self.services.submission_guard();
@@ -1258,12 +1259,6 @@ mod tests {
         assert_eq!(settlement.recoveries[0].id(), handles[0].id());
         drop(operation);
         assert_eq!(handles[0].id(), shutdown.recovery_handles_snapshot()[0].id());
-        services.track_recoveries(&settlement.recoveries);
-        assert_eq!(
-            1,
-            shutdown.snapshot().unresolved_recoveries,
-            "tracking the same recovery twice must keep one shutdown blocker"
-        );
         let stopped = shutdown.stop_services();
         assert!(
             matches!(stopped, Err(MimeError::OperationShutdownPending)),
