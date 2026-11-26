@@ -202,8 +202,6 @@ fn test_public_ffprobe_async_provider_classifies_complete_bytes() {
     use qubit_local_files::LocalFileSystem;
     use qubit_local_files::options::LocalTempDirectoryOptions;
 
-    use crate::support::PathEnvGuard;
-
     let directory = LocalFileSystem::host()
         .unwrap()
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
@@ -213,7 +211,13 @@ fn test_public_ffprobe_async_provider_classifies_complete_bytes() {
     let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&executable, permissions).unwrap();
-    let _path_guard = PathEnvGuard::prepend(directory.path());
+    if crate::support::run_test_in_path_child(
+        "classifier::refinement_operation_tests::test_public_ffprobe_async_provider_classifies_complete_bytes",
+        directory.path(),
+        false,
+    ) {
+        return;
+    }
 
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 1 }).unwrap();

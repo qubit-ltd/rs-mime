@@ -27,13 +27,17 @@ jobs:
       - name: Install FFprobe
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg
+          sudo apt-get install --yes --no-install-recommends ffmpeg file
       - name: Verify FFprobe version
         run: ffprobe -version
       - name: Prepare pinned local path dependencies
         run: ./.infra/bin/prepare-local-path-dependencies.sh
       - name: Run real FFprobe integration smoke
         run: cargo test --locked --test mod real_ffprobe_integration_tests -- --ignored
+      - name: Verify file utility
+        run: file --version
+      - name: Run real file command smoke
+        run: cargo test --locked --test mod test_real_file_command_sync_entry_points -- --ignored
       - name: Compile documentation consumer
         run: cargo check --manifest-path tests/fixtures/documentation_consumer/Cargo.toml --locked
       - name: Run managed lifecycle example

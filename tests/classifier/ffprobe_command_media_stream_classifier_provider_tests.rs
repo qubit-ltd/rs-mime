@@ -28,9 +28,6 @@ use qubit_spi::ServiceProvider;
 #[cfg(unix)]
 use qubit_spi::error::ProviderFailureKind;
 
-#[cfg(unix)]
-use crate::support::PathEnvGuard;
-
 #[test]
 fn test_default_provider_has_the_ffprobe_identity() {
     let provider = FfprobeCommandMediaStreamClassifierProvider;
@@ -46,7 +43,13 @@ fn test_ffprobe_provider_applies_probe_output_and_timeout_budgets() {
         .create_temp_directory_with_options(&LocalTempDirectoryOptions::new())
         .expect("temporary command directory should be created");
     let executable = directory.path().join("ffprobe");
-    let _path_guard = PathEnvGuard::prepend(directory.path());
+    if crate::support::run_test_in_path_child(
+        "classifier::ffprobe_command_media_stream_classifier_provider_tests::test_ffprobe_provider_applies_probe_output_and_timeout_budgets",
+        directory.path(),
+        false,
+    ) {
+        return;
+    }
     let write_command = |body: &str| {
         std::fs::write(&executable, body).expect("fake ffprobe should be written");
         let mut permissions = std::fs::metadata(&executable)
