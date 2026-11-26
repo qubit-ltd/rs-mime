@@ -709,12 +709,16 @@ own. Run the example with
 `cargo run --example managed_lifecycle`; the CI consumer fixture invokes the
 same entry point.
 
-`MimeRuntime::builtin()` starts with the bundled repository. Attaching execution
-services with `with_execution_services` also installs a repository-backed async
-backend by default; `with_async_provider_selection` replaces it when another
-async implementation is needed. Resolving a sync-only provider factory fails
-with `AsyncUnsupported` during this runtime configuration call, before
-submission.
+`MimeRuntime::new(config, repository)` retains the supplied repository;
+`MimeRuntime::builtin()` explicitly starts with bundled data. Attaching execution
+services with `with_execution_services` installs a repository-backed async
+backend using the runtime's retained repository. `with_async_provider_selection`
+(and its classifier variant) replaces that managed backend; a provider factory
+that declares bundled repository data as its candidate source uses those rules.
+Attaching services again resets the managed selection to the runtime repository.
+These operations do not change the synchronous detector facade. Resolving a
+sync-only provider factory fails with `AsyncUnsupported` during provider
+selection, before submission.
 The built-in `repository` and
 `file` providers both expose managed async backends. `file` requires complete
 content; its lack of random-access support only rules out inputs that require
@@ -884,7 +888,7 @@ capabilities are:
 | Provider | Managed async backend | Input and refinement limits |
 | --- | --- | --- |
 | `repository` | Yes | Matches supplied bytes against repository rules; does not support random-access input. |
-| `file` | Yes, after explicit selection | Requires complete content and does not support random-access input. Attaching any async classifier is rejected with `UnsupportedCapability` during factory creation. |
+| `file` | Yes, after explicit selection | Consumes complete staged content and uses the system command result; filename candidates and `MimeDetectionPolicy` do not participate. It does not support random-access input. Attaching any async classifier is rejected with `UnsupportedCapability` during factory creation. |
 | Sync-only custom provider | No | Resolving its factory for async selection fails with `AsyncUnsupported` during runtime configuration; it is not run synchronously as a fallback. |
 
 For path-backed inputs, filename rules receive the native path basename through
@@ -1007,8 +1011,12 @@ implementations define their own behavior. The async path entry point reads up
 to the requested prefix by default. The legacy `RepositoryMimeDetector` path
 is an exception: a unique filename candidate still short-circuits under
 `PreferFilename`, while content-dependent policies return `AsyncUnsupported`
-before opening the provider path. Custom `MimeDetectorBackend` implementations
-retain their existing behavior by default. Override
+before opening the provider path. `FileBasedMimeDetector` also rejects
+content-required async calls with `AsyncUnsupported` before opening or reading
+its provider; callers relying on the former I/O error timing or side effect
+should use its synchronous file entry or the managed `file` provider. Callers
+that need bytes in advance must read them explicitly. Custom
+`MimeDetectorBackend` implementations retain their existing behavior by default. Override
 `supports_async_content_detection` to reject before IO, or provide an
 asynchronous content hook when they need to inspect content. A prefix backend can inspect large
 resources without loading the entire resource. A backend whose

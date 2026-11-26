@@ -596,10 +596,12 @@ settlement，再释放 typed handle，最后等待组 Drain。若存在未解决
 自定义清理应在服务停止前完成，或自行保留可继续工作的依赖。
 完整样例可通过 `cargo run --locked --example managed_lifecycle` 运行，CI 的 consumer fixture 也运行同一入口。
 
-`MimeRuntime::builtin()` 默认使用内置 repository。调用 `with_execution_services` 附加执行服务时，
-也会默认安装 repository 受管异步 backend；如需其他异步实现，可再用
-`with_async_provider_selection` 替换它。为异步 backend 解析仅支持同步的 Provider 工厂时，会在
-runtime 配置阶段以 `AsyncUnsupported` 失败，早于任务提交。内置 `repository` 和 `file` Provider 都提供受管异步
+`MimeRuntime::new(config, repository)` 会保留调用方传入的 repository；`MimeRuntime::builtin()` 则明确使用
+内置数据。调用 `with_execution_services` 附加执行服务时，会安装一个使用该 runtime repository 的
+repository 受管异步 backend。需要切换时，可调用 `with_async_provider_selection` 或带 classifier 的变体；
+若所选 Provider 工厂声明使用内置 repository 作为候选来源，就会采用内置规则。再次附加执行服务会把受管
+backend 重置为 runtime repository；这些调用不会改变同步 detector facade。为异步 backend 解析仅支持同步的
+Provider 工厂时，会在 Provider 选择阶段以 `AsyncUnsupported` 失败，早于任务提交。内置 `repository` 和 `file` Provider 都提供受管异步
 backend。`file` 要求完整内容；
 它不支持随机访问，只表示不能处理要求随机访问的输入。注册 Provider 不会启动检测任务。
 未配置执行服务时，提交会以 `ExecutionServicesRequired` 拒绝。上文仅支持同步的 Provider 所致
@@ -707,7 +709,7 @@ Provider 遇到 EOF 时，实际返回字节也可能更少。若预检无法预
 | Provider | 受管异步 backend | 输入与精化限制 |
 | --- | --- | --- |
 | `repository` | 支持 | 根据提供的字节匹配仓库规则；不支持随机访问输入。 |
-| `file` | 支持，须显式选择 | 要求完整内容，不支持随机访问。任何附加的异步 classifier 都会在 factory 创建时以 `UnsupportedCapability` 拒绝。 |
+| `file` | 支持，须显式选择 | 只消费完整暂存内容，并以系统命令结果作为候选；文件名候选和 `MimeDetectionPolicy` 不参与。它不支持随机访问。附加异步 classifier 会在 factory 创建时以 `UnsupportedCapability` 拒绝。 |
 | 仅同步的自定义 Provider | 不支持 | 为异步选择解析其工厂时，会在 runtime 配置阶段以 `AsyncUnsupported` 失败；不会回退为同步执行。 |
 
 路径输入会按 native path 语义提取 basename，再交给专用文件名匹配入口；完整路径不会被重新当作文件名解析。
@@ -786,8 +788,10 @@ worker 实际退出，并观察相同的最终结果。
 和通过本 crate blanket `MimeDetector` 实现接入的 backend，前缀检测不会将该前缀传给完整媒体
 classifier；直接实现 `MimeDetector` 的类型自行决定其行为。异步路径入口默认读取请求的内容
 前缀。内置旧 `RepositoryMimeDetector` 是例外：在 `PreferFilename` 下，唯一文件名候选仍会直接返回；
-依赖内容的策略则会在打开 Provider 路径前返回 `AsyncUnsupported`。自定义
-`MimeDetectorBackend` 默认保留原有行为。覆盖 `supports_async_content_detection` 并返回 `false` 可在读取前拒绝；
+依赖内容的策略则会在打开 Provider 路径前返回 `AsyncUnsupported`。旧的
+`FileBasedMimeDetector` 在异步调用需要内容时也会先返回 `AsyncUnsupported`，不会打开或读取 Provider。
+如果调用方依赖此前的 I/O 错误时序或副作用，应改用同步文件入口或受管 `file` Provider；需要提前读取内容时，
+由应用代码自行读取。自定义 `MimeDetectorBackend` 默认保留原有行为。覆盖 `supports_async_content_detection` 并返回 `false` 可在读取前拒绝；
 需要检查内容时则提供异步内容 hook。前缀后端可以在不加载完整资源的情况下检查大文件；声明
 `ContentRequirement::Complete` 后端不能使用前缀入口。自定义完整内容后端可以通过覆盖独立的
 `guess_from_async_provider_path` hook 检查异步 Provider 路径。受管异步操作使用 runtime 配置的 backend；
