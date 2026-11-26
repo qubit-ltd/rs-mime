@@ -2,6 +2,8 @@
 //    Copyright (c) 2026 Haixing Hu.
 //
 //    SPDX-License-Identifier: Apache-2.0
+//
+//    Licensed under the Apache License, Version 2.0.
 // =============================================================================
 
 use std::ffi::OsString;
@@ -28,8 +30,7 @@ pub(crate) fn run_test_in_path_child(test_name: &str, directory: &Path, replace:
             let source = directory.join(command);
             let target = path_directory.join(command);
             let _ = std::fs::remove_file(&target);
-            std::os::unix::fs::symlink(source, target)
-                .expect("private PATH should link the child executable");
+            std::os::unix::fs::symlink(source, target).expect("private PATH should link the child executable");
         }
         return false;
     }
@@ -44,8 +45,7 @@ pub(crate) fn run_test_in_path_child(test_name: &str, directory: &Path, replace:
     };
     entries.insert(0, directory.to_path_buf());
     let path: OsString = std::env::join_paths(entries).expect("native PATH entries should join");
-    let executable =
-        std::env::current_exe().expect("integration test executable should be available");
+    let executable = std::env::current_exe().expect("integration test executable should be available");
     let status = Command::new(executable)
         .args(["--exact", test_name, "--nocapture"])
         .env(CHILD_MARKER, "1")

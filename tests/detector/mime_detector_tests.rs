@@ -960,7 +960,6 @@ fn test_default_mime_detector_returns_usable_detector() {
 
 #[test]
 fn test_mime_detector_registry_creates_boxed_and_shared_named_detectors() {
-
     let registry = MimeDetectorRegistry::builtin();
     let config = MimeConfig::default();
     let boxed = create_named_detector(&registry, "repository", &config);

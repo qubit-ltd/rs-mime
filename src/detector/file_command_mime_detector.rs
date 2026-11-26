@@ -8,8 +8,9 @@
 //! MIME detector backed by the system `file` command.
 //!
 //! Managed operations through this detector require complete content. Input
-//! filenames and [`MimeOperationOptions::policy`](crate::MimeOperationOptions::policy)
-//! do not affect the managed command result; those options are consumed by
+//! filenames and
+//! [`MimeOperationOptions::policy`](crate::MimeOperationOptions::policy) do not
+//! affect the managed command result; those options are consumed by
 //! backends that combine repository filename and content candidates.
 //!
 //! This detector invokes `file --mime-type --brief <path>` for content guesses
@@ -1536,9 +1537,11 @@ mod file_operation_tests {
             let fake = executor(b"application/x-command-result", false, None);
             let harness = harness(Arc::clone(&fake));
             let (filesystem, reads) = ProviderFs::filesystem(b"complete provider content");
-            let options = MimeOperationOptions { policy, ..Default::default() };
-            let (handle, outcome, _) =
-                submit_provider(&harness, filesystem, options, None, Default::default());
+            let options = MimeOperationOptions {
+                policy,
+                ..Default::default()
+            };
+            let (handle, outcome, _) = submit_provider(&harness, filesystem, options, None, Default::default());
             let candidates = match outcome {
                 OperationOutcome::Succeeded(candidates) => candidates,
                 other => panic!("unexpected managed command outcome: {other:?}"),
@@ -1559,8 +1562,7 @@ mod file_operation_tests {
             policy: crate::MimeDetectionPolicy::ContentFirst,
             ..Default::default()
         };
-        let (handle, outcome) =
-            submit(&harness, Arc::from(b"complete bytes".as_slice()), options, false);
+        let (handle, outcome) = submit(&harness, Arc::from(b"complete bytes".as_slice()), options, false);
         let candidates = match outcome {
             OperationOutcome::Succeeded(candidates) => candidates,
             other => panic!("unexpected managed command outcome: {other:?}"),

@@ -51,11 +51,9 @@ fn block_on<F: Future>(future: F) -> F::Output {
 }
 
 #[test]
-fn file_legacy_async_content_rejects_before_provider_io() {
+fn test_file_legacy_async_content_rejects_before_provider_io() {
     let detector = FileCommandMimeDetector::new();
-    assert!(!MimeDetectorBackend::supports_async_content_detection(
-        &detector
-    ));
+    assert!(!MimeDetectorBackend::supports_async_content_detection(&detector));
     let path = FsPath::parse("/unknown.bin").expect("fixture path");
 
     for spi in [
@@ -65,13 +63,8 @@ fn file_legacy_async_content_rejects_before_provider_io() {
         let opens = Arc::clone(&spi.opens);
         let reads = Arc::clone(&spi.reads);
         let fs = AsyncFileSystem::from_spi(spi).expect("fixture filesystem");
-        let error = block_on(detector.detect_async_path(
-            &fs,
-            &path,
-            32,
-            MimeDetectionPolicy::VerifyContent,
-        ))
-        .expect_err("file detector has no legacy async content hook");
+        let error = block_on(detector.detect_async_path(&fs, &path, 32, MimeDetectionPolicy::VerifyContent))
+            .expect_err("file detector has no legacy async content hook");
         assert!(matches!(error, MimeError::AsyncUnsupported));
         assert_eq!(0, opens.load(Ordering::Relaxed));
         assert_eq!(0, reads.load(Ordering::Relaxed));
@@ -79,7 +72,7 @@ fn file_legacy_async_content_rejects_before_provider_io() {
 }
 
 #[test]
-fn file_legacy_async_filename_shortcut_and_default_provider_hook_capability() {
+fn test_file_legacy_async_filename_shortcut_and_default_provider_hook_capability() {
     let detector = FileCommandMimeDetector::new();
     let path = FsPath::parse("/document.pdf").expect("PDF path");
     let spi = PrefixAsyncFileSystemSpi::new(b"%PDF-1.7");
@@ -125,7 +118,7 @@ impl MimeDetectorBackend for CompleteBackend {
 }
 
 #[test]
-fn default_provider_hook_preserves_complete_content_error_before_io() {
+fn test_default_provider_hook_preserves_complete_content_error_before_io() {
     let path = FsPath::parse("/unknown.bin").expect("fixture path");
     let spi = PrefixAsyncFileSystemSpi::new(b"payload");
     let opens = Arc::clone(&spi.opens);

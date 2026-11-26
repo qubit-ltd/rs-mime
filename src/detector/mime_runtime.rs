@@ -610,6 +610,14 @@ impl MimeRuntime {
     }
 }
 
+/// Finds a preferred filename candidate for managed content detection.
+///
+/// # Parameters
+///
+/// - `backend_id`: The selected managed backend identifier.
+/// - `repository`: The repository used by repository-backed detection.
+/// - `input`: The owned content and optional filename input.
+/// - `policy`: The filename matching policy.
 fn managed_filename_winner<'a>(
     backend_id: &str,
     repository: Option<&'a Arc<MimeRepository>>,
@@ -620,38 +628,13 @@ fn managed_filename_winner<'a>(
         return None;
     }
     repository.and_then(|repository| match input {
-        OwnedMimeInput::Bytes { filename, .. } => super::internal::async_repository_matcher::preferred_filename(
-            repository,
-            filename.as_deref(),
-            policy,
-        ),
-        OwnedMimeInput::Provider { path, .. } => super::internal::async_repository_matcher::preferred_basename(
-            repository,
-            path.file_name(),
-            policy,
-        ),
+        OwnedMimeInput::Bytes { filename, .. } => {
+            super::internal::async_repository_matcher::preferred_filename(repository, filename.as_deref(), policy)
+        }
+        OwnedMimeInput::Provider { path, .. } => {
+            super::internal::async_repository_matcher::preferred_basename(repository, path.file_name(), policy)
+        }
     })
-}
-
-#[cfg(test)]
-mod file_policy_tests {
-    use super::*;
-
-    #[test]
-    fn file_backend_does_not_use_runtime_repository_filename_shortcuts() {
-        let repository = Arc::new(MimeRepository::bundled().clone());
-        let input = OwnedMimeInput::Bytes {
-            content: Arc::from(b"content".as_slice()),
-            extent: crate::InputExtent::Complete,
-            filename: Some("document.pdf".to_owned()),
-        };
-        assert!(managed_filename_winner(
-            "file",
-            Some(&repository),
-            &input,
-            crate::MimeDetectionPolicy::PreferFilename,
-        ).is_none());
-    }
 }
 
 impl Default for MimeRuntime {
@@ -666,5 +649,33 @@ impl Default for MimeRuntime {
     /// Panics if initialization of the bundled runtime unexpectedly fails.
     fn default() -> Self {
         Self::builtin().expect("built-in MIME runtime should initialize")
+    }
+}
+
+#[cfg(test)]
+mod file_policy_tests {
+    use std::sync::Arc;
+
+    use super::OwnedMimeInput;
+    use super::managed_filename_winner;
+    use crate::MimeRepository;
+
+    #[test]
+    fn test_file_backend_does_not_use_runtime_repository_filename_shortcuts() {
+        let repository = Arc::new(MimeRepository::bundled().clone());
+        let input = OwnedMimeInput::Bytes {
+            content: Arc::from(b"content".as_slice()),
+            extent: crate::InputExtent::Complete,
+            filename: Some("document.pdf".to_owned()),
+        };
+        assert!(
+            managed_filename_winner(
+                "file",
+                Some(&repository),
+                &input,
+                crate::MimeDetectionPolicy::PreferFilename,
+            )
+            .is_none()
+        );
     }
 }

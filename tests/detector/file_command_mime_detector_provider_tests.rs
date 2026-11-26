@@ -63,7 +63,6 @@ fn test_provider_builds_complete_async_backend_without_command_probe() {
 
 #[test]
 fn test_file_command_mime_detector_provider_metadata_and_availability() {
-
     let provider = FileCommandMimeDetectorProvider;
     let descriptor = provider.descriptor();
     let creation = provider.create_configured(&MimeConfig::default());
@@ -161,10 +160,8 @@ fn test_file_command_provider_reports_unavailable_command() {
     }
 
     let original_path = std::env::var_os("PATH");
-    let missing_path = std::env::join_paths([std::path::PathBuf::from(
-        "/qubit-mime-test-missing-command",
-    )])
-    .expect("missing command path should be representable natively");
+    let missing_path = std::env::join_paths([std::path::PathBuf::from("/qubit-mime-test-missing-command")])
+        .expect("missing command path should be representable natively");
     let current_test = std::env::current_exe().expect("current integration test executable should be available");
     let test_name =
         "detector::file_command_mime_detector_provider_tests::test_file_command_provider_reports_unavailable_command";
@@ -176,5 +173,9 @@ fn test_file_command_provider_reports_unavailable_command() {
         .expect("isolated provider test should start");
 
     assert!(status.success(), "isolated provider test should pass");
-    assert_eq!(original_path, std::env::var_os("PATH"), "parent PATH must remain unchanged");
+    assert_eq!(
+        original_path,
+        std::env::var_os("PATH"),
+        "parent PATH must remain unchanged"
+    );
 }

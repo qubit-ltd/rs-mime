@@ -197,7 +197,6 @@ fn test_public_prefer_filename_uses_native_basename_without_provider_or_command_
 
 #[test]
 fn test_is_available_can_be_called_without_panicking() {
-
     let _ = FileCommandMimeDetector::is_available();
 }
 
@@ -880,7 +879,6 @@ fn test_detect_file_rejects_successful_command_error_text() {
 #[cfg(unix)]
 #[test]
 fn test_detect_file_reports_missing_input_with_host_file_utility() {
-
     if !FileCommandMimeDetector::is_available() {
         eprintln!("skipping: host file utility is unavailable");
         return;
@@ -902,7 +900,10 @@ fn test_real_file_command_sync_entry_points() {
 
     use qubit_mime::MimeDetectionPolicy;
 
-    assert!(FileCommandMimeDetector::is_available(), "real file command smoke requires file on PATH");
+    assert!(
+        FileCommandMimeDetector::is_available(),
+        "real file command smoke requires file on PATH"
+    );
     let path = std::env::temp_dir().join(format!("mime-file-command-api-{}.pdf", std::process::id()));
     std::fs::write(&path, b"%PDF-1.7\n").expect("test PDF should be created");
     let detector = FileCommandMimeDetector::new();

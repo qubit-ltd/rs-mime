@@ -193,8 +193,7 @@ fn test_runtime_provider_selection_keeps_custom_repository_in_sync_facade() {
     .unwrap());
     let manager = qubit_operation::OperationManager::new(Default::default()).unwrap();
     let group = manager.group(qubit_operation::GroupOptions { capacity: 2 }).unwrap();
-    let services =
-        qubit_mime::MimeExecutionServices::new(manager, group, Arc::new(NoopExecution), 1024).unwrap();
+    let services = qubit_mime::MimeExecutionServices::new(manager, group, Arc::new(NoopExecution), 1024).unwrap();
     let runtime = MimeRuntime::new(MimeConfig::default(), repository)
         .with_execution_services(services.clone())
         .with_async_provider_selection_and_classifier(
@@ -205,15 +204,21 @@ fn test_runtime_provider_selection_keeps_custom_repository_in_sync_facade() {
         )
         .expect("explicit async detector and classifier selection");
 
-    let detector = runtime.create_detector().expect("synchronous facade after classifier selection");
+    let detector = runtime
+        .create_detector()
+        .expect("synchronous facade after classifier selection");
     let runtime = runtime.with_execution_services(services);
-    let detector_after_reattach = runtime.create_detector().expect("synchronous facade after reattaching services");
+    let detector_after_reattach = runtime
+        .create_detector()
+        .expect("synchronous facade after reattaching services");
     assert_eq!(
         detector.detect_by_filename("report.runtime-only").unwrap(),
         Some("application/x-runtime-only".to_owned())
     );
     assert_eq!(
-        detector_after_reattach.detect_by_filename("report.runtime-only").unwrap(),
+        detector_after_reattach
+            .detect_by_filename("report.runtime-only")
+            .unwrap(),
         Some("application/x-runtime-only".to_owned())
     );
     assert_eq!(
