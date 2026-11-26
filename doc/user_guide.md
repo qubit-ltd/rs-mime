@@ -422,7 +422,7 @@ cd fixture-root/rs-mime
 
 The current workflow checks out this `rs-mime` revision and checks out
 [`rs-magika` at the reachable commit `432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12`](https://github.com/qubit-ltd/rs-magika/commit/432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12).
-It keeps the other sibling revisions pinned in the [workflow](../.github/workflows/magika-consumer.yml).
+It keeps the other sibling revisions pinned in the [workflow](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/.github/workflows/magika-consumer.yml).
 Before running the commands below, prepare an independent sibling layout named
 `current-fixture-root/`: put the current `rs-mime` checkout in
 `current-fixture-root/rs-mime` and check out each sibling repository at the
@@ -443,8 +443,8 @@ Use these workflow revisions for the other siblings: `rs-operation`
 `28bf195b8eef9c03d9cb1c5428186758b76aaacd`. Keep `rs-mime` at the current
 checkout that contains this guide; it has no fixed SHA in this source graph.
 
-The fixture [manifest](../tests/fixtures/magika_inventory_consumer/Cargo.toml)
-and [lock file](../tests/fixtures/magika_inventory_consumer/Cargo.lock) are
+The fixture [manifest](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.toml)
+and [lock file](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.lock) are
 inside the current MIME checkout. Their relative path dependencies resolve
 `qubit-mime` to that checkout and `qubit-magika` and `qubit-operation` to the
 sibling `rs-magika` and `rs-operation` checkouts. No fixed MIME commit is needed
