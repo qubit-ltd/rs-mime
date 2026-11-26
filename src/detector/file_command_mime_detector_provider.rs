@@ -25,6 +25,11 @@ use crate::MimeExecutionServices;
 
 /// Provider for the built-in system `file` command detector.
 ///
+/// Managed operations require complete content. The supplied filename and
+/// [`MimeOperationOptions::policy`](crate::MimeOperationOptions::policy) do not
+/// change the command result; those options apply to backends that combine
+/// repository filename and content candidates.
+///
 /// # Examples
 ///
 /// ```

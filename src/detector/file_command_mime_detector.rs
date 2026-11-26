@@ -7,10 +7,15 @@
 // =============================================================================
 //! MIME detector backed by the system `file` command.
 //!
-//! This detector uses the embedded repository for filename guesses and invokes
-//! `file --mime-type --brief <path>` for content guesses on local files or
-//! temporary files staged from seekable readers. It is registered under the
-//! built-in provider id `file` and aliases such as `file-command`.
+//! Managed operations through this detector require complete content. Input
+//! filenames and [`MimeOperationOptions::policy`](crate::MimeOperationOptions::policy)
+//! do not affect the managed command result; those options are consumed by
+//! backends that combine repository filename and content candidates.
+//!
+//! This detector invokes `file --mime-type --brief <path>` for content guesses
+//! on local files or temporary files staged from seekable readers. It is
+//! registered under built-in provider id `file` and aliases such as
+//! `file-command`.
 //!
 //! Local-path detection passes the path to the system `file` command without
 //! `-L`. The default runner therefore preserves the installed command's
@@ -1088,6 +1093,19 @@ mod file_operation_tests {
         AsyncOperationHandle<MimeCandidates, MimeError>,
         OperationOutcome<MimeCandidates, MimeError>,
     ) {
+        submit_named(harness, bytes, options, cancelled, "--private-name.bin")
+    }
+
+    fn submit_named(
+        harness: &Harness,
+        bytes: Arc<[u8]>,
+        options: MimeOperationOptions,
+        cancelled: bool,
+        filename: &'static str,
+    ) -> (
+        AsyncOperationHandle<MimeCandidates, MimeError>,
+        OperationOutcome<MimeCandidates, MimeError>,
+    ) {
         let detector = harness.detector.clone();
         let services = harness.services.clone();
         let tree = services.new_read_tree(0);
@@ -1105,7 +1123,7 @@ mod file_operation_tests {
                         BorrowedMimeInput::Bytes {
                             content: &bytes,
                             extent: InputExtent::Complete,
-                            filename: Some("--private-name.bin"),
+                            filename: Some(filename),
                         },
                         &options,
                     )
@@ -1139,7 +1157,7 @@ mod file_operation_tests {
                 if let Some(stop_context) = stop_context {
                     *stop_context.lock().unwrap() = Some(scope.context().clone());
                 }
-                let path = FsPath::parse("/input").unwrap();
+                let path = FsPath::parse("/report.pdf").unwrap();
                 detector
                     .guess_content_in(
                         &scope,
@@ -1473,6 +1491,121 @@ mod file_operation_tests {
         assert!(matches!(outcome, OperationOutcome::Succeeded(ref result) if result.candidates.is_empty()));
         block_on(handle.wait_settlement());
         cleanup(&harness_empty);
+    }
+
+    #[test]
+    fn test_file_operation_managed_bytes_use_command_result_for_every_policy() {
+        for policy in [
+            crate::MimeDetectionPolicy::Freedesktop,
+            crate::MimeDetectionPolicy::ContentFirst,
+            crate::MimeDetectionPolicy::PreferFilename,
+            crate::MimeDetectionPolicy::VerifyContent,
+        ] {
+            let fake = executor(b"application/x-command-result", false, None);
+            let harness = harness(Arc::clone(&fake));
+            let options = MimeOperationOptions {
+                policy,
+                ..Default::default()
+            };
+            let (handle, outcome) = submit_named(
+                &harness,
+                Arc::from(b"complete bytes".as_slice()),
+                options,
+                false,
+                "report.pdf",
+            );
+            let candidates = match outcome {
+                OperationOutcome::Succeeded(candidates) => candidates,
+                other => panic!("unexpected managed command outcome: {other:?}"),
+            };
+            assert_eq!(candidates.candidates[0].mime_type, "application/x-command-result");
+            assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+            assert!(block_on(handle.wait_settlement()).all_released());
+            cleanup(&harness);
+        }
+    }
+
+    #[test]
+    fn test_file_operation_managed_provider_uses_command_result_for_every_policy() {
+        for policy in [
+            crate::MimeDetectionPolicy::Freedesktop,
+            crate::MimeDetectionPolicy::ContentFirst,
+            crate::MimeDetectionPolicy::PreferFilename,
+            crate::MimeDetectionPolicy::VerifyContent,
+        ] {
+            let fake = executor(b"application/x-command-result", false, None);
+            let harness = harness(Arc::clone(&fake));
+            let (filesystem, reads) = ProviderFs::filesystem(b"complete provider content");
+            let options = MimeOperationOptions { policy, ..Default::default() };
+            let (handle, outcome, _) =
+                submit_provider(&harness, filesystem, options, None, Default::default());
+            let candidates = match outcome {
+                OperationOutcome::Succeeded(candidates) => candidates,
+                other => panic!("unexpected managed command outcome: {other:?}"),
+            };
+            assert_eq!(candidates.candidates[0].mime_type, "application/x-command-result");
+            assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+            assert!(reads.load(Ordering::SeqCst) > 0);
+            assert!(block_on(handle.wait_settlement()).all_released());
+            cleanup(&harness);
+        }
+    }
+
+    #[test]
+    fn test_file_operation_managed_empty_output_has_no_candidate_for_content_first() {
+        let fake = executor(b"", false, None);
+        let harness = harness(Arc::clone(&fake));
+        let options = MimeOperationOptions {
+            policy: crate::MimeDetectionPolicy::ContentFirst,
+            ..Default::default()
+        };
+        let (handle, outcome) =
+            submit(&harness, Arc::from(b"complete bytes".as_slice()), options, false);
+        let candidates = match outcome {
+            OperationOutcome::Succeeded(candidates) => candidates,
+            other => panic!("unexpected managed command outcome: {other:?}"),
+        };
+        assert!(candidates.candidates.is_empty());
+        assert_eq!(fake.calls.load(Ordering::SeqCst), 1);
+        assert!(block_on(handle.wait_settlement()).all_released());
+        cleanup(&harness);
+    }
+
+    #[test]
+    fn test_file_operation_managed_prefix_rejects_before_command() {
+        let fake = executor(b"application/x-command-result", false, None);
+        let harness = harness(Arc::clone(&fake));
+        let detector = harness.detector.clone();
+        let services = harness.services.clone();
+        let tree = services.new_read_tree(0);
+        let mut handle = harness
+            .group
+            .as_async()
+            .try_submit(Default::default(), move |scope| async move {
+                services.bind_read_tree(scope.id(), &tree);
+                detector
+                    .guess_content_in(
+                        &scope,
+                        BorrowedMimeInput::Bytes {
+                            content: b"partial",
+                            extent: InputExtent::Prefix,
+                            filename: Some("report.pdf"),
+                        },
+                        &MimeOperationOptions {
+                            policy: crate::MimeDetectionPolicy::PreferFilename,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+            })
+            .unwrap();
+        assert!(matches!(
+            block_on(handle.wait_outcome()).unwrap(),
+            OperationOutcome::Failed(MimeError::CompleteContentRequired)
+        ));
+        assert_eq!(fake.calls.load(Ordering::SeqCst), 0);
+        assert!(block_on(handle.wait_settlement()).all_released());
+        cleanup(&harness);
     }
 
     #[test]

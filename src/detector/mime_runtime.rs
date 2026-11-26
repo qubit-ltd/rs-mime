@@ -77,7 +77,9 @@ impl MimeRuntime {
     /// Creates a runtime that shares the supplied repository handle.
     ///
     /// The configuration is moved into a shared handle so detectors created by
-    /// this runtime use the same immutable settings.
+    /// this runtime use the same immutable settings. Managed submissions also
+    /// use this repository when the selected async backend is repository-backed
+    /// or declares the bundled repository as its candidate source.
     ///
     /// # Parameters
     ///
@@ -100,6 +102,9 @@ impl MimeRuntime {
 
     /// Creates a runtime using the default configuration and bundled
     /// repository.
+    ///
+    /// This explicitly chooses bundled data. `Default` delegates to this
+    /// constructor; `new` retains the repository supplied by the caller.
     ///
     /// # Returns
     ///
@@ -149,8 +154,10 @@ impl MimeRuntime {
 
     /// Attaches shared operation and MIME execution services without starting
     /// workers. This also selects the runtime's repository-backed async
-    /// detector as the default managed backend; an explicit provider
-    /// selection can replace it afterward.
+    /// detector as the default managed backend, using the repository already
+    /// retained by the runtime. An explicit provider selection can replace the
+    /// managed backend afterward without changing the synchronous detector
+    /// facade or its repository.
     ///
     /// # Parameters
     /// - `services`: Shared operation manager, group, worker adapter, and
@@ -168,7 +175,10 @@ impl MimeRuntime {
 
     /// Selects an explicitly async-capable provider for managed submissions.
     /// The synchronous detector facade continues to use the repository-backed
-    /// implementation retained by this runtime.
+    /// implementation retained by this runtime. Repository filename
+    /// short-circuiting is available only when the selected provider supplies
+    /// a repository source; a provider such as `file` consumes complete content
+    /// and its command result.
     ///
     /// # Parameters
     /// - `registry`: Registry containing async provider factories.
@@ -199,7 +209,9 @@ impl MimeRuntime {
 
     /// Selects async detector and classifier providers for managed operation
     /// submission. The selected classifier is attached to detector backends
-    /// that implement async MIME refinement.
+    /// that implement async MIME refinement. As with detector-only selection,
+    /// this changes the managed providers while the synchronous facade keeps
+    /// this runtime's original repository.
     ///
     /// # Parameters
     /// - `detector_registry`: Registry containing async detector providers.
@@ -499,18 +511,7 @@ impl MimeRuntime {
         // admission visible to shutdown without holding the submission lock.
         let read_plan = mime_submission::ProviderReadPlan::capture(backend.as_ref(), self_metered_provider_reads);
         let repository = self.async_repository.clone();
-        let filename_winner = repository.as_ref().and_then(|repository| match &input {
-            OwnedMimeInput::Bytes { filename, .. } => super::internal::async_repository_matcher::preferred_filename(
-                repository,
-                filename.as_deref(),
-                options.policy,
-            ),
-            OwnedMimeInput::Provider { path, .. } => super::internal::async_repository_matcher::preferred_basename(
-                repository,
-                path.file_name(),
-                options.policy,
-            ),
-        });
+        let filename_winner = managed_filename_winner(&backend_id, repository.as_ref(), &input, options.policy);
         let max_buffer_size = self.context.config().max_buffer_size();
         let filename_short_circuit = filename_winner.is_some();
         let requirement =
@@ -606,6 +607,50 @@ impl MimeRuntime {
                 })
             }
         }
+    }
+}
+
+fn managed_filename_winner<'a>(
+    backend_id: &str,
+    repository: Option<&'a Arc<MimeRepository>>,
+    input: &OwnedMimeInput,
+    policy: crate::MimeDetectionPolicy,
+) -> Option<&'a crate::MimeType> {
+    if backend_id == "file" {
+        return None;
+    }
+    repository.and_then(|repository| match input {
+        OwnedMimeInput::Bytes { filename, .. } => super::internal::async_repository_matcher::preferred_filename(
+            repository,
+            filename.as_deref(),
+            policy,
+        ),
+        OwnedMimeInput::Provider { path, .. } => super::internal::async_repository_matcher::preferred_basename(
+            repository,
+            path.file_name(),
+            policy,
+        ),
+    })
+}
+
+#[cfg(test)]
+mod file_policy_tests {
+    use super::*;
+
+    #[test]
+    fn file_backend_does_not_use_runtime_repository_filename_shortcuts() {
+        let repository = Arc::new(MimeRepository::bundled().clone());
+        let input = OwnedMimeInput::Bytes {
+            content: Arc::from(b"content".as_slice()),
+            extent: crate::InputExtent::Complete,
+            filename: Some("document.pdf".to_owned()),
+        };
+        assert!(managed_filename_winner(
+            "file",
+            Some(&repository),
+            &input,
+            crate::MimeDetectionPolicy::PreferFilename,
+        ).is_none());
     }
 }
 
