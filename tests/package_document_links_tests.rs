@@ -49,10 +49,14 @@ fn test_packaged_markdown_links_resolve_inside_package_file_set() {
         .lines()
         .map(normalize_package_path)
         .collect::<HashSet<_>>();
-    assert!(!packaged.is_empty(), "cargo package returned an empty file list");
+    assert!(
+        !packaged.is_empty(),
+        "cargo package returned an empty file list"
+    );
 
     verify_reachable_markdown(&DOCUMENTS.map(str::to_owned), &packaged, |document| {
-        fs::read_to_string(package_root.join(document)).map_err(|error| format!("read {document}: {error}"))
+        fs::read_to_string(package_root.join(document))
+            .map_err(|error| format!("read {document}: {error}"))
     })
     .unwrap_or_else(|error| panic!("packaged Markdown links are invalid: {error}"));
 
@@ -64,7 +68,7 @@ fn test_packaged_markdown_links_resolve_inside_package_file_set() {
     );
 }
 
-fn local_markdown_links_with_fragments(markdown: &str) -> Vec<(String, Option<String>)> {
+fn local_file_links_with_fragments(markdown: &str) -> Vec<(String, Option<String>)> {
     let mut visible = String::with_capacity(markdown.len());
     let mut fenced = false;
     for line in markdown.lines() {
@@ -98,8 +102,11 @@ fn local_markdown_links_with_fragments(markdown: &str) -> Vec<(String, Option<St
         }
         let (path, fragment) = target.split_once('#').unwrap_or((target, ""));
         let path = path.split('?').next().unwrap_or_default();
-        if path.ends_with(".md") || (path.is_empty() && !fragment.is_empty()) {
-            links.push((path.to_owned(), (!fragment.is_empty()).then(|| fragment.to_owned())));
+        if !path.is_empty() || !fragment.is_empty() {
+            links.push((
+                path.to_owned(),
+                (!fragment.is_empty()).then(|| fragment.to_owned()),
+            ));
         }
         cursor = end + 1;
     }
@@ -132,7 +139,7 @@ where
                 "{document} contains machine-local file URL {target:?}; use a package-relative path"
             ));
         }
-        for (target, fragment) in local_markdown_links_with_fragments(&markdown) {
+        for (target, fragment) in local_file_links_with_fragments(&markdown) {
             let resolved = if target.is_empty() {
                 document.clone()
             } else {
@@ -143,21 +150,29 @@ where
                     "{document} links to {target:?}, which resolves to {resolved:?} but is absent from cargo package --list"
                 ));
             }
-            if let Some(fragment) = fragment {
-                let target_markdown = if resolved == document {
-                    markdown.as_str()
-                } else if let Some(cached) = documents.get(&resolved) {
-                    cached.as_str()
-                } else {
-                    let content = read_document(&resolved)?;
-                    documents.insert(resolved.clone(), content);
-                    documents.get(&resolved).expect("document was inserted").as_str()
-                };
-                if !markdown_anchors(target_markdown).contains(&fragment) {
-                    return Err(format!("{document} links to missing anchor #{fragment} in {resolved}"));
+            let is_markdown = resolved.to_ascii_lowercase().ends_with(".md");
+            if is_markdown {
+                if let Some(fragment) = fragment {
+                    let target_markdown = if resolved == document {
+                        markdown.as_str()
+                    } else if let Some(cached) = documents.get(&resolved) {
+                        cached.as_str()
+                    } else {
+                        let content = read_document(&resolved)?;
+                        documents.insert(resolved.clone(), content);
+                        documents
+                            .get(&resolved)
+                            .expect("document was inserted")
+                            .as_str()
+                    };
+                    if !markdown_anchors(target_markdown).contains(&fragment) {
+                        return Err(format!(
+                            "{document} links to missing anchor #{fragment} in {resolved}"
+                        ));
+                    }
                 }
+                pending.push_back(resolved);
             }
-            pending.push_back(resolved);
         }
         documents.insert(document, markdown);
     }
@@ -212,7 +227,10 @@ fn markdown_anchors(markdown: &str) -> HashSet<String> {
                 if character.is_alphanumeric() {
                     slug.push(character);
                     previous_dash = false;
-                } else if (character.is_whitespace() || character == '-') && !slug.is_empty() && !previous_dash {
+                } else if (character.is_whitespace() || character == '-')
+                    && !slug.is_empty()
+                    && !previous_dash
+                {
                     slug.push('-');
                     previous_dash = true;
                 }
@@ -226,7 +244,9 @@ fn markdown_anchors(markdown: &str) -> HashSet<String> {
 }
 
 fn resolve_link(document: &str, target: &str) -> String {
-    let parent = Path::new(document).parent().unwrap_or_else(|| Path::new(""));
+    let parent = Path::new(document)
+        .parent()
+        .unwrap_or_else(|| Path::new(""));
     let target = target.split(['#', '?']).next().unwrap_or_default();
     let mut resolved = PathBuf::new();
     for component in parent.join(target).components() {
@@ -264,7 +284,10 @@ fn temporary_target_dir() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("system clock must be after UNIX epoch")
         .as_nanos();
-    std::env::temp_dir().join(format!("qubit-mime-package-links-{}-{timestamp}", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "qubit-mime-package-links-{}-{timestamp}",
+        std::process::id()
+    ))
 }
 
 struct TargetCleanup(PathBuf);
@@ -280,22 +303,81 @@ mod tests {
     use std::collections::HashMap;
     use std::collections::HashSet;
 
-    use super::local_markdown_links_with_fragments;
+    use super::local_file_links_with_fragments;
     use super::machine_local_file_link;
     use super::resolve_link;
     use super::verify_reachable_markdown;
 
     #[test]
-    fn test_link_extraction_skips_external_anchors_and_fenced_examples() {
+    fn test_link_extraction_skips_external_targets_and_fenced_examples() {
         let markdown = "[local](../guide.md#part) [external](https://example.test/a.md) [anchor](#part)\n```md\n[example](missing.md)\n```\n";
         assert_eq!(
             vec![
                 ("../guide.md".to_owned(), Some("part".to_owned())),
                 (String::new(), Some("part".to_owned())),
             ],
-            local_markdown_links_with_fragments(markdown)
+            local_file_links_with_fragments(markdown)
         );
         assert_eq!("guide.md", resolve_link("doc/page.md", "../guide.md"));
+    }
+
+    #[test]
+    fn test_link_extraction_includes_non_markdown_package_files() {
+        let markdown = "[workflow](../.github/workflows/ci.yml) [manifest](fixture/Cargo.toml) [lock](fixture/Cargo.lock) [asset](image.png)";
+        assert_eq!(
+            vec![
+                ("../.github/workflows/ci.yml".to_owned(), None),
+                ("fixture/Cargo.toml".to_owned(), None),
+                ("fixture/Cargo.lock".to_owned(), None),
+                ("image.png".to_owned(), None),
+            ],
+            local_file_links_with_fragments(markdown)
+        );
+    }
+
+    #[test]
+    fn test_package_file_targets_reject_missing_workflow_manifest_and_lock() {
+        let packaged = HashSet::from(["README.md".to_owned()]);
+        for missing in [
+            ".github/workflows/ci.yml",
+            "fixture/Cargo.toml",
+            "fixture/Cargo.lock",
+        ] {
+            let document = format!("[target]({missing})");
+            let documents = HashMap::from([("README.md", document.as_str())]);
+            let error = verify_reachable_markdown(&["README.md".to_owned()], &packaged, |path| {
+                documents
+                    .get(path)
+                    .map(|text| (*text).to_owned())
+                    .ok_or_else(|| format!("missing {path}"))
+            })
+            .unwrap_err();
+            assert!(
+                error.contains(missing),
+                "expected missing target {missing:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_package_file_targets_accept_existing_workflow_manifest_and_lock() {
+        let documents = HashMap::from([(
+            "README.md",
+            "[workflow](.github/workflows/ci.yml) [manifest](fixture/Cargo.toml) [lock](fixture/Cargo.lock)",
+        )]);
+        let packaged = HashSet::from([
+            "README.md".to_owned(),
+            ".github/workflows/ci.yml".to_owned(),
+            "fixture/Cargo.toml".to_owned(),
+            "fixture/Cargo.lock".to_owned(),
+        ]);
+        verify_reachable_markdown(&["README.md".to_owned()], &packaged, |path| {
+            documents
+                .get(path)
+                .map(|text| (*text).to_owned())
+                .ok_or_else(|| format!("missing {path}"))
+        })
+        .unwrap();
     }
 
     #[test]

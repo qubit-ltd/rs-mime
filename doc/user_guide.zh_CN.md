@@ -333,7 +333,7 @@ cd fixture-root/rs-mime
 
 当前 workflow 使用触发 CI 的这份 `rs-mime` checkout，并将
 [`rs-magika` 固定到远端可检出的提交 `432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12`](https://github.com/qubit-ltd/rs-magika/commit/432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12)。
-其余兄弟仓库仍使用[workflow](../.github/workflows/magika-consumer.yml)中固定的版本。
+其余兄弟仓库仍使用[workflow](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/.github/workflows/magika-consumer.yml)中固定的版本。
 运行下方命令前，请准备独立的 `current-fixture-root/` sibling 布局：将包含本指南的当前
 `rs-mime` checkout 放在 `current-fixture-root/rs-mime`，并把兄弟仓库检出到 workflow
 指定的固定提交。不要复用上方用于历史复现的 `fixture-root/`。例如，在
@@ -353,8 +353,8 @@ git -C rs-magika checkout --detach 432370c4dc5a6b5ae0c9faf467a2e272ef1f5e12
 `28bf195b8eef9c03d9cb1c5428186758b76aaacd`。此源码图中的 `rs-mime` 使用当前
 checkout，不绑定固定 SHA。
 
-当前 MIME checkout 中的 fixture [manifest](../tests/fixtures/magika_inventory_consumer/Cargo.toml)
-和[锁文件](../tests/fixtures/magika_inventory_consumer/Cargo.lock)通过相对路径引用源码：
+当前 MIME checkout 中的 fixture [manifest](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.toml)
+和[锁文件](https://github.com/qubit-ltd/rs-mime/blob/c05273cb8ac7ff8bb22d96c4385e38fb12b99d63/tests/fixtures/magika_inventory_consumer/Cargo.lock)通过相对路径引用源码：
 `qubit-mime` 指向当前 checkout，`qubit-magika` 和 `qubit-operation` 分别指向同级的
 `rs-magika` 和 `rs-operation`。本指南不固定 MIME 提交；CI 使用触发 workflow 的当前
 checkout，因此不会依赖尚未产生的未来提交。从 `current-fixture-root/rs-mime` 根目录运行下方命令。
