@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: qubit-ltd/rs-magika
-          ref: 47c174a44de8b48a7fee995f6df03a7d26f51db3
+          ref: 4aab7b4889d2ee3c03373b3a186f56c91412f7d6
           path: rs-magika
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -48,12 +48,12 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: qubit-ltd/rs-fs
-          ref: c7ea1d035498aa633f4f3c04d90fdb5d4b73de97
+          ref: 2d725c9b3bd0926dbbaf77428ab3596b08af0a47
           path: rs-fs
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: qubit-ltd/rs-fs-registry
-          ref: df6c8b7ce45495995c0b0ab9d64e14d0b41a8b1c
+          ref: be7c9c956829d8b48061b78f02b9a04972a61f54
           path: rs-fs-registry
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
