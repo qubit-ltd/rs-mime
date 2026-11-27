@@ -58,12 +58,12 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: qubit-ltd/rs-local-files
-          ref: 80d4357b354f572e695f0c17ac1182f0aaad22c0
+          ref: 3e81d3e58f42fcbc2f7d6d9acd142d43d8ade66d
           path: rs-local-files
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: qubit-ltd/rs-fs-local
-          ref: 3bf4275ed601e39fdbf8532f9d80d563d9cc7182
+          ref: f7630dd357c96109644545bd010942b164ebf10a
           path: rs-fs-local
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
